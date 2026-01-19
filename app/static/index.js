@@ -242,6 +242,18 @@
 		return compactFormatter.format(numeric);
 	};
 
+	const formatModelLabel = (model, reasoningEffort) => {
+		const base = (model || "").trim();
+		if (!base) {
+			return "--";
+		}
+		const effort = (reasoningEffort || "").trim();
+		if (!effort) {
+			return base;
+		}
+		return `${base} (${effort})`;
+	};
+
 	const formatCurrency = (value) => {
 		const numeric = toNumber(value);
 		if (numeric === null) {
@@ -565,6 +577,7 @@
 			accountId: entry.accountId,
 			requestId: entry.requestId,
 			model: entry.model,
+			reasoningEffort: entry.reasoningEffort ?? null,
 			status: entry.status,
 			tokens: toNumber(entry.tokens),
 			cost: toNumber(entry.costUsd),
@@ -884,12 +897,13 @@
 		const requests = state.dashboardData.recentRequests.map((request) => {
 			const rawError = request.errorMessage || request.errorCode || "";
 			const accountLabel = formatAccountLabel(request.accountId, accounts);
+			const modelLabel = formatModelLabel(request.model, request.reasoningEffort);
 			return {
 				key: `${request.requestId}-${request.timestamp}`,
 				requestId: request.requestId,
 				time: formatTimeLong(request.timestamp),
 				account: accountLabel,
-				model: request.model,
+				model: modelLabel,
 				status: {
 					class: requestStatusClass(request.status),
 					label: requestStatusLabel(request.status),

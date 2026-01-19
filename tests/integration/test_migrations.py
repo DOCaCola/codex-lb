@@ -5,7 +5,7 @@ import pytest
 from app.core.auth import DEFAULT_PLAN
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.migrations import run_migrations
+from app.db.migrations import MIGRATIONS, run_migrations
 from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
@@ -38,7 +38,7 @@ async def test_run_migrations_preserves_unknown_plan_types(db_setup):
 
     async with SessionLocal() as session:
         applied = await run_migrations(session)
-        assert applied == 1
+        assert applied == len(MIGRATIONS)
 
     async with SessionLocal() as session:
         acc_one = await session.get(Account, "acc_one")
