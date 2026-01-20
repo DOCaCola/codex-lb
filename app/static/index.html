@@ -203,14 +203,14 @@
                 <table>
                   <thead>
                     <tr>
-                      <th class="highlighted indicator">Account ID</th>
-                      <th>Email</th>
-                      <th>Plan</th>
-                      <th>Status</th>
-                      <th style="text-align: right"
+                      <th class="highlighted indicator" style="width: 28%">Account ID</th>
+                      <th style="width: 25%">Email</th>
+                      <th style="width: 10%">Plan</th>
+                      <th style="width: 12%">Status</th>
+                      <th style="text-align: right; width: 12%"
                         x-text="`Remaining (${formatWindowLabel('secondary', dashboardData.usage.secondary.windowMinutes)})`">
                       </th>
-                      <th
+                      <th style="width: 13%"
                         x-text="`Quota reset (${formatWindowLabel('secondary', dashboardData.usage.secondary.windowMinutes)})`">
                       </th>
                     </tr>
@@ -219,8 +219,8 @@
                     <template x-for="account in filteredAccounts" :key="account.id">
                       <tr :class="{ highlighted: account.id === accounts.selectedId }"
                         @click="selectAccount(account.id)" style="cursor: pointer">
-                        <td x-text="account.id"></td>
-                        <td x-text="account.email"></td>
+                        <td class="cell-truncate" x-text="account.id" :title="account.id"></td>
+                        <td class="cell-truncate" x-text="account.email" :title="account.email"></td>
                         <td x-text="planLabel(account.plan)"></td>
                         <td><span class="status-pill" :class="account.status"
                             x-text="statusLabel(account.status)"></span>
@@ -267,6 +267,7 @@
                   <label
                     x-text="`Remaining (${formatWindowLabel('primary', dashboardData.usage.primary.windowMinutes)})`"></label>
                   <div role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                    :class="calculateProgressClass(selectedAccount.status, selectedAccount.usage?.primaryRemainingPercent)"
                     :aria-valuenow="formatPercentValue(selectedAccount.usage?.primaryRemainingPercent)">
                     <div :style="{ width: `${formatPercentValue(selectedAccount.usage?.primaryRemainingPercent)}%` }">
                     </div>
@@ -278,6 +279,7 @@
                   <label
                     x-text="`Remaining (${formatWindowLabel('secondary', dashboardData.usage.secondary.windowMinutes)})`"></label>
                   <div role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                    :class="calculateProgressClass(selectedAccount.status, selectedAccount.usage?.secondaryRemainingPercent)"
                     :aria-valuenow="formatPercentValue(selectedAccount.usage?.secondaryRemainingPercent)">
                     <div :style="{ width: `${formatPercentValue(selectedAccount.usage?.secondaryRemainingPercent)}%` }">
                     </div>

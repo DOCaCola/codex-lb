@@ -475,6 +475,14 @@
 	};
 	const routingLabel = (strategy) => ROUTING_LABELS[strategy] || "unknown";
 	const errorLabel = (code) => ERROR_LABELS[code] || "--";
+	const calculateProgressClass = (status, remainingPercent) => {
+		if (status === "exceeded") return "error";
+		if (status === "paused" || status === "deactivated") return "";
+		const percent = toNumber(remainingPercent) || 0;
+		if (percent <= 20) return "error";
+		if (percent <= 50) return "limited";
+		return "success";
+	};
 	const progressClass = (status) => PROGRESS_CLASS_BY_STATUS[status] || "";
 
 	const normalizeSearchInput = (value) =>
@@ -916,13 +924,7 @@
 				},
 				remaining: remainingRounded,
 				remainingText: formatPercent(secondaryRemaining),
-				progressClass: (() => {
-					if (account.status === "exceeded") return "error";
-					if (account.status === "paused" || account.status === "deactivated") return "";
-					if (secondaryRemaining <= 20) return "error";
-					if (secondaryRemaining <= 50) return "limited";
-					return "success";
-				})(),
+				progressClass: calculateProgressClass(account.status, secondaryRemaining),
 				marquee: account.status === "deactivated",
 				meta: formatQuotaResetMeta(
 					account.resetAtSecondary,
@@ -1545,6 +1547,9 @@
 				if (this.authDialog.verificationUrl) {
 					window.open(this.authDialog.verificationUrl, "_blank", "noopener");
 				}
+			},
+			calculateProgressClass(status, remainingPercent) {
+				return calculateProgressClass(status, remainingPercent);
 			},
 			async copyToClipboard(value, label) {
 				if (!value) {

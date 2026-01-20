@@ -30,6 +30,9 @@
 
   --donut-empty: #3f3f46;
 
+  --bg-list-hover: rgba(255, 255, 255, 0.03);
+  --bg-list-selected: rgba(59, 130, 246, 0.15);
+
   --shell-max-width: 1400px;
 }
 
@@ -56,6 +59,8 @@
 
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --bg-list-hover: rgba(0, 0, 0, 0.04);
+  --bg-list-selected: rgba(59, 130, 246, 0.1);
 
   --donut-empty: #e4e4e7;
 }
@@ -552,6 +557,40 @@ table {
   border-collapse: collapse;
   font-size: 14px;
   text-align: left;
+  table-layout: fixed;
+}
+
+.cell-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ... existing styles ... */
+
+.list-actions .searchbox button {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  padding: 0;
+  right: 8px;
+  width: auto;
+}
+
+.list-actions .searchbox button:hover {
+  background: transparent;
+}
+
+/* ... existing styles ... */
+
+.summary-list strong {
+  color: var(--text-main);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+  text-align: right;
 }
 
 th {
@@ -574,19 +613,26 @@ tr:last-child td {
   border-bottom: none;
 }
 
+tr {
+  transition: background-color 0.15s;
+}
+
 tr:hover td {
-  background: var(--bg-surface);
+  background: var(--bg-list-hover);
   color: var(--text-main);
 }
 
 tr:hover {
-  outline: 1px solid var(--accent-primary);
-  outline-offset: -1px;
+  outline: none;
 }
 
 tr.highlighted td {
-  background: var(--bg-surface);
-  border-color: var(--accent-primary);
+  background: var(--bg-list-selected);
+  border-bottom-color: var(--border-subtle);
+}
+
+tr.highlighted td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
 }
 
 input[type="text"],
