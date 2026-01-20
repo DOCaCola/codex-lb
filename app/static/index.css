@@ -313,6 +313,7 @@ body {
   padding: 8px 0;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
+  gap: 12px;
 }
 
 .legend li:last-child {
@@ -350,6 +351,8 @@ body {
 .legend-detail-value {
   font-family: monospace;
   color: var(--text-main);
+  min-width: 4ch;
+  text-align: right;
 }
 
 .status-pill {
@@ -433,17 +436,27 @@ body {
 .account-card header {
   display: flex;
   justify-content: space-between;
-  align-items: start;
+  align-items: flex-start;
+  gap: 12px;
 }
 
-.account-card header div {
+.account-card header>div {
+  flex: 1;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.account-card header .status-pill {
+  flex-shrink: 0;
+}
+
+.account-card header>div>div:first-child {
   font-weight: 500;
   font-size: 15px;
   color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
 }
 
 .account-card .account-id {

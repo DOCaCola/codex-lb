@@ -864,7 +864,8 @@
 			);
 			const gradient = buildDonutGradient(items, capacity);
 			const legendItems = items.map((item) => ({
-				label: item.label,
+				label: truncateText(item.label, 28),
+				fullLabel: item.label,
 				detailLabel: "Remaining",
 				detailValue: formatPercent(item.remainingPercent),
 				color: item.color,
@@ -876,6 +877,7 @@
 				);
 				legendItems.push({
 					label: "Consumed",
+					fullLabel: "Consumed",
 					detailLabel: "",
 					detailValue: formatPercent(consumedPercent),
 					color: CONSUMED_COLOR,
