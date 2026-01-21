@@ -35,6 +35,7 @@ class _DummyRepo:
         last_refresh: datetime,
         plan_type: str | None = None,
         email: str | None = None,
+        chatgpt_account_id: str | None = None,
     ) -> bool:
         self.tokens_payload = {
             "account_id": account_id,
@@ -44,6 +45,7 @@ class _DummyRepo:
             "last_refresh": last_refresh,
             "plan_type": plan_type,
             "email": email,
+            "chatgpt_account_id": chatgpt_account_id,
         }
         return True
 

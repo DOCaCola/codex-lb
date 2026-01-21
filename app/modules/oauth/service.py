@@ -15,7 +15,7 @@ from app.core.auth import (
     DEFAULT_PLAN,
     OpenAIAuthClaims,
     extract_id_token_claims,
-    fallback_account_id,
+    generate_unique_account_id,
 )
 from app.core.clients.oauth import (
     OAuthError,
@@ -294,16 +294,17 @@ class OauthService:
     async def _persist_tokens(self, tokens: OAuthTokens) -> None:
         claims = extract_id_token_claims(tokens.id_token)
         auth_claims = claims.auth or OpenAIAuthClaims()
-        account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id
+        raw_account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id
         email = claims.email or DEFAULT_EMAIL
+        account_id = generate_unique_account_id(raw_account_id, email)
         plan_type = coerce_account_plan_type(
             auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type,
             DEFAULT_PLAN,
         )
-        account_id = account_id or fallback_account_id(email)
 
         account = Account(
             id=account_id,
+            chatgpt_account_id=raw_account_id,
             email=email,
             plan_type=plan_type,
             access_token_encrypted=self._encryptor.encrypt(tokens.access_token),

@@ -29,7 +29,7 @@ def _make_account(account_id: str, email: str, status: AccountStatus) -> Account
 
 
 @pytest.mark.asyncio
-async def test_unique_email_constraint(db_setup):
+async def test_duplicate_emails_rejected(db_setup):
     async with SessionLocal() as session:
         session.add(_make_account("acc1", "dup@example.com", AccountStatus.ACTIVE))
         await session.commit()

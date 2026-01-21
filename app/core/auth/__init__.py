@@ -90,7 +90,17 @@ def claims_from_auth(auth: AuthFile) -> AccountClaims:
     )
 
 
+def generate_unique_account_id(account_id: str | None, email: str | None) -> str:
+    if account_id and email and email != DEFAULT_EMAIL:
+        email_hash = hashlib.sha256(email.encode()).hexdigest()[:8]
+        return f"{account_id}_{email_hash}"
+    if account_id:
+        return account_id
+    return fallback_account_id(email)
+
+
 def fallback_account_id(email: str | None) -> str:
+    """Generate a fallback account ID when no OpenAI account ID is available."""
     if email and email != DEFAULT_EMAIL:
         digest = hashlib.sha256(email.encode()).hexdigest()[:12]
         return f"email_{digest}"

@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 import app.modules.proxy.service as proxy_module
+from app.core.auth import generate_unique_account_id
 from app.db.models import RequestLog
 from app.db.session import SessionLocal
 
@@ -65,11 +66,14 @@ async def test_proxy_responses_no_accounts(async_client):
 
 @pytest.mark.asyncio
 async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
-    auth_json = _make_auth_json("acc_live", "streamer@example.com")
+    email = "streamer@example.com"
+    raw_account_id = "acc_live"
+    auth_json = _make_auth_json(raw_account_id, email)
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
     seen = {}
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
@@ -96,11 +100,13 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
     event = _extract_first_event(lines)
     assert event["type"] == "response.completed"
     assert seen["access_token"] == "access-token"
-    assert seen["account_id"] == "acc_live"
+    assert seen["account_id"] == raw_account_id
 
     async with SessionLocal() as session:
         result = await session.execute(
-            select(RequestLog).where(RequestLog.account_id == "acc_live").order_by(RequestLog.requested_at.desc())
+            select(RequestLog)
+            .where(RequestLog.account_id == expected_account_id)
+            .order_by(RequestLog.requested_at.desc())
         )
         log = result.scalars().first()
         assert log is not None

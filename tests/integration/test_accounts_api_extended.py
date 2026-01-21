@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.core.auth import fallback_account_id
+from app.core.auth import fallback_account_id, generate_unique_account_id
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
@@ -98,19 +98,22 @@ async def test_import_falls_back_to_email_based_account_id(async_client):
 
 @pytest.mark.asyncio
 async def test_delete_account_removes_from_list(async_client):
-    auth_json = _make_auth_json("acc_delete", "delete@example.com")
+    email = "delete@example.com"
+    raw_account_id = "acc_delete"
+    auth_json = _make_auth_json(raw_account_id, email)
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    delete = await async_client.delete("/api/accounts/acc_delete")
+    actual_account_id = generate_unique_account_id(raw_account_id, email)
+    delete = await async_client.delete(f"/api/accounts/{actual_account_id}")
     assert delete.status_code == 200
     assert delete.json()["status"] == "deleted"
 
     accounts = await async_client.get("/api/accounts")
     assert accounts.status_code == 200
     data = accounts.json()["accounts"]
-    assert all(account["accountId"] != "acc_delete" for account in data)
+    assert all(account["accountId"] != actual_account_id for account in data)
 
 
 @pytest.mark.asyncio

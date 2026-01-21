@@ -93,7 +93,7 @@ class ProxyService:
                 openai_error("no_accounts", selection.error_message or "No active accounts available"),
             )
         account = await self._ensure_fresh(account)
-        account_id = _header_account_id(account.id)
+        account_id = _header_account_id(account.chatgpt_account_id)
 
         async def _call_compact(target: Account) -> OpenAIResponsePayload:
             access_token = self._encryptor.decrypt(target.access_token_encrypted)
@@ -291,7 +291,7 @@ class ProxyService:
     ) -> AsyncIterator[str]:
         account_id_value = account.id
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
-        account_id = _header_account_id(account_id_value)
+        account_id = _header_account_id(account.chatgpt_account_id)
         model = payload.model
         reasoning_effort = payload.reasoning.effort if payload.reasoning else None
         start = time.monotonic()
@@ -441,11 +441,8 @@ class ProxyService:
         await self._handle_stream_error(account, _upstream_error_from_openai(error), code)
 
     async def _handle_stream_error(self, account: Account, error: UpstreamError, code: str) -> None:
-        if code == "rate_limit_exceeded":
+        if code in {"rate_limit_exceeded", "usage_limit_reached"}:
             await self._load_balancer.mark_rate_limit(account, error)
-            return
-        if code == "usage_limit_reached":
-            await self._load_balancer.mark_quota_exceeded(account, error)
             return
         if code in {"insufficient_quota", "usage_not_included", "quota_exceeded"}:
             await self._load_balancer.mark_quota_exceeded(account, error)

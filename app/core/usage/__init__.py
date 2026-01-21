@@ -17,12 +17,14 @@ from app.db.models import Account
 PLAN_CAPACITY_CREDITS_PRIMARY = {
     "plus": 225.0,
     "business": 225.0,
+    "team": 225.0,
     "pro": 1500.0,
 }
 
 PLAN_CAPACITY_CREDITS_SECONDARY = {
     "plus": 7560.0,
     "business": 7560.0,
+    "team": 7560.0,
     "pro": 50400.0,
 }
 

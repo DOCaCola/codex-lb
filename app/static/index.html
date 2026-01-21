@@ -78,11 +78,14 @@
                     <ul class="legend">
                       <template x-for="item in donut.items" :key="item.label">
                         <li>
-                          <span>
+                          <span class="legend-label">
                             <i :style="{ '--legend-color': item.color }"></i>
-                            <span x-text="item.label"></span>
+                            <span class="legend-label-text" x-text="item.label" :title="item.label"></span>
                           </span>
-                          <span x-text="item.detail"></span>
+                          <span class="legend-detail">
+                            <span class="legend-detail-label" x-text="item.detailLabel"></span>
+                            <span class="legend-detail-value" x-text="item.detailValue"></span>
+                          </span>
                         </li>
                       </template>
                     </ul>

@@ -182,6 +182,32 @@ async def test_usage_window_secondary_uses_latest_window_minutes(async_client, d
 
 
 @pytest.mark.asyncio
+async def test_usage_history_team_plan_has_capacity(async_client, db_setup):
+    now = utcnow()
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+
+        await accounts_repo.upsert(_make_account("acc_team", "team@example.com", plan_type="team"))
+        await usage_repo.add_entry(
+            "acc_team",
+            20.0,
+            window="primary",
+            recorded_at=now - timedelta(hours=1),
+        )
+
+    response = await async_client.get("/api/usage/history?hours=24")
+    assert response.status_code == 200
+    payload = response.json()
+    accounts = {item["accountId"]: item for item in payload["accounts"]}
+    entry = accounts["acc_team"]
+
+    assert entry["remainingPercentAvg"] == pytest.approx(80.0)
+    assert entry["capacityCredits"] == pytest.approx(225.0)
+    assert entry["remainingCredits"] == pytest.approx(180.0)
+
+
+@pytest.mark.asyncio
 async def test_usage_history_invalid_hours_returns_validation_error(async_client):
     response = await async_client.get("/api/usage/history?hours=0")
     assert response.status_code == 422

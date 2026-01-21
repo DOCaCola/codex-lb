@@ -7,6 +7,7 @@ import json
 import pytest
 
 import app.modules.oauth.service as oauth_module
+from app.core.auth import generate_unique_account_id
 from app.core.clients.oauth import DeviceCode, OAuthTokens
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
@@ -27,6 +28,9 @@ def _encode_jwt(payload: dict) -> str:
 async def test_device_oauth_flow_creates_account(async_client, monkeypatch):
     await oauth_module._OAUTH_STORE.reset()
 
+    email = "device@example.com"
+    raw_account_id = "acc_device"
+
     async def fake_device_code(**_):
         return DeviceCode(
             verification_url="https://auth.openai.com/codex/device",
@@ -38,8 +42,8 @@ async def test_device_oauth_flow_creates_account(async_client, monkeypatch):
 
     async def fake_exchange_device_token(**_):
         payload = {
-            "email": "device@example.com",
-            "chatgpt_account_id": "acc_device",
+            "email": email,
+            "chatgpt_account_id": raw_account_id,
             "https://api.openai.com/auth": {"chatgpt_plan_type": "plus"},
         }
         return OAuthTokens(
@@ -75,10 +79,11 @@ async def test_device_oauth_flow_creates_account(async_client, monkeypatch):
         await asyncio.sleep(0.05)
     assert payload and payload["status"] == "success"
 
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
     accounts = await async_client.get("/api/accounts")
     assert accounts.status_code == 200
     data = accounts.json()["accounts"]
-    assert any(account["accountId"] == "acc_device" for account in data)
+    assert any(account["accountId"] == expected_account_id for account in data)
 
 
 @pytest.mark.asyncio

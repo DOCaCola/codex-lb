@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+from app.core.auth import generate_unique_account_id
+
 pytestmark = pytest.mark.integration
 
 
@@ -16,8 +18,10 @@ def _encode_jwt(payload: dict) -> str:
 
 @pytest.mark.asyncio
 async def test_import_and_list_accounts(async_client):
+    email = "tester@example.com"
+    raw_account_id = "acc_explicit"
     payload = {
-        "email": "tester@example.com",
+        "email": email,
         "chatgpt_account_id": "acc_payload",
         "https://api.openai.com/auth": {"chatgpt_plan_type": "plus"},
     }
@@ -26,22 +30,23 @@ async def test_import_and_list_accounts(async_client):
             "idToken": _encode_jwt(payload),
             "accessToken": "access",
             "refreshToken": "refresh",
-            "accountId": "acc_explicit",
+            "accountId": raw_account_id,
         },
     }
 
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
     data = response.json()
-    assert data["accountId"] == "acc_explicit"
-    assert data["email"] == "tester@example.com"
+    assert data["accountId"] == expected_account_id
+    assert data["email"] == email
     assert data["planType"] == "plus"
 
     list_response = await async_client.get("/api/accounts")
     assert list_response.status_code == 200
     accounts = list_response.json()["accounts"]
-    assert any(account["accountId"] == "acc_explicit" for account in accounts)
+    assert any(account["accountId"] == expected_account_id for account in accounts)
 
 
 @pytest.mark.asyncio
@@ -62,9 +67,11 @@ async def test_pause_missing_account_returns_404(async_client):
 
 @pytest.mark.asyncio
 async def test_pause_account(async_client):
+    email = "pause@example.com"
+    raw_account_id = "acc_pause"
     payload = {
-        "email": "pause@example.com",
-        "chatgpt_account_id": "acc_pause",
+        "email": email,
+        "chatgpt_account_id": raw_account_id,
         "https://api.openai.com/auth": {"chatgpt_plan_type": "plus"},
     }
     auth_json = {
@@ -72,22 +79,23 @@ async def test_pause_account(async_client):
             "idToken": _encode_jwt(payload),
             "accessToken": "access",
             "refreshToken": "refresh",
-            "accountId": "acc_pause",
+            "accountId": raw_account_id,
         },
     }
 
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    pause = await async_client.post("/api/accounts/acc_pause/pause")
+    pause = await async_client.post(f"/api/accounts/{expected_account_id}/pause")
     assert pause.status_code == 200
     assert pause.json()["status"] == "paused"
 
     accounts = await async_client.get("/api/accounts")
     assert accounts.status_code == 200
     data = accounts.json()["accounts"]
-    matched = next((account for account in data if account["accountId"] == "acc_pause"), None)
+    matched = next((account for account in data if account["accountId"] == expected_account_id), None)
     assert matched is not None
     assert matched["status"] == "paused"
     assert matched["deactivationReason"] is None

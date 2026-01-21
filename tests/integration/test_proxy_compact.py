@@ -6,6 +6,7 @@ import json
 import pytest
 
 import app.modules.proxy.service as proxy_module
+from app.core.auth import generate_unique_account_id
 from app.core.clients.proxy import ProxyResponseError
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import utcnow
@@ -49,11 +50,14 @@ async def test_proxy_compact_no_accounts(async_client):
 
 @pytest.mark.asyncio
 async def test_proxy_compact_success(async_client, monkeypatch):
-    auth_json = _make_auth_json("acc_compact", "compact@example.com")
+    email = "compact@example.com"
+    raw_account_id = "acc_compact"
+    auth_json = _make_auth_json(raw_account_id, email)
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
     seen = {}
 
     async def fake_compact(payload, headers, access_token, account_id):
@@ -66,7 +70,7 @@ async def test_proxy_compact_success(async_client, monkeypatch):
     async with SessionLocal() as session:
         usage_repo = UsageRepository(session)
         await usage_repo.add_entry(
-            account_id="acc_compact",
+            account_id=expected_account_id,
             used_percent=25.0,
             window="primary",
             reset_at=1735689600,
@@ -81,7 +85,7 @@ async def test_proxy_compact_success(async_client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["output"] == []
     assert seen["access_token"] == "access-token"
-    assert seen["account_id"] == "acc_compact"
+    assert seen["account_id"] == raw_account_id
     assert response.headers.get("x-codex-primary-used-percent") == "25.0"
     assert response.headers.get("x-codex-primary-window-minutes") == "300"
     assert response.headers.get("x-codex-primary-reset-at") == "1735689600"
@@ -92,10 +96,14 @@ async def test_proxy_compact_success(async_client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_proxy_compact_usage_limit_marks_account(async_client, monkeypatch):
-    auth_json = _make_auth_json("acc_limit", "limit@example.com")
+    email = "limit@example.com"
+    raw_account_id = "acc_limit"
+    auth_json = _make_auth_json(raw_account_id, email)
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
+
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
 
     async def fake_compact(payload, headers, access_token, account_id):
         raise ProxyResponseError(
@@ -119,6 +127,6 @@ async def test_proxy_compact_usage_limit_marks_account(async_client, monkeypatch
     assert error["type"] == "usage_limit_reached"
 
     async with SessionLocal() as session:
-        account = await session.get(Account, "acc_limit")
+        account = await session.get(Account, expected_account_id)
         assert account is not None
-        assert account.status == AccountStatus.QUOTA_EXCEEDED
+        assert account.status == AccountStatus.RATE_LIMITED

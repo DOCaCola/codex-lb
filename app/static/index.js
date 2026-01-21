@@ -654,6 +654,7 @@
 				accountId: entry.accountId,
 				capacityCredits: toNumber(entry.capacityCredits) || 0,
 				remainingCredits: toNumber(entry.remainingCredits) || 0,
+				remainingPercentAvg: toNumber(entry.remainingPercentAvg),
 			})),
 		};
 	};
@@ -712,7 +713,7 @@
 			return acc;
 		}, {});
 
-	const buildRemainingItems = (entries, accounts, capacity) => {
+	const buildRemainingItems = (entries, accounts, capacity, windowKey) => {
 		const accountMap = new Map(
 			(accounts || []).map((account) => [account.id, account]),
 		);
@@ -720,7 +721,23 @@
 			const account = accountMap.get(entry.accountId);
 			const label = account ? account.email : entry.accountId;
 			const value = toNumber(entry.remainingCredits) || 0;
-			const rawPercent = capacity > 0 ? (value / capacity) * 100 : 0;
+			const percentFromApi = toNumber(entry.remainingPercentAvg);
+			const percentFromAccount =
+				windowKey === "primary"
+					? toNumber(account?.usage?.primaryRemainingPercent)
+					: windowKey === "secondary"
+						? toNumber(account?.usage?.secondaryRemainingPercent)
+						: null;
+			const entryCapacity = toNumber(entry.capacityCredits) || 0;
+			const denominator = entryCapacity > 0 ? entryCapacity : capacity;
+			const rawPercent =
+				percentFromApi !== null
+					? percentFromApi
+					: percentFromAccount !== null
+						? percentFromAccount
+						: denominator > 0
+							? (value / denominator) * 100
+							: 0;
 			const remainingPercent = Math.min(100, Math.max(0, rawPercent));
 			return {
 				accountId: entry.accountId,
@@ -843,11 +860,13 @@
 				usage.byAccount || [],
 				accounts,
 				capacity,
+				window.key,
 			);
 			const gradient = buildDonutGradient(items, capacity);
 			const legendItems = items.map((item) => ({
 				label: item.label,
-				detail: `Remaining ${formatPercent(item.remainingPercent)}`,
+				detailLabel: "Remaining",
+				detailValue: formatPercent(item.remainingPercent),
 				color: item.color,
 			}));
 			if (capacity > 0 && consumed > 0) {
@@ -857,7 +876,8 @@
 				);
 				legendItems.push({
 					label: "Consumed",
-					detail: `${formatPercent(consumedPercent)}`,
+					detailLabel: "",
+					detailValue: formatPercent(consumedPercent),
 					color: CONSUMED_COLOR,
 				});
 			}
@@ -1707,15 +1727,15 @@
 				const items =
 					this.view === "accounts"
 						? [
-								`Selection: ${this.accounts.selectedId || "--"}`,
-								`Rotation: ${this.dashboardData.routing?.rotationEnabled ? "enabled" : "disabled"}`,
-								`Last sync: ${lastSync}`,
-							]
+							`Selection: ${this.accounts.selectedId || "--"}`,
+							`Rotation: ${this.dashboardData.routing?.rotationEnabled ? "enabled" : "disabled"}`,
+							`Last sync: ${lastSync}`,
+						]
 						: [
-								`Last sync: ${lastSync}`,
-								`Routing: ${routingLabel(this.dashboardData.routing?.strategy)}`,
-								`Backend: ${this.backendPath}`,
-							];
+							`Last sync: ${lastSync}`,
+							`Routing: ${routingLabel(this.dashboardData.routing?.strategy)}`,
+							`Backend: ${this.backendPath}`,
+						];
 				if (this.importState.isLoading) {
 					items.unshift(
 						`Importing ${this.importState.fileName || "auth.json"}...`,

@@ -24,6 +24,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    chatgpt_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     plan_type: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -40,6 +41,7 @@ class Account(Base):
         nullable=False,
     )
     deactivation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class UsageHistory(Base):
