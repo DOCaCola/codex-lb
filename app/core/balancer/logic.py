@@ -16,6 +16,9 @@ PERMANENT_FAILURE_CODES = {
     "account_deleted": "Account has been deleted",
 }
 
+SECONDS_PER_DAY = 60 * 60 * 24
+UNKNOWN_RESET_BUCKET_DAYS = 10_000
+
 
 @dataclass
 class AccountState:
@@ -24,6 +27,8 @@ class AccountState:
     used_percent: float | None = None
     reset_at: float | None = None
     cooldown_until: float | None = None
+    secondary_used_percent: float | None = None
+    secondary_reset_at: int | None = None
     last_error_at: float | None = None
     last_selected_at: float | None = None
     error_count: int = 0
@@ -36,7 +41,12 @@ class SelectionResult:
     error_message: str | None
 
 
-def select_account(states: Iterable[AccountState], now: float | None = None) -> SelectionResult:
+def select_account(
+    states: Iterable[AccountState],
+    now: float | None = None,
+    *,
+    prefer_earlier_reset: bool = False,
+) -> SelectionResult:
     current = now or time.time()
     available: list[AccountState] = []
     all_states = list(states)
@@ -95,12 +105,23 @@ def select_account(states: Iterable[AccountState], now: float | None = None) -> 
             return SelectionResult(None, f"Rate limit exceeded. Try again in {wait_seconds:.0f}s")
         return SelectionResult(None, "No available accounts")
 
-    def _sort_key(state: AccountState) -> tuple[float, float, str]:
-        used = state.used_percent if state.used_percent is not None else 0.0
+    def _usage_sort_key(state: AccountState) -> tuple[float, float, float, str]:
+        primary_used = state.used_percent if state.used_percent is not None else 0.0
+        secondary_used = state.secondary_used_percent if state.secondary_used_percent is not None else primary_used
         last_selected = state.last_selected_at or 0.0
-        return used, last_selected, state.account_id
+        return secondary_used, primary_used, last_selected, state.account_id
 
-    selected = min(available, key=_sort_key)
+    def _reset_first_sort_key(state: AccountState) -> tuple[int, float, float, float, str]:
+        reset_bucket_days = UNKNOWN_RESET_BUCKET_DAYS
+        if state.secondary_reset_at is not None:
+            reset_bucket_days = max(
+                0,
+                int((state.secondary_reset_at - current) // SECONDS_PER_DAY),
+            )
+        secondary_used, primary_used, last_selected, account_id = _usage_sort_key(state)
+        return reset_bucket_days, secondary_used, primary_used, last_selected, account_id
+
+    selected = min(available, key=_reset_first_sort_key if prefer_earlier_reset else _usage_sort_key)
     return SelectionResult(selected, None)
 
 
@@ -108,11 +129,11 @@ def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
     state.status = AccountStatus.RATE_LIMITED
     state.error_count += 1
     state.last_error_at = time.time()
-    
+
     reset_at = _extract_reset_at(error)
     if reset_at is not None:
         state.reset_at = reset_at
-    
+
     message = error.get("message")
     delay = parse_retry_after(message) if message else None
     if delay is None:

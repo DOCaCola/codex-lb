@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -7,18 +8,61 @@ import pytest
 
 from app.core.crypto import TokenEncryptor
 from app.core.usage.models import UsagePayload
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.usage.updater import UsageUpdater
 
 pytestmark = pytest.mark.unit
 
 
+@dataclass(frozen=True, slots=True)
+class UsageEntry:
+    account_id: str
+    used_percent: float
+    input_tokens: int | None
+    output_tokens: int | None
+    recorded_at: datetime | None
+    window: str | None
+    reset_at: int | None
+    window_minutes: int | None
+    credits_has: bool | None
+    credits_unlimited: bool | None
+    credits_balance: float | None
+
+
 class StubUsageRepository:
     def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
+        self.entries: list[UsageEntry] = []
 
-    async def add_entry(self, **kwargs: Any) -> None:
-        self.entries.append(kwargs)
+    async def add_entry(
+        self,
+        account_id: str,
+        used_percent: float,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        recorded_at: datetime | None = None,
+        window: str | None = None,
+        reset_at: int | None = None,
+        window_minutes: int | None = None,
+        credits_has: bool | None = None,
+        credits_unlimited: bool | None = None,
+        credits_balance: float | None = None,
+    ) -> UsageHistory | None:
+        self.entries.append(
+            UsageEntry(
+                account_id=account_id,
+                used_percent=used_percent,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                recorded_at=recorded_at,
+                window=window,
+                reset_at=reset_at,
+                window_minutes=window_minutes,
+                credits_has=credits_has,
+                credits_unlimited=credits_unlimited,
+                credits_balance=credits_balance,
+            )
+        )
+        return None
 
 
 def _make_account(account_id: str, chatgpt_account_id: str, email: str = "a@example.com") -> Account:

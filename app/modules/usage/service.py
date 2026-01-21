@@ -4,7 +4,13 @@ from datetime import timedelta
 from typing import cast
 
 from app.core import usage as usage_core
-from app.core.usage.logs import RequestLogLike, cost_from_log, total_tokens_from_log, usage_tokens_from_log
+from app.core.usage.logs import (
+    RequestLogLike,
+    cached_input_tokens_from_log,
+    cost_from_log,
+    total_tokens_from_log,
+    usage_tokens_from_log,
+)
 from app.core.usage.pricing import CostItem, calculate_costs
 from app.core.usage.types import (
     UsageCostSummary,
@@ -181,9 +187,11 @@ def _usage_metrics(logs_secondary: list[RequestLog]) -> UsageMetricsSummary:
         error_rate = len(error_logs) / total_requests
     top_error = _top_error_code(error_logs)
     tokens_secondary = _sum_tokens(logs_secondary)
+    cached_tokens_secondary = _sum_cached_input_tokens(logs_secondary)
     return UsageMetricsSummary(
         requests_7d=total_requests,
         tokens_secondary_window=tokens_secondary,
+        cached_tokens_secondary_window=cached_tokens_secondary,
         error_rate_7d=error_rate,
         top_error=top_error,
     )
@@ -193,6 +201,13 @@ def _sum_tokens(logs: list[RequestLog]) -> int:
     total = 0
     for log in logs:
         total += total_tokens_from_log(cast(RequestLogLike, log)) or 0
+    return total
+
+
+def _sum_cached_input_tokens(logs: list[RequestLog]) -> int:
+    total = 0
+    for log in logs:
+        total += cached_input_tokens_from_log(cast(RequestLogLike, log)) or 0
     return total
 
 
@@ -242,6 +257,7 @@ def _metrics_summary_to_model(metrics: UsageMetricsSummary) -> UsageMetrics:
     return UsageMetrics(
         requests_7d=metrics.requests_7d,
         tokens_secondary_window=metrics.tokens_secondary_window,
+        cached_tokens_secondary_window=metrics.cached_tokens_secondary_window,
         error_rate_7d=metrics.error_rate_7d,
         top_error=metrics.top_error,
     )

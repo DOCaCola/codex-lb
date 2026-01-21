@@ -48,14 +48,15 @@ class AccountsRepository:
             update(Account)
             .where(Account.id == account_id)
             .values(status=status, deactivation_reason=deactivation_reason, reset_at=reset_at)
+            .returning(Account.id)
         )
         await self._session.commit()
-        return bool(getattr(result, "rowcount", 0) or 0)
+        return result.scalar_one_or_none() is not None
 
     async def delete(self, account_id: str) -> bool:
-        result = await self._session.execute(delete(Account).where(Account.id == account_id))
+        result = await self._session.execute(delete(Account).where(Account.id == account_id).returning(Account.id))
         await self._session.commit()
-        return bool(getattr(result, "rowcount", 0) or 0)
+        return result.scalar_one_or_none() is not None
 
     async def update_tokens(
         self,
@@ -80,6 +81,8 @@ class AccountsRepository:
             values["email"] = email
         if chatgpt_account_id is not None:
             values["chatgpt_account_id"] = chatgpt_account_id
-        result = await self._session.execute(update(Account).where(Account.id == account_id).values(**values))
+        result = await self._session.execute(
+            update(Account).where(Account.id == account_id).values(**values).returning(Account.id)
+        )
         await self._session.commit()
-        return bool(getattr(result, "rowcount", 0) or 0)
+        return result.scalar_one_or_none() is not None

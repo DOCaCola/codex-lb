@@ -321,6 +321,43 @@
             </div>
           </div>
         </article>
+
+        <article role="tabpanel" id="tab-settings" :hidden="view !== 'settings'">
+          <div class="panel">
+            <h3>Routing settings</h3>
+            <p class="text-muted">Toggle routing features. When both options are off, accounts are selected by
+              balancing usage evenly.</p>
+
+            <fieldset style="margin-top: 12px">
+              <legend>Sticky threads</legend>
+              <input id="sticky-threads-toggle" type="checkbox" x-model="settings.stickyThreadsEnabled"
+                aria-describedby="sticky-threads-help">
+              <label for="sticky-threads-toggle">Enable sticky threads (reuse the same upstream account per
+                conversation)</label>
+              <div id="sticky-threads-help" class="text-muted" style="margin-top: 6px">
+                When enabled, requests with a prompt cache key stay pinned to the same upstream account unless the
+                pinned account becomes unavailable.
+              </div>
+            </fieldset>
+
+            <fieldset style="margin-top: 12px">
+              <legend>Reset priority</legend>
+              <input id="reset-priority-toggle" type="checkbox" x-model="settings.preferEarlierResetAccounts"
+                aria-describedby="reset-priority-help">
+              <label for="reset-priority-toggle">Prefer accounts that reset earlier first</label>
+              <div id="reset-priority-help" class="text-muted" style="margin-top: 6px">
+                When enabled, the load balancer prefers accounts whose secondary quota resets sooner, then balances
+                usage.
+              </div>
+            </fieldset>
+
+            <div class="inline-actions" style="margin-top: 12px">
+              <button type="button" @click="saveSettings" :disabled="settings.isSaving">
+                <span>Save</span>
+              </button>
+            </div>
+          </div>
+        </article>
       </section>
   </div>
   <div class="status-bar">

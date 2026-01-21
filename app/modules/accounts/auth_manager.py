@@ -4,8 +4,7 @@ import logging
 from datetime import datetime
 from typing import Protocol
 
-from app.core.auth import DEFAULT_PLAN
-from app.core.auth import OpenAIAuthClaims, extract_id_token_claims
+from app.core.auth import DEFAULT_PLAN, OpenAIAuthClaims, extract_id_token_claims
 from app.core.auth.refresh import RefreshError, refresh_access_token, should_refresh
 from app.core.balancer import PERMANENT_FAILURE_CODES
 from app.core.crypto import TokenEncryptor

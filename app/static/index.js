@@ -16,6 +16,7 @@
 		oauthStart: "/api/oauth/start",
 		oauthStatus: "/api/oauth/status",
 		oauthComplete: "/api/oauth/complete",
+		settings: "/api/settings",
 	};
 
 	const PAGES = [
@@ -32,6 +33,13 @@
 			label: "Accounts",
 			title: "Codex Load Balancer - Accounts",
 			path: "/accounts",
+		},
+		{
+			id: "settings",
+			tabId: "tab-settings",
+			label: "Settings",
+			title: "Codex Load Balancer - Settings",
+			path: "/settings",
 		},
 	];
 
@@ -187,6 +195,7 @@
 		metrics: {
 			requests7d: 0,
 			tokensSecondaryWindow: null,
+			cachedTokensSecondaryWindow: null,
 			cost7d: 0,
 			errorRate7d: null,
 			topError: "",
@@ -240,6 +249,28 @@
 			return "--";
 		}
 		return compactFormatter.format(numeric);
+	};
+
+	const formatTokensWithCached = (totalTokens, cachedInputTokens) => {
+		const total = toNumber(totalTokens);
+		if (total === null) {
+			return "--";
+		}
+		const cached = toNumber(cachedInputTokens);
+		if (cached === null || cached <= 0) {
+			return formatCompactNumber(total);
+		}
+		return `${formatCompactNumber(total)} (${formatCompactNumber(cached)} Cached)`;
+	};
+
+	const formatCachedTokensMeta = (totalTokens, cachedInputTokens) => {
+		const total = toNumber(totalTokens);
+		const cached = toNumber(cachedInputTokens);
+		if (total === null || total <= 0 || cached === null || cached <= 0) {
+			return "Cached: --";
+		}
+		const percent = Math.min(100, Math.max(0, (cached / total) * 100));
+		return `Cached: ${formatCompactNumber(cached)} (${Math.round(percent)}%)`;
 	};
 
 	const formatModelLabel = (model, reasoningEffort) => {
@@ -592,6 +623,7 @@
 			reasoningEffort: entry.reasoningEffort ?? null,
 			status: entry.status,
 			tokens: toNumber(entry.tokens),
+			cachedInputTokens: toNumber(entry.cachedInputTokens),
 			cost: toNumber(entry.costUsd),
 			errorCode: entry.errorCode ?? null,
 			errorMessage: entry.errorMessage ?? null,
@@ -620,17 +652,21 @@
 			const secondaryRemainingPercent = toNumber(
 				secondaryRow?.remainingPercentAvg,
 			);
+			const mergedSecondaryRemaining =
+				secondaryRemainingPercent ??
+				account.usage?.secondaryRemainingPercent ??
+				0;
+			const mergedPrimaryRemaining =
+				primaryRemainingPercent ??
+				account.usage?.primaryRemainingPercent ??
+				0;
+			const effectivePrimaryRemaining =
+				mergedSecondaryRemaining <= 0 ? 0 : mergedPrimaryRemaining;
 			return {
 				...account,
 				usage: {
-					primaryRemainingPercent:
-						primaryRemainingPercent ??
-						account.usage?.primaryRemainingPercent ??
-						0,
-					secondaryRemainingPercent:
-						secondaryRemainingPercent ??
-						account.usage?.secondaryRemainingPercent ??
-						0,
+					primaryRemainingPercent: effectivePrimaryRemaining,
+					secondaryRemainingPercent: mergedSecondaryRemaining,
 				},
 				resetAtPrimary: account.resetAtPrimary ?? null,
 				resetAtSecondary: account.resetAtSecondary ?? null,
@@ -680,6 +716,7 @@
 		const metrics = summary?.metrics || {};
 		const requests7d = toNumber(metrics.requests7d) ?? 0;
 		const tokensSecondaryWindow = toNumber(metrics.tokensSecondaryWindow);
+		const cachedTokensSecondaryWindow = toNumber(metrics.cachedTokensSecondaryWindow);
 		const errorRate7d = toNumber(metrics.errorRate7d);
 		const topError = metrics.topError || "";
 		return {
@@ -691,6 +728,7 @@
 			metrics: {
 				requests7d,
 				tokensSecondaryWindow,
+				cachedTokensSecondaryWindow,
 				cost7d: toNumber(summary?.cost?.totalUsd7d) || 0,
 				errorRate7d,
 				topError,
@@ -776,6 +814,38 @@
 		}));
 	};
 
+	const buildSecondaryExhaustedIndex = (accounts) => {
+		const exhausted = new Set();
+		(accounts || []).forEach((account) => {
+			const remaining = toNumber(account?.usage?.secondaryRemainingPercent);
+			if (remaining !== null && remaining <= 0 && account?.id) {
+				exhausted.add(account.id);
+			}
+		});
+		return exhausted;
+	};
+
+	const applySecondaryExhaustedToPrimary = (entries, exhaustedIds) => {
+		if (!entries?.length || !exhaustedIds?.size) {
+			return entries || [];
+		}
+		return entries.map((entry) => {
+			if (entry?.accountId && exhaustedIds.has(entry.accountId)) {
+				return {
+					...entry,
+					remainingCredits: 0,
+				};
+			}
+			return entry;
+		});
+	};
+
+	const sumRemainingCredits = (entries) =>
+		(entries || []).reduce(
+			(acc, entry) => acc + (toNumber(entry?.remainingCredits) || 0),
+			0,
+		);
+
 	const buildDonutGradient = (items, total) => {
 		if (!items.length || total <= 0) {
 			return `conic-gradient(${CONSUMED_COLOR} 0 100%)`;
@@ -818,6 +888,7 @@
 		const statusCounts = countByStatus(accounts);
 		const secondaryWindowMinutes =
 			state.dashboardData.usage?.secondary?.windowMinutes ?? null;
+		const secondaryExhaustedAccounts = buildSecondaryExhaustedIndex(accounts);
 
 		const badges = ["active", "paused", "limited", "exceeded", "deactivated"]
 			.map((status) => {
@@ -837,7 +908,10 @@
 			{
 				title: `Tokens (${formatWindowLabel("secondary", secondaryWindowMinutes)})`,
 				value: formatCompactNumber(metrics.tokensSecondaryWindow),
-				meta: "Scope: responses",
+				meta: formatCachedTokensMeta(
+					metrics.tokensSecondaryWindow,
+					metrics.cachedTokensSecondaryWindow,
+				),
 			},
 			{
 				title: "Cost (7d)",
@@ -865,11 +939,28 @@
 				resetAt: null,
 				byAccount: [],
 			};
-			const remaining = toNumber(usage.remaining) || 0;
+			const rawEntries = usage.byAccount || [];
+			const hasPrimaryAdjustments =
+				window.key === "primary" &&
+				rawEntries.some(
+					(entry) =>
+						entry?.accountId && secondaryExhaustedAccounts.has(entry.accountId),
+				);
+			const entries =
+				window.key === "primary"
+					? applySecondaryExhaustedToPrimary(
+							rawEntries,
+							secondaryExhaustedAccounts,
+						)
+					: rawEntries;
+			const remaining =
+				hasPrimaryAdjustments
+					? sumRemainingCredits(entries)
+					: toNumber(usage.remaining) || 0;
 			const capacity = Math.max(remaining, toNumber(usage.capacity) || 0);
 			const consumed = Math.max(0, capacity - remaining);
 			const items = buildRemainingItems(
-				usage.byAccount || [],
+				entries,
 				accounts,
 				capacity,
 				window.key,
@@ -959,7 +1050,7 @@
 					class: requestStatusClass(request.status),
 					label: requestStatusLabel(request.status),
 				},
-				tokens: formatNumber(request.tokens),
+				tokens: formatTokensWithCached(request.tokens, request.cachedInputTokens),
 				cost: formatCurrency(request.cost),
 				error: rawError ? truncateText(rawError, 80) : "--",
 				errorTitle: rawError,
@@ -1096,6 +1187,20 @@
 		return responsePayload;
 	};
 
+	const putJson = async (url, payload, label) => {
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload || {}),
+		});
+		const responsePayload = await readResponsePayload(response);
+		if (!response.ok) {
+			const message = extractErrorMessage(responsePayload);
+			throw new Error(message || `Failed to ${label} (${response.status})`);
+		}
+		return responsePayload;
+	};
+
 	const deleteJson = async (url, label) => {
 		const response = await fetch(url, { method: "DELETE" });
 		const responsePayload = await readResponsePayload(response);
@@ -1120,6 +1225,16 @@
 	const fetchRequestLogs = async (limit) =>
 		fetchJson(API_ENDPOINTS.requestLogs(limit), "request logs");
 
+	const normalizeSettingsPayload = (payload) => ({
+		stickyThreadsEnabled: Boolean(payload?.stickyThreadsEnabled),
+		preferEarlierResetAccounts: Boolean(payload?.preferEarlierResetAccounts),
+	});
+
+	const fetchSettings = async () => {
+		const payload = await fetchJson(API_ENDPOINTS.settings, "settings");
+		return normalizeSettingsPayload(payload);
+	};
+
 	const registerApp = () => {
 		Alpine.data("feApp", () => ({
 			view: "dashboard",
@@ -1128,6 +1243,11 @@
 			ui: createUiConfig(),
 			dashboardData: createEmptyDashboardData(),
 			dashboard: createEmptyDashboardView(),
+			settings: {
+				stickyThreadsEnabled: false,
+				preferEarlierResetAccounts: false,
+				isSaving: false,
+			},
 			accounts: {
 				selectedId: "",
 				rows: [],
@@ -1223,12 +1343,14 @@
 						primaryResult,
 						secondaryResult,
 						requestLogsResult,
+						settingsResult,
 					] = await Promise.allSettled([
 						fetchAccounts(),
 						fetchUsageSummary(),
 						fetchUsageWindow("primary"),
 						fetchUsageWindow("secondary"),
 						fetchRequestLogs(50),
+						fetchSettings(),
 					]);
 					const errors = [];
 					if (accountsResult.status !== "fulfilled") {
@@ -1261,6 +1383,12 @@
 						errors.push(requestLogsResult.reason);
 					}
 
+					const settings =
+						settingsResult.status === "fulfilled" ? settingsResult.value : null;
+					if (settingsResult.status === "rejected") {
+						errors.push(settingsResult.reason);
+					}
+
 					const mergedAccounts = mergeUsageIntoAccounts(
 						accountsResult.value,
 						primaryUsage,
@@ -1273,6 +1401,7 @@
 							primaryUsage,
 							secondaryUsage,
 							requestLogs,
+							settings,
 						},
 						preferredId,
 					);
@@ -1317,10 +1446,53 @@
 					primaryUsage: data.primaryUsage,
 					secondaryUsage: data.secondaryUsage,
 					requestLogs: data.requestLogs,
+					settings: data.settings,
 				});
+				if (data.settings) {
+					this.settings.stickyThreadsEnabled = Boolean(
+						data.settings.stickyThreadsEnabled,
+					);
+					this.settings.preferEarlierResetAccounts = Boolean(
+						data.settings.preferEarlierResetAccounts,
+					);
+				}
 				this.ui.usageWindows = buildUsageWindowConfig(data.summary);
 				this.dashboard = buildDashboardView(this);
 				this.syncAccountSearchSelection();
+			},
+			async saveSettings() {
+				if (this.settings.isSaving) {
+					return;
+				}
+				this.settings.isSaving = true;
+				try {
+					const payload = {
+						stickyThreadsEnabled: this.settings.stickyThreadsEnabled,
+						preferEarlierResetAccounts: this.settings.preferEarlierResetAccounts,
+					};
+					const updated = await putJson(
+						API_ENDPOINTS.settings,
+						payload,
+						"save settings",
+					);
+					const normalized = normalizeSettingsPayload(updated);
+					this.settings.stickyThreadsEnabled = normalized.stickyThreadsEnabled;
+					this.settings.preferEarlierResetAccounts =
+						normalized.preferEarlierResetAccounts;
+					this.openMessageBox({
+						tone: "success",
+						title: "Settings saved",
+						message: "Routing settings updated.",
+					});
+				} catch (error) {
+					this.openMessageBox({
+						tone: "error",
+						title: "Settings save failed",
+						message: error.message || "Failed to save settings.",
+					});
+				} finally {
+					this.settings.isSaving = false;
+				}
 			},
 			focusAccountSearch() {
 				this.$refs.accountSearch?.focus();

@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import math
 from collections import Counter
-from typing import Mapping
+from datetime import datetime
+from typing import Mapping, Protocol
 
 from app.core.auth.refresh import RefreshError
 from app.core.clients.usage import UsageFetchError, fetch_usage
@@ -15,15 +16,31 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.usage.repository import UsageRepository
 
 logger = logging.getLogger(__name__)
+
+
+class UsageRepositoryPort(Protocol):
+    async def add_entry(
+        self,
+        account_id: str,
+        used_percent: float,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        recorded_at: datetime | None = None,
+        window: str | None = None,
+        reset_at: int | None = None,
+        window_minutes: int | None = None,
+        credits_has: bool | None = None,
+        credits_unlimited: bool | None = None,
+        credits_balance: float | None = None,
+    ) -> UsageHistory | None: ...
 
 
 class UsageUpdater:
     def __init__(
         self,
-        usage_repo: UsageRepository,
+        usage_repo: UsageRepositoryPort,
         accounts_repo: AccountsRepository | None = None,
     ) -> None:
         self._usage_repo = usage_repo

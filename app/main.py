@@ -24,6 +24,7 @@ from app.modules.health import api as health_api
 from app.modules.oauth import api as oauth_api
 from app.modules.proxy import api as proxy_api
 from app.modules.request_logs import api as request_logs_api
+from app.modules.settings import api as settings_api
 from app.modules.usage import api as usage_api
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(usage_api.router)
     app.include_router(request_logs_api.router)
     app.include_router(oauth_api.router)
+    app.include_router(settings_api.router)
     app.include_router(health_api.router)
 
     static_dir = Path(__file__).parent / "static"
@@ -117,6 +119,10 @@ def create_app() -> FastAPI:
 
     @app.get("/accounts", include_in_schema=False)
     async def spa_accounts():
+        return FileResponse(index_html, media_type="text/html")
+
+    @app.get("/settings", include_in_schema=False)
+    async def spa_settings():
         return FileResponse(index_html, media_type="text/html")
 
     app.mount("/dashboard", StaticFiles(directory=static_dir, html=True), name="dashboard")
