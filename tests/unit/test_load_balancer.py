@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.core.balancer import (
@@ -23,6 +25,121 @@ def test_select_account_picks_lowest_used_percent():
     result = select_account(states)
     assert result.account is not None
     assert result.account.account_id == "b"
+
+
+def test_select_account_prefers_earlier_secondary_reset_bucket():
+    now = time.time()
+    states = [
+        AccountState(
+            "a",
+            AccountStatus.ACTIVE,
+            used_percent=10.0,
+            secondary_used_percent=10.0,
+            secondary_reset_at=int(now + 3 * 24 * 3600),
+        ),
+        AccountState(
+            "b",
+            AccountStatus.ACTIVE,
+            used_percent=50.0,
+            secondary_used_percent=50.0,
+            secondary_reset_at=int(now + 2 * 3600),
+        ),
+    ]
+    result = select_account(states, now=now, prefer_earlier_reset=True)
+    assert result.account is not None
+    assert result.account.account_id == "b"
+
+
+def test_select_account_secondary_reset_is_bucketed_by_day():
+    now = time.time()
+    states = [
+        AccountState(
+            "a",
+            AccountStatus.ACTIVE,
+            used_percent=20.0,
+            secondary_used_percent=20.0,
+            secondary_reset_at=int(now + 23 * 3600),
+        ),
+        AccountState(
+            "b",
+            AccountStatus.ACTIVE,
+            used_percent=10.0,
+            secondary_used_percent=10.0,
+            secondary_reset_at=int(now + 1 * 3600),
+        ),
+    ]
+    result = select_account(states, now=now, prefer_earlier_reset=True)
+    assert result.account is not None
+    assert result.account.account_id == "b"
+
+
+def test_select_account_prefers_lower_secondary_used_with_same_reset_bucket():
+    now = time.time()
+    states = [
+        AccountState(
+            "a",
+            AccountStatus.ACTIVE,
+            used_percent=5.0,
+            secondary_used_percent=80.0,
+            secondary_reset_at=int(now + 6 * 3600),
+        ),
+        AccountState(
+            "b",
+            AccountStatus.ACTIVE,
+            used_percent=50.0,
+            secondary_used_percent=10.0,
+            secondary_reset_at=int(now + 1 * 3600),
+        ),
+    ]
+    result = select_account(states, now=now, prefer_earlier_reset=True)
+    assert result.account is not None
+    assert result.account.account_id == "b"
+
+
+def test_select_account_deprioritizes_missing_secondary_reset_at():
+    now = time.time()
+    states = [
+        AccountState(
+            "a",
+            AccountStatus.ACTIVE,
+            used_percent=0.0,
+            secondary_used_percent=0.0,
+            secondary_reset_at=None,
+        ),
+        AccountState(
+            "b",
+            AccountStatus.ACTIVE,
+            used_percent=90.0,
+            secondary_used_percent=90.0,
+            secondary_reset_at=int(now + 1 * 3600),
+        ),
+    ]
+    result = select_account(states, now=now, prefer_earlier_reset=True)
+    assert result.account is not None
+    assert result.account.account_id == "b"
+
+
+def test_select_account_ignores_reset_when_disabled():
+    now = time.time()
+    states = [
+        AccountState(
+            "a",
+            AccountStatus.ACTIVE,
+            used_percent=10.0,
+            secondary_used_percent=10.0,
+            secondary_reset_at=int(now + 5 * 24 * 3600),
+        ),
+        AccountState(
+            "b",
+            AccountStatus.ACTIVE,
+            used_percent=50.0,
+            secondary_used_percent=50.0,
+            secondary_reset_at=int(now + 1 * 3600),
+        ),
+    ]
+    result = select_account(states, now=now, prefer_earlier_reset=False)
+    assert result.account is not None
+    assert result.account.account_id == "a"
 
 
 def test_select_account_skips_rate_limited_until_reset():

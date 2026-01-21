@@ -16,6 +16,7 @@
 		oauthStart: "/api/oauth/start",
 		oauthStatus: "/api/oauth/status",
 		oauthComplete: "/api/oauth/complete",
+		settings: "/api/settings",
 	};
 
 	const PAGES = [
@@ -32,6 +33,13 @@
 			label: "Accounts",
 			title: "Codex Load Balancer - Accounts",
 			path: "/accounts",
+		},
+		{
+			id: "settings",
+			tabId: "tab-settings",
+			label: "Settings",
+			title: "Codex Load Balancer - Settings",
+			path: "/settings",
 		},
 	];
 
@@ -1148,6 +1156,20 @@
 		return responsePayload;
 	};
 
+	const putJson = async (url, payload, label) => {
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload || {}),
+		});
+		const responsePayload = await readResponsePayload(response);
+		if (!response.ok) {
+			const message = extractErrorMessage(responsePayload);
+			throw new Error(message || `Failed to ${label} (${response.status})`);
+		}
+		return responsePayload;
+	};
+
 	const deleteJson = async (url, label) => {
 		const response = await fetch(url, { method: "DELETE" });
 		const responsePayload = await readResponsePayload(response);
@@ -1172,6 +1194,16 @@
 	const fetchRequestLogs = async (limit) =>
 		fetchJson(API_ENDPOINTS.requestLogs(limit), "request logs");
 
+	const normalizeSettingsPayload = (payload) => ({
+		stickyThreadsEnabled: Boolean(payload?.stickyThreadsEnabled),
+		preferEarlierResetAccounts: Boolean(payload?.preferEarlierResetAccounts),
+	});
+
+	const fetchSettings = async () => {
+		const payload = await fetchJson(API_ENDPOINTS.settings, "settings");
+		return normalizeSettingsPayload(payload);
+	};
+
 	const registerApp = () => {
 		Alpine.data("feApp", () => ({
 			view: "dashboard",
@@ -1180,6 +1212,11 @@
 			ui: createUiConfig(),
 			dashboardData: createEmptyDashboardData(),
 			dashboard: createEmptyDashboardView(),
+			settings: {
+				stickyThreadsEnabled: false,
+				preferEarlierResetAccounts: false,
+				isSaving: false,
+			},
 			accounts: {
 				selectedId: "",
 				rows: [],
@@ -1275,12 +1312,14 @@
 						primaryResult,
 						secondaryResult,
 						requestLogsResult,
+						settingsResult,
 					] = await Promise.allSettled([
 						fetchAccounts(),
 						fetchUsageSummary(),
 						fetchUsageWindow("primary"),
 						fetchUsageWindow("secondary"),
 						fetchRequestLogs(50),
+						fetchSettings(),
 					]);
 					const errors = [];
 					if (accountsResult.status !== "fulfilled") {
@@ -1313,6 +1352,12 @@
 						errors.push(requestLogsResult.reason);
 					}
 
+					const settings =
+						settingsResult.status === "fulfilled" ? settingsResult.value : null;
+					if (settingsResult.status === "rejected") {
+						errors.push(settingsResult.reason);
+					}
+
 					const mergedAccounts = mergeUsageIntoAccounts(
 						accountsResult.value,
 						primaryUsage,
@@ -1325,6 +1370,7 @@
 							primaryUsage,
 							secondaryUsage,
 							requestLogs,
+							settings,
 						},
 						preferredId,
 					);
@@ -1369,10 +1415,53 @@
 					primaryUsage: data.primaryUsage,
 					secondaryUsage: data.secondaryUsage,
 					requestLogs: data.requestLogs,
+					settings: data.settings,
 				});
+				if (data.settings) {
+					this.settings.stickyThreadsEnabled = Boolean(
+						data.settings.stickyThreadsEnabled,
+					);
+					this.settings.preferEarlierResetAccounts = Boolean(
+						data.settings.preferEarlierResetAccounts,
+					);
+				}
 				this.ui.usageWindows = buildUsageWindowConfig(data.summary);
 				this.dashboard = buildDashboardView(this);
 				this.syncAccountSearchSelection();
+			},
+			async saveSettings() {
+				if (this.settings.isSaving) {
+					return;
+				}
+				this.settings.isSaving = true;
+				try {
+					const payload = {
+						stickyThreadsEnabled: this.settings.stickyThreadsEnabled,
+						preferEarlierResetAccounts: this.settings.preferEarlierResetAccounts,
+					};
+					const updated = await putJson(
+						API_ENDPOINTS.settings,
+						payload,
+						"save settings",
+					);
+					const normalized = normalizeSettingsPayload(updated);
+					this.settings.stickyThreadsEnabled = normalized.stickyThreadsEnabled;
+					this.settings.preferEarlierResetAccounts =
+						normalized.preferEarlierResetAccounts;
+					this.openMessageBox({
+						tone: "success",
+						title: "Settings saved",
+						message: "Routing settings updated.",
+					});
+				} catch (error) {
+					this.openMessageBox({
+						tone: "error",
+						title: "Settings save failed",
+						message: error.message || "Failed to save settings.",
+					});
+				} finally {
+					this.settings.isSaving = false;
+				}
 			},
 			focusAccountSearch() {
 				this.$refs.accountSearch?.focus();
