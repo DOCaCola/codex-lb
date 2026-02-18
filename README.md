@@ -71,7 +71,7 @@ Point any OpenAI-compatible client at codex-lb. If [API key auth](#api-key-authe
 | <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="32" alt="Python"> | **OpenAI Python SDK** | `http://127.0.0.1:2455/v1` | Code |
 
 <details>
-<summary><img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="22" style="vertical-align: middle" alt="OpenAI">&ensp;<b>Codex CLI / IDE Extension</b></summary>
+<summary><img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="20" align="center" alt="OpenAI">&ensp;<b>Codex CLI / IDE Extension</b></summary>
 <br>
 
 `~/.codex/config.toml`:
@@ -110,7 +110,7 @@ codex
 </details>
 
 <details>
-<summary><img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="22" style="vertical-align: middle" alt="OpenCode">&ensp;<b>OpenCode</b></summary>
+<summary><img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="20" align="center" alt="OpenCode">&ensp;<b>OpenCode</b></summary>
 <br>
 
 `~/.config/opencode/opencode.json`:
@@ -154,7 +154,7 @@ opencode
 </details>
 
 <details>
-<summary><img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="22" style="vertical-align: middle" alt="OpenClaw">&ensp;<b>OpenClaw</b></summary>
+<summary><img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="20" align="center" alt="OpenClaw">&ensp;<b>OpenClaw</b></summary>
 <br>
 
 `~/.openclaw/openclaw.json`:
@@ -188,7 +188,7 @@ Set the env var or replace `${CODEX_LB_API_KEY}` with a key from the dashboard. 
 </details>
 
 <details>
-<summary><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="22" style="vertical-align: middle" alt="Python">&ensp;<b>OpenAI Python SDK</b></summary>
+<summary><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="20" align="center" alt="Python">&ensp;<b>OpenAI Python SDK</b></summary>
 <br>
 
 ```python
