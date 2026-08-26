@@ -22,6 +22,8 @@ reasoning history whose `reasoning.content` contains plaintext blocks.
   destination is a model source that cannot decode it.
 - Sanitize source-generated plaintext reasoning items at the native
   subscription boundary without changing ordinary model-source replay.
+- Remove lookup-only top-level item IDs before stateless Responses egress so
+  temporary output identities are not interpreted as persisted-item references.
 
 ## Capabilities
 

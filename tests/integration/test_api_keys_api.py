@@ -1400,7 +1400,19 @@ async def test_backend_codex_responses_routes_responses_capable_model_source(asy
     async with async_client.stream(
         "POST",
         "/backend-api/codex/responses",
-        json={"model": model, "instructions": "hi", "input": []},
+        json={
+            "model": model,
+            "instructions": "hi",
+            "input": [
+                {
+                    "type": "function_call",
+                    "id": "fc_tmp_source",
+                    "call_id": "call_source",
+                    "name": "ping",
+                    "arguments": "{}",
+                }
+            ],
+        },
     ) as response:
         assert response.status_code == 200
         lines = [line async for line in response.aiter_lines() if line]
@@ -1409,6 +1421,9 @@ async def test_backend_codex_responses_routes_responses_capable_model_source(asy
     forwarded_payload = cast("dict[str, object]", observed["payload"])
     assert forwarded_payload["model"] == model
     assert forwarded_payload["stream"] is True
+    assert forwarded_payload["input"] == [
+        {"type": "function_call", "call_id": "call_source", "name": "ping", "arguments": "{}"}
+    ]
     assert "tools" not in forwarded_payload
     assert any("resp_source" in line for line in lines)
 

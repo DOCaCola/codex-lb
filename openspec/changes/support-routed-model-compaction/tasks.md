@@ -8,6 +8,7 @@
 
 - [x] 2.1 Add codex-lb compaction envelope encode/decode and replay lowering.
 - [x] 2.2 Add native subscription-boundary reasoning sanitation.
+- [x] 2.2a Remove lookup-only item IDs at every stateless Responses boundary.
 - [x] 2.3 Build source summarization requests and validate completed summary
       output.
 - [x] 2.4 Route terminal source compaction through the synthetic lifecycle.

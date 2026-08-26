@@ -1843,6 +1843,40 @@ def sanitize_native_reasoning_input(payload: Mapping[str, JsonValue]) -> Mutable
     return sanitized
 
 
+def strip_unstored_lookup_item_ids(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
+    """Remove lookup-only item identities from stateless Responses input."""
+
+    sanitized = dict(payload)
+    if sanitized.get("store") is not False:
+        return sanitized
+    input_value = sanitized.get("input")
+    if not is_json_list(input_value):
+        return sanitized
+    changed = False
+    normalized_input: list[JsonValue] = []
+    for item in input_value:
+        if (
+            not is_json_mapping(item)
+            or "id" not in item
+            or (isinstance(item.get("encrypted_content"), str) and bool(item["encrypted_content"]))
+        ):
+            normalized_input.append(item)
+            continue
+        normalized_item = dict(item)
+        normalized_item.pop("id")
+        normalized_input.append(normalized_item)
+        changed = True
+    if changed:
+        sanitized["input"] = normalized_input
+    return sanitized
+
+
+def sanitize_native_responses_input(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
+    """Normalize stateless input for the native ChatGPT Responses boundary."""
+
+    return sanitize_native_reasoning_input(strip_unstored_lookup_item_ids(payload))
+
+
 def normalize_reasoning_aliases(payload: MutableJsonObject) -> None:
     reasoning_effort = payload.pop("reasoningEffort", None)
     snake_case_reasoning_effort = payload.pop("reasoning_effort", None)

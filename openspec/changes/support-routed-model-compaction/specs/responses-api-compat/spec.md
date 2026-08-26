@@ -10,6 +10,12 @@ top-level `reasoning` input item with an empty array and MUST remove that item's
 output-only `status` field. Source-routed Responses requests MUST NOT receive
 this native-boundary sanitation.
 
+Immediately before any native or source-routed Responses request with
+`store: false` is sent, the proxy MUST remove `id` from every top-level input
+item unless that item carries non-empty opaque `encrypted_content`. It MUST
+preserve opaque-state IDs, `call_id`, and all other item fields. Requests whose
+effective `store` value is true or omitted MUST retain their item IDs.
+
 When the terminal trigger targets an eligible OpenAI-compatible model source,
 the proxy SHALL run synthetic source compaction and SHALL return the same
 single-item compact SSE lifecycle required by Codex. The completed item MUST
@@ -32,6 +38,15 @@ explicit unavailable-history note.
   backend
 - **THEN** its wire `content` is an empty array and `status` is absent
 - **AND** ordinary source Responses replay remains unchanged
+
+#### Scenario: Temporary item IDs are not resolved by stateless upstreams
+
+- **GIVEN** ordinary or compact input contains `rs_tmp_*`, message, or tool item
+  IDs and retains a tool `call_id`
+- **WHEN** the effective request uses `store: false`
+- **THEN** each lookup-only top-level item `id` is absent on the wire
+- **AND** the tool `call_id` is preserved
+- **AND** an authoritative compaction ID paired with encrypted content remains
 
 #### Scenario: Source compaction emits one proxy-owned item
 

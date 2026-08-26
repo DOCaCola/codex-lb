@@ -139,6 +139,7 @@ from app.core.openai.requests import (
     normalize_tool_type,
     responses_request_has_explicit_prompt_cache_controls,
     strip_replayed_tool_call_namespaces_from_payload,
+    strip_unstored_lookup_item_ids,
 )
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.request_locality import (
@@ -4909,6 +4910,7 @@ async def _source_responses_response(
         source_payload,
         supported_tool_types=source_model_supported_tool_types(source, payload.model),
     )
+    source_payload = strip_unstored_lookup_item_ids(source_payload)
 
     if payload.stream:
         try:

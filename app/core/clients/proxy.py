@@ -67,7 +67,7 @@ from app.core.openai.parsing import (
 from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
-    sanitize_native_reasoning_input,
+    sanitize_native_responses_input,
     validate_compact_input_wire_budget,
 )
 from app.core.resilience.circuit_breaker import (
@@ -3202,7 +3202,7 @@ async def _stream_responses_with_session(
     failure_exception_type: str | None = None
     retryable_same_contract: bool | None = None
     client_session = session
-    payload_dict = sanitize_native_reasoning_input(payload.to_payload())
+    payload_dict = sanitize_native_responses_input(payload.to_payload())
     apply_codex_installation_metadata(payload_dict, codex_installation_id)
     if settings.image_inline_fetch_enabled:
         payload_dict = await _inline_input_image_urls(
@@ -4056,8 +4056,9 @@ class _CompactCommandTransport:
         pre_request_started_at = time.monotonic()
         compact_timeout_seconds = _effective_compact_total_timeout(settings.upstream_compact_timeout_seconds)
         effective_connect_timeout = _effective_compact_connect_timeout(settings.upstream_connect_timeout_seconds)
-        payload_dict = sanitize_native_reasoning_input(_responses_compact_payload_for_responses_endpoint(self.payload))
+        payload_dict = _responses_compact_payload_for_responses_endpoint(self.payload)
         payload_dict["store"] = False
+        payload_dict = sanitize_native_responses_input(payload_dict)
         payload_dict["stream"] = True
         if settings.image_inline_fetch_enabled:
             payload_dict = await _inline_input_image_urls(

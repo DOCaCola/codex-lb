@@ -473,6 +473,7 @@ async def test_compact_responses_sanitizes_foreign_reasoning_for_native_upstream
             "input": [
                 {
                     "type": "reasoning",
+                    "id": "rs_tmp_jp91555aji",
                     "status": "completed",
                     "content": [{"type": "reasoning_text", "text": "foreign plaintext"}],
                 },
@@ -894,6 +895,7 @@ async def test_stream_responses_sanitizes_foreign_reasoning_for_native_upstream(
             "input": [
                 {
                     "type": "reasoning",
+                    "id": "rs_tmp_ordinary",
                     "status": "completed",
                     "content": [{"type": "reasoning_text", "text": "foreign plaintext"}],
                 },

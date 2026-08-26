@@ -11,7 +11,12 @@ from app.core.openai.compaction import (
     lower_codex_lb_compaction_items,
     lower_opaque_compaction_items_for_model_source,
 )
-from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest, sanitize_native_reasoning_input
+from app.core.openai.requests import (
+    ResponsesCompactRequest,
+    ResponsesRequest,
+    sanitize_native_reasoning_input,
+    strip_unstored_lookup_item_ids,
+)
 from app.core.types import JsonValue
 from app.modules.model_sources.compaction import (
     SourceCompactionResultError,
@@ -84,6 +89,34 @@ def test_native_reasoning_sanitizer_removes_foreign_output_fields() -> None:
         {"type": "message", "role": "user", "content": "continue"},
     ]
     assert "provider thought" in str(payload["input"])
+
+
+def test_unstored_responses_sanitizer_removes_lookup_ids_only() -> None:
+    input_items: list[JsonValue] = [
+        {"type": "message", "id": "msg_tmp_1", "role": "assistant", "content": "hello"},
+        {
+            "type": "function_call",
+            "id": "fc_tmp_1",
+            "call_id": "call_1",
+            "name": "ping",
+            "arguments": "{}",
+        },
+        {"type": "reasoning", "id": "rs_tmp_jp91555aji", "content": []},
+        {"type": "compaction", "id": "cmp_bound", "encrypted_content": "opaque"},
+    ]
+    unstored: dict[str, JsonValue] = {"store": False, "input": input_items}
+
+    sanitized = strip_unstored_lookup_item_ids(unstored)
+
+    assert sanitized["input"] == [
+        {"type": "message", "role": "assistant", "content": "hello"},
+        {"type": "function_call", "call_id": "call_1", "name": "ping", "arguments": "{}"},
+        {"type": "reasoning", "content": []},
+        {"type": "compaction", "id": "cmp_bound", "encrypted_content": "opaque"},
+    ]
+    assert unstored["input"] == input_items
+    assert strip_unstored_lookup_item_ids({"store": True, "input": input_items})["input"] == input_items
+    assert strip_unstored_lookup_item_ids({"input": input_items})["input"] == input_items
 
 
 def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:

@@ -64,6 +64,16 @@ top-level reasoning items have non-empty plaintext `content` replaced by an
 empty array and output-only `status` removed. Model-source requests retain their
 provider-native reasoning history.
 
+### Stateless item identity boundary
+
+Every Responses request with `store: false` has lookup-only top-level input
+item `id` fields removed immediately before egress. Those IDs otherwise become
+references to items that were never persisted. IDs accompanying non-empty
+opaque `encrypted_content` remain intact because that ciphertext is bound to
+its authoritative item identity. Tool `call_id` fields also remain unchanged,
+preserving call/result pairing. This applies to both native subscription and
+model-source destinations, including compaction turns.
+
 ## Failure Modes
 
 - An upstream source error retains the existing model-source error envelope.
