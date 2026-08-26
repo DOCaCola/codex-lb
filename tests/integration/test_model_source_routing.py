@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from tempfile import SpooledTemporaryFile
@@ -2905,6 +2906,78 @@ async def test_source_responses_preserves_effortless_provider_thinking_object(
         assert captured["reasoning"] == reasoning
     if enable_thinking:
         assert "enable_thinking" not in captured
+
+
+@pytest.mark.asyncio
+async def test_source_terminal_compaction_runs_plain_summary_turn_and_returns_proxy_envelope(
+    async_client,
+    source_upstream,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def responses(request: web.Request) -> web.Response:
+        captured["path"] = request.path
+        captured["payload"] = await request.json()
+        return web.json_response(
+            {
+                "id": "resp_source_compact",
+                "object": "response",
+                "status": "completed",
+                "model": "source-terminal-compact",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "source-generated summary"}],
+                    }
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            }
+        )
+
+    base_url = await source_upstream(responses)
+    model = "source-terminal-compact"
+    await _create_model_source(
+        async_client,
+        name="source-terminal-compact",
+        model=model,
+        base_url=base_url,
+        supports_responses=True,
+    )
+
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={
+            "model": model,
+            "instructions": "work normally",
+            "input": [
+                {"type": "message", "role": "user", "content": "keep this history"},
+                {"type": "compaction_trigger"},
+            ],
+            "tools": [{"type": "function", "name": "do_work", "parameters": {"type": "object"}}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    upstream_payload = cast(dict[str, object], captured["payload"])
+    assert captured["path"] == "/v1/responses"
+    assert upstream_payload["stream"] is False
+    assert "tools" not in upstream_payload
+    assert "tool_choice" not in upstream_payload
+    assert "text" not in upstream_payload
+    assert "compaction_trigger" not in str(upstream_payload["input"])
+    assert "CONTEXT CHECKPOINT COMPACTION" in str(upstream_payload["input"])
+
+    events = [
+        json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: {")
+    ]
+    done = next(event for event in events if event["type"] == "response.output_item.done")
+    assert done["item"]["type"] == "compaction"
+    assert done["item"]["encrypted_content"].startswith("clb1:")
+    completed = next(event for event in events if event["type"] == "response.completed")
+    assert completed["response"]["output"] == [done["item"]]
 
 
 @pytest.mark.asyncio

@@ -462,6 +462,40 @@ async def test_compact_responses_uses_codex_client_when_route_is_resolved(route:
 
 
 @pytest.mark.asyncio
+async def test_compact_responses_sanitizes_foreign_reasoning_for_native_upstream(
+    route: ResolvedUpstreamRoute,
+) -> None:
+    client = _CodexClient(_CompactStreamResponse())
+    payload = ResponsesCompactRequest.model_validate(
+        {
+            "model": "gpt-5.6-luna",
+            "instructions": "Summarize.",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "status": "completed",
+                    "content": [{"type": "reasoning_text", "text": "foreign plaintext"}],
+                },
+                {"type": "compaction_trigger"},
+            ],
+        }
+    )
+
+    await compact_responses(
+        payload,
+        {"user-agent": "codex"},
+        "access",
+        "chatgpt_account",
+        session=cast(Any, object()),
+        route=route,
+        codex_client=cast(Any, client),
+    )
+
+    sent_reasoning = client.calls[0]["json"]["input"][0]
+    assert sent_reasoning == {"type": "reasoning", "content": []}
+
+
+@pytest.mark.asyncio
 async def test_compact_responses_recovers_terminal_item_without_output_index(
     route: ResolvedUpstreamRoute,
 ) -> None:

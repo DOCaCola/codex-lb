@@ -114,6 +114,10 @@ from app.core.openai.chat_responses import (
     collect_chat_completion,
     stream_chat_chunks,
 )
+from app.core.openai.compaction import (
+    encode_codex_lb_compaction_summary,
+    lower_opaque_compaction_items_for_model_source,
+)
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.images import V1ImageResponse, V1ImagesEditsForm, V1ImagesGenerationsRequest
 from app.core.openai.model_registry import UpstreamModel, get_model_registry, is_public_model
@@ -183,6 +187,11 @@ from app.modules.model_sources.catalog import (
     source_model_supports_reasoning,
     source_models_to_upstream_models,
 )
+from app.modules.model_sources.compaction import (
+    SourceCompactionResultError,
+    build_source_compaction_request,
+    extract_completed_source_compaction_summary,
+)
 from app.modules.model_sources.forwarding import (
     ModelSourceForwardingError,
     SourceTimings,
@@ -245,6 +254,7 @@ from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     apply_api_key_enforcement_to_chat_payload,
     apply_enforced_service_tier_model_fallback,
+    build_terminal_compact_request,
     enforce_strict_function_tools_format,
     enforce_strict_text_format,
     model_alias_requests_fast_mode,
@@ -1112,10 +1122,21 @@ async def responses(
         raw_source_model = responses_payload.model
     validate_model_access(api_key, responses_payload.model)
     try:
-        # Terminal compaction and file pins are structural subscription-only
-        # constraints. Previous-response ownership is resolved from continuity
-        # evidence below, after a viable source candidate exists.
-        source_route_excluded = responses_source_route_excluded(responses_payload)
+        # File pins are structural subscription-only constraints. Terminal
+        # compaction participates in source selection so a routed model can
+        # summarize its own history. Previous-response ownership is resolved
+        # from continuity evidence below, after a viable source candidate exists.
+        terminal_compaction = (
+            strip_terminal_compaction_trigger_input(
+                responses_payload,
+                strip_trigger=False,
+            )
+            is not None
+        )
+        source_route_excluded = responses_source_route_excluded(
+            responses_payload,
+            exclude_compaction=False,
+        )
     except ClientPayloadError as exc:
         error = openai_client_payload_error(exc)
         return _logged_error_json_response(request, 400, error)
@@ -1141,8 +1162,17 @@ async def responses(
         # Opportunistic admission gates subscription *account* capacity;
         # source-routed requests use no account, so a closed/empty pool must
         # not reject them.
-        responses_payload.stream = True
         rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
+        if terminal_compaction:
+            return await _source_synthetic_compaction_response(
+                request,
+                responses_payload,
+                source=source,
+                api_key=api_key,
+                rate_limit_headers=rate_limit_headers,
+                pre_normalization_effort=pre_normalization_effort,
+            )
+        responses_payload.stream = True
         return await _source_responses_response(
             request,
             responses_payload,
@@ -1275,10 +1305,17 @@ async def v1_responses(
         raw_source_model = responses_payload.model
     validate_model_access(api_key, responses_payload.model)
     try:
-        # Share file-pin exclusions with Codex/WebSocket, but do not treat a
-        # terminal compaction_trigger as a source-route exclusion: /v1 has no
-        # Codex compact path. Previous-response ownership is resolved from
-        # continuity evidence below, after a viable source candidate exists.
+        # Share file-pin exclusions with Codex/WebSocket. Terminal compaction
+        # participates in source selection and is synthesized locally for a
+        # routed model. Previous-response ownership is resolved from continuity
+        # evidence below, after a viable source candidate exists.
+        terminal_compaction = (
+            strip_terminal_compaction_trigger_input(
+                responses_payload,
+                strip_trigger=False,
+            )
+            is not None
+        )
         source_route_excluded = responses_source_route_excluded(
             responses_payload,
             exclude_compaction=False,
@@ -1309,6 +1346,15 @@ async def v1_responses(
         # source-routed requests use no account, so a closed/empty pool must
         # not reject them.
         rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
+        if terminal_compaction:
+            return await _source_synthetic_compaction_response(
+                request,
+                responses_payload,
+                source=source,
+                api_key=api_key,
+                rate_limit_headers=rate_limit_headers,
+                pre_normalization_effort=pre_normalization_effort,
+            )
         return await _source_responses_response(
             request,
             responses_payload,
@@ -4725,6 +4771,72 @@ async def _source_audio_transcription_response(
     return Response(content=result.body, status_code=200, headers=headers)
 
 
+async def _source_synthetic_compaction_response(
+    request: Request,
+    payload: ResponsesRequest,
+    *,
+    source: ModelSource,
+    api_key: ApiKeyData | None,
+    rate_limit_headers: Mapping[str, str],
+    pre_normalization_effort: str | None,
+) -> Response:
+    compact_payload = build_terminal_compact_request(payload)
+    if compact_payload is None:
+        raise RuntimeError("source compaction requires a terminal compaction trigger")
+    source_request = build_source_compaction_request(compact_payload)
+    source_response = await _source_responses_response(
+        request,
+        source_request,
+        source=source,
+        api_key=api_key,
+        rate_limit_headers=rate_limit_headers,
+        pre_normalization_effort=pre_normalization_effort,
+    )
+    if source_response.status_code != 200:
+        return source_response
+    try:
+        source_payload = json.loads(bytes(source_response.body))
+        if not isinstance(source_payload, dict):
+            raise SourceCompactionResultError("source compaction returned malformed output")
+        summary = extract_completed_source_compaction_summary(source_payload)
+    except (JSONDecodeError, UnicodeDecodeError, SourceCompactionResultError) as exc:
+        return _logged_error_json_response(
+            request,
+            502,
+            openai_error(
+                "model_source_compaction_invalid",
+                str(exc),
+                error_type="upstream_error",
+            ),
+            headers=rate_limit_headers,
+        )
+
+    response_id_value = source_payload.get("id")
+    response_id = (
+        response_id_value if isinstance(response_id_value, str) and response_id_value else f"resp_{uuid4().hex}"
+    )
+    compact_item: dict[str, JsonValue] = {
+        "id": f"cmp_{uuid4().hex}",
+        "type": "compaction",
+        "status": "completed",
+        "encrypted_content": encode_codex_lb_compaction_summary(summary),
+    }
+    stream = _synthetic_compaction_response_stream(
+        compact_item,
+        response_id=response_id,
+        usage=source_payload.get("usage"),
+    )
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            **rate_limit_headers,
+        },
+    )
+
+
 async def _source_responses_response(
     request: Request,
     payload: ResponsesRequest,
@@ -4749,6 +4861,7 @@ async def _source_responses_response(
         request_usage_budget=estimate_api_key_request_usage(payload),
     )
     source_payload = payload.model_dump_for_forwarding()
+    lower_opaque_compaction_items_for_model_source(source_payload)
     preserve_materialized_provider_alias = payload._codex_lb_provider_reasoning_effort_materialized and (
         api_key is None or (api_key.enforced_reasoning_effort is None and api_key.allowed_reasoning_efforts is None)
     )
@@ -5627,41 +5740,7 @@ async def _stream_responses(
     compact_payload: ResponsesCompactRequest | None = None
     if codex_session_affinity:
         try:
-            compact_trigger_input = strip_terminal_compaction_trigger_input(payload)
-            if compact_trigger_input is not None:
-                compact_payload_data = payload.model_dump(
-                    mode="json",
-                    include={
-                        "model",
-                        "instructions",
-                        "reasoning",
-                        "store",
-                        "service_tier",
-                        "prompt_cache_key",
-                    },
-                    exclude_none=True,
-                )
-                if isinstance(payload.model_extra, dict):
-                    prompt_cache_key_alias = payload.model_extra.get("promptCacheKey")
-                    if isinstance(prompt_cache_key_alias, str) and "prompt_cache_key" not in compact_payload_data:
-                        compact_payload_data["prompt_cache_key"] = prompt_cache_key_alias
-                # The main /responses route trims the terminal trigger before
-                # compaction so the compact budget and image elision see only
-                # the history to summarize. The upstream /compact contract
-                # still requires exactly one terminal trigger on the wire.
-                compact_payload_data["input"] = [
-                    *compact_trigger_input,
-                    {"type": "compaction_trigger"},
-                ]
-                if payload.previous_response_id is not None:
-                    compact_payload_data["previous_response_id"] = payload.previous_response_id
-                if payload.conversation is not None:
-                    compact_payload_data["conversation"] = payload.conversation
-                compact_payload = ResponsesCompactRequest.model_validate(compact_payload_data)
-                # Validate the exact compact wire payload before admission or
-                # reservation work so an untrimmable trigger is a client 400,
-                # not a late service exception that reaches the global 500.
-                compact_payload.to_payload()
+            compact_payload = build_terminal_compact_request(payload)
         except ClientPayloadError as exc:
             error = openai_client_payload_error(exc)
             return _logged_error_json_response(request, 400, error)

@@ -860,6 +860,36 @@ def strip_terminal_compaction_trigger_input(
     return _strip_terminal_compaction_trigger_input_items(input_value, strip_trigger=strip_trigger)
 
 
+def build_terminal_compact_request(payload: ResponsesRequest) -> ResponsesCompactRequest | None:
+    compact_input = strip_terminal_compaction_trigger_input(payload)
+    if compact_input is None:
+        return None
+    compact_payload_data = payload.model_dump(
+        mode="json",
+        include={
+            "model",
+            "instructions",
+            "reasoning",
+            "store",
+            "service_tier",
+            "prompt_cache_key",
+        },
+        exclude_none=True,
+    )
+    if isinstance(payload.model_extra, dict):
+        prompt_cache_key_alias = payload.model_extra.get("promptCacheKey")
+        if isinstance(prompt_cache_key_alias, str) and "prompt_cache_key" not in compact_payload_data:
+            compact_payload_data["prompt_cache_key"] = prompt_cache_key_alias
+    compact_payload_data["input"] = [*compact_input, {"type": "compaction_trigger"}]
+    if payload.previous_response_id is not None:
+        compact_payload_data["previous_response_id"] = payload.previous_response_id
+    if payload.conversation is not None:
+        compact_payload_data["conversation"] = payload.conversation
+    compact_payload = ResponsesCompactRequest.model_validate(compact_payload_data)
+    compact_payload.to_payload()
+    return compact_payload
+
+
 def _strip_terminal_compaction_trigger_input_items(
     input_value: list[JsonValue],
     *,
@@ -900,10 +930,9 @@ def responses_source_route_excluded(
 ) -> bool:
     """True when a Responses request must stay on subscription accounts.
 
-    A terminal compaction trigger is served by the upstream compact flow on
-    the turn's owner account (Codex path only — callers set
-    ``exclude_compaction=False`` on ``/v1/responses``, which has no Codex
-    compaction path). An ``input_file``/``input_image`` file reference is
+    Callers that have no destination-aware compact path may use
+    ``exclude_compaction=True`` to retain the request on subscription
+    accounts. An ``input_file``/``input_image`` file reference is
     pinned to the subscription account that received the upload. Previous
     response ownership is resolved separately from recorded continuity
     evidence because response identifier syntax is provider-opaque.

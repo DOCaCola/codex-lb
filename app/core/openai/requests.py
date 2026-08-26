@@ -8,6 +8,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
+from app.core.openai.compaction import lower_codex_lb_compaction_items
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_call_safety import is_downstream_side_effect_tool_call_item
 from app.core.types import JsonObject, JsonValue
@@ -885,6 +886,7 @@ def _strip_unsupported_fields(
     _normalize_openai_compatible_aliases(payload)
     _normalize_service_tier_aliases(payload)
     _strip_subscription_prompt_cache_controls(payload)
+    lower_codex_lb_compaction_items(payload)
     _sanitize_interleaved_reasoning_input(payload)
     _strip_poisoned_local_compact_fallback_items(payload)
     if strip_replayed_tool_call_namespaces:
