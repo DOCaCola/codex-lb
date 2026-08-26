@@ -14,8 +14,10 @@ When the terminal trigger targets an eligible OpenAI-compatible model source,
 the proxy SHALL run synthetic source compaction and SHALL return the same
 single-item compact SSE lifecycle required by Codex. The completed item MUST
 contain a codex-lb-owned `clb1:` compaction envelope. The proxy MUST NOT return
-a successful compaction lifecycle for an incomplete, malformed, or empty
-source summary.
+a successful compaction lifecycle for an incomplete, truncated, malformed, or
+empty source summary. A completed top-level response MUST NOT override a
+truncation finish reason, non-empty `incomplete_details`, or an incomplete
+message item.
 
 Before any later upstream request, the proxy SHALL lower a valid `clb1:` replay
 item into explicit summary context and SHALL NOT forward the proxy-owned
@@ -43,8 +45,9 @@ explicit unavailable-history note.
 - **WHEN** codex-lb builds any upstream request
 - **THEN** the upstream receives explicit summary text instead of the envelope
 
-#### Scenario: Partial source summary is not installed
+#### Scenario: Partial or truncated source summary is not installed
 
-- **WHEN** the summarization response is incomplete, malformed, or empty
+- **WHEN** the summarization response is incomplete, truncated, malformed, or
+  empty
 - **THEN** the proxy returns an error
 - **AND** it does not emit a completed compaction item

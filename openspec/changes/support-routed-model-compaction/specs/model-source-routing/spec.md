@@ -6,9 +6,10 @@ Terminal compaction requests SHALL participate in Responses model-source
 selection on the HTTP route. A selected source SHALL receive an ordinary,
 non-streaming summarization request rather than the private
 `compaction_trigger` protocol. The request MUST omit tools, tool choice,
-parallel tool calls, structured-output controls, continuation identifiers, and
-the terminal trigger; it MUST append the Codex handoff-summary instruction and
-replace image inputs with an explicit omission marker.
+parallel tool calls, input-carried `additional_tools`, structured-output
+controls, continuation identifiers, and the terminal trigger; it MUST append
+the Codex handoff-summary instruction and replace image inputs with an explicit
+omission marker.
 
 When a model source receives replayed compaction history that was minted by a
 native backend and cannot be decoded by codex-lb, the proxy MUST replace that
@@ -21,7 +22,8 @@ it to the source.
 - **WHEN** the HTTP Responses request for `m` ends with a terminal
   `compaction_trigger`
 - **THEN** the selected source receives a normal non-streaming Responses request
-- **AND** it receives neither the trigger nor the request's tool surface
+- **AND** it receives neither the trigger nor any top-level or input-carried
+  tool surface
 
 #### Scenario: Native opaque history switches to a source
 

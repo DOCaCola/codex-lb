@@ -36,10 +36,11 @@ unchanged.
 
 ### Synthetic source compaction
 
-For a selected source, codex-lb removes the terminal trigger and upstream-only
-controls, replaces images with an explicit omission marker, appends the Codex
-handoff-summary prompt, and makes a non-streaming Responses request. Only text
-from completed assistant message output is accepted.
+For a selected source, codex-lb removes the terminal trigger, top-level tools,
+input-carried `additional_tools`, and upstream-only controls; replaces images
+with an explicit omission marker; appends the Codex handoff-summary prompt; and
+makes a non-streaming Responses request. Only non-truncated text from completed
+assistant message output is accepted.
 
 The proxy returns the existing synthetic SSE compaction lifecycle with one
 item. Its `encrypted_content` uses `clb1:` followed by base64-encoded UTF-8
@@ -66,8 +67,8 @@ reasoning history.
 ## Failure Modes
 
 - An upstream source error retains the existing model-source error envelope.
-- An incomplete, malformed, or empty summary returns a 502 and does not install
-  replacement history.
+- An incomplete, truncated, malformed, or empty summary returns a 502 and does
+  not install replacement history.
 - A client disconnect follows the existing model-source settlement and cleanup
   path.
 - Native opaque history switched to a source is represented explicitly rather

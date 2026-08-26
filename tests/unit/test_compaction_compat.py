@@ -95,6 +95,11 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
             "input": [
                 {"type": "compaction", "encrypted_content": "native-opaque"},
                 {
+                    "type": "additional_tools",
+                    "role": "user",
+                    "tools": [{"type": "function", "name": "desktop_tool"}],
+                },
+                {
                     "type": "message",
                     "role": "user",
                     "content": [{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}],
@@ -114,6 +119,8 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
     assert "tools" not in wire
     assert "text" not in wire
     assert "compaction_trigger" not in str(wire["input"])
+    assert "additional_tools" not in str(wire["input"])
+    assert "desktop_tool" not in str(wire["input"])
     assert COMPACTION_UNAVAILABLE_NOTE in str(wire["input"])
     assert "[image omitted for compaction]" in str(wire["input"])
     assert "CONTEXT CHECKPOINT COMPACTION" in str(wire["input"])
@@ -139,3 +146,46 @@ def test_source_compaction_accepts_only_completed_nonempty_message_text() -> Non
         extract_completed_source_compaction_summary({"status": "incomplete", "output": response["output"]})
     with pytest.raises(SourceCompactionResultError):
         extract_completed_source_compaction_summary({"status": "completed", "output": []})
+
+
+@pytest.mark.parametrize(
+    "terminal_field",
+    [
+        {"incomplete_details": {"reason": "max_output_tokens"}},
+        {"finish_reason": "length"},
+        {"stop_reason": "content_filter"},
+    ],
+)
+def test_source_compaction_rejects_truncated_terminal_signals(
+    terminal_field: dict[str, JsonValue],
+) -> None:
+    response: dict[str, JsonValue] = {
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "partial summary"}],
+            }
+        ],
+        **terminal_field,
+    }
+
+    with pytest.raises(SourceCompactionResultError, match="incomplete|truncated"):
+        extract_completed_source_compaction_summary(response)
+
+
+def test_source_compaction_rejects_incomplete_message_item() -> None:
+    response: dict[str, JsonValue] = {
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "status": "incomplete",
+                "content": [{"type": "output_text", "text": "partial summary"}],
+            }
+        ],
+    }
+
+    with pytest.raises(SourceCompactionResultError, match="message did not complete"):
+        extract_completed_source_compaction_summary(response)
