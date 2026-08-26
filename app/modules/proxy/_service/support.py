@@ -973,6 +973,11 @@ class _WebSocketRequestState:
     # references pinned to the uploading subscription account. Previous
     # response ownership is recorded separately after continuity lookup.
     source_route_excluded: bool = False
+    # Conversation-scoped identities used only to coordinate a source-model
+    # WebSocket retry onto HTTP. Process-wide session headers are excluded so
+    # one conversation cannot downgrade another conversation from the same
+    # Codex client process.
+    source_websocket_fallback_identities: tuple[str, ...] = ()
     request_usage_budget: ApiKeyRequestUsageBudget | None = None
     request_text: str | None = None
     replay_count: int = 0

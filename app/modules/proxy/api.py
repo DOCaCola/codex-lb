@@ -220,6 +220,7 @@ from app.modules.model_sources.selection import (
     effective_model_for_api_key,
     select_responses_model_source,
 )
+from app.modules.model_sources.websocket_fallback import source_websocket_fallback_identities
 from app.modules.proxy import affinity as proxy_affinity_module
 from app.modules.proxy import images_service as images_service_module
 from app.modules.proxy import service as proxy_service_module
@@ -1236,6 +1237,10 @@ async def responses_websocket(
     if denial is not None:
         await websocket.send_denial_response(denial)
         return
+    source_fallback_denial = _source_websocket_fallback_denial(websocket, context, api_key)
+    if source_fallback_denial is not None:
+        await websocket.send_denial_response(source_fallback_denial)
+        return
     client_turn_state = proxy_affinity_module._sticky_key_from_turn_state_header(websocket.headers)
     turn_state = proxy_affinity_module.ensure_downstream_turn_state(websocket.headers)
     await websocket.accept(headers=proxy_affinity_module.build_downstream_turn_state_accept_headers(turn_state))
@@ -1597,6 +1602,10 @@ async def v1_responses_websocket(
     )
     if denial is not None:
         await websocket.send_denial_response(denial)
+        return
+    source_fallback_denial = _source_websocket_fallback_denial(websocket, context, api_key)
+    if source_fallback_denial is not None:
+        await websocket.send_denial_response(source_fallback_denial)
         return
     client_turn_state = proxy_affinity_module._sticky_key_from_turn_state_header(websocket.headers)
     turn_state = proxy_affinity_module.ensure_downstream_turn_state(websocket.headers)
@@ -5617,39 +5626,53 @@ async def _source_chat_stream_with_settlement(
     status = "success"
     error_code: str | None = None
     error_message: str | None = None
+    terminal_disconnect: BaseException | None = None
     try:
-        async for chunk in stream:
-            yield chunk
-    except (asyncio.CancelledError, GeneratorExit):
-        # Client disconnect surfaces as CancelledError (task cancellation) or
-        # GeneratorExit (generator aclose); both bypass ``except Exception``
-        # and would leave the reservation charged until stale cleanup.
-        # Recorded as a cancelled terminal — the same normal client-side
-        # disconnect classification the main proxy streaming path writes —
-        # so it stays out of every error-rate numerator and top_error
-        # (#1552).
-        status = "cancelled"
-        error_code = "client_disconnected"
-        error_message = "client disconnected before stream completed"
         try:
-            await _await_cleanup_deferring_cancellation(_aclose_stream(stream))
-        finally:
-            if reservation is not None:
-                await _release_reservation_deferring_cancellation(reservation)
-        raise
-    except ModelSourceForwardingError as exc:
-        status = "error"
-        error_code = _source_error_code(exc.payload)
-        error_message = _source_error_message(exc.payload)
-        await _release_reservation(reservation)
-        raise
-    except Exception as exc:
-        status = "error"
-        error_code = "model_source_stream_error"
-        error_message = exc.__class__.__name__
-        await _release_reservation(reservation)
-        raise
-    else:
+            async for chunk in stream:
+                yield chunk
+        except (asyncio.CancelledError, GeneratorExit) as exc:
+            # A protocol terminal can be forwarded before the source's SSE
+            # trailer or transport EOF. Clients are allowed to close as soon
+            # as they receive that terminal; settle it like natural completion
+            # instead of misclassifying the request as a mid-stream cancel.
+            successful_terminal_seen = usage_holder.successful_terminal_seen
+            if not successful_terminal_seen:
+                status = "cancelled"
+                error_code = "client_disconnected"
+                error_message = "client disconnected before stream completed"
+            close_exc: BaseException | None = None
+            try:
+                await _await_cleanup_deferring_cancellation(_aclose_stream(stream))
+            except BaseException as stream_close_exc:
+                close_exc = stream_close_exc
+            if not successful_terminal_seen:
+                if reservation is not None:
+                    await _release_reservation_deferring_cancellation(reservation)
+                if close_exc is not None:
+                    raise close_exc
+                raise
+            if close_exc is not None:
+                logger.warning(
+                    "Failed to close completed source stream after downstream disconnect source_id=%s model=%s",
+                    source.id,
+                    model,
+                    exc_info=close_exc,
+                )
+            terminal_disconnect = exc
+        except ModelSourceForwardingError as exc:
+            status = "error"
+            error_code = _source_error_code(exc.payload)
+            error_message = _source_error_message(exc.payload)
+            await _release_reservation(reservation)
+            raise
+        except Exception as exc:
+            status = "error"
+            error_code = "model_source_stream_error"
+            error_message = exc.__class__.__name__
+            await _release_reservation(reservation)
+            raise
+
         settled, settlement_deferred_cancellation = await _await_result_deferring_cancellation(
             _settle_source_reservation(reservation, source=source, model=model, usage=usage_holder.usage)
         )
@@ -5672,6 +5695,8 @@ async def _source_chat_stream_with_settlement(
                 api_key.id if api_key else None,
                 model,
             )
+        if terminal_disconnect is not None:
+            raise terminal_disconnect
     finally:
         await _await_cleanup_deferring_cancellation(
             _log_source_chat_completion(
@@ -7805,6 +7830,28 @@ async def _validate_proxy_websocket_request(
             ),
         )
     return api_key, None
+
+
+def _source_websocket_fallback_denial(
+    websocket: WebSocket,
+    context: ProxyContext,
+    api_key: ApiKeyData | None,
+) -> JSONResponse | None:
+    api_key_id = api_key.id if api_key is not None else None
+    if not any(
+        context.service._source_websocket_fallback_registry.matches(identity, api_key_id)
+        for identity in source_websocket_fallback_identities(websocket.headers)
+    ):
+        return None
+    return JSONResponse(
+        status_code=426,
+        headers={"Upgrade": "websocket"},
+        content=openai_error(
+            "model_source_requires_http_transport",
+            "This conversation requested a model served by an OpenAI-compatible model source; retry over HTTPS.",
+            error_type="server_error",
+        ),
+    )
 
 
 async def _required_capability_http_transport_denial(

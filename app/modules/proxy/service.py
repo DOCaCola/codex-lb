@@ -115,6 +115,7 @@ from app.modules.api_keys.service import (
 from app.modules.api_keys.service import (
     ApiKeysService as ApiKeysService,
 )
+from app.modules.model_sources.websocket_fallback import SourceWebSocketFallbackRegistry
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -934,6 +935,7 @@ class ProxyService(
         self._http_bridge_previous_response_index: dict[tuple[str, str | None], _HTTPBridgeSessionKey] = {}
         self._websocket_previous_response_account_index: dict[tuple[str, str | None, str | None], str] = {}
         self._websocket_continuity_index: dict[tuple[str, str | None], _WebSocketContinuityState] = {}
+        self._source_websocket_fallback_registry = SourceWebSocketFallbackRegistry()
         self._background_cleanup_tasks: set[asyncio.Task[None]] = set()
         self._stream_api_key_release_retry_semaphore = asyncio.Semaphore(_STREAM_API_KEY_RELEASE_RETRY_MAX_CONCURRENCY)
         self._file_pin_session_factory = SessionLocal

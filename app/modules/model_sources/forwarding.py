@@ -108,6 +108,7 @@ class SourceResponsesStream:
 class SourceUsageHolder:
     usage: SourceUsage | None = None
     timings: SourceTimings | None = None
+    successful_terminal_seen: bool = False
 
 
 async def _await_cleanup_deferring_cancellation(awaitable: Awaitable[object]) -> None:
@@ -764,7 +765,11 @@ class SourceStreamUsageParser:
             if not stripped.startswith("data:"):
                 continue
             data = stripped.removeprefix("data:").strip()
-            if not data or data == "[DONE]":
+            if data == "[DONE]":
+                if self._response_shape == "chat":
+                    self._usage_holder.successful_terminal_seen = True
+                continue
+            if not data:
                 continue
             try:
                 parsed = json.loads(data)
@@ -773,6 +778,8 @@ class SourceStreamUsageParser:
             if not isinstance(parsed, dict):
                 continue
             if self._response_shape == "responses":
+                if parsed.get("type") == "response.completed":
+                    self._usage_holder.successful_terminal_seen = True
                 usage = _usage_from_responses_event(parsed)
                 timings = _timings_from_responses_event(parsed)
             else:

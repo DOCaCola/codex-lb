@@ -104,6 +104,7 @@ from app.modules.model_sources.selection import (
     effective_model_for_api_key,
     responses_model_is_source_owned,
 )
+from app.modules.model_sources.websocket_fallback import source_websocket_fallback_identities
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -1815,6 +1816,12 @@ class _WebSocketMixin:
                                         request_state.model,
                                         request_state.raw_source_model,
                                     )
+                                    source_api_key = request_state.api_key or api_key
+                                    for fallback_identity in request_state.source_websocket_fallback_identities:
+                                        proxy._source_websocket_fallback_registry.mark(
+                                            fallback_identity,
+                                            source_api_key.id if source_api_key is not None else None,
+                                        )
                                     await proxy._release_websocket_request_state_reservation(request_state)
                                     # The prepared request already owns a request-log row; without
                                     # this the row is never finalized, so the same logical failure
@@ -3218,6 +3225,7 @@ class _WebSocketMixin:
         request_state.client_ip = client_ip
         request_state.raw_source_model = raw_source_model
         request_state.source_route_excluded = source_route_excluded
+        request_state.source_websocket_fallback_identities = source_websocket_fallback_identities(headers)
         request_state.responses_lite_model = next_responses_lite_model
         request_state.expose_stale_previous_response_classifier = codex_session_affinity
         request_state.require_security_work_authorized = capability_route.require_security_work_authorized
@@ -3494,6 +3502,12 @@ class _WebSocketMixin:
                 request_state.raw_source_model,
                 (request_state.api_key or api_key) is not None,
             )
+            source_api_key = request_state.api_key or api_key
+            for fallback_identity in request_state.source_websocket_fallback_identities:
+                proxy._source_websocket_fallback_registry.mark(
+                    fallback_identity,
+                    source_api_key.id if source_api_key is not None else None,
+                )
             await proxy._emit_websocket_connect_failure(
                 websocket,
                 client_send_lock=client_send_lock,

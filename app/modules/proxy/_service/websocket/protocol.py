@@ -57,6 +57,7 @@ class _WebSocketServiceProtocol(Protocol):
     _send_downstream_websocket_bytes: Any
     _send_downstream_websocket_text: Any
     _settle_stream_api_key_usage: Any
+    _source_websocket_fallback_registry: Any
     _start_request_state_api_key_reservation_heartbeat: Any
     _try_open_websocket_connect_attempt: Any
     _touch_active_websocket_thread_affinity: Any

@@ -43,6 +43,15 @@ def test_chat_stream_usage_parser_handles_split_sse_frame() -> None:
     assert holder.usage.cached_input_tokens == 3
 
 
+def test_chat_stream_usage_parser_records_done_terminal() -> None:
+    holder = SourceUsageHolder()
+    parser = SourceStreamUsageParser(holder, response_shape="chat")
+
+    parser.feed(b"data: [DONE]\n\n")
+
+    assert holder.successful_terminal_seen is True
+
+
 def test_chat_stream_usage_parser_handles_crlf_frames() -> None:
     holder = SourceUsageHolder()
     parser = SourceStreamUsageParser(holder, response_shape="chat")
@@ -109,6 +118,7 @@ def test_responses_stream_usage_parser_handles_split_sse_frame() -> None:
     assert holder.usage.input_tokens == 7
     assert holder.usage.output_tokens == 4
     assert holder.usage.cached_input_tokens == 2
+    assert holder.successful_terminal_seen is True
 
 
 def test_audio_usage_parser_accepts_total_tokens_only_json() -> None:

@@ -1882,6 +1882,86 @@ async def test_downstream_disconnect_closes_source_stream(async_client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_disconnect_after_source_terminal_settles_as_success(async_client, monkeypatch):
+    from starlette.requests import Request
+
+    import app.modules.proxy.api as proxy_api
+    from app.db.models import ModelSource
+    from app.modules.model_sources.forwarding import SourceUsage, SourceUsageHolder
+
+    settled: list[object] = []
+    released: list[object] = []
+    logs: list[dict[str, object]] = []
+
+    async def record_settle(reservation: object, **_kwargs: object) -> bool:
+        settled.append(reservation)
+        return True
+
+    async def record_release(reservation: object) -> None:
+        released.append(reservation)
+
+    async def record_log(*_args: object, **kwargs: object) -> None:
+        logs.append(dict(kwargs))
+
+    monkeypatch.setattr(proxy_api, "_settle_source_reservation", record_settle)
+    monkeypatch.setattr(proxy_api, "_release_reservation", record_release)
+    monkeypatch.setattr(proxy_api, "_log_source_chat_completion", record_log)
+
+    async def source_stream() -> AsyncIterator[bytes]:
+        yield b'data: {"type":"response.completed"}\n\n'
+        await asyncio.sleep(60)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/responses",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "query_string": b"",
+        }
+    )
+    source = ModelSource(
+        id="src_terminal_disconnect",
+        name="terminal-disconnect",
+        kind="openai_compatible",
+        base_url="http://127.0.0.1:9/v1",
+        is_enabled=True,
+        supports_chat_completions=False,
+        supports_responses=True,
+    )
+    reservation = ApiKeyUsageReservationData(
+        reservation_id="resv_terminal_disconnect",
+        key_id="key_terminal_disconnect",
+        model="terminal-model",
+    )
+    usage_holder = SourceUsageHolder(
+        usage=SourceUsage(input_tokens=3, output_tokens=5),
+        successful_terminal_seen=True,
+    )
+    response_stream = cast(
+        AsyncGenerator[bytes, None],
+        proxy_api._source_chat_stream_with_settlement(
+            source_stream(),
+            usage_holder=usage_holder,
+            request=request,
+            source=source,
+            api_key=None,
+            model="terminal-model",
+            reservation=reservation,
+        ),
+    )
+
+    assert await anext(response_stream) == b'data: {"type":"response.completed"}\n\n'
+    await response_stream.aclose()
+
+    assert settled == [reservation]
+    assert released == []
+    assert logs[-1]["status"] == "success"
+    assert logs[-1]["error_code"] is None
+
+
+@pytest.mark.asyncio
 async def test_source_stream_disconnect_logs_cancelled_not_error(async_client, db_setup, monkeypatch):
     """Regression for #1552: a downstream disconnect mid-stream on a
     model-source route is a normal client-side terminal — recorded as
