@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 from binascii import Error as Base64Error
-from collections.abc import Mapping
 
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
@@ -96,31 +95,6 @@ def lower_opaque_compaction_items_for_model_source(payload: MutableJsonObject) -
         changed = True
     if changed:
         payload["input"] = lowered
-
-
-def sanitize_native_compact_reasoning_input(payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    """Normalize foreign reasoning history for native OpenAI compaction."""
-
-    sanitized = dict(payload)
-    input_value = sanitized.get("input")
-    if not is_json_list(input_value):
-        return sanitized
-    changed = False
-    normalized_input: list[JsonValue] = []
-    for item in input_value:
-        if not is_json_mapping(item) or item.get("type") != "reasoning":
-            normalized_input.append(item)
-            continue
-        normalized_item = dict(item)
-        content = normalized_item.get("content")
-        if is_json_list(content) and content:
-            normalized_item["content"] = []
-        normalized_item.pop("status", None)
-        normalized_input.append(normalized_item)
-        changed = changed or normalized_item != item
-    if changed:
-        sanitized["input"] = normalized_input
-    return sanitized
 
 
 def _summary_message(summary: str) -> dict[str, JsonValue]:

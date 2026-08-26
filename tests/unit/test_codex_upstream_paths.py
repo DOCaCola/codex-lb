@@ -883,6 +883,46 @@ async def test_stream_responses_uses_codex_client_when_route_is_resolved(route: 
 
 
 @pytest.mark.asyncio
+async def test_stream_responses_sanitizes_foreign_reasoning_for_native_upstream(
+    route: ResolvedUpstreamRoute,
+) -> None:
+    client = _CodexClient(_StreamResponse())
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.6-sol",
+            "instructions": "Continue.",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "status": "completed",
+                    "content": [{"type": "reasoning_text", "text": "foreign plaintext"}],
+                },
+                {"type": "message", "role": "user", "content": "continue"},
+            ],
+            "stream": True,
+        }
+    )
+
+    _ = [
+        event
+        async for event in stream_responses(
+            payload,
+            {"user-agent": "codex"},
+            "access",
+            "chatgpt_account",
+            session=cast(Any, object()),
+            upstream_stream_transport_override="http",
+            route=route,
+            codex_client=cast(Any, client),
+        )
+    ]
+
+    sent_reasoning = client.calls[0]["json"]["input"][0]
+    assert sent_reasoning == {"type": "reasoning", "content": []}
+    assert "foreign plaintext" in str(payload.to_payload()["input"])
+
+
+@pytest.mark.asyncio
 async def test_stream_responses_websocket_transport_uses_codex_client_when_route_is_resolved(
     route: ResolvedUpstreamRoute,
 ) -> None:

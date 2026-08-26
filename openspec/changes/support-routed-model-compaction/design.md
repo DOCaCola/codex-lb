@@ -57,12 +57,12 @@ When the selected destination is a model source, remaining native opaque
 compaction items also become the unavailable-history note. Subscription
 destinations retain native opaque items unchanged.
 
-### Native compact reasoning boundary
+### Native reasoning boundary
 
-Immediately before a native compact request is sent, top-level reasoning items
-have non-empty plaintext `content` replaced by an empty array and output-only
-`status` removed. Ordinary model-source requests retain their provider-native
-reasoning history.
+Immediately before any native subscription-backed Responses request is sent,
+top-level reasoning items have non-empty plaintext `content` replaced by an
+empty array and output-only `status` removed. Model-source requests retain their
+provider-native reasoning history.
 
 ## Failure Modes
 

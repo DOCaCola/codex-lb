@@ -4,11 +4,11 @@
 
 When a valid terminal `compaction_trigger` targets a subscription-backed model,
 the proxy SHALL preserve the existing native compact flow and synthetic SSE
-lifecycle. Immediately before sending the native compact request, the proxy
-MUST replace every non-empty plaintext `content` array on a top-level
-`reasoning` input item with an empty array and MUST remove that item's
-output-only `status` field. Ordinary non-compact Responses requests MUST NOT
-receive this native-boundary sanitation.
+lifecycle. Immediately before sending any native subscription-backed Responses
+request, the proxy MUST replace every non-empty plaintext `content` array on a
+top-level `reasoning` input item with an empty array and MUST remove that item's
+output-only `status` field. Source-routed Responses requests MUST NOT receive
+this native-boundary sanitation.
 
 When the terminal trigger targets an eligible OpenAI-compatible model source,
 the proxy SHALL run synthetic source compaction and SHALL return the same
@@ -24,11 +24,12 @@ item into explicit summary context and SHALL NOT forward the proxy-owned
 envelope as native encrypted state. A malformed `clb1:` item MUST become an
 explicit unavailable-history note.
 
-#### Scenario: Foreign plaintext reasoning is accepted by native compaction
+#### Scenario: Foreign plaintext reasoning is accepted by native Responses
 
-- **GIVEN** compact input contains a top-level reasoning item with non-empty
+- **GIVEN** request input contains a top-level reasoning item with non-empty
   plaintext `content` and an output-only `status`
-- **WHEN** the request is sent to native subscription compaction
+- **WHEN** an ordinary or compact request is sent to a native subscription
+  backend
 - **THEN** its wire `content` is an empty array and `status` is absent
 - **AND** ordinary source Responses replay remains unchanged
 

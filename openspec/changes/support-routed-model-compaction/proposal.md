@@ -20,8 +20,8 @@ reasoning history whose `reasoning.content` contains plaintext blocks.
   before any later upstream request.
 - Replace native opaque compaction history with an explicit note when the next
   destination is a model source that cannot decode it.
-- Sanitize source-generated plaintext reasoning items at the native compact
-  boundary without changing ordinary model-source replay.
+- Sanitize source-generated plaintext reasoning items at the native
+  subscription boundary without changing ordinary model-source replay.
 
 ## Capabilities
 

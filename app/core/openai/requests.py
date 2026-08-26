@@ -1818,6 +1818,31 @@ def _sanitize_interleaved_reasoning_input(payload: MutableJsonObject) -> None:
     payload["input"] = _sanitize_input_items(input_items)
 
 
+def sanitize_native_reasoning_input(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
+    """Normalize replayed reasoning at the native ChatGPT egress boundary."""
+
+    sanitized = dict(payload)
+    input_value = sanitized.get("input")
+    if not is_json_list(input_value):
+        return sanitized
+    changed = False
+    normalized_input: list[JsonValue] = []
+    for item in input_value:
+        if not is_json_mapping(item) or item.get("type") != "reasoning":
+            normalized_input.append(item)
+            continue
+        normalized_item = dict(item)
+        content = normalized_item.get("content")
+        if is_json_list(content) and content:
+            normalized_item["content"] = []
+        normalized_item.pop("status", None)
+        normalized_input.append(normalized_item)
+        changed = changed or normalized_item != item
+    if changed:
+        sanitized["input"] = normalized_input
+    return sanitized
+
+
 def normalize_reasoning_aliases(payload: MutableJsonObject) -> None:
     reasoning_effort = payload.pop("reasoningEffort", None)
     snake_case_reasoning_effort = payload.pop("reasoning_effort", None)

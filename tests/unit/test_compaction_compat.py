@@ -10,9 +10,8 @@ from app.core.openai.compaction import (
     encode_codex_lb_compaction_summary,
     lower_codex_lb_compaction_items,
     lower_opaque_compaction_items_for_model_source,
-    sanitize_native_compact_reasoning_input,
 )
-from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
+from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest, sanitize_native_reasoning_input
 from app.core.types import JsonValue
 from app.modules.model_sources.compaction import (
     SourceCompactionResultError,
@@ -67,7 +66,7 @@ def test_native_opaque_compaction_is_lowered_only_for_model_sources() -> None:
     assert COMPACTION_UNAVAILABLE_NOTE in str(payload["input"])
 
 
-def test_native_compact_sanitizes_foreign_reasoning_only() -> None:
+def test_native_reasoning_sanitizer_removes_foreign_output_fields() -> None:
     payload: dict[str, JsonValue] = {
         "input": [
             {
@@ -78,7 +77,7 @@ def test_native_compact_sanitizes_foreign_reasoning_only() -> None:
             {"type": "message", "role": "user", "content": "continue"},
         ]
     }
-    sanitized = sanitize_native_compact_reasoning_input(payload)
+    sanitized = sanitize_native_reasoning_input(payload)
 
     assert sanitized["input"] == [
         {"type": "reasoning", "content": []},
