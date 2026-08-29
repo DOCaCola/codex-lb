@@ -15,9 +15,11 @@ from app.db.models import HttpBridgeSessionState
 from app.db.session import close_session
 from app.modules.proxy.continuity import is_http_bridge_account_neutral_replay
 from app.modules.proxy.durable_bridge_repository import (
+    DURABLE_BRIDGE_OPERATION_SPOOL_PURGE_BATCH_SIZE,
     DurableBridgeAliasRegistration,
     DurableBridgeAliasRegistrationReceipt,
     DurableBridgeOperationEventInput,
+    DurableBridgeOperationPurgeBatchResult,
     DurableBridgeOperationSnapshot,
     DurableBridgeRecoveryAttemptSnapshot,
     DurableBridgeRepository,
@@ -594,9 +596,22 @@ class DurableBridgeSessionCoordinator:
                 max_bytes=max_bytes,
             )
 
-    async def purge_operation_spool(self, *, cutoff: datetime, batch_size: int = 500) -> int:
+    async def purge_operation_spool(
+        self,
+        *,
+        cutoff: datetime,
+        batch_size: int = DURABLE_BRIDGE_OPERATION_SPOOL_PURGE_BATCH_SIZE,
+    ) -> int:
+        return (await self.purge_operation_spool_batch(cutoff=cutoff, batch_size=batch_size)).deleted_operations
+
+    async def purge_operation_spool_batch(
+        self,
+        *,
+        cutoff: datetime,
+        batch_size: int = DURABLE_BRIDGE_OPERATION_SPOOL_PURGE_BATCH_SIZE,
+    ) -> DurableBridgeOperationPurgeBatchResult:
         async with self._session() as session:
-            return await DurableBridgeRepository(session).purge_operation_spool(
+            return await DurableBridgeRepository(session).purge_operation_spool_batch(
                 cutoff=cutoff,
                 batch_size=batch_size,
             )
