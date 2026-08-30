@@ -39,6 +39,7 @@ from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeyInvalidError, ApiKeysService, LimitRuleInput
 from app.modules.model_sources.forwarding import (
     SourceChatCompletion,
+    SourceResponsesCompletion,
     SourceResponsesStream,
     SourceTimings,
     SourceUsage,
@@ -1914,9 +1915,9 @@ async def test_v1_responses_filters_unsupported_model_source_tools(async_client,
 
 
 @pytest.mark.asyncio
-async def test_backend_codex_responses_compaction_trigger_skips_model_source(async_client, monkeypatch):
+async def test_backend_codex_responses_compaction_trigger_uses_model_source(async_client, monkeypatch):
     model = "external-codex-responses-compact"
-    await _create_model_source(
+    source_id = await _create_model_source(
         async_client,
         name="codex-responses-compact",
         model=model,
@@ -1924,19 +1925,35 @@ async def test_backend_codex_responses_compaction_trigger_skips_model_source(asy
     )
     observed: dict[str, object] = {}
 
-    async def fail_source(*args, **kwargs):
+    async def fake_forward_source(source, payload):
+        observed["source_id"] = source.id
+        observed["model"] = payload.get("model")
+        observed["input"] = payload.get("input")
+        return SourceResponsesCompletion(
+            payload={
+                "id": "resp_codex_compact_source",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "compacted context"}],
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+            },
+            usage=SourceUsage(input_tokens=10, output_tokens=2, cached_input_tokens=0),
+            timings=None,
+            upstream_status_code=200,
+        )
+
+    async def fail_subscription(*args, **kwargs):
         del args, kwargs
-        pytest.fail("compaction triggers must use the Codex compaction path")
+        pytest.fail("routed compaction must not use a subscription account")
 
-    async def fake_stream_responses(request, payload, context, api_key, **kwargs):
-        del request, context, api_key
-        observed["model"] = payload.model
-        observed["input"] = payload.input
-        observed["codex_session_affinity"] = kwargs.get("codex_session_affinity")
-        return JSONResponse({"ok": True})
-
-    monkeypatch.setattr(proxy_api, "stream_source_responses", fail_source)
-    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream_responses)
+    monkeypatch.setattr(proxy_api, "forward_source_responses", fake_forward_source)
+    monkeypatch.setattr(proxy_api, "_stream_responses", fail_subscription)
 
     response = await async_client.post(
         "/backend-api/codex/responses",
@@ -1952,12 +1969,12 @@ async def test_backend_codex_responses_compaction_trigger_skips_model_source(asy
     )
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True}
-    assert observed == {
-        "model": model,
-        "input": [{"role": "user", "content": "hello"}, {"type": "compaction_trigger"}],
-        "codex_session_affinity": True,
-    }
+    assert observed["source_id"] == source_id
+    assert observed["model"] == model
+    assert "compaction_trigger" not in str(observed["input"])
+    assert "CONTEXT CHECKPOINT COMPACTION" in str(observed["input"])
+    assert '"type":"compaction"' in response.text
+    assert "clb1:" in response.text
 
 
 @pytest.mark.asyncio
@@ -2280,26 +2297,34 @@ async def test_v1_responses_compaction_trigger_keeps_model_source(async_client, 
     )
     observed: dict[str, object] = {}
 
-    async def fake_stream_source(source, payload):
+    async def fake_forward_source(source, payload):
         observed["source_id"] = source.id
         observed["model"] = payload.get("model")
         observed["input"] = payload.get("input")
-        usage_holder = SourceUsageHolder()
-
-        async def body():
-            usage_holder.usage = SourceUsage(input_tokens=1, output_tokens=1, cached_input_tokens=0)
-            yield (
-                b'data: {"type":"response.completed","response":{"id":"resp_v1_compact_source",'
-                b'"usage":{"input_tokens":1,"output_tokens":1}}\n\n'
-            )
-
-        return SourceResponsesStream(body=body(), usage_holder=usage_holder, upstream_status_code=200)
+        return SourceResponsesCompletion(
+            payload={
+                "id": "resp_v1_compact_source",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "compacted context"}],
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+            },
+            usage=SourceUsage(input_tokens=10, output_tokens=2, cached_input_tokens=0),
+            timings=None,
+            upstream_status_code=200,
+        )
 
     async def fail_subscription(*args, **kwargs):
         del args, kwargs
         pytest.fail("v1 compaction_trigger must remain eligible for model sources")
 
-    monkeypatch.setattr(proxy_api, "stream_source_responses", fake_stream_source)
+    monkeypatch.setattr(proxy_api, "forward_source_responses", fake_forward_source)
     monkeypatch.setattr(proxy_api, "_stream_responses", fail_subscription)
 
     async with async_client.stream(
@@ -2319,11 +2344,10 @@ async def test_v1_responses_compaction_trigger_keeps_model_source(async_client, 
 
     assert observed["source_id"] == source_id
     assert observed["model"] == model
-    assert observed["input"] == [
-        {"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
-        {"type": "compaction_trigger"},
-    ]
-    assert any("resp_v1_compact_source" in line for line in lines)
+    assert "compaction_trigger" not in str(observed["input"])
+    assert "CONTEXT CHECKPOINT COMPACTION" in str(observed["input"])
+    assert any('"type":"compaction"' in line for line in lines)
+    assert any("clb1:" in line for line in lines)
 
 
 @pytest.mark.asyncio
