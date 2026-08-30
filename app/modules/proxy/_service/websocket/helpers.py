@@ -535,6 +535,7 @@ def _websocket_continuity_anchor_for_payload(
     continuity_state: _WebSocketContinuityState | None,
     *,
     responses_payload: ResponsesRequest,
+    raw_source_model: str | None,
     codex_session_affinity: bool,
 ) -> _WebSocketContinuityAnchor | None:
     if continuity_state is None or not codex_session_affinity:
@@ -543,6 +544,12 @@ def _websocket_continuity_anchor_for_payload(
         return None
     previous_response_id = continuity_state.last_completed_response_id
     if previous_response_id is None:
+        return None
+    current_model_selector = raw_source_model or responses_payload.model
+    # A model transition must keep the caller's full replay. Reusing the prior
+    # selector's opaque response id can pin a source-owned model to the native
+    # subscription account that produced the earlier turn.
+    if continuity_state.last_completed_model_selector != current_model_selector:
         return None
     stored_count = continuity_state.last_completed_input_count
     if not _facade()._input_prefix_matches_stored_context(
@@ -622,6 +629,7 @@ def _record_websocket_continuity_completion(
 ) -> None:
     if response_id is None:
         continuity_state.last_completed_response_id = None
+        continuity_state.last_completed_model_selector = None
         continuity_state.last_completed_input_count = 0
         continuity_state.last_completed_input_prefix_fingerprint = None
         continuity_state.last_pending_function_call_ids = []
@@ -635,6 +643,7 @@ def _record_websocket_continuity_completion(
     # is cleared rather than left stale when the completed turn cannot
     # provide one.
     continuity_state.last_completed_response_id = response_id
+    continuity_state.last_completed_model_selector = request_state.raw_source_model or request_state.model
     if request_state.input_item_count > 0 and request_state.input_full_fingerprint is not None:
         continuity_state.last_completed_input_count = request_state.input_item_count
         continuity_state.last_completed_input_prefix_fingerprint = request_state.input_full_fingerprint

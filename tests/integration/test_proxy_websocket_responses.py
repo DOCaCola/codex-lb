@@ -827,6 +827,138 @@ def test_backend_responses_websocket_canonical_source_previous_response_requires
     assert source_checks == [model]
 
 
+def test_backend_responses_websocket_model_switch_does_not_inherit_native_anchor(
+    app_instance,
+    monkeypatch,
+):
+    native_model = "gpt-5.6-sol"
+    source_model = "openrouter/z-ai/glm-5.3-flash"
+    native_response_id = "resp_native_before_source_switch"
+    account = SimpleNamespace(id="acct_ws_native_before_source", security_work_authorized=False)
+    upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            _websocket_response_batch(native_response_id),
+            [
+                _FakeUpstreamMessage(
+                    "text",
+                    text=json.dumps(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "invalid_request_error",
+                                "code": "invalid_request_error",
+                                "message": (
+                                    f"The '{source_model}' model is not supported when using Codex "
+                                    "with a ChatGPT account."
+                                ),
+                            },
+                        },
+                        separators=(",", ":"),
+                    ),
+                )
+            ],
+        ],
+    )
+    owner_lookups: list[str] = []
+
+    async def recorded_native_owner(
+        self,
+        *,
+        previous_response_id,
+        api_key,
+        session_id=None,
+        surface,
+        request_state=None,
+        **kwargs,
+    ):
+        del self, api_key, session_id, surface, request_state, kwargs
+        owner_lookups.append(previous_response_id)
+        return account.id if previous_response_id == native_response_id else None
+
+    async def configured_source(model, api_key, *, raw_model=None):
+        del api_key, raw_model
+        return model == source_model
+
+    async def select_native_account(self, *args, request_state, **kwargs):
+        del self, args, kwargs
+        assert request_state.model == native_model
+        return account
+
+    async def open_native_account(self, selected_account, headers, **kwargs):
+        del self, headers, kwargs
+        assert selected_account.id == account.id
+        return selected_account, upstream
+
+    monkeypatch.setattr(
+        proxy_module.ProxyService,
+        "_resolve_websocket_previous_response_owner",
+        recorded_native_owner,
+    )
+    monkeypatch.setattr(websocket_mixin_module, "responses_model_is_source_owned", configured_source)
+    monkeypatch.setattr(
+        proxy_module.ProxyService,
+        "_select_websocket_connect_account",
+        select_native_account,
+    )
+    monkeypatch.setattr(
+        proxy_module.ProxyService,
+        "_try_open_websocket_connect_attempt",
+        open_native_account,
+    )
+
+    first_input = {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "start natively"}],
+    }
+    retained_output = {
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "native answer"}],
+    }
+    next_input = {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "continue with GLM"}],
+    }
+
+    with TestClient(app_instance, client=("127.0.0.1", 50000)) as client:
+        with client.websocket_connect(
+            "ws://localhost/backend-api/codex/responses",
+            headers={"session_id": "thread-ws-native-to-source"},
+        ) as websocket:
+            websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "response.create",
+                        "model": native_model,
+                        "input": [first_input],
+                    }
+                )
+            )
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+
+            websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "response.create",
+                        "model": source_model,
+                        "input": [first_input, retained_output, next_input],
+                    }
+                )
+            )
+            event = json.loads(websocket.receive_text())
+
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == "model_source_requires_http_transport"
+    assert owner_lookups == []
+    assert len(upstream.sent_text) == 1
+    assert json.loads(upstream.sent_text[0])["model"] == native_model
+
+
 def _codex_profile_provider(profile_name: str | None) -> tuple[str, str, dict[str, Any]]:
     base_config = tomllib.loads(_CODEX_CLIENT_CONFIG.read_text(encoding="utf-8"))
     profile_config = (

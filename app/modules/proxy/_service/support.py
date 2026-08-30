@@ -1414,6 +1414,10 @@ def _http_bridge_session_supports_service_tier(
 class _WebSocketContinuityState:
     last_completed_input_count: int = 0
     last_completed_response_id: str | None = None
+    # Exact source-routing selector (enforced model or preserved raw alias)
+    # that produced ``last_completed_response_id``. Implicit anchors are an
+    # optimization for this selector, not provider-neutral conversation state.
+    last_completed_model_selector: str | None = None
     last_completed_input_prefix_fingerprint: str | None = None
     last_pending_function_call_ids: list[str] = field(default_factory=list)
     last_pending_tool_call_types: dict[str, str] = field(default_factory=dict)

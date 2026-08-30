@@ -3161,6 +3161,7 @@ class _WebSocketMixin:
             session_anchor = _websocket_continuity_anchor_for_payload(
                 continuity_state,
                 responses_payload=responses_payload,
+                raw_source_model=raw_source_model,
                 codex_session_affinity=codex_session_affinity,
             )
         if session_anchor is not None:

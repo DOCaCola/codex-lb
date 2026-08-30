@@ -24155,6 +24155,7 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_input_count=len(historical_input),
         last_completed_response_id="resp_completed_anchor",
+        last_completed_model_selector="gpt-5.1",
         last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
     )
 
@@ -24194,6 +24195,79 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
     fresh_payload = json.loads(prepared.request_state.fresh_upstream_request_text)
     assert "previous_response_id" not in fresh_payload
     assert fresh_payload["input"] == [*historical_input, new_input]
+
+
+@pytest.mark.asyncio
+async def test_prepare_websocket_response_create_request_preserves_full_replay_across_model_change(monkeypatch):
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    reserve_usage = AsyncMock(return_value=None)
+    api_key = ApiKeyData(
+        id="key_ws_model_transition",
+        name="ws-model-transition",
+        key_prefix="sk-ws-model-transition",
+        allowed_models=None,
+        enforced_model=None,
+        enforced_reasoning_effort=None,
+        enforced_service_tier=None,
+        expires_at=None,
+        is_active=True,
+        created_at=utcnow(),
+        last_used_at=None,
+    )
+
+    class Settings:
+        trace_channels = frozenset()
+        openai_prompt_cache_key_derivation_enabled = True
+
+    historical_input: list[JsonValue] = [
+        {"role": "user", "content": [{"type": "input_text", "text": "old question"}]},
+    ]
+    retained_output: JsonValue = {
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "old answer"}],
+    }
+    new_input: JsonValue = {
+        "role": "user",
+        "content": [{"type": "input_text", "text": "continue on the source model"}],
+    }
+    continuity_state = proxy_service._WebSocketContinuityState(
+        last_completed_input_count=len(historical_input),
+        last_completed_response_id="resp_native_anchor",
+        last_completed_model_selector="gpt-5.6-sol",
+        last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+    )
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", reserve_usage)
+    monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
+
+    prepared = await service._prepare_websocket_response_create_request(
+        cast(
+            dict[str, JsonValue],
+            {
+                "type": "response.create",
+                "model": "openrouter/z-ai/glm-5.3-flash",
+                "input": [*historical_input, retained_output, new_input],
+            },
+        ),
+        headers={"session_id": "turn_ws_model_transition"},
+        codex_session_affinity=True,
+        openai_cache_affinity=True,
+        sticky_threads_enabled=False,
+        openai_cache_affinity_max_age_seconds=300,
+        api_key=api_key,
+        continuity_state=continuity_state,
+    )
+
+    upstream_payload = json.loads(prepared.text_data)
+    assert "previous_response_id" not in upstream_payload
+    assert upstream_payload["input"] == [*historical_input, retained_output, new_input]
+    assert prepared.request_state.previous_response_id is None
+    assert prepared.request_state.proxy_injected_previous_response_id is False
+    assert prepared.request_state.fresh_upstream_request_is_retry_safe is True
 
 
 @pytest.mark.asyncio
@@ -24305,6 +24379,7 @@ async def test_prepare_websocket_response_create_request_does_not_fresh_retry_in
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_input_count=len(historical_input),
         last_completed_response_id="resp_completed_anchor",
+        last_completed_model_selector="gpt-5.1",
         last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
     )
 
@@ -25101,6 +25176,7 @@ def test_record_websocket_continuity_completion_keeps_anchor_fields_in_sync():
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_input_count=2,
         last_completed_response_id="resp_old",
+        last_completed_model_selector="gpt-5.0",
         last_completed_input_prefix_fingerprint="old-fingerprint",
     )
     incomplete_state = proxy_service._WebSocketRequestState(
@@ -25124,6 +25200,7 @@ def test_record_websocket_continuity_completion_keeps_anchor_fields_in_sync():
     # fingerprint, but the stale count/fingerprint pair from the previous
     # turn must not survive attached to the new response id.
     assert continuity_state.last_completed_response_id == "resp_new_without_fingerprint"
+    assert continuity_state.last_completed_model_selector == "gpt-5.1"
     assert continuity_state.last_completed_input_count == 0
     assert continuity_state.last_completed_input_prefix_fingerprint is None
 
@@ -25136,6 +25213,7 @@ def test_record_websocket_continuity_completion_keeps_anchor_fields_in_sync():
         started_at=0.0,
         input_item_count=3,
         input_full_fingerprint="new-fingerprint",
+        raw_source_model="openrouter/gpt-5.1",
     )
 
     proxy_service._record_websocket_continuity_completion(
@@ -25145,6 +25223,7 @@ def test_record_websocket_continuity_completion_keeps_anchor_fields_in_sync():
     )
 
     assert continuity_state.last_completed_response_id == "resp_new"
+    assert continuity_state.last_completed_model_selector == "openrouter/gpt-5.1"
     assert continuity_state.last_completed_input_count == 3
     assert continuity_state.last_completed_input_prefix_fingerprint == "new-fingerprint"
 
@@ -25191,6 +25270,7 @@ def test_record_websocket_continuity_completion_keeps_pending_tool_calls_for_str
     )
 
     assert continuity_state.last_completed_response_id is None
+    assert continuity_state.last_completed_model_selector is None
     assert continuity_state.last_pending_function_call_ids == []
     assert continuity_state.last_pending_tool_call_types == {}
 
