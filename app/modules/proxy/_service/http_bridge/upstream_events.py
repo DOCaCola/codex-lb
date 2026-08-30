@@ -67,6 +67,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_denied_anchor_fence_current_map,
     _http_bridge_denied_anchor_fence_entry,
     _http_bridge_durable_lease_ttl_seconds,
+    _http_bridge_event_proves_upstream_liveness,
     _http_bridge_eventless_precreated_deadline,
     _http_bridge_request_budget_seconds,
     _http_bridge_request_counts_against_queue,
@@ -75,6 +76,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _normalize_http_bridge_error_event,
     _record_http_bridge_denied_anchor_fence,
     _record_http_bridge_stuck_retire,
+    _record_http_bridge_unmatched_upstream_liveness,
     _schedule_http_bridge_background_cleanup,
 )
 from app.modules.proxy._service.http_bridge.quarantine import (
@@ -1669,6 +1671,13 @@ class _HTTPBridgeUpstreamEventsMixin:
                             session,
                             detail=poison_detail,
                             response_events_seen=observed_response_events,
+                            # Reader-failure retirement must never revive: the
+                            # pending turns were already terminally failed and
+                            # this reader is condemned, so a post-suspension
+                            # liveness signal (which durable-anchor
+                            # rehydration can spoof without upstream evidence)
+                            # would only leave a readerless session registered.
+                            allow_liveness_revive=False,
                             **retry_circuit_attempt_kwargs,
                         )
                         force_retire = True
@@ -1702,6 +1711,9 @@ class _HTTPBridgeUpstreamEventsMixin:
                         retry_circuit_detail="clean_close",
                         response_events_seen=observed_response_events,
                         retired_request_count=failed_pending_count,
+                        # See the poison branch above: reader-failure
+                        # retirement never revives a condemned session.
+                        allow_liveness_revive=False,
                         **retry_circuit_attempt_kwargs,
                     )
                 else:
@@ -1716,6 +1728,9 @@ class _HTTPBridgeUpstreamEventsMixin:
                         # strike. The deferred/poison branch records its own
                         # strike above and intentionally does not pass it.
                         retired_request_count=failed_pending_count,
+                        # See the poison branch above: reader-failure
+                        # retirement never revives a condemned session.
+                        allow_liveness_revive=False,
                         **retry_circuit_attempt_kwargs,
                     )
         return force_retire or session.admission_waiter_count == 0
@@ -2335,6 +2350,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                 # that attempt transition before any later recovery await can
                 # classify the send as eventless.
                 _mark_response_create_attempt_observed(matched_request_state, event_type)
+                session.last_upstream_event_generation += 1
                 now = _service_time().monotonic()
                 if matched_request_state.latency_first_upstream_event_ms is None:
                     matched_request_state.latency_first_upstream_event_ms = int(
@@ -2722,15 +2738,39 @@ class _HTTPBridgeUpstreamEventsMixin:
             # whatever was waiting for it waits until a timeout fires, so the
             # drop needs to be visible rather than inferred from a missing
             # downstream response.
+            #
+            # The frame still proves the upstream transport is alive. Nothing
+            # resets the downstream pre-response silence clock from here (that
+            # clock only sees matched queue items), so record the liveness as an
+            # explicit marker: a later bridge_eventless_timeout with a non-zero
+            # count is a local matching wedge, not a silent upstream.
+            unmatched_liveness_count = _record_http_bridge_unmatched_upstream_liveness(
+                session,
+                event_type=event_type,
+            )
             logger.warning(
                 "HTTP bridge upstream event matched no pending request account_id=%s bridge_kind=%s "
-                "event_type=%s has_response_id=%s pending_count=%d",
+                "event_type=%s has_response_id=%s pending_count=%d unmatched_upstream_liveness=%d",
                 session.account.id,
                 session.key.affinity_kind,
                 event_type or "unknown",
                 response_id is not None,
                 pending_request_count,
+                unmatched_liveness_count,
             )
+            if _http_bridge_event_proves_upstream_liveness(event_type):
+                _log_http_bridge_event(
+                    "unmatched_upstream_liveness",
+                    session.key,
+                    account_id=session.account.id,
+                    model=session.request_model,
+                    pending_count=pending_request_count,
+                    detail=(
+                        f"event_type={event_type or 'unknown'} unmatched_upstream_liveness={unmatched_liveness_count}"
+                    ),
+                    cache_key_family=session.key.affinity_kind,
+                    model_class=_extract_model_class(session.request_model) if session.request_model else None,
+                )
 
         if status_request_state is not None and event_type not in {
             "response.completed",

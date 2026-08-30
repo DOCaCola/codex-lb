@@ -239,6 +239,198 @@ async def test_keyed_warm_session_reacquire_is_fair_share_gated_and_counted(
 
 
 @pytest.mark.asyncio
+async def test_reacquire_with_snapshot_never_touches_settings_cache_under_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #1971: callers holding pending_lock pass the fair-share snapshot.
+
+    The settings-cache refresh runs a DB query behind a process-global lock;
+    resolving it inside the reacquire while holding ``pending_lock`` let one
+    stalled query wedge every keyed submit process-wide."""
+
+    mixin = http_bridge_request_submit_module._HTTPBridgeRequestSubmitMixin
+    settings_get = AsyncMock(side_effect=AssertionError("settings cache must not be read under pending_lock"))
+    monkeypatch.setattr(
+        http_bridge_request_submit_module,
+        "_service_get_settings_cache",
+        lambda: SimpleNamespace(get=settings_get),
+    )
+    acquire_account_lease = AsyncMock(return_value=_make_lease("l-snapshot"))
+    fake_self = SimpleNamespace(_load_balancer=SimpleNamespace(acquire_account_lease=acquire_account_lease))
+    session = _make_bridge_session(api_key_id="key-snap")
+
+    async with session.pending_lock:
+        await mixin._ensure_http_bridge_session_stream_lease_locked(
+            fake_self,
+            session,
+            fair_share_threshold_pct=37,
+        )
+
+    settings_get.assert_not_awaited()
+    assert session.account_lease is not None
+    await_args = acquire_account_lease.await_args
+    assert await_args is not None
+    assert await_args.kwargs["api_key_stream_fair_share_threshold_pct"] == 37
+
+
+@pytest.mark.asyncio
+async def test_drain_retirement_defers_to_registered_admission_waiter() -> None:
+    """A registered admission waiter owns a turn not yet counted into the
+    queue (it may be suspended on the pre-lock fair-share resolve, issue
+    #1971); drain retirement must not close the bridge under it, and must
+    proceed once the waiter unwinds."""
+
+    mixin = http_bridge_request_submit_module._HTTPBridgeRequestSubmitMixin
+    session = _make_bridge_session()
+    session.upstream_control.reconnect_requested = True
+    session.upstream_control.retire_after_drain = True
+    session.admission_waiter_count = 1
+    close_bounded = AsyncMock()
+    fake_self = SimpleNamespace(_close_http_bridge_session_bounded=close_bounded)
+
+    retired = await mixin._retire_http_bridge_after_drain_if_ready(fake_self, session)
+
+    assert retired is False
+    close_bounded.assert_not_awaited()
+    assert not session.upstream_close_attempted
+
+    session.admission_waiter_count = 0
+    retired = await mixin._retire_http_bridge_after_drain_if_ready(fake_self, session)
+
+    assert retired is True
+    close_bounded.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_keyed_submit_with_held_lease_never_reads_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A keyed session already holding its stream lease admits turns without
+    any settings-cache dependency — a stalled or unavailable settings DB must
+    not block or fail requests that need no lease reacquisition."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(api_key_id="key-leased")
+    session.account_lease = _make_lease("l-held")
+    monkeypatch.setattr(service._load_balancer, "release_account_lease", AsyncMock())
+
+    settings_get = AsyncMock(side_effect=AssertionError("settings cache must not be read for a leased session"))
+    monkeypatch.setattr(
+        http_bridge_request_submit_module,
+        "_service_get_settings_cache",
+        lambda: SimpleNamespace(get=settings_get),
+    )
+
+    prewarm_reached = asyncio.Event()
+
+    async def hold_in_prewarm(*_args: object, **_kwargs: object) -> None:
+        prewarm_reached.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service, "_maybe_prewarm_http_bridge_session", AsyncMock(side_effect=hold_in_prewarm))
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-leased-no-settings",
+        model="gpt-5.2",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        request_text='{"type":"response.create","model":"gpt-5.2","input":"hi"}',
+        transport="http",
+        skip_request_log=True,
+    )
+    submit_task = asyncio.create_task(
+        service._submit_http_bridge_request(
+            session,
+            request_state=request_state,
+            text_data=request_state.request_text or "{}",
+            queue_limit=8,
+        )
+    )
+    # Reaching prewarm proves the first admission section completed without
+    # touching the settings cache (the mock would have raised).
+    await asyncio.wait_for(prewarm_reached.wait(), timeout=1)
+    settings_get.assert_not_awaited()
+
+    submit_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(submit_task, timeout=1)
+    settings_get.assert_not_awaited()
+    assert session.admission_waiter_count == 0
+
+
+@pytest.mark.asyncio
+async def test_keyed_submit_resolves_fair_share_before_pending_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #1971 product path: a stalled settings-cache refresh must stall
+    the submit BEFORE it acquires ``session.pending_lock``, so the session's
+    other work (interruption cleanup, queue bookkeeping) is never wedged
+    behind a hung DB query. The old in-lock resolve held the lock across the
+    stall — cleanup tasks piled up on it for days in production."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(api_key_id="key-stall")
+    lease = _make_lease("l-stall")
+    monkeypatch.setattr(service._load_balancer, "acquire_account_lease", AsyncMock(return_value=lease))
+    monkeypatch.setattr(service._load_balancer, "release_account_lease", AsyncMock())
+    monkeypatch.setattr(service, "_maybe_prewarm_http_bridge_session", AsyncMock())
+
+    settings_blocked = asyncio.Event()
+    release_settings = asyncio.Event()
+
+    async def stalled_get() -> SimpleNamespace:
+        settings_blocked.set()
+        await release_settings.wait()
+        return SimpleNamespace(proxy_api_key_fair_share_congestion_threshold_pct=50)
+
+    monkeypatch.setattr(
+        http_bridge_request_submit_module,
+        "_service_get_settings_cache",
+        lambda: SimpleNamespace(get=stalled_get),
+    )
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-settings-stall",
+        model="gpt-5.2",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        request_text='{"type":"response.create","model":"gpt-5.2","input":"hi"}',
+        transport="http",
+        skip_request_log=True,
+    )
+    submit_task = asyncio.create_task(
+        service._submit_http_bridge_request(
+            session,
+            request_state=request_state,
+            text_data=request_state.request_text or "{}",
+            queue_limit=8,
+        )
+    )
+    await asyncio.wait_for(settings_blocked.wait(), timeout=1)
+
+    # While the settings refresh is stalled, pending_lock must stay free.
+    lock_acquired = False
+    with anyio.move_on_after(0.2):
+        async with session.pending_lock:
+            lock_acquired = True
+    assert lock_acquired, "submit held pending_lock across the stalled settings refresh"
+
+    submit_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(submit_task, timeout=1)
+    assert session.admission_waiter_count == 0
+    assert session.account_lease is None
+
+
+@pytest.mark.asyncio
 async def test_reacquire_denial_raises_local_cap_envelope() -> None:
     mixin = http_bridge_request_submit_module._HTTPBridgeRequestSubmitMixin
     session = _make_bridge_session()

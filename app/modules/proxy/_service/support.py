@@ -1297,6 +1297,7 @@ class _HTTPBridgeSession:
     durable_session_id: str | None = None
     durable_owner_epoch: int | None = None
     upstream_reader: asyncio.Task[None] | None = None
+    last_upstream_event_generation: int = 0
     last_upstream_close_code: int | None = None
     last_upstream_close_generation: int = 0
     closed: bool = False
@@ -1329,6 +1330,11 @@ class _HTTPBridgeSession:
     upstream_proxy_endpoint_id: str | None = None
     upstream_proxy_fallback_used: bool | None = None
     upstream_proxy_fail_closed_reason: str | None = None
+    # Upstream frames that proved transport liveness but matched no pending
+    # request. They are dropped from the downstream queues, so without this
+    # counter a pre-response bridge timeout cannot tell "upstream said nothing"
+    # apart from "upstream spoke and our matching lost the frame".
+    unmatched_upstream_liveness_count: int = 0
 
     def claim_liveness_settlement(self) -> bool:
         """Claim whole-deque settlement for a liveness-failed submitter.
