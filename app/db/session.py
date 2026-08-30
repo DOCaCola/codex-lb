@@ -389,15 +389,24 @@ async def _shielded_bounded(awaitable: Awaitable[object], timeout: float) -> asy
     anything the aiosqlite worker thread holds (issue #1682).
     """
     task = asyncio.ensure_future(awaitable)
-    waiter = asyncio.ensure_future(asyncio.wait({task}, timeout=timeout))
-    while not waiter.done():
-        try:
-            await asyncio.shield(waiter)
-        except asyncio.CancelledError:
-            # Teardown runs in ``finally`` blocks: the bound, not the caller's
-            # cancellation, decides abandonment. ``asyncio.wait`` cannot
-            # outlive its timeout, so this drain stays bounded.
-            continue
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    # The anyio shield keeps a level-cancelled scope from re-raising into
+    # every ``await`` (busy-spin); ``asyncio.wait`` removes its callback in a
+    # ``finally`` and never cancels ``task``, unlike 3.14's ``asyncio.shield``
+    # which leaks a done-callback per cancelled wait. The deadline (not a
+    # restarted timeout) keeps the bound exact under repeated edge cancels.
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait({task}, timeout=remaining)
+            except asyncio.CancelledError:
+                # Teardown runs in ``finally`` blocks: the bound, not the
+                # caller's cancellation, decides abandonment.
+                continue
     if task.done():
         task.result()
         return None

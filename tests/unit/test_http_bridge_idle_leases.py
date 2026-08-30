@@ -629,6 +629,117 @@ async def test_prewarm_failure_retires_closed_session_after_last_waiter(
 
 
 @pytest.mark.asyncio
+async def test_level_cancelled_submit_finishes_cleanup_without_leaking_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-08-30 livelock regression at the product path: a client disconnect
+    (level-cancelled scope) during submit must neither busy-spin the
+    defer-cancellation wait nor grow the cleanup task's callback list, and the
+    interruption cleanup must still run to completion before the cancellation
+    surfaces."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session()
+    lease = _make_lease("l-level-cancel")
+    acquire_account_lease = AsyncMock(return_value=lease)
+    release_account_lease = AsyncMock()
+    monkeypatch.setattr(service._load_balancer, "acquire_account_lease", acquire_account_lease)
+    monkeypatch.setattr(service._load_balancer, "release_account_lease", release_account_lease)
+
+    prewarm_started = asyncio.Event()
+    hold_prewarm = asyncio.Event()
+
+    async def wait_in_prewarm(*_args: object, **_kwargs: object) -> None:
+        prewarm_started.set()
+        await hold_prewarm.wait()
+
+    monkeypatch.setattr(service, "_maybe_prewarm_http_bridge_session", AsyncMock(side_effect=wait_in_prewarm))
+
+    cleanup_started = asyncio.Event()
+    finish_cleanup = asyncio.Event()
+    cleanup_task_holder: dict[str, asyncio.Task[None] | None] = {"task": None}
+    original_cleanup = service._cleanup_http_bridge_submit_interruption
+
+    async def delayed_cleanup(
+        cleanup_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        gate_acquired: bool,
+        request_enqueued: bool,
+        counted_in_queue: bool,
+        admission_waiter_registered: bool = False,
+    ) -> None:
+        cleanup_task_holder["task"] = cast("asyncio.Task[None] | None", asyncio.current_task())
+        cleanup_started.set()
+        await finish_cleanup.wait()
+        await original_cleanup(
+            cleanup_session,
+            request_state=request_state,
+            gate_acquired=gate_acquired,
+            request_enqueued=request_enqueued,
+            counted_in_queue=counted_in_queue,
+            admission_waiter_registered=admission_waiter_registered,
+        )
+
+    monkeypatch.setattr(service, "_cleanup_http_bridge_submit_interruption", delayed_cleanup)
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-level-cancel",
+        model="gpt-5.2",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        request_text='{"type":"response.create","model":"gpt-5.2","input":"hi"}',
+        transport="http",
+        skip_request_log=True,
+    )
+
+    scope_holder: dict[str, anyio.CancelScope] = {}
+    submit_cancelled = False
+
+    async def run_submit() -> None:
+        nonlocal submit_cancelled
+        with anyio.CancelScope() as scope:
+            scope_holder["scope"] = scope
+            try:
+                await service._submit_http_bridge_request(
+                    session,
+                    request_state=request_state,
+                    text_data=request_state.request_text or "{}",
+                    queue_limit=8,
+                )
+            except asyncio.CancelledError:
+                submit_cancelled = True
+                raise
+
+    submit_task = asyncio.create_task(run_submit())
+    await asyncio.wait_for(prewarm_started.wait(), timeout=1)
+    scope_holder["scope"].cancel()
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+
+    # The level cancellation stays pending while cleanup is held. The old
+    # unguarded loop busy-spun here, leaking >900 shield callbacks onto the
+    # cleanup task within 50ms.
+    await asyncio.sleep(0.05)
+    cleanup_task = cleanup_task_holder["task"]
+    assert cleanup_task is not None
+    assert len(getattr(cleanup_task, "_callbacks", None) or []) <= 3
+    assert not cleanup_task.done()
+
+    finish_cleanup.set()
+    await asyncio.wait_for(submit_task, timeout=1)
+
+    # Cleanup ran to completion and the cancellation surfaced afterwards.
+    assert submit_cancelled
+    assert scope_holder["scope"].cancelled_caught
+    release_account_lease.assert_awaited_once_with(lease)
+    assert session.admission_waiter_count == 0
+    assert session.account_lease is None
+
+
+@pytest.mark.asyncio
 async def test_prewarm_cancellation_cannot_interrupt_waiter_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

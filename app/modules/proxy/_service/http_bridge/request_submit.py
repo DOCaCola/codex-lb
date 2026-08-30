@@ -80,10 +80,13 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _HTTP_BRIDGE_COOLDOWN_SUPPRESSION_ATTR,
     _HTTP_BRIDGE_PRE_SUBMIT_FAILURE_ATTR,
     _await_task_deferring_cancellation,
+    _bind_http_bridge_proxy_injected_anchor,
     _build_http_bridge_prewarm_text,
+    _http_bridge_denied_anchor_fence_advanced,
     _http_bridge_durable_lease_ttl_seconds,
     _http_bridge_is_previous_response_owner_unavailable,
     _http_bridge_key_strength,
+    _http_bridge_payload_looks_like_full_resend,
     _http_bridge_precreated_retry_failure_error,
     _http_bridge_prewarm_enabled,
     _http_bridge_request_budget_seconds,
@@ -733,6 +736,11 @@ class _HTTPBridgeRequestSubmitMixin:
                 payload.previous_response_id is not None
                 or _sticky_key_from_turn_state_header(headers or {}) is not None
             ),
+            # Hard turn-state operation recovery can inject its anchor later,
+            # after the request state is prepared. Preserve the original
+            # payload shape so a full resend remains eligible for denied-anchor
+            # retirement when that operation path supplies the id.
+            proxy_injected_anchor_had_full_resend_payload=_http_bridge_payload_looks_like_full_resend(payload),
             payload_conversation_bound=bool(payload.conversation),
             input_item_count=input_item_count,
             input_full_fingerprint=input_full_fingerprint,
@@ -1216,8 +1224,11 @@ class _HTTPBridgeRequestSubmitMixin:
                         hard_turn_chain_advanced = True
                         text_data = _text_with_previous_response_id(text_data, terminal_hard_turn_response_id)
                         request_state.request_text = text_data
-                        request_state.previous_response_id = terminal_hard_turn_response_id
-                        request_state.proxy_injected_previous_response_id = True
+                        _bind_http_bridge_proxy_injected_anchor(
+                            self,
+                            request_state,
+                            response_id=terminal_hard_turn_response_id,
+                        )
                         request_state.hard_continuity_anchor = True
                         operation_parent_response_id = terminal_hard_turn_response_id
                         operation_fingerprint = durable_bridge_operation_fingerprint(
@@ -1266,8 +1277,11 @@ class _HTTPBridgeRequestSubmitMixin:
                             if completed_response_id and completed_response_id != request_state.previous_response_id:
                                 text_data = _text_with_previous_response_id(text_data, completed_response_id)
                                 request_state.request_text = text_data
-                                request_state.previous_response_id = completed_response_id
-                                request_state.proxy_injected_previous_response_id = True
+                                _bind_http_bridge_proxy_injected_anchor(
+                                    self,
+                                    request_state,
+                                    response_id=completed_response_id,
+                                )
                                 operation_parent_response_id = completed_response_id
                                 hard_turn_chain_advanced = True
                                 seen_hard_turn_response_ids.add(completed_response_id)
@@ -1950,6 +1964,29 @@ class _HTTPBridgeRequestSubmitMixin:
                                     "The recovery checkpoint was consumed before dispatch; retry the request.",
                                 ),
                             )
+                    if (
+                        request_state.proxy_injected_previous_response_id
+                        and request_state.previous_response_id is not None
+                        and (
+                            request_state.previous_response_id in session.denied_proxy_injected_anchor_ids
+                            or request_state.denied_proxy_injected_anchor_fence_was_already_denied
+                            or _http_bridge_denied_anchor_fence_advanced(self, request_state)
+                        )
+                    ):
+                        _record_continuity_fail_closed(
+                            surface="http_bridge",
+                            reason="denied_proxy_anchor_before_dispatch",
+                            previous_response_id=request_state.previous_response_id,
+                            session_id=request_state.session_id,
+                            upstream_error_code="previous_response_not_found",
+                        )
+                        raise ProxyResponseError(
+                            502,
+                            openai_error(
+                                "stream_incomplete",
+                                "The previous response anchor was rejected upstream; retry the request.",
+                            ),
+                        )
                     if (
                         request_state.verified_stale_anchor_replay
                         and request_state.verified_stale_anchor_retry_circuit_generation_captured
@@ -3091,8 +3128,12 @@ class _HTTPBridgeRequestSubmitMixin:
                     retry_text_data,
                 )
                 if using_fresh_replay:
-                    request_state.previous_response_id = None
-                    request_state.proxy_injected_previous_response_id = False
+                    _bind_http_bridge_proxy_injected_anchor(
+                        self,
+                        request_state,
+                        response_id=None,
+                        proxy_injected=False,
+                    )
                     request_state.request_text = retry_text_data
                 await _send_http_bridge_request_text_with_archive_id(session, request_state, retry_text_data)
             _clear_websocket_request_error_overrides(request_state)
@@ -3662,8 +3703,12 @@ class _HTTPBridgeRequestSubmitMixin:
         request_state.deferred_reasoning_downstream_texts = []
         request_state.awaiting_response_created = True
         if retry_text != request_state.request_text:
-            request_state.previous_response_id = None
-            request_state.proxy_injected_previous_response_id = False
+            _bind_http_bridge_proxy_injected_anchor(
+                self,
+                request_state,
+                response_id=None,
+                proxy_injected=False,
+            )
             request_state.request_text = retry_text
 
         async with session.pending_lock:
