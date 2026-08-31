@@ -9,6 +9,7 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Iterator, Mapping, NoReturn, cast
 
 import aiohttp
@@ -108,7 +109,10 @@ from app.modules.model_sources.selection import (
     effective_model_for_api_key,
     responses_model_is_source_owned,
 )
-from app.modules.model_sources.websocket_fallback import source_websocket_fallback_identities
+from app.modules.model_sources.websocket_fallback import (
+    SourceWebSocketFallbackRegistry,
+    source_websocket_fallback_identities,
+)
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -1289,6 +1293,10 @@ async def _process_upstream_websocket_transport_end(
 
 
 class _WebSocketMixin:
+    @cached_property
+    def _source_websocket_fallback_registry(self) -> SourceWebSocketFallbackRegistry:
+        return SourceWebSocketFallbackRegistry()
+
     async def _touch_active_websocket_thread_affinity(
         self,
         request_state: _WebSocketRequestState,
