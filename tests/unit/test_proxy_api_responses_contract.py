@@ -1057,6 +1057,69 @@ async def test_normalize_public_responses_stream_synthesizes_delta_from_complete
 
 
 @pytest.mark.asyncio
+async def test_normalize_public_responses_stream_does_not_synthesize_delta_from_reasoning_output() -> None:
+    reasoning_item = {
+        "id": "rs_litellm",
+        "type": "reasoning",
+        "status": "completed",
+        "content": [{"type": "reasoning_text", "text": "private analysis"}],
+    }
+    blocks = [
+        block
+        async for block in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                proxy_api_module.format_sse_event(
+                    {
+                        "type": "response.created",
+                        "sequence_number": 0,
+                        "response": {
+                            "id": "resp_litellm",
+                            "object": "response",
+                            "status": "in_progress",
+                            "output": [],
+                        },
+                    }
+                ),
+                proxy_api_module.format_sse_event(
+                    {
+                        "type": "response.output_item.done",
+                        "sequence_number": 1,
+                        "output_index": 0,
+                        "item": reasoning_item,
+                    }
+                ),
+                proxy_api_module.format_sse_event(
+                    {
+                        "type": "response.completed",
+                        "sequence_number": 2,
+                        "response": {
+                            "id": "resp_litellm",
+                            "object": "response",
+                            "status": "completed",
+                            "output": [reasoning_item],
+                        },
+                    }
+                ),
+            )
+        )
+    ]
+
+    payloads = [proxy_api_module._parse_sse_payload(block) for block in blocks]
+    event_types = [payload["type"] for payload in payloads if payload is not None]
+    assert event_types == [
+        "response.created",
+        "response.output_item.done",
+        "response.completed",
+    ]
+    done = payloads[1]
+    assert done is not None
+    assert done["item"] == reasoning_item
+    completed = payloads[2]
+    assert completed is not None
+    assert completed["response"]["output"] == [reasoning_item]
+
+
+@pytest.mark.asyncio
 async def test_normalize_public_responses_stream_does_not_duplicate_existing_delta() -> None:
     blocks = [
         block

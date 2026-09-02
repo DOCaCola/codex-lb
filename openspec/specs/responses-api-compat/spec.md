@@ -3,7 +3,9 @@
 ## Purpose
 
 Define Responses API compatibility contracts so Codex, OpenCode, and OpenAI-style clients preserve expected behavior.
+
 ## Requirements
+
 ### Requirement: Use prompt_cache_key as OpenAI cache affinity
 For OpenAI-style `/v1/responses`, `/v1/responses/compact`, and chat-completions requests mapped onto Responses, the service MUST treat a non-empty `prompt_cache_key` as the bounded upstream account affinity key for prompt-cache correctness even when a `session_id` header is present. OpenAI-style route wiring MUST NOT upgrade those requests to durable `CODEX_SESSION` affinity by default. This affinity MUST apply even when dashboard `sticky_threads_enabled` is disabled, the service MUST continue forwarding the same `prompt_cache_key` upstream unchanged, and the stored affinity MUST expire after the configured freshness window so older keys can rebalance. The freshness window MUST come from dashboard settings so operators can adjust it without restart.
 
@@ -854,19 +856,36 @@ The shared OpenAI-compatible Responses sanitation path MUST normalize third-part
 - **AND** the forwarded upstream payload does not include `thinking`
 
 ### Requirement: Public Responses streams expose renderable final text
-For OpenAI-style streaming `/v1/responses` and `/backend-api/codex/responses`, the service MUST expose renderable `response.output_text.delta` events for assistant message text when upstream provides final text only in output item or terminal response output payloads. The service MUST NOT duplicate text deltas for an output item that already emitted a text delta.
+
+For OpenAI-style streaming `/v1/responses` and `/backend-api/codex/responses`,
+the service MUST expose renderable `response.output_text.delta` events for
+assistant message text when upstream provides final text only in output item or
+terminal response output payloads. Synthetic visible-text deltas MUST be
+limited to normalized `type: "message"` output items. The service MUST NOT
+convert reasoning-item content into `response.output_text.delta`, and MUST NOT
+duplicate text deltas for an output item that already emitted a text delta.
 
 #### Scenario: final output item text is exposed as a text delta
+
 - **WHEN** upstream emits a `response.output_item.done` event with assistant message text and no prior text delta for that output item
 - **THEN** the service emits a corresponding `response.output_text.delta` event before forwarding the final item event
 
 #### Scenario: terminal response output text is exposed as a text delta
+
 - **WHEN** upstream emits only a terminal `response.completed` event with assistant message text in `response.output`
 - **THEN** the service emits a corresponding `response.output_text.delta` event before forwarding the terminal event
 
 #### Scenario: existing text deltas are preserved without duplication
+
 - **WHEN** upstream already emits a `response.output_text.delta` for an output item
 - **THEN** the service forwards the stream without synthesizing another text delta for that same output item
+
+#### Scenario: reasoning output item text remains non-visible
+
+- **GIVEN** an OpenAI-compatible source emits reasoning text events and a completed `type: "reasoning"` output item whose content carries text
+- **WHEN** the public Responses stream normalizer processes the item directly or inside terminal response output
+- **THEN** the reasoning events and item remain reasoning output
+- **AND** the service does not synthesize `response.output_text.delta` from the reasoning item
 
 ### Requirement: Tool call events and output items are preserved
 If the upstream model emits tool call deltas or output items, the service MUST forward those events in streaming mode and MUST include tool call items in the final response output for non-streaming mode.

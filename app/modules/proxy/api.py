@@ -9537,6 +9537,8 @@ def _synthetic_text_delta_for_output_item(
     normalized_item = _normalize_public_output_item(item)
     if normalized_item is None:
         return None
+    if normalized_item.get("type") != "message":
+        return None
     text = _extract_public_output_item_text(normalized_item)
     if text is None:
         return None

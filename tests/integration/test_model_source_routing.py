@@ -3839,6 +3839,132 @@ async def test_codex_responses_payload_restores_declared_minimal_effort(async_cl
 
 
 @pytest.mark.asyncio
+async def test_codex_source_responses_does_not_promote_litellm_reasoning_to_visible_text(
+    async_client,
+    source_upstream,
+) -> None:
+    reasoning_text = "private analysis"
+    visible_text = "visible answer"
+    reasoning_item = {
+        "id": "rs_litellm",
+        "type": "reasoning",
+        "status": "completed",
+        "content": [{"type": "reasoning_text", "text": reasoning_text}],
+    }
+    message_item = {
+        "id": "msg_litellm",
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": visible_text}],
+    }
+    upstream_events = [
+        {
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": {
+                "id": "resp_litellm",
+                "object": "response",
+                "status": "in_progress",
+                "output": [],
+            },
+        },
+        {
+            "type": "response.reasoning_text.delta",
+            "sequence_number": 1,
+            "item_id": "rs_litellm",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": reasoning_text,
+        },
+        {
+            "type": "response.output_item.done",
+            "sequence_number": 2,
+            "output_index": 0,
+            "item": reasoning_item,
+        },
+        {
+            "type": "response.output_text.delta",
+            "sequence_number": 3,
+            "item_id": "msg_litellm",
+            "output_index": 1,
+            "content_index": 0,
+            "delta": visible_text,
+        },
+        {
+            "type": "response.output_item.done",
+            "sequence_number": 4,
+            "output_index": 1,
+            "item": message_item,
+        },
+        {
+            "type": "response.completed",
+            "sequence_number": 5,
+            "response": {
+                "id": "resp_litellm",
+                "object": "response",
+                "status": "completed",
+                "output": [],
+                "usage": {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12},
+            },
+        },
+    ]
+    frames = (
+        b"".join(
+            f"event: {event['type']}\ndata: {json.dumps(event, separators=(',', ':'))}\n\n".encode()
+            for event in upstream_events
+        )
+        + b"data: [DONE]\n\n"
+    )
+
+    async def responses(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(frames)
+        await response.write_eof()
+        return response
+
+    base_url = await source_upstream(responses)
+    model = "litellm-reasoning-stream"
+    await _create_model_source(
+        async_client,
+        name="litellm-reasoning-stream",
+        model=model,
+        base_url=base_url,
+        supports_responses=True,
+        raw_metadata_json='{"supports_reasoning": true}',
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/backend-api/codex/responses",
+        headers={"accept": "text/event-stream", "user-agent": "codex-cli/1.0"},
+        json={
+            "model": model,
+            "instructions": "answer",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+            "stream": True,
+            "reasoning": {"effort": "high"},
+        },
+    ) as response:
+        assert response.status_code == 200
+        events = [
+            json.loads(line.removeprefix("data: "))
+            async for line in response.aiter_lines()
+            if line.startswith("data: {")
+        ]
+
+    reasoning_deltas = [event for event in events if event["type"] == "response.reasoning_text.delta"]
+    assert [event["delta"] for event in reasoning_deltas] == [reasoning_text]
+    visible_deltas = [event for event in events if event["type"] == "response.output_text.delta"]
+    assert [event["delta"] for event in visible_deltas] == [visible_text]
+    reasoning_done = next(
+        event for event in events if event["type"] == "response.output_item.done" and event["output_index"] == 0
+    )
+    assert reasoning_done["item"] == reasoning_item
+
+
+@pytest.mark.asyncio
 async def test_source_embeddings_routes_explicit_null_fields(async_client, source_upstream) -> None:
     captured: dict[str, object] = {}
     model = "explicit-null-embedder"
