@@ -27,6 +27,7 @@ from app.core.auth.guardian import build_auth_guardian_scheduler
 from app.core.balancer import configure_replica_salt
 from app.core.bootstrap import ensure_auto_bootstrap_token, log_bootstrap_token
 from app.core.clients.http import close_http_client, init_http_client
+from app.core.clients.native_egress import close_discovered_native_egress_client
 from app.core.config.key_fingerprint import verify_encryption_key_fingerprint
 from app.core.config.settings import (
     _bridge_advertise_hostname_is_replica_specific,
@@ -878,7 +879,10 @@ async def lifespan(app: FastAPI):
         # potentially wedged cancellation, so shutdown always proceeds.
         leader_lease_release_completed = await _release_leader_lease_within(10)
         try:
-            await close_http_client()
+            try:
+                await close_discovered_native_egress_client()
+            finally:
+                await close_http_client()
         finally:
             try:
                 if metrics_server_task is not None:

@@ -35,6 +35,7 @@ jobs:
     outputs:
       frontend: ${{ steps.force.outputs.full_suite || steps.filter.outputs.frontend }}
       backend: ${{ steps.force.outputs.full_suite || steps.filter.outputs.backend }}
+      rust: ${{ steps.force.outputs.full_suite || steps.filter.outputs.rust }}
       helm: ${{ steps.force.outputs.full_suite || steps.filter.outputs.helm }}
       docker: ${{ steps.force.outputs.full_suite || steps.filter.outputs.docker }}
       migrations: ${{ steps.force.outputs.full_suite || steps.filter.outputs.migrations }}
@@ -352,6 +353,42 @@ jobs:
 
       - name: Ty check
         run: make typecheck
+
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Check formatting, lints, tests, and release build
+        run: make rust-check
+
+      - name: Audit Rust dependencies and licenses
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        with:
+          rust-version: "1.96.0"
+          command: check
+          arguments: --all-features
 
   test:
     name: Tests (pytest, ${{ matrix.slice.name }})
@@ -698,7 +735,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy scan results to GitHub Security
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           sarif_file: trivy-results.sarif
@@ -875,6 +912,7 @@ jobs:
       - dashboard-browser-smoke
       - lint
       - typecheck
+      - rust
       - test
       - test-integration-core
       - test-integration-core-required

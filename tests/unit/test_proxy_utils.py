@@ -50,7 +50,7 @@ from app.core.clients.proxy_websocket import (
 )
 from app.core.config.settings import Settings
 from app.core.crypto import TokenEncryptor
-from app.core.errors import OpenAIErrorParam, openai_error
+from app.core.errors import SYNTHETIC_TRANSPORT_FAILURE_MARKER, OpenAIErrorParam, openai_error
 from app.core.exceptions import ProxyReasoningEffortNotAllowed
 from app.core.openai.models import CompactResponsePayload, OpenAIResponsePayload
 from app.core.openai.parsing import parse_sse_event
@@ -2169,6 +2169,93 @@ def test_build_upstream_headers_accept_override():
     assert headers["Accept"] == "application/json"
 
 
+def test_build_upstream_headers_emits_singletons_once_case_insensitively():
+    headers = _build_upstream_headers(
+        {
+            "authorization": "Bearer inbound",
+            "accept": "*/*",
+            "content-type": "text/plain",
+        },
+        "token",
+        None,
+    )
+
+    for name in ("authorization", "accept", "content-type"):
+        assert [key.lower() for key in headers].count(name) == 1
+    assert headers["Authorization"] == "Bearer token"
+    assert headers["Accept"] == "text/event-stream"
+    assert headers["Content-Type"] == "application/json"
+
+
+def test_build_upstream_headers_preserves_native_singleton_and_account_positions():
+    native_ua = "codex_cli_rs/0.151.0 (Ubuntu 24.4.0; x86_64) dumb"
+    inbound = {
+        "x-codex-beta-features": "feature",
+        "accept": "*/*",
+        "Content-Type": "text/plain",
+        "AUTHORIZATION": "Bearer inbound",
+        "ChatGPT-Account-Id": "inbound-account",
+        "originator": "codex_cli_rs",
+        "User-Agent": native_ua,
+    }
+
+    headers = _build_upstream_headers(inbound, "selected-token", "selected-account")
+
+    assert list(headers) == list(inbound)
+    assert headers["accept"] == "text/event-stream"
+    assert headers["Content-Type"] == "application/json"
+    assert headers["AUTHORIZATION"] == "Bearer selected-token"
+    assert headers["ChatGPT-Account-Id"] == "selected-account"
+    for name in ("authorization", "accept", "content-type", "chatgpt-account-id"):
+        assert [key.lower() for key in headers].count(name) == 1
+
+
+def test_responses_lite_header_returns_to_native_position_after_safe_recompute():
+    native_ua = "codex_cli_rs/0.151.0 (Ubuntu 24.4.0; x86_64) dumb"
+    inbound = {
+        "x-codex-beta-features": "feature",
+        "x-codex-turn-metadata": "metadata",
+        "x-client-request-id": "request",
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+        "originator": "codex_cli_rs",
+        "user-agent": native_ua,
+    }
+    native_order = proxy_module._native_responses_header_order(inbound)
+    assert native_order is not None
+    headers = {
+        "x-codex-beta-features": "feature",
+        "x-codex-turn-metadata": "metadata",
+        "x-client-request-id": "request",
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+        "authorization": "Bearer selected-token",
+        "chatgpt-account-id": "selected-account",
+        "originator": "codex_cli_rs",
+        "user-agent": native_ua,
+    }
+
+    proxy_module._apply_responses_lite_http_header(
+        headers,
+        {"input": [{"type": "additional_tools"}]},
+        preferred_order=native_order,
+    )
+
+    assert list(headers) == [
+        "x-codex-beta-features",
+        "x-codex-turn-metadata",
+        "x-openai-internal-codex-responses-lite",
+        "x-client-request-id",
+        "accept",
+        "content-type",
+        "authorization",
+        "chatgpt-account-id",
+        "originator",
+        "user-agent",
+    ]
+    assert headers[proxy_module.CODEX_RESPONSES_LITE_HEADER] == "true"
+
+
 def test_upstream_unavailable_certificate_connect_error_is_not_transient_retry() -> None:
     message = str(_client_connector_certificate_error())
 
@@ -4243,7 +4330,14 @@ async def test_stream_http_bridge_or_retry_bypasses_bridge_for_input_image(monke
     assert output == ["data: retry\n\n"]
     assert calls == [("retry", payload, None, 180.0, "http")]
 
-    text_payload = ResponsesRequest.model_validate({"model": "gpt-5.5", "instructions": "hi", "input": "hello"})
+    text_payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.5",
+            "instructions": "hi",
+            "input": "hello",
+            "prompt_cache_key": "bridge-text-thread",
+        }
+    )
     text_output = [
         line
         async for line in service._stream_http_bridge_or_retry(
@@ -6089,6 +6183,100 @@ def test_http_downstream_always_websocket_policy_keeps_websocket_without_sticky_
     )
 
 
+def test_native_codex_http_fallback_bypasses_sticky_websocket_bridge() -> None:
+    dashboard_settings = _make_proxy_settings()
+    dashboard_settings.http_downstream_transport_policy = "always_websocket"
+    dashboard_settings.upstream_stream_transport = "auto"
+    base_settings = _make_proxy_settings()
+    base_settings.upstream_stream_transport = "auto"
+    payload = _make_transport_policy_payload(prompt_cache_key="native-fallback-thread")
+
+    assert (
+        streaming_retry_module._http_bridge_allowed_by_transport_policy(
+            payload,
+            {"user-agent": "codex_exec/0.150.1 (Ubuntu; x86_64)", "originator": "codex_exec"},
+            api_key=None,
+            dashboard_settings=dashboard_settings,
+            base_settings=base_settings,
+        )
+        is False
+    )
+
+
+def test_native_codex_explicit_websocket_still_enters_bridge() -> None:
+    dashboard_settings = _make_proxy_settings()
+    dashboard_settings.upstream_stream_transport = "websocket"
+    base_settings = _make_proxy_settings()
+
+    assert (
+        streaming_retry_module._http_bridge_allowed_by_transport_policy(
+            _make_transport_policy_payload(prompt_cache_key="native-explicit-thread"),
+            {"originator": "codex_exec"},
+            api_key=None,
+            dashboard_settings=dashboard_settings,
+            base_settings=base_settings,
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    ("dashboard_policy", "key_override", "upstream_config", "sticky", "expected"),
+    [
+        ("always_http", None, "auto", True, False),
+        ("pinned", None, "auto", True, False),
+        ("smart", None, "auto", False, False),
+        ("smart", None, "auto", True, True),
+        ("always_websocket", None, "auto", False, True),
+        ("always_websocket", "always_http", "auto", True, False),
+        ("always_http", "always_websocket", "auto", False, True),
+        ("always_websocket", None, "http", True, False),
+        ("always_http", None, "websocket", False, True),
+    ],
+    ids=[
+        "always-http",
+        "pinned",
+        "smart-single-shot",
+        "smart-sticky",
+        "always-websocket",
+        "key-forces-http",
+        "key-forces-websocket",
+        "explicit-http",
+        "explicit-websocket",
+    ],
+)
+def test_http_bridge_admission_obeys_effective_transport_policy(
+    dashboard_policy: str,
+    key_override: str | None,
+    upstream_config: str,
+    sticky: bool,
+    expected: bool,
+) -> None:
+    dashboard_settings = _make_proxy_settings()
+    dashboard_settings.http_downstream_transport_policy = dashboard_policy
+    dashboard_settings.upstream_stream_transport = upstream_config
+    base_settings = _make_proxy_settings()
+    base_settings.http_downstream_transport_policy = "smart"
+    base_settings.upstream_stream_transport = "auto"
+    api_key = (
+        _make_api_key_data("key_bridge_policy", transport_policy_override=key_override)
+        if key_override is not None
+        else None
+    )
+    payload = _make_transport_policy_payload(**({"previous_response_id": "resp_previous"} if sticky else {}))
+
+    assert (
+        streaming_retry_module._http_bridge_allowed_by_transport_policy(
+            payload,
+            {},
+            api_key=api_key,
+            dashboard_settings=dashboard_settings,
+            base_settings=base_settings,
+        )
+        is expected
+    )
+
+
 async def _capture_stream_retry_transport(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -6176,6 +6364,18 @@ async def test_http_downstream_sticky_smart_policy_preserves_auto_transport_mode
     )
 
     assert transport == "auto"
+
+
+@pytest.mark.asyncio
+async def test_native_codex_http_fallback_preserves_http_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = await _capture_stream_retry_transport(
+        monkeypatch,
+        dashboard_policy="always_websocket",
+        payload=_make_transport_policy_payload(prompt_cache_key="native-fallback-thread"),
+        headers={"user-agent": "codex_exec/0.150.1 (Ubuntu; x86_64)", "originator": "codex_exec"},
+    )
+
+    assert transport == "http"
 
 
 @pytest.mark.asyncio
@@ -6792,10 +6992,49 @@ class _SseSession:
         *,
         json=None,
         headers: dict[str, str] | None = None,
+        skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
-        self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        self.calls.append(
+            {
+                "url": url,
+                "json": json,
+                "headers": headers,
+                "skip_auto_headers": skip_auto_headers,
+                "timeout": timeout,
+            }
+        )
         return self._response
+
+
+class _NativeSseResponse:
+    status = 200
+    headers: dict[str, str] = {}
+
+    def __init__(self, chunks: Sequence[bytes]) -> None:
+        self.content = _DummyContent(chunks)
+        self.closed = False
+
+    async def __aenter__(self) -> "_NativeSseResponse":
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _NativeEgressClientHarness:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[object] = []
+
+    async def request(self, request: object) -> object:
+        self.calls.append(request)
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
 
 
 class _SessionGenerationHarness:
@@ -6836,8 +7075,10 @@ class _TimeoutSseSession:
         *,
         json=None,
         headers: dict[str, str] | None = None,
+        skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
+        del url, json, headers, skip_auto_headers, timeout
         raise asyncio.TimeoutError
 
 
@@ -6873,8 +7114,10 @@ class _TimeoutAfterHeadersSseSession:
         *,
         json=None,
         headers: dict[str, str] | None = None,
+        skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
+        del url, json, headers, skip_auto_headers, timeout
         return _TimeoutAfterHeadersSseResponse()
 
 
@@ -6892,8 +7135,10 @@ class _SilentBeforeHeadersSseSession:
         *,
         json=None,
         headers: dict[str, str] | None = None,
+        skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
+        del url, json, headers, skip_auto_headers
         self.timeouts.append(timeout)
         self._clock["now"] += self._silence_seconds
         raise aiohttp.SocketTimeoutError("Timeout on reading data from socket")
@@ -6948,8 +7193,10 @@ class _ActiveThenTotalTimeoutSseSession:
         *,
         json=None,
         headers: dict[str, str] | None = None,
+        skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
+        del url, json, headers, skip_auto_headers, timeout
         return _ActiveThenTotalTimeoutSseResponse(self._clock)
 
 
@@ -7094,9 +7341,18 @@ class _WsSession:
         *,
         json=None,
         headers: dict[str, str] | None = None,
+        skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
-        self.post_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        self.post_calls.append(
+            {
+                "url": url,
+                "json": json,
+                "headers": headers,
+                "skip_auto_headers": skip_auto_headers,
+                "timeout": timeout,
+            }
+        )
         if self._sse_response is None:
             raise AssertionError("HTTP POST path should not be used in websocket mode")
         return self._sse_response
@@ -7635,6 +7891,7 @@ async def test_stream_responses_archives_http_error_before_raising(monkeypatch):
     class ErrorPostResponse:
         status = 429
         reason = "Too Many Requests"
+        headers = {"Retry-After": "3"}
         content = _DummyContent([])
 
         async def __aenter__(self):
@@ -7675,6 +7932,8 @@ async def test_stream_responses_archives_http_error_before_raising(monkeypatch):
         ]
 
     assert exc_info.value.status_code == 429
+    assert exc_info.value.retry_after_header == "3"
+    assert exc_info.value.retry_after_seconds == 3
     assert len(archived) == 2
     assert archived[-1]["direction"] == "server_to_codex"
     assert archived[-1]["status_code"] == 429
@@ -7999,8 +8258,10 @@ async def test_stream_responses_preserves_connect_timeout_retry_provenance(monke
             *,
             json=None,
             headers: dict[str, str] | None = None,
+            skip_auto_headers: frozenset[str] | None = None,
             timeout=None,
         ):
+            del url, json, headers, skip_auto_headers, timeout
             raise proxy_module.aiohttp.ConnectionTimeoutError("connect timed out")
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
@@ -8219,9 +8480,10 @@ async def test_stream_responses_maps_typed_dns_failure_with_failed_session_prove
             *,
             json=None,
             headers: dict[str, str] | None = None,
+            skip_auto_headers: frozenset[str] | None = None,
             timeout=None,
         ):
-            del url, json, headers, timeout
+            del url, json, headers, skip_auto_headers, timeout
             key = ConnectionKey("chatgpt.com", 443, True, True, None, None, None)
             raise aiohttp.ClientConnectorError(
                 key,
@@ -8316,9 +8578,10 @@ async def test_stream_responses_keeps_missing_environment_proxy_hostname_endpoin
             *,
             json=None,
             headers: dict[str, str] | None = None,
+            skip_auto_headers: frozenset[str] | None = None,
             timeout=None,
         ):
-            del url, json, headers, timeout
+            del url, json, headers, skip_auto_headers, timeout
             key = ConnectionKey("missing-proxy.invalid", 8080, False, False, None, None, None)
             raise aiohttp.ClientProxyConnectionError(
                 key,
@@ -8492,7 +8755,143 @@ async def test_stream_responses_falls_back_to_http_post_without_native_codex_hea
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_http_egress_normalizes_selected_installation_metadata(monkeypatch):
+async def test_stream_responses_direct_http_prefers_native_egress(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Settings:
+        upstream_base_url = "https://chatgpt.com/backend-api"
+        upstream_connect_timeout_seconds = 8.0
+        stream_idle_timeout_seconds = 45.0
+        max_sse_event_bytes = 1024
+        image_inline_fetch_enabled = False
+        trace_channels = frozenset()
+        proxy_request_budget_seconds = 15.0
+        upstream_stream_transport = "http"
+
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_complete", lambda **kwargs: None)
+    payload = ResponsesRequest.model_validate(
+        {"model": "gpt-5.1", "instructions": "hi", "input": [{"role": "user", "content": "hi"}]}
+    )
+    session = _SseSession(_SsePostResponse([]))
+    native_response = _NativeSseResponse([b'data: {"type":"response.completed","response":{"id":"resp_native"}}\n\n'])
+    native_client = _NativeEgressClientHarness(native_response)
+
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            headers={"originator": "codex_exec"},
+            access_token="token",
+            account_id="acc_1",
+            session=cast(proxy_module.aiohttp.ClientSession, session),
+            native_egress_client=cast(Any, native_client),
+        )
+    ]
+
+    assert events == ['data: {"type":"response.completed","response":{"id":"resp_native"}}\n\n']
+    assert session.calls == []
+    assert native_response.closed is True
+    assert len(native_client.calls) == 1
+    native_request = native_client.calls[0]
+    assert getattr(native_request, "method") == "POST"
+    assert getattr(native_request, "url") == "https://chatgpt.com/backend-api/codex/responses"
+    assert json.loads(getattr(native_request, "body")) == payload.to_payload()
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_direct_http_falls_back_when_native_helper_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Settings:
+        upstream_base_url = "https://chatgpt.com/backend-api"
+        upstream_connect_timeout_seconds = 8.0
+        stream_idle_timeout_seconds = 45.0
+        max_sse_event_bytes = 1024
+        image_inline_fetch_enabled = False
+        trace_channels = frozenset()
+        proxy_request_budget_seconds = 15.0
+        upstream_stream_transport = "http"
+
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_complete", lambda **kwargs: None)
+    payload = ResponsesRequest.model_validate(
+        {"model": "gpt-5.1", "instructions": "hi", "input": [{"role": "user", "content": "hi"}]}
+    )
+    session = _SseSession(
+        _SsePostResponse([b'data: {"type":"response.completed","response":{"id":"resp_python"}}\n\n'])
+    )
+    native_client = _NativeEgressClientHarness(proxy_module.NativeEgressUnavailable("helper disappeared"))
+
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            headers={},
+            access_token="token",
+            account_id="acc_1",
+            session=cast(proxy_module.aiohttp.ClientSession, session),
+            native_egress_client=cast(Any, native_client),
+        )
+    ]
+
+    assert events == ['data: {"type":"response.completed","response":{"id":"resp_python"}}\n\n']
+    assert len(native_client.calls) == 1
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_does_not_replay_ambiguous_native_failure_through_aiohttp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Settings:
+        upstream_base_url = "https://chatgpt.com/backend-api"
+        upstream_connect_timeout_seconds = 8.0
+        stream_idle_timeout_seconds = 45.0
+        max_sse_event_bytes = 1024
+        image_inline_fetch_enabled = False
+        trace_channels = frozenset()
+        proxy_request_budget_seconds = 15.0
+        upstream_stream_transport = "http"
+
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_complete", lambda **kwargs: None)
+    payload = ResponsesRequest.model_validate(
+        {"model": "gpt-5.1", "instructions": "hi", "input": [{"role": "user", "content": "hi"}]}
+    )
+    session = _SseSession(_SsePostResponse([]))
+    native_client = _NativeEgressClientHarness(
+        proxy_module.NativeEgressTransportError(
+            "native upstream response body failed",
+            failure_phase="body_read",
+            retryable_same_contract=False,
+        )
+    )
+
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            headers={},
+            access_token="token",
+            account_id="acc_1",
+            session=cast(proxy_module.aiohttp.ClientSession, session),
+            native_egress_client=cast(Any, native_client),
+        )
+    ]
+
+    event = parse_sse_data_json(events[0])
+    assert event is not None
+    assert event[SYNTHETIC_TRANSPORT_FAILURE_MARKER] is True
+    response = cast(dict[str, object], event["response"])
+    error = cast(dict[str, object], response["error"])
+    assert error["code"] == "upstream_error"
+    assert session.calls == []
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_http_egress_uses_profiled_installation_identity(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
@@ -8535,11 +8934,14 @@ async def test_stream_responses_http_egress_normalizes_selected_installation_met
     assert events == ['data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n']
     assert len(session.calls) == 1
     upstream_headers = cast(dict[str, str], session.calls[0]["headers"])
-    assert upstream_headers["x-codex-installation-id"] == "account-installation"
+    assert "x-codex-installation-id" not in {key.lower() for key in upstream_headers}
     assert json.loads(upstream_headers["x-codex-turn-metadata"]) == {
         "installation_id": "account-installation",
         "turn_id": "turn_123",
     }
+    upstream_payload = cast(dict[str, object], session.calls[0]["json"])
+    client_metadata = cast(dict[str, object], upstream_payload["client_metadata"])
+    assert client_metadata["x-codex-installation-id"] == "account-installation"
 
 
 @pytest.mark.asyncio
@@ -8840,6 +9242,189 @@ async def test_public_responses_stream_normalizes_raw_error_after_created():
     assert error["code"] == "upstream_error"
     assert error["type"] == "server_error"
     assert error["message"] == "OpenCode stream failed"
+
+
+@pytest.mark.asyncio
+async def test_native_codex_stream_preserves_missing_terminal_without_synthesis() -> None:
+    async def truncated_stream() -> AsyncIterator[str]:
+        yield 'data: {"type":"response.created","response":{"id":"resp_native_truncated"}}\n\n'
+
+    iterator = proxy_api._normalize_public_responses_stream(
+        truncated_stream(),
+        enforce_openai_sdk_contract=False,
+        preserve_native_failure_lifecycle=True,
+    )
+
+    assert parse_sse_data_json(await iterator.__anext__()) == {
+        "type": "response.created",
+        "response": {"id": "resp_native_truncated"},
+    }
+    with pytest.raises(proxy_module.ProxyResponseError):
+        await iterator.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_native_codex_stream_suppresses_marked_synthetic_transport_terminal() -> None:
+    async def synthetic_failure_stream() -> AsyncIterator[str]:
+        yield (
+            'data: {"type":"response.failed","_codex_lb_synthetic_transport_failure":true,'
+            '"response":{"status":"failed","error":{"code":"upstream_request_timeout",'
+            '"message":"Proxy request budget exhausted"}}}\n\n'
+        )
+        yield "data: [DONE]\n\n"
+
+    with pytest.raises(proxy_module.ProxyResponseError):
+        _ = [
+            event_block
+            async for event_block in proxy_api._normalize_public_responses_stream(
+                synthetic_failure_stream(),
+                enforce_openai_sdk_contract=False,
+                preserve_native_failure_lifecycle=True,
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_native_codex_stream_suppresses_marked_incomplete_terminal_as_eof() -> None:
+    async def synthetic_failure_stream() -> AsyncIterator[str]:
+        yield (
+            'data: {"type":"response.failed","_codex_lb_synthetic_transport_failure":true,'
+            '"response":{"status":"failed","error":{"code":"stream_incomplete",'
+            '"message":"Upstream closed stream without completion"}}}\n\n'
+        )
+        yield "data: [DONE]\n\n"
+
+    with pytest.raises(proxy_module.ProxyResponseError):
+        _ = [
+            event_block
+            async for event_block in proxy_api._normalize_public_responses_stream(
+                synthetic_failure_stream(),
+                enforce_openai_sdk_contract=False,
+                preserve_native_failure_lifecycle=True,
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_non_native_stream_emits_synthetic_transport_terminal_without_internal_marker() -> None:
+    async def synthetic_failure_stream() -> AsyncIterator[str]:
+        yield (
+            'data: {"type":"response.failed","_codex_lb_synthetic_transport_failure":true,'
+            '"response":{"status":"failed","error":{"code":"upstream_request_timeout",'
+            '"message":"Proxy request budget exhausted"}}}\n\n'
+        )
+
+    events = [
+        parse_sse_data_json(event_block)
+        async for event_block in proxy_api._normalize_public_responses_stream(
+            synthetic_failure_stream(),
+            enforce_openai_sdk_contract=False,
+        )
+    ]
+
+    assert events[0] is not None
+    assert events[0]["type"] == "response.failed"
+    assert "_codex_lb_synthetic_transport_failure" not in events[0]
+
+
+@pytest.mark.asyncio
+async def test_native_codex_stream_reraises_transport_failure_without_terminal_event() -> None:
+    async def failed_stream() -> AsyncIterator[str]:
+        raise proxy_module.ProxyResponseError(
+            502,
+            openai_error("upstream_request_timeout", "timed out"),
+        )
+        yield ""  # pragma: no cover
+
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        _ = [
+            event
+            async for event in proxy_api._stream_response_error_events(
+                failed_stream(),
+                owns_reservation=False,
+                reservation=None,
+                preserve_native_failure_lifecycle=True,
+            )
+        ]
+
+    assert _proxy_error_code(exc_info.value) == "upstream_request_timeout"
+
+
+def test_stream_startup_error_response_preserves_exact_retry_after_header() -> None:
+    request = Request({"type": "http", "method": "POST", "path": "/backend-api/codex/responses", "headers": []})
+    error = proxy_module.ProxyResponseError(
+        429,
+        openai_error("rate_limit_exceeded", "slow down", error_type="rate_limit_error"),
+        retry_after_seconds=3,
+        retry_after_header="Wed, 21 Oct 2026 07:28:00 GMT",
+    )
+
+    response = proxy_api._stream_startup_error_response(request, error, headers={})
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "Wed, 21 Oct 2026 07:28:00 GMT"
+
+
+def test_stream_startup_error_response_rejects_malformed_retry_after_header() -> None:
+    request = Request({"type": "http", "method": "POST", "path": "/backend-api/codex/responses", "headers": []})
+    error = proxy_module.ProxyResponseError(
+        429,
+        openai_error("rate_limit_exceeded", "slow down", error_type="rate_limit_error"),
+        retry_after_seconds=3,
+        retry_after_header="not a valid HTTP date",
+    )
+
+    response = proxy_api._stream_startup_error_response(request, error, headers={})
+
+    assert response.headers["Retry-After"] == "3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["queued", "in_progress"])
+async def test_non_streaming_response_preserves_unfinished_status(status: str) -> None:
+    event_block, event_type = proxy_module._non_streaming_response_event(
+        {"id": "resp_background", "status": status, "output": []}
+    )
+
+    async def stream() -> AsyncIterator[str]:
+        yield event_block
+
+    result = await proxy_api._collect_responses_payload(stream())
+
+    assert event_type == f"response.{status}"
+    assert isinstance(result, OpenAIResponsePayload)
+    assert result.status == status
+
+
+@pytest.mark.asyncio
+async def test_collect_responses_payload_does_not_treat_in_progress_as_terminal() -> None:
+    async def stream() -> AsyncIterator[str]:
+        yield proxy_module.format_sse_event(
+            {"type": "response.in_progress", "response": {"id": "resp_background", "status": "in_progress"}}
+        )
+        yield proxy_module.format_sse_event(
+            {
+                "type": "response.completed",
+                "response": {"id": "resp_background", "status": "completed", "output": []},
+            }
+        )
+
+    result = await proxy_api._collect_responses_payload(stream())
+
+    assert isinstance(result, OpenAIResponsePayload)
+    assert result.status == "completed"
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"Retry-After": " 5 "}, "5"),
+        ({"retry-after": "5\r\nX-Injected: yes"}, None),
+        ({"Retry-After": "x" * 129}, None),
+    ],
+)
+def test_safe_retry_after_header_is_bounded(headers: dict[str, str], expected: str | None) -> None:
+    assert proxy_module._safe_retry_after_header(headers) == expected
 
 
 def test_normalize_http_bridge_error_event_preserves_explicit_error_code_from_parsed_event():
@@ -10349,6 +10934,80 @@ async def test_stream_responses_http_transport_keeps_http(monkeypatch):
 
     assert session.calls
     assert events == ['data: {"type":"response.completed","response":{"id":"resp_http_legacy"}}\n\n']
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_responses_forces_http_and_preserves_json_request(monkeypatch):
+    class Settings:
+        upstream_base_url = "https://chatgpt.com/backend-api"
+        upstream_connect_timeout_seconds = 8.0
+        stream_idle_timeout_seconds = 45.0
+        max_sse_event_bytes = 1024
+        image_inline_fetch_enabled = False
+        trace_channels = frozenset()
+        proxy_request_budget_seconds = 75.0
+        upstream_stream_transport = "websocket"
+
+    class JsonResponse:
+        status = 200
+        headers = {"content-type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def json(self, *, content_type=None):
+            del content_type
+            return {
+                "id": "resp_http_json",
+                "object": "response",
+                "status": "completed",
+                "output": [],
+            }
+
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
+    monkeypatch.setattr(proxy_module, "discover_native_egress_client", lambda: None)
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_complete", lambda **kwargs: None)
+
+    session = _WsSession(_WsConnection([]), sse_response=cast(Any, JsonResponse()))
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.4",
+            "instructions": "hi",
+            "input": [{"role": "user", "content": "hi"}],
+            "stream": False,
+        }
+    )
+
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            headers={"X-Codex-Routing-Hint": "model=gpt-5.4"},
+            access_token="token",
+            account_id="acc_1",
+            session=cast(proxy_module.aiohttp.ClientSession, session),
+        )
+    ]
+
+    assert session.ws_calls == []
+    assert len(session.post_calls) == 1
+    assert cast(dict[str, object], session.post_calls[0]["json"])["stream"] is False
+    upstream_headers = cast(dict[str, str], session.post_calls[0]["headers"])
+    assert "x-codex-routing-hint" not in {key.lower() for key in upstream_headers}
+    assert upstream_headers["Accept"] == "application/json"
+    assert parse_sse_data_json(events[0]) == {
+        "type": "response.completed",
+        "response": {
+            "id": "resp_http_json",
+            "object": "response",
+            "status": "completed",
+            "output": [],
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -13324,6 +13983,58 @@ async def test_stream_once_marks_downstream_cancel_before_first_event(monkeypatc
     assert request_logs.calls[0]["error_code"] == "client_disconnected"
     assert request_logs.calls[0]["failure_phase"] == "downstream"
     assert request_logs.calls[0]["failure_detail"] == "client_disconnected_before_terminal_event"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["stream_incomplete", "upstream_unavailable"])
+async def test_native_codex_previsible_transport_failure_is_never_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+    error_code: str,
+) -> None:
+    settings = _make_proxy_settings()
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_native_previsible_failure")
+    select_account = AsyncMock(return_value=AccountSelection(account=account, error_message=None))
+    stream_calls = 0
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_select_account_with_budget_compatible", select_account)
+    monkeypatch.setattr(service, "_ensure_fresh_with_budget", AsyncMock(return_value=account))
+
+    async def failed_stream(*_args: object, **_kwargs: object) -> AsyncIterator[str]:
+        nonlocal stream_calls
+        stream_calls += 1
+        raise proxy_module.ProxyResponseError(
+            502,
+            openai_error(error_code, "ambiguous native transport failure"),
+        )
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(service, "_stream_once", failed_stream)
+    payload = ResponsesRequest.model_validate({"model": "gpt-5.4", "instructions": "hi", "input": [], "stream": True})
+
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        _ = [
+            chunk
+            async for chunk in service._stream_with_retry(
+                payload,
+                {"originator": "codex_exec"},
+                codex_session_affinity=False,
+                propagate_http_errors=False,
+                openai_cache_affinity=False,
+                api_key=None,
+                api_key_reservation=None,
+                suppress_text_done_events=False,
+                request_transport="http",
+                upstream_stream_transport_override="http",
+                enforce_openai_sdk_contract=False,
+            )
+        ]
+
+    assert _proxy_error_code(exc_info.value) == error_code
+    assert stream_calls == 1
+    assert select_account.await_count == 1
 
 
 @pytest.mark.asyncio

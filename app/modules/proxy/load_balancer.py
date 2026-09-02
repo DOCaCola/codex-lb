@@ -208,6 +208,7 @@ class AccountSelection:
     resets_at: int | None = None
     lease: AccountLease | None = None
     catalog_omission_quota_admission: CatalogOmissionQuotaAdmission | None = None
+    continuity_owner_no_longer_exists: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,14 +226,12 @@ class _SelectionInputs(SelectionInputsProtocol):
     latest_primary: dict[str, UsageHistory | AdditionalUsageHistory]
     latest_secondary: dict[str, UsageHistory | AdditionalUsageHistory]
     latest_monthly: dict[str, UsageHistory]
-    # Ownership ambiguity is resolved before transient additional-quota,
-    # exclusion, runtime-health, budget, and account-cap filters. Keep that
-    # stronger candidate pool alongside the effective routing pool.
+    # Resolve ownership before transient routing filters; keep that stronger
+    # candidate pool alongside the effective routing pool.
     continuity_owner_candidates: list[Account] | None = None
-    # Sticky-row mutation is authorized by account assignment and security
-    # policy, before model/service-tier eligibility. Keep this separate from
-    # continuity ambiguity: a model-ineligible account can still own the raw
-    # row that this authenticated request is allowed to retire.
+    # Sticky mutation authority precedes model/service-tier eligibility; keep
+    # it separate because a model-ineligible account can still own the raw row
+    # this authenticated request may retire.
     sticky_mutation_authority_account_ids: frozenset[str] | None = None
     quota_planner_settings: PlannerSettings = PlannerSettings()
     runtime_accounts: list[Account] | None = None
@@ -717,6 +716,7 @@ class LoadBalancer:
                 account=None,
                 error_message=selection_inputs.error_message,
                 error_code=selection_inputs.error_code,
+                continuity_owner_no_longer_exists=selection_inputs.error_code == CONTINUITY_OWNER_UNAVAILABLE,
             )
 
         selected_snapshot: Account | None = None
@@ -957,7 +957,7 @@ class LoadBalancer:
                     error_message=error_message,
                     error_code=OPPORTUNISTIC_BURN_WINDOW_CLOSED,
                 )
-            if required_continuity_owner and selection_error_code in (None, "hard_affinity_saturated"):
+            if required_continuity_owner and selection_error_code is None:
                 selection_error_code = CONTINUITY_OWNER_UNAVAILABLE
             if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC and error_message and selection_error_code is None:
                 return AccountSelection(

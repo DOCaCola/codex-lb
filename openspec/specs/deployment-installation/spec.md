@@ -614,3 +614,53 @@ Because the packaged module root lives in the read-only Nix store where env file
 
 - **WHEN** a user runs `nix flake check`
 - **THEN** Nix builds the default package
+
+### Requirement: Official Linux container packages locked native egress
+
+The official Linux container build MUST compile the native egress worker from
+the repository-root Cargo workspace with its committed lockfile and pinned
+toolchain in an isolated Rust build stage, and MUST install only the resulting
+release executable as `codex-lb-native-egress` on the runtime path. The
+executable MUST support a long-lived multiplexed request protocol and reusable
+reqwest client pools without requiring a sidecar or operator setting. The
+runtime image MUST NOT contain the Rust toolchain or Cargo build directory.
+Python wheel and source installs MUST remain valid when the executable is
+absent.
+
+#### Scenario: Container runtime exposes native helper
+
+- **WHEN** the official Linux image is built from the repository
+- **THEN** `codex-lb-native-egress` is executable on the runtime path
+- **AND** it was built with the committed lockfile
+- **AND** it accepts multiple request commands during one process lifetime
+- **AND** Cargo and the Rust compiler are absent from the runtime image
+
+#### Scenario: Universal Python package remains portable
+
+- **WHEN** a wheel or source install runs on a platform without the helper
+- **THEN** importing and starting codex-lb succeeds
+- **AND** supported direct requests fall back to the Python transport
+
+### Requirement: Rust migration uses one final-state workspace
+
+The repository MUST maintain one virtual Cargo workspace at its root, one
+committed application lockfile, and a pinned Rust toolchain. Production Rust
+code MUST live in focused crates below `crates/`; it MUST NOT be isolated in a
+temporary language or helper subtree that requires a repository-wide move when
+the Python backend is retired. The protocol, reusable transport, and worker
+binary MUST remain separate dependency layers, with the worker depending on
+transport and transport depending on the runtime-free protocol crate. Workspace
+policy MUST forbid unsafe Rust by default, deny Clippy warnings in CI, and audit
+advisories, licenses, wildcard dependencies, and non-approved sources.
+
+#### Scenario: Another backend slice migrates to Rust
+
+- **WHEN** a cohesive Python-owned backend slice gains a Rust implementation
+- **THEN** its focused crate is added under the existing root workspace
+- **AND** reusable libraries do not depend on executable crates
+
+#### Scenario: Python backend is eventually retired
+
+- **WHEN** Rust becomes the application owner
+- **THEN** the existing root workspace and crates remain at their canonical paths
+- **AND** the server application is added without relocating a temporary `rust/` or `native/` tree

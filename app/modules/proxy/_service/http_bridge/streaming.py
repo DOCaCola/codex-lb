@@ -917,6 +917,7 @@ class _HTTPBridgeStreamingMixin:
         forwarded_file_owner_account_id: str | None = None,
         client_ip: str | None = None,
         enforce_openai_sdk_contract: bool = True,
+        http_bridge_active: bool | None = None,
         capacity_startup_wait_event: asyncio.Event | None = None,
         capacity_startup_ready_event: asyncio.Event | None = None,
     ) -> AsyncIterator[str]:
@@ -942,6 +943,7 @@ class _HTTPBridgeStreamingMixin:
             forwarded_file_owner_account_id=forwarded_file_owner_account_id,
             client_ip=client_ip,
             enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+            http_bridge_active=http_bridge_active,
             capacity_startup_wait_event=capacity_startup_wait_event,
             capacity_startup_ready_event=capacity_startup_ready_event,
         )
@@ -967,11 +969,14 @@ class _HTTPBridgeStreamingMixin:
         forwarded_file_owner_account_id: str | None = None,
         client_ip: str | None = None,
         enforce_openai_sdk_contract: bool = True,
+        http_bridge_active: bool | None = None,
         capacity_startup_wait_event: asyncio.Event | None = None,
         capacity_startup_ready_event: asyncio.Event | None = None,
     ) -> AsyncIterator[str]:
         dashboard_settings = await _service_get_settings_cache().get()
         runtime_config = _http_bridge_runtime_config(dashboard_settings, _service_get_settings())
+        if http_bridge_active is False:
+            runtime_config = dataclasses.replace(runtime_config, enabled=False)
         request_id = ensure_request_id()
         self._raise_for_unsupported_input_image_references(payload)
         payload_size_estimate_bytes = len(

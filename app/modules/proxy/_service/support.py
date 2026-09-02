@@ -50,6 +50,7 @@ from app.modules.proxy.work_admission import AdmissionLease
 
 logger = logging.getLogger(__name__)
 
+
 _REQUEST_TRANSPORT_HTTP = "http"
 _REQUEST_TRANSPORT_WEBSOCKET = "websocket"
 _REASONING_SUMMARY_BLANK_HTML_COMMENT_RE = re.compile(r"(?m)^[ \t]*<!--\s*-->[ \t]*(?:\r?\n|\Z)")

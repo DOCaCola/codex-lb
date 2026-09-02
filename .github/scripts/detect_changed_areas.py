@@ -35,6 +35,21 @@ FILTERS = {
         "docs/reference/settings.md",
         ".env.example",
     ],
+    "rust": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "deny.toml",
+        "crates/**",
+        "app/core/clients/native_egress.py",
+        "tests/unit/test_native_egress.py",
+        "tests/unit/test_native_egress_packaging.py",
+        "tests/integration/test_native_routed_egress.py",
+        "Dockerfile",
+        "Dockerfile.*",
+        "Makefile",
+        ".github/workflows/ci.yml",
+    ],
     "helm": [
         "deploy/helm/**",
         "Makefile",
@@ -102,6 +117,7 @@ def _pull_request_files(event: dict[str, Any]) -> list[str]:
                 "Dockerfile",
                 "app/db/alembic/__github_api_unavailable__",
                 "flake.nix",
+                "Cargo.toml",
             ]
         if not isinstance(payload, list):
             raise SystemExit(f"GitHub PR files request returned {type(payload).__name__}, expected list")

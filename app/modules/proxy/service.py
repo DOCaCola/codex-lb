@@ -78,6 +78,7 @@ from app.core.errors import (
     previous_response_id_from_not_found_message,
     previous_response_stream_incomplete_error,
     response_failed_event,
+    synthetic_transport_failure_event,
 )
 from app.core.errors import (
     is_previous_response_not_found_public_shape as _is_previous_response_not_found_public_shape,  # noqa: F401
@@ -504,9 +505,7 @@ from app.modules.proxy._service.response_create import (
 from app.modules.proxy._service.response_create import (
     _write_response_create_dump as _write_response_create_dump,
 )
-from app.modules.proxy._service.streaming import (
-    _StreamingMixin,
-)
+from app.modules.proxy._service.streaming import _StreamingMixin
 from app.modules.proxy._service.streaming.helpers import (
     _build_rewritten_stream_response_failed_event as _build_rewritten_stream_response_failed_event,
 )
@@ -551,6 +550,9 @@ from app.modules.proxy._service.streaming.helpers import (
 )
 from app.modules.proxy._service.streaming.helpers import (
     _upstream_turn_state_from_socket as _upstream_turn_state_from_socket,
+)
+from app.modules.proxy._service.streaming.retry import (
+    _http_bridge_allowed_by_transport_policy as _http_bridge_allowed_by_transport_policy,
 )
 from app.modules.proxy._service.streaming.retry import (
     _http_downstream_request_is_sticky as _http_downstream_request_is_sticky,
@@ -1706,6 +1708,7 @@ class ProxyService(
         exclude_account_ids: Collection[str] | None = None,
         preferred_account_id: str | None = None,
         preferred_account_is_continuity_owner: bool = False,
+        preferred_account_overrides_single_account_routing: bool = False,
         require_security_work_authorized: bool = False,
         lease_kind: Literal["response_create", "stream"] | None = None,
         estimated_lease_tokens: float = 0.0,
@@ -1776,12 +1779,11 @@ class ProxyService(
                 required_preferred_account = (
                     preferred_account_id is not None and not fallback_on_preferred_account_unavailable
                 )
-                required_continuity_preferred_account = (
-                    required_preferred_account and preferred_account_is_continuity_owner
-                )
+                required_continuity = required_preferred_account and preferred_account_is_continuity_owner
                 single_account_routing_id: str | None = None
                 if _routing_strategy(settings) == "single_account" and (
-                    not required_preferred_account or required_continuity_preferred_account
+                    not required_preferred_account
+                    or (required_continuity and not preferred_account_overrides_single_account_routing)
                 ):
                     selected_account_id = (settings.single_account_id or "").strip()
                     if not selected_account_id:
@@ -1810,12 +1812,12 @@ class ProxyService(
                     and (
                         scoped_account_ids is None
                         or preferred_account_id in scoped_account_ids
-                        or required_continuity_preferred_account
+                        or (required_continuity and not preferred_account_overrides_single_account_routing)
                     )
                     and (
                         single_account_routing_id is None
                         or preferred_account_id == single_account_routing_id
-                        or required_continuity_preferred_account
+                        or required_continuity
                     )
                 )
                 if preferred_account_id is not None and not preferred_eligible:
@@ -1867,12 +1869,12 @@ class ProxyService(
                         additional_limit_name=additional_limit_name,
                         account_ids=(
                             {single_account_routing_id}
-                            if required_continuity_preferred_account and single_account_routing_id is not None
+                            if required_continuity and single_account_routing_id is not None
                             else scoped_account_ids
                         ),
                         required_account_id=preferred_account_id,
                         required_account_is_ownership_constraint=required_preferred_account,
-                        required_continuity_owner=(required_continuity_preferred_account),
+                        required_continuity_owner=required_continuity,
                         require_unambiguous_account=require_unambiguous_account,
                         require_security_work_authorized=require_security_work_authorized,
                         budget_threshold_pct=_sticky_reallocation_primary_budget_threshold_pct(settings),
@@ -2349,11 +2351,8 @@ def _remaining_budget_seconds(deadline: float) -> float:
 
 
 def _proxy_request_timeout_event(request_id: str) -> ResponseFailedEvent:
-    return response_failed_event(
-        "upstream_request_timeout",
-        "Proxy request budget exhausted",
-        response_id=request_id,
-    )
+    event = response_failed_event("upstream_request_timeout", "Proxy request budget exhausted", response_id=request_id)
+    return synthetic_transport_failure_event(event)
 
 
 def _security_work_advisory_event(
