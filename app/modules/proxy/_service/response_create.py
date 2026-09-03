@@ -29,7 +29,7 @@ from app.core.clients.proxy import (
 )
 from app.core.config.settings import DEFAULT_HOME_DIR, get_settings
 from app.core.errors import OpenAIErrorEnvelope, openai_error
-from app.core.openai.requests import ResponsesRequest
+from app.core.openai.requests import ResponsesRequest, sanitize_native_responses_input
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
 from app.modules.proxy._service.support import (
@@ -190,7 +190,7 @@ def _response_create_text(
     include_type_field: bool,
     client_metadata: Mapping[str, JsonValue] | None,
 ) -> str:
-    upstream_payload = dict(payload.to_payload())
+    upstream_payload = sanitize_native_responses_input(payload.to_payload())
     upstream_payload.pop("stream", None)
     upstream_payload.pop("background", None)
     if include_type_field:
@@ -220,7 +220,7 @@ def _response_create_text_with_size_guard(
         if isinstance(payload.input, list)
         else {}
     )
-    upstream_payload = dict(payload.to_payload())
+    upstream_payload = sanitize_native_responses_input(payload.to_payload())
     upstream_payload.pop("stream", None)
     upstream_payload.pop("background", None)
     if include_type_field:

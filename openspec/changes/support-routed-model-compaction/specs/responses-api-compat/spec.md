@@ -4,11 +4,13 @@
 
 When a valid terminal `compaction_trigger` targets a subscription-backed model,
 the proxy SHALL preserve the existing native compact flow and synthetic SSE
-lifecycle. Immediately before sending any native subscription-backed Responses
-request, the proxy MUST replace every non-empty plaintext `content` array on a
-top-level `reasoning` input item with an empty array and MUST remove that item's
-output-only `status` field. Source-routed Responses requests MUST NOT receive
-this native-boundary sanitation.
+lifecycle. Immediately before serializing any native subscription-backed
+Responses request, the proxy MUST replace every non-empty plaintext `content`
+array on a top-level `reasoning` input item with an empty array and MUST remove
+that item's output-only `status` field. This requirement MUST cover direct HTTP,
+direct WebSocket, HTTP-session bridge, and prepared replay request bodies.
+Source-routed Responses requests MUST NOT receive this native-boundary
+sanitation.
 
 Immediately before any native or source-routed Responses request with
 `store: false` is sent, the proxy MUST remove `id` from every top-level input
@@ -34,8 +36,8 @@ explicit unavailable-history note.
 
 - **GIVEN** request input contains a top-level reasoning item with non-empty
   plaintext `content` and an output-only `status`
-- **WHEN** an ordinary or compact request is sent to a native subscription
-  backend
+- **WHEN** an ordinary, compact, WebSocket, HTTP-session bridge, or prepared
+  replay request is sent to a native subscription backend
 - **THEN** its wire `content` is an empty array and `status` is absent
 - **AND** ordinary source Responses replay remains unchanged
 

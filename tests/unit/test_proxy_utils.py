@@ -27215,6 +27215,82 @@ def test_slim_response_create_orphan_output_does_not_consume_namespaced_pairing(
         pytest.param(proxy_service._REQUEST_TRANSPORT_WEBSOCKET, id="websocket-bridge"),
     ],
 )
+def test_native_response_create_serializers_sanitize_source_reasoning_replay(
+    transport: str,
+):
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.6-sol",
+            "instructions": "Continue.",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_tmp_source_reasoning",
+                    "status": "completed",
+                    "content": [{"type": "reasoning_text", "text": "provider reasoning"}],
+                },
+                {
+                    "type": "message",
+                    "id": "msg_tmp_source_answer",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "provider answer"}],
+                },
+                {
+                    "type": "function_call",
+                    "id": "fc_tmp_source_call",
+                    "call_id": "call_source",
+                    "name": "lookup",
+                    "arguments": "{}",
+                },
+            ],
+            "store": False,
+            "stream": True,
+        }
+    )
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+
+    request_state, initial_text = service._prepare_response_bridge_request_state(
+        payload,
+        api_key=None,
+        api_key_reservation=None,
+        include_type_field=True,
+        attach_event_queue=False,
+        transport=transport,
+        client_metadata=None,
+    )
+    plain_text = proxy_service._response_create_text(
+        payload,
+        include_type_field=True,
+        client_metadata=None,
+    )
+    replay_text = proxy_service._response_create_text_with_size_guard(
+        payload,
+        include_type_field=True,
+        client_metadata=None,
+        request_state=request_state,
+        transport=transport,
+    )
+
+    assert replay_text is not None
+    for text_data in (initial_text, plain_text, replay_text):
+        upstream_input = json.loads(text_data)["input"]
+        assert upstream_input[0] == {"type": "reasoning", "content": []}
+        assert "id" not in upstream_input[1]
+        assert "id" not in upstream_input[2]
+        assert upstream_input[2]["call_id"] == "call_source"
+    original_reasoning = cast(list[dict[str, Any]], payload.to_payload()["input"])[0]
+    assert original_reasoning["id"] == "rs_tmp_source_reasoning"
+    assert original_reasoning["status"] == "completed"
+    assert original_reasoning["content"] == [{"type": "reasoning_text", "text": "provider reasoning"}]
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [
+        pytest.param(proxy_service._REQUEST_TRANSPORT_HTTP, id="http-bridge"),
+        pytest.param(proxy_service._REQUEST_TRANSPORT_WEBSOCKET, id="websocket-bridge"),
+    ],
+)
 def test_prepare_response_bridge_pairs_same_protocol_reused_call_id_by_occurrence(
     monkeypatch: pytest.MonkeyPatch,
     transport: str,

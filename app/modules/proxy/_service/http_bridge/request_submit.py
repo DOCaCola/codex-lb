@@ -52,6 +52,7 @@ from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    sanitize_native_responses_input,
 )
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
@@ -690,7 +691,7 @@ class _HTTPBridgeRequestSubmitMixin:
             if isinstance(payload.input, list)
             else {}
         )
-        upstream_payload = dict(payload.to_payload())
+        upstream_payload = sanitize_native_responses_input(payload.to_payload())
         upstream_payload.pop("stream", None)
         upstream_payload.pop("background", None)
         if include_type_field:

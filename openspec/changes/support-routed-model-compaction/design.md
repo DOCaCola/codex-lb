@@ -59,10 +59,13 @@ destinations retain native opaque items unchanged.
 
 ### Native reasoning boundary
 
-Immediately before any native subscription-backed Responses request is sent,
-top-level reasoning items have non-empty plaintext `content` replaced by an
-empty array and output-only `status` removed. Model-source requests retain their
-provider-native reasoning history.
+Immediately before any native subscription-backed Responses request is
+serialized, top-level reasoning items have non-empty plaintext `content`
+replaced by an empty array and output-only `status` removed. The boundary
+applies equally to direct HTTP, direct WebSocket, HTTP-session bridge, and
+prepared replay bodies. The parsed request remains unchanged for routing and
+continuity bookkeeping, and model-source requests retain their provider-native
+reasoning history.
 
 ### Stateless item identity boundary
 

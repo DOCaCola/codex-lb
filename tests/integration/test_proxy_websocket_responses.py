@@ -1133,6 +1133,76 @@ def test_codex_provider_profiles_route_before_first_account_attempt(
     assert forwarded_capability_headers == [False]
 
 
+def test_backend_responses_websocket_sanitizes_source_reasoning_for_native_upstream(
+    app_instance,
+    monkeypatch,
+):
+    upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[_websocket_response_batch("resp_native_after_source")],
+    )
+
+    class _FakeSettingsCache:
+        async def get(self):
+            return _websocket_settings()
+
+    async def allow_firewall(_websocket):
+        return None
+
+    async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
+        del request
+        return None
+
+    async def fake_connect_proxy_websocket(self, headers, **kwargs):
+        del self, headers, kwargs
+        return SimpleNamespace(id="acct_native_after_source"), upstream
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
+    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
+
+    request_payload = {
+        "type": "response.create",
+        "model": "gpt-5.6-sol",
+        "instructions": "Continue.",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_tmp_source_reasoning",
+                "status": "completed",
+                "content": [{"type": "reasoning_text", "text": "provider reasoning"}],
+            },
+            {
+                "type": "message",
+                "id": "msg_tmp_source_answer",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "provider answer"}],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue natively"}],
+            },
+        ],
+        "store": False,
+        "stream": True,
+    }
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/backend-api/codex/responses") as websocket:
+            websocket.send_text(json.dumps(request_payload))
+            created = json.loads(websocket.receive_text())
+            completed = json.loads(websocket.receive_text())
+
+    assert created["type"] == "response.created"
+    assert completed["type"] == "response.completed"
+    sent_input = json.loads(upstream.sent_text[0])["input"]
+    assert sent_input[0] == {"type": "reasoning", "content": []}
+    assert "id" not in sent_input[1]
+    assert sent_input[2]["content"][0]["text"] == "continue natively"
+
+
 @pytest.mark.parametrize(
     ("path", "payload"),
     [
