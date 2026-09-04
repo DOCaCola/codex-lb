@@ -2194,13 +2194,15 @@ async def test_record_usage_cost_limit_uses_flex_service_tier_pricing() -> None:
 @pytest.mark.parametrize(
     ("model", "expected_reserved_microdollars", "expected_final_microdollars"),
     [
+        ("gpt-6-astra", 491_519, 52_000_000),
+        ("gpt-6-astra-2026-09-04", 491_519, 52_000_000),
         ("gpt-5.6", 286_720, 31_000_000),
         ("gpt-5.6-sol-snapshot", 286_720, 31_000_000),
         ("gpt-5.6-terra-snapshot", 114_688, 12_400_000),
         ("gpt-5.6-luna-snapshot", 11_468, 1_240_000),
     ],
 )
-async def test_usage_reservation_uses_gpt_5_6_personality_pricing(
+async def test_usage_reservation_uses_frontier_model_pricing(
     model: str,
     expected_reserved_microdollars: int,
     expected_final_microdollars: int,

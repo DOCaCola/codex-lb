@@ -16,11 +16,16 @@ discovery even when an account can serve it.
   continue treating a successful live catalog refresh as authoritative.
 - Use the current frontier plan set only as the pre-refresh routing floor;
   live per-account advertisements remain authoritative for actual routing.
+- Add Astra to the existing static cost-accounting table with published
+  Standard, Fast/priority, Flex, and long-context input, cached-input, and
+  output rates, including suffixed model aliases.
 
 ## Impact
 
 - No database migration or new configuration.
 - Startup/offline model discovery includes `gpt-6-astra` with client-compatible
   metadata.
-- No pricing or cost-accounting entry is added because no verified pricing
-  metadata is available from the Codex catalog.
+- API-key reservations, request logs, and aggregate reports no longer treat
+  Astra usage as zero-cost.
+- Cache-write and regional-processing accounting remain outside this change,
+  consistent with the existing pricing model for other catalog entries.

@@ -64,6 +64,13 @@ def test_get_pricing_for_model_gpt_5_4_alias():
     assert model == "gpt-5.4"
 
 
+@pytest.mark.parametrize("requested_model", ["gpt-6-astra", "gpt-6-astra-2026-09-04"])
+def test_get_pricing_for_model_gpt_6_astra_aliases(requested_model: str) -> None:
+    result = get_pricing_for_model(requested_model, DEFAULT_PRICING_MODELS, DEFAULT_MODEL_ALIASES)
+
+    assert result == ("gpt-6-astra", DEFAULT_PRICING_MODELS["gpt-6-astra"])
+
+
 @pytest.mark.parametrize(
     ("requested_model", "canonical_model"),
     [
@@ -258,6 +265,56 @@ def test_calculate_cost_from_usage_gpt_5_6_service_tiers(
     cost = calculate_cost_from_usage(usage, DEFAULT_PRICING_MODELS[model], service_tier=service_tier)
 
     assert cost == pytest.approx(expected_cost)
+
+
+@pytest.mark.parametrize(
+    ("service_tier", "expected_cost"),
+    [
+        (None, 51.1),
+        ("flex", 25.55),
+        ("priority", 102.2),
+        ("fast", 102.2),
+    ],
+)
+def test_calculate_cost_from_usage_gpt_6_astra_service_tiers(
+    service_tier: str | None,
+    expected_cost: float,
+) -> None:
+    usage = UsageTokens(
+        input_tokens=200_000.0,
+        output_tokens=1_000_000.0,
+        cached_input_tokens=100_000.0,
+    )
+
+    cost = calculate_cost_from_usage(usage, DEFAULT_PRICING_MODELS["gpt-6-astra"], service_tier=service_tier)
+
+    assert cost == pytest.approx(expected_cost)
+
+
+@pytest.mark.parametrize(("service_tier", "expected_cost"), [(None, 12.6), ("flex", 6.3)])
+def test_calculate_cost_from_usage_gpt_6_astra_long_context(
+    service_tier: str | None,
+    expected_cost: float,
+) -> None:
+    usage = UsageTokens(
+        input_tokens=300_000.0,
+        output_tokens=100_000.0,
+        cached_input_tokens=50_000.0,
+    )
+
+    cost = calculate_cost_from_usage(usage, DEFAULT_PRICING_MODELS["gpt-6-astra"], service_tier=service_tier)
+
+    assert cost == pytest.approx(expected_cost)
+
+
+def test_calculate_cost_from_usage_gpt_6_astra_uses_272k_long_context_boundary() -> None:
+    price = DEFAULT_PRICING_MODELS["gpt-6-astra"]
+
+    at_boundary = calculate_cost_from_usage(UsageTokens(input_tokens=272_000.0, output_tokens=0.0), price)
+    above_boundary = calculate_cost_from_usage(UsageTokens(input_tokens=272_001.0, output_tokens=0.0), price)
+
+    assert at_boundary == pytest.approx(272_000 / 1_000_000 * 10.0)
+    assert above_boundary == pytest.approx(272_001 / 1_000_000 * 20.0)
 
 
 @pytest.mark.parametrize(
