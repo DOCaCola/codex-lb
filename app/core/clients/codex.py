@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import secrets
 from dataclasses import dataclass
@@ -120,19 +121,39 @@ class _PreparedNativeRequest:
     response_head_timeout_seconds: float | None
 
 
+async def release_codex_response(response: Any) -> None:
+    """Release an unbuffered upstream response once its consumer stops reading.
+
+    Streams routinely end before body EOF (terminal SSE event, idle timeout,
+    cancellation, downstream disconnect). Closing the owning session alone
+    leaves the aiohttp ``Connection`` acquired, so the cyclic GC later finalizes
+    it as ``Unclosed connection``. Duck-typed on purpose: aiohttp exposes
+    ``release()``, the native egress response exposes ``aclose()``, and buffered
+    or test responses expose neither.
+    """
+    for name in ("release", "close", "aclose"):
+        method = getattr(response, name, None)
+        if callable(method):
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+            return
+
+
 class _SessionOwnedContent:
-    def __init__(self, content: Any, session: aiohttp.ClientSession) -> None:
-        self._content = content
+    def __init__(self, response: Any, session: aiohttp.ClientSession) -> None:
+        self._response = response
         self._session = session
 
     def iter_chunked(self, size: int) -> Any:
-        return self._iter_and_close(self._content.iter_chunked(size))
+        return self._iter_and_close(self._response.content.iter_chunked(size))
 
     async def _iter_and_close(self, iterator: Any) -> Any:
         try:
             async for chunk in iterator:
                 yield chunk
         finally:
+            await release_codex_response(self._response)
             await self._session.close()
 
 
@@ -143,7 +164,13 @@ class _SessionOwnedResponse:
         self.status = getattr(response, "status", getattr(response, "status_code", 0))
         self.status_code = getattr(response, "status_code", self.status)
         self.headers = getattr(response, "headers", {}) or {}
-        self.content = _SessionOwnedContent(response.content, session)
+        self.content = _SessionOwnedContent(response, session)
+
+    async def release(self) -> None:
+        try:
+            await release_codex_response(self._response)
+        finally:
+            await self._session.close()
 
     async def read(self) -> bytes:
         try:
@@ -156,7 +183,7 @@ class _SessionOwnedResponse:
                 return result.encode()
             return b""
         finally:
-            await self._session.close()
+            await self.release()
 
     async def text(self) -> str:
         return (await self.read()).decode("utf-8", errors="replace")
@@ -430,9 +457,9 @@ class CodexClient:
 
 
 def create_codex_session(*, max_clients: int = 10) -> Any:
-    from app.core.clients.http import _build_ssl_context
+    from app.core.clients.http import _shared_ssl_context
 
-    connector = aiohttp.TCPConnector(limit=max_clients, ssl=_build_ssl_context())
+    connector = aiohttp.TCPConnector(limit=max_clients, ssl=_shared_ssl_context())
     return aiohttp.ClientSession(
         connector=connector,
         timeout=aiohttp.ClientTimeout(total=None),
@@ -507,7 +534,7 @@ async def _open_ws_via_socks_proxy(url: str, endpoint: ResolvedProxyEndpoint, **
 
 
 def _socks_proxy_connector(endpoint: ResolvedProxyEndpoint) -> ProxyConnector:
-    from app.core.clients.http import _build_ssl_context
+    from app.core.clients.http import _shared_ssl_context
 
     proxy_scheme = endpoint.proxy_url.split(":", 1)[0]
     return ProxyConnector(
@@ -517,7 +544,7 @@ def _socks_proxy_connector(endpoint: ResolvedProxyEndpoint) -> ProxyConnector:
         username=endpoint.username,
         password=endpoint.password,
         rdns=proxy_scheme == "socks5h",
-        ssl=_build_ssl_context(),
+        ssl=_shared_ssl_context(),
     )
 
 

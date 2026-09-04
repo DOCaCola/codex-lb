@@ -9,7 +9,14 @@ import pytest
 from aiohttp.client_reqrep import ConnectionKey
 from python_socks import ProxyType
 
-from app.core.clients.codex import CodexClient, CodexTransportError, require_route_or_direct_egress_opt_in
+from app.core.clients import codex as codex_module
+from app.core.clients.codex import (
+    CodexClient,
+    CodexTransportError,
+    create_codex_session,
+    require_route_or_direct_egress_opt_in,
+)
+from app.core.clients.http import _reset_shared_ssl_context, _shared_ssl_context
 from app.core.clients.native_egress import (
     NativeEgressRequest,
     NativeEgressTransportError,
@@ -898,3 +905,64 @@ async def test_socks_websocket_cancel_during_enter_closes_local_session(
     assert session.closed == 1
     assert session.context.exited is False
     assert session.context.owned is False
+
+
+async def test_socks_session_owned_response_releases_before_closing_session() -> None:
+    order: list[str] = []
+
+    async def _noop() -> None:
+        return None
+
+    class _Content:
+        async def iter_chunked(self, size: int):
+            del size
+            yield b"data: first\n\n"
+            yield b"data: second\n\n"
+
+    class _RawResponse:
+        status = 200
+        headers: dict[str, str] = {}
+        content = _Content()
+
+        def release(self) -> Any:
+            order.append("release")
+            return _noop()
+
+    class _Session:
+        async def close(self) -> None:
+            order.append("session_close")
+
+    owned = codex_module._SessionOwnedResponse(_RawResponse(), cast(Any, _Session()))
+
+    async for _ in owned.content.iter_chunked(1024):
+        break
+    await owned.release()
+
+    assert order == ["release", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_create_codex_session_connectors_share_one_ssl_context() -> None:
+    _reset_shared_ssl_context()
+    first = create_codex_session()
+    second = create_codex_session()
+    try:
+        assert first.connector._ssl is second.connector._ssl
+        assert first.connector._ssl is _shared_ssl_context()
+    finally:
+        await first.close()
+        await second.close()
+        _reset_shared_ssl_context()
+
+
+@pytest.mark.asyncio
+async def test_socks_proxy_connector_reuses_shared_ssl_context() -> None:
+    _reset_shared_ssl_context()
+    endpoint = ResolvedProxyEndpoint("ep_1", "socks5h", "proxy.test", 1080)
+    connector = codex_module._socks_proxy_connector(endpoint)
+    try:
+        assert connector._ssl is _shared_ssl_context()
+        assert connector._rdns is True
+    finally:
+        await connector.close()
+        _reset_shared_ssl_context()
