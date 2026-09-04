@@ -53,6 +53,7 @@ EXPECTED_GPT56_MODEL_PLANS = {
 }
 
 EXPECTED_BOOTSTRAP_MINIMAL_CLIENT_VERSIONS = {
+    "gpt-6-astra": None,
     "gpt-5.6-sol": "0.144.0",
     "gpt-5.6-terra": "0.144.0",
     "gpt-5.6-luna": "0.144.0",
@@ -220,6 +221,8 @@ async def test_prefers_websockets_does_not_use_bootstrap_after_snapshot():
 def test_prefers_websockets_uses_bootstrap_fallback_when_uninitialized():
     registry = ModelRegistry(ttl_seconds=60.0)
 
+    assert registry.prefers_websockets("gpt-6-astra") is True
+    assert registry.prefers_websockets("gpt-6-astra-2026-09-04") is True
     assert registry.prefers_websockets("gpt-5.6-sol") is True
     assert registry.prefers_websockets("gpt-5.6-terra") is True
     assert registry.prefers_websockets("gpt-5.6-luna") is True
@@ -239,6 +242,55 @@ def test_bootstrap_models_include_representative_upstream_metadata():
     assert set(models) == set(EXPECTED_BOOTSTRAP_MINIMAL_CLIENT_VERSIONS)
     for slug, expected_version in EXPECTED_BOOTSTRAP_MINIMAL_CLIENT_VERSIONS.items():
         assert models[slug].minimal_client_version == expected_version
+
+    astra = models["gpt-6-astra"]
+    assert astra.display_name == "GPT-6-Astra"
+    assert astra.description == "Our most capable model for complex, demanding work."
+    assert astra.context_window == 272_000
+    assert astra.input_modalities == ("text", "image")
+    assert astra.default_reasoning_level == "medium"
+    assert [level.effort for level in astra.supported_reasoning_levels] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ]
+    assert astra.support_verbosity is True
+    assert astra.default_verbosity == "low"
+    assert astra.prefer_websockets is True
+    assert astra.supported_in_api is True
+    assert astra.minimal_client_version is None
+    assert astra.priority == 1
+    assert astra.available_in_plans == EXPECTED_GPT56_MODEL_PLANS
+    assert astra.raw == {
+        "shell_type": "unified_exec",
+        "visibility": "list",
+        "availability_nux": None,
+        "max_context_window": 872_000,
+        "truncation_policy": {"mode": "tokens", "limit": 10_000},
+        "experimental_supported_tools": ["send_user_message_async", "clock"],
+        "apply_patch_tool_type": "freeform",
+        "web_search_tool_type": "text_and_image",
+        "supports_image_detail_original": True,
+        "tool_mode": "code_mode_only",
+        "multi_agent_version": "v2",
+        "multi_agent_reasoning_effort": "xhigh",
+        "use_responses_lite": True,
+        "include_skills_usage_instructions": False,
+        "include_apps_usage_instructions": False,
+        "include_plugin_usage_instructions": False,
+        "node_repl_disabled": False,
+        "node_repl_auto_review_required": True,
+        "effective_context_window_percent": 95,
+        "comp_hash": "3000",
+        "default_reasoning_summary": "none",
+        "upgrade": None,
+        "supports_search_tool": True,
+        "service_tiers": [{"id": "priority", "name": "Fast", "description": "2x speed, increased usage"}],
+        "additional_speed_tiers": ["fast"],
+    }
 
     sol = models["gpt-5.6-sol"]
     assert sol.display_name == "GPT-5.6-Sol"
