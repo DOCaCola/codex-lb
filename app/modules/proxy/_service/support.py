@@ -830,6 +830,7 @@ class _StreamSettlement:
     error_message: str | None = None
     error: UpstreamError | None = None
     account_health_error: bool = False
+    settlement_order_required: bool = False
     record_success: bool = True
     downstream_visible: bool = False
     downstream_text_visible: bool = False
@@ -1089,6 +1090,12 @@ class _WebSocketRequestState:
     # it claimed none); released by the submit finalizer whenever the probe
     # was never dispatched, so no pre-dispatch exit can strand the lease.
     claimed_half_open_until: float = 0.0
+    # True while the submit owns an admission-waiter registration taken at
+    # submit entry, before the retry-circuit gate, that the dispatch path has
+    # not yet taken over. It keeps the turn visible to a concurrent
+    # cooldown-suppressed sibling deciding whether the shared session is
+    # idle; every pre-dispatch exit releases it.
+    admission_waiter_preregistered: bool = False
     # Stable fingerprint used by the durable recovery-attempt journal. It is
     # populated only for a proof-gated fresh replay candidate.
     recovery_attempt_fingerprint: str | None = None
