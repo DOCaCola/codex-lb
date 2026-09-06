@@ -3234,8 +3234,8 @@ The server MUST accept client-to-proxy websocket messages on the Responses webso
 - **THEN** the websocket ingress message budget uses the configured value
 - **AND** an invalid (non-positive or non-integer) value fails startup with a clear error
 
-### Requirement: Oversized response.create payloads are slimmed or rejected fail-fast before upstream send
-When the service prepares a Responses `response.create` request for the upstream websocket, it MUST measure the serialized outbound request size before sending it upstream. If the payload exceeds the upstream websocket budget, the service MUST first attempt to slim only the historical portion of `input` that precedes the most recent user turn: historical inline images MUST be replaced with textual omission notices, and oversized historical tool outputs MUST be replaced with textual omission notices that preserve the item in sequence. If the request still exceeds budget after slimming, the service MUST fail locally with status `400` — not `413` — carrying `error.code = "payload_too_large"`, `error.type = "invalid_request_error"`, and `error.param = "input"`, because the official Codex client treats `400` as a non-retryable invalid-request error surfaced immediately while `413` triggers five full-payload retries followed by a sticky session-wide websocket-to-HTTP transport downgrade.
+### Requirement: Oversized response.create payloads are slimmed or rejected before upstream send
+When the service prepares a Responses `response.create` request for the upstream websocket, it MUST measure the serialized outbound request size before sending it upstream. If the payload exceeds the upstream websocket budget, the service MUST first attempt to slim only the historical portion of `input` that precedes the most recent user turn: historical inline images MUST be replaced with textual omission notices, and oversized historical tool outputs MUST be replaced with textual omission notices that preserve the item in sequence. If a client-facing WebSocket request still exceeds the budget after slimming, the service MUST fail locally with status `413`, carrying `error.code = "payload_too_large"`, `error.type = "invalid_request_error"`, and `error.param = "input"`, so the official Codex client can use its WebSocket-to-HTTPS recovery path and obtain the upstream HTTP endpoint's result. If an HTTP request or another non-WebSocket request state still exceeds the budget after slimming, the service MUST retain status `400` with the same error envelope. Every local rejection MUST occur before an upstream WebSocket is allocated or reused.
 
 #### Scenario: Historical inline artifacts are slimmed and the latest user turn is preserved
 - **WHEN** a Responses request exceeds the upstream websocket budget because historical inline images or historical oversized tool outputs dominate the serialized `input`
@@ -3243,7 +3243,7 @@ When the service prepares a Responses `response.create` request for the upstream
 - **THEN** the service forwards the slimmed `response.create` upstream
 - **AND** it preserves the most recent user turn unchanged
 
-#### Scenario: HTTP Responses route fails locally with 400 when the payload still exceeds budget
+#### Scenario: HTTP Responses route retains a terminal status when the payload still exceeds budget
 - **WHEN** an HTTP `/v1/responses` or `/backend-api/codex/responses` request still exceeds the upstream websocket budget after historical slimming
 - **THEN** the service returns HTTP `400`
 - **AND** the error envelope code is `payload_too_large`
@@ -3251,9 +3251,9 @@ When the service prepares a Responses `response.create` request for the upstream
 - **AND** the error envelope param is `input`
 - **AND** the service MUST NOT allocate or reuse an upstream websocket bridge session for that request
 
-#### Scenario: Websocket Responses route fails locally with a status-400 error event when the payload still exceeds budget
+#### Scenario: Websocket Responses route exposes the Codex HTTP recovery path
 - **WHEN** a websocket `/v1/responses` or `/backend-api/codex/responses` request still exceeds the upstream websocket budget after historical slimming
-- **THEN** the service emits a websocket error event with `"type": "error"` and `"status": 400`
+- **THEN** the service emits a websocket error event with `"type": "error"` and `"status": 413`
 - **AND** the error envelope code is `payload_too_large`
 - **AND** the error envelope type is `invalid_request_error`
 - **AND** the error envelope param is `input`
@@ -4398,7 +4398,7 @@ The trailing-slash variants MUST be hidden aliases of the canonical HTTP handler
 
 If either representation exceeds that budget, the service MUST stop before route logic or upstream forwarding and return HTTP 413 with an OpenAI-compatible error envelope carrying `error.code = payload_too_large` and `error.type = invalid_request_error`.
 
-This transport-ingress 413 applies before parsing and is distinct from the existing application-level oversized-`response.create` guard. A request that fits the 128 MiB transport budget but still exceeds the upstream websocket budget after historical slimming MUST retain the existing HTTP 400 `payload_too_large` behavior and `param = input`.
+This transport-ingress 413 applies before parsing and is distinct from the application-level oversized-`response.create` guard. A request that fits the 128 MiB transport budget but still exceeds the upstream websocket budget after historical slimming MUST use status `413` on the client-facing WebSocket recovery path and retain HTTP `400` for an HTTP request, with `error.code = payload_too_large`, `error.type = invalid_request_error`, and `error.param = input` in both cases.
 
 #### Scenario: Larger Responses request fits both ingress checks
 
@@ -4423,7 +4423,7 @@ This transport-ingress 413 applies before parsing and is distinct from the exist
 - **THEN** the service returns HTTP 413 with `error.code = payload_too_large` and `error.type = invalid_request_error`
 - **AND** the service does not invoke Responses route logic or forward the request upstream
 
-#### Scenario: Post-slimming application rejection remains 400
+#### Scenario: Post-slimming HTTP application rejection remains 400
 
 - **WHEN** a Responses HTTP request fits the raw and decompressed transport-ingress budget
 - **AND** its serialized `response.create` still exceeds the upstream websocket budget after historical slimming

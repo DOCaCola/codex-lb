@@ -5399,7 +5399,7 @@ def test_websocket_installation_metadata_stamping_rechecks_response_create_size(
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
 
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status_code == 413
     assert exc_info.value.payload["error"]["code"] == "payload_too_large"
 
 
@@ -25531,7 +25531,7 @@ async def test_prepare_websocket_response_create_request_releases_reservation_on
             api_key=api_key,
         )
 
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status_code == 413
     release_usage.assert_awaited_once_with(reservation)
 
 
@@ -26792,7 +26792,7 @@ async def test_prepare_websocket_full_replay_rejects_oversized_unslimmable_paylo
             continuity_state=continuity_state,
         )
 
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status_code == 413
     assert exc_info.value.payload["error"]["code"] == "payload_too_large"
 
 

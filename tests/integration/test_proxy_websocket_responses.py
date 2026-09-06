@@ -9282,7 +9282,7 @@ def test_backend_responses_websocket_rejects_oversized_response_create_before_up
     with TestClient(app_instance) as client:
         error_event = send_oversized_request()
     assert error_event["type"] == "error"
-    assert error_event["status"] == 400
+    assert error_event["status"] == 413
     assert error_event["error"]["code"] == "payload_too_large"
     assert error_event["error"]["type"] == "invalid_request_error"
     assert error_event["error"]["param"] == "input"
@@ -9297,13 +9297,13 @@ def test_backend_responses_websocket_rejects_oversized_response_create_before_up
 
     with TestClient(app_instance) as client:
         duplicate_event = send_oversized_request()
-    assert duplicate_event["status"] == 400
+    assert duplicate_event["status"] == 413
     assert len(list(tmp_path.glob("*.response-create.json.gz"))) == 1
     assert len(list(tmp_path.glob("*.meta.json"))) == 1
     meta_files[0].unlink()
     with TestClient(app_instance) as client:
         orphan_retry_event = send_oversized_request()
-    assert orphan_retry_event["status"] == 400
+    assert orphan_retry_event["status"] == 413
     complete_pairs = [
         dump_path
         for dump_path in tmp_path.glob("*.response-create.json.gz")
