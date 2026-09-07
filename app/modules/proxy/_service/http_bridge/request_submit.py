@@ -134,8 +134,6 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _service_inline_input_image_urls,
     _service_lease_http_session,
     _service_time,
-    _slim_response_create_payload_for_upstream,
-    _upstream_response_create_max_bytes,
     _websocket_auth_failure_permanent_code,
     _websocket_auth_failure_requires_reauth,
     _websocket_request_text_is_account_neutral_fresh_replay,
@@ -785,11 +783,6 @@ class _HTTPBridgeRequestSubmitMixin:
                 # The caller's dump describes the un-deduped input; it must not
                 # become the forwarded frame or the budget base.
                 upstream_payload_base = None
-        protected_agent_control_output_occurrences = (
-            _historical_agent_control_output_occurrences(cast(list[JsonValue], payload.input))
-            if isinstance(payload.input, list)
-            else {}
-        )
         if upstream_payload_base is None:
             upstream_payload_base = payload.to_payload()
         # Sanitation returns a separate top-level mapping, so the pristine dump
@@ -873,31 +866,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 payload.previous_response_id,
             )
         text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
-        payload_size = len(text_data.encode("utf-8"))
-        max_bytes = _upstream_response_create_max_bytes()
-        if payload_size > max_bytes:
-            slimmed_payload, slim_summary = _slim_response_create_payload_for_upstream(
-                upstream_payload,
-                max_bytes=max_bytes,
-                protected_agent_control_output_occurrences=protected_agent_control_output_occurrences,
-            )
-            if slim_summary is not None:
-                upstream_payload = slimmed_payload
-                text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
-                logger.warning(
-                    (
-                        "Slimmed response.create request_id=%s request_log_id=%s transport=%s "
-                        "original_bytes=%s slimmed_bytes=%s "
-                        "historical_tool_outputs_slimmed=%s historical_images_slimmed=%s"
-                    ),
-                    request_state.request_id,
-                    request_state.request_log_id,
-                    transport,
-                    payload_size,
-                    len(text_data.encode("utf-8")),
-                    slim_summary["historical_tool_outputs_slimmed"],
-                    slim_summary["historical_images_slimmed"],
-                )
+
         request_state.request_text = text_data
         _enforce_response_create_size_limit(request_state)
         return request_state, text_data

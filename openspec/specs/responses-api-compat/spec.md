@@ -43,7 +43,7 @@ When an `input_image` part contains a `file_id` field or an `image_url` starting
 - **GIVEN** `upstream_stream_transport` is `"auto"` and the request payload size exceeds the WebSocket frame budget
 - **WHEN** the proxy resolves the upstream transport
 - **THEN** the request MUST be sent over HTTP `POST` instead of WebSocket
-- **AND** explicit `upstream_stream_transport = "websocket"` overrides MUST still take precedence
+- **AND** an explicit `upstream_stream_transport = "websocket"` MUST NOT bypass the byte ceiling
 
 #### Scenario: large request payload bypasses the HTTP responses bridge
 
@@ -53,7 +53,7 @@ When an `input_image` part contains a `file_id` field or an `image_url` starting
 - **AND** subsequent smaller requests MUST continue to use the bridge normally
 
 ### Requirement: Oversized responses request payloads fall back to HTTP
-When `upstream_stream_transport` is `"auto"` and the serialized request payload size exceeds the WebSocket frame budget, the proxy MUST use upstream HTTP `POST` instead of WebSocket. If the HTTP responses bridge is enabled and the same oversized request would otherwise route through the bridge, the proxy MUST bypass the bridge for that request only and send it over raw HTTP. Explicit `upstream_stream_transport` overrides MUST still take precedence.
+When `upstream_stream_transport` is `"auto"` and the serialized request payload size exceeds the WebSocket frame budget, the proxy MUST use upstream HTTP `POST` instead of WebSocket. If the HTTP responses bridge is enabled and the same oversized request would otherwise route through the bridge, the proxy MUST bypass the bridge for that request only and send it over raw HTTP. Explicit `upstream_stream_transport` overrides MUST retain precedence only for payloads within the upstream WebSocket budget.
 
 #### Scenario: large request payload routes via HTTP transport on auto
 - **GIVEN** `upstream_stream_transport` is `"auto"` and the request payload size exceeds the WebSocket frame budget
@@ -2813,7 +2813,7 @@ The service MUST track tool-call items completed by a streamed response that may
 - **GIVEN** an HTTP bridge follow-up whose serialized `response.create` is close to the upstream byte limit
 - **WHEN** synthetic interrupted outputs are injected
 - **THEN** the service prepares the upstream request from the injected payload so the `response.create` slim/size guard runs against the bytes actually sent upstream
-- **AND** an over-limit injected request is rejected locally with `payload_too_large` instead of being forwarded upstream
+- **AND** an injected frame above the WebSocket limit uses upstream HTTP, subject to the Responses HTTP body budget
 
 #### Scenario: stored input context reflects the injected upstream input
 - **WHEN** an HTTP bridge follow-up gains synthetic interrupted outputs
@@ -3227,37 +3227,56 @@ The server MUST accept client-to-proxy websocket messages on the Responses webso
 #### Scenario: Oversized response.create reaches the application-level guard
 - **WHEN** a client sends a single websocket text message larger than 16 MiB but within the configured ingress budget
 - **THEN** the server delivers the message to the application layer instead of closing the connection with `1009 message too big`
-- **AND** the application-level oversized-`response.create` handling (historical slimming, then local rejection) applies
+- **AND** the application-level oversized-`response.create` handling selects upstream HTTP while preserving the downstream WebSocket
 
 #### Scenario: Operator overrides the ingress budget
 - **WHEN** the operator starts the server with `--ws-max-size <bytes>` or sets `UVICORN_WS_MAX_SIZE=<bytes>`
 - **THEN** the websocket ingress message budget uses the configured value
 - **AND** an invalid (non-positive or non-integer) value fails startup with a clear error
 
-### Requirement: Oversized response.create payloads are slimmed or rejected before upstream send
-When the service prepares a Responses `response.create` request for the upstream websocket, it MUST measure the serialized outbound request size before sending it upstream. If the payload exceeds the upstream websocket budget, the service MUST first attempt to slim only the historical portion of `input` that precedes the most recent user turn: historical inline images MUST be replaced with textual omission notices, and oversized historical tool outputs MUST be replaced with textual omission notices that preserve the item in sequence. If a client-facing WebSocket request still exceeds the budget after slimming, the service MUST fail locally with status `413`, carrying `error.code = "payload_too_large"`, `error.type = "invalid_request_error"`, and `error.param = "input"`, so the official Codex client can use its WebSocket-to-HTTPS recovery path and obtain the upstream HTTP endpoint's result. If an HTTP request or another non-WebSocket request state still exceeds the budget after slimming, the service MUST retain status `400` with the same error envelope. Every local rejection MUST occur before an upstream WebSocket is allocated or reused.
+### Requirement: Oversized response.create payloads select HTTP before upstream send
 
-#### Scenario: Historical inline artifacts are slimmed and the latest user turn is preserved
-- **WHEN** a Responses request exceeds the upstream websocket budget because historical inline images or historical oversized tool outputs dominate the serialized `input`
-- **AND** replacing those historical artifacts with omission notices reduces the serialized request below budget
-- **THEN** the service forwards the slimmed `response.create` upstream
-- **AND** it preserves the most recent user turn unchanged
+The service MUST measure the final serialized response.create frame, including injected metadata, before sending it upstream. A frame above the configured upstream WebSocket byte budget MUST use upstream HTTP SSE for that turn, even when WebSocket is configured explicitly. The service MUST preserve historical images, tool outputs, and recent input instead of slimming history to meet a transport ceiling. It MUST preserve account ownership, authentication, upstream proxy routing, and continuation fields across this transport selection.
 
-#### Scenario: HTTP Responses route retains a terminal status when the payload still exceeds budget
-- **WHEN** an HTTP `/v1/responses` or `/backend-api/codex/responses` request still exceeds the upstream websocket budget after historical slimming
-- **THEN** the service returns HTTP `400`
-- **AND** the error envelope code is `payload_too_large`
-- **AND** the error envelope type is `invalid_request_error`
-- **AND** the error envelope param is `input`
-- **AND** the service MUST NOT allocate or reuse an upstream websocket bridge session for that request
+For a downstream WebSocket, the service MUST relay HTTP Responses events on the existing downstream connection using the normal request association and settlement path. It MUST NOT send the oversized frame over WebSocket or replay a dispatched turn merely because a transport closes. A later frame within budget MUST remain eligible for upstream WebSocket.
 
-#### Scenario: Websocket Responses route exposes the Codex HTTP recovery path
-- **WHEN** a websocket `/v1/responses` or `/backend-api/codex/responses` request still exceeds the upstream websocket budget after historical slimming
-- **THEN** the service emits a websocket error event with `"type": "error"` and `"status": 413`
-- **AND** the error envelope code is `payload_too_large`
-- **AND** the error envelope type is `invalid_request_error`
-- **AND** the error envelope param is `input`
-- **AND** the service MUST NOT connect the upstream websocket for that request
+Expanded request bodies MUST remain bounded by the Responses HTTP body budget. Exceeding that budget MUST produce context_length_exceeded before dispatch.
+
+#### Scenario: Oversized initial turn uses HTTP without opening an upstream WebSocket
+
+- **WHEN** the initial create frame exceeds the upstream WebSocket budget and fits the HTTP body budget
+- **THEN** the proxy sends one upstream HTTP request with the full input
+- **AND** HTTP response events reach the existing downstream WebSocket
+- **AND** no upstream WebSocket is opened for that turn
+
+#### Scenario: Smaller linked turn retains WebSocket eligibility
+
+- **WHEN** a smaller create follows an HTTP-transport turn on the same downstream connection
+- **THEN** it remains eligible for upstream WebSocket
+- **AND** the previous_response_id and account ownership are preserved
+
+#### Scenario: Existing WebSocket turn coexists with oversized HTTP turn
+
+- **WHEN** an oversized create arrives while an upstream WebSocket exists
+- **THEN** the proxy sends only that create over HTTP
+- **AND** both streams retain their response IDs and settle through their original account
+- **AND** an upstream WebSocket close does not discard the HTTP turn's terminal event
+
+#### Scenario: Disconnect cancels a backpressured HTTP producer
+
+- **WHEN** the downstream disconnects while an HTTP relay is blocked by backpressure
+- **THEN** the proxy cancels and joins the producer and closes its response body
+- **AND** its event buffering remains bounded
+
+### Requirement: Provider HTTP payload rejection terminates the Responses turn
+
+For a streaming Responses request, an upstream HTTP 413 MUST produce a terminal response.failed event with error.code context_length_exceeded and error.type invalid_request_error. The proxy MUST NOT pass that rejection back as a retryable transport status or echo the provider's error body. Non-streaming HTTP error contracts MUST remain unchanged.
+
+#### Scenario: HTTP itself rejects the input size
+
+- **WHEN** a streaming upstream HTTP Responses request returns 413
+- **THEN** the client receives one terminal context_length_exceeded event
+- **AND** the transport adapter does not resend the rejected body
 
 ### Requirement: Streaming Responses requests use a bounded retry budget
 When a streaming `/v1/responses` request encounters upstream instability, the proxy MUST enforce a configurable total request budget across selection, token refresh, account-capacity recovery waits, and upstream stream attempts. Each upstream stream attempt MUST clamp its connect timeout, idle timeout, and total request timeout to the remaining request budget.
@@ -4398,7 +4417,7 @@ The trailing-slash variants MUST be hidden aliases of the canonical HTTP handler
 
 If either representation exceeds that budget, the service MUST stop before route logic or upstream forwarding and return HTTP 413 with an OpenAI-compatible error envelope carrying `error.code = payload_too_large` and `error.type = invalid_request_error`.
 
-This transport-ingress 413 applies before parsing and is distinct from the application-level oversized-`response.create` guard. A request that fits the 128 MiB transport budget but still exceeds the upstream websocket budget after historical slimming MUST use status `413` on the client-facing WebSocket recovery path and retain HTTP `400` for an HTTP request, with `error.code = payload_too_large`, `error.type = invalid_request_error`, and `error.param = input` in both cases.
+This transport-ingress 413 applies before parsing and is distinct from upstream transport selection. A request that fits the Responses HTTP budget but exceeds the upstream WebSocket byte budget MUST use upstream HTTP without slimming history or asking the client to change transport.
 
 #### Scenario: Larger Responses request fits both ingress checks
 
@@ -4423,11 +4442,11 @@ This transport-ingress 413 applies before parsing and is distinct from the appli
 - **THEN** the service returns HTTP 413 with `error.code = payload_too_large` and `error.type = invalid_request_error`
 - **AND** the service does not invoke Responses route logic or forward the request upstream
 
-#### Scenario: Post-slimming HTTP application rejection remains 400
+#### Scenario: Oversized HTTP application request reaches the HTTP upstream
 
 - **WHEN** a Responses HTTP request fits the raw and decompressed transport-ingress budget
-- **AND** its serialized `response.create` still exceeds the upstream websocket budget after historical slimming
-- **THEN** the existing application-level guard returns HTTP 400 with `error.code = payload_too_large`, `error.type = invalid_request_error`, and `error.param = input`
+- **AND** its serialized response.create exceeds the upstream WebSocket budget
+- **THEN** the proxy forwards it over upstream HTTP without removing historical input
 
 ### Requirement: Thread-goal OpenAPI operations have unique stable identifiers
 The generated OpenAPI document MUST assign a unique `operationId` to every documented HTTP operation. The GET and POST operations at `/backend-api/codex/thread/goal/get` MUST remain available through the same runtime behavior and MUST expose the deterministic identifiers `thread_goal_get_backend_api_codex_thread_goal_get_get` and `thread_goal_get_backend_api_codex_thread_goal_get_post`, respectively. Correcting this schema metadata MUST NOT change either method's authentication, dependency, request forwarding, upstream operation, response status, or response payload behavior.
@@ -5435,7 +5454,7 @@ sending it.
 #### Scenario: Metadata cannot create an oversized frame
 
 - **WHEN** operation metadata makes the final frame exceed the configured limit
-- **THEN** the request is rejected or slimmed before any upstream send
+- **THEN** the request uses upstream HTTP, subject to the Responses HTTP body budget
 
 ### Requirement: Fence same-session active operations
 

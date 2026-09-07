@@ -20,7 +20,6 @@ from app.core.clients.proxy import (
     ProxyResponseError,
     _agent_control_tool_output_occurrences,
     _finalize_responses_lite_reasoning_context,
-    _historical_agent_control_output_occurrences,
     _inline_content_images,
     _normalize_responses_lite_websocket_client_metadata,
     _payload_has_responses_lite_websocket_marker,
@@ -215,71 +214,14 @@ def _response_create_text_with_size_guard(
     request_state: _WebSocketRequestState,
     transport: str,
 ) -> str | None:
-    protected_agent_control_output_occurrences = (
-        _historical_agent_control_output_occurrences(cast(list[JsonValue], payload.input))
-        if isinstance(payload.input, list)
-        else {}
+    # Oversized replay bodies remain valid HTTP requests. Keep their full input;
+    # the connection adapter decides transport from the final serialized frame.
+    text = _response_create_text(
+        payload,
+        include_type_field=include_type_field,
+        client_metadata=client_metadata,
     )
-    upstream_payload = sanitize_native_responses_input(payload.to_payload())
-    upstream_payload.pop("stream", None)
-    upstream_payload.pop("background", None)
-    if include_type_field:
-        upstream_payload["type"] = "response.create"
-    if client_metadata:
-        upstream_payload["client_metadata"] = client_metadata
-    _finalize_responses_lite_reasoning_context(
-        upstream_payload,
-        responses_lite=(
-            _payload_uses_responses_lite(upstream_payload)
-            or _payload_has_responses_lite_websocket_marker(upstream_payload)
-        ),
-    )
-    text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
-    payload_size = len(text_data.encode("utf-8"))
-    max_bytes = _upstream_response_create_max_bytes()
-    if payload_size > max_bytes:
-        original_payload_size = payload_size
-        slim_payload_for_upstream = _service_global_or(
-            "_slim_response_create_payload_for_upstream",
-            _slim_response_create_payload_for_upstream,
-        )
-        slimmed_payload, slim_summary = slim_payload_for_upstream(
-            upstream_payload,
-            max_bytes=max_bytes,
-            protected_agent_control_output_occurrences=protected_agent_control_output_occurrences,
-        )
-        if slim_summary is not None:
-            upstream_payload = slimmed_payload
-            text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
-            payload_size = len(text_data.encode("utf-8"))
-            logger.warning(
-                (
-                    "Slimmed response.create request_id=%s request_log_id=%s transport=%s "
-                    "original_bytes=%s slimmed_bytes=%s "
-                    "historical_tool_outputs_slimmed=%s historical_images_slimmed=%s"
-                ),
-                request_state.request_id,
-                request_state.request_log_id,
-                transport,
-                original_payload_size,
-                payload_size,
-                slim_summary["historical_tool_outputs_slimmed"],
-                slim_summary["historical_images_slimmed"],
-            )
-        if payload_size > max_bytes:
-            logger.warning(
-                (
-                    "Skipping oversized response.create retry body request_id=%s request_log_id=%s "
-                    "transport=%s bytes=%s max_bytes=%s"
-                ),
-                request_state.request_id,
-                request_state.request_log_id,
-                transport,
-                payload_size,
-                max_bytes,
-            )
-            return None
-    return text_data
+    return text if len(text.encode("utf-8")) <= get_settings().max_decompressed_responses_body_bytes else None
 
 
 def _response_create_text_with_account_installation_id(
@@ -638,7 +580,6 @@ def _enforce_response_create_size_limit(request_state: _WebSocketRequestState) -
     payload_bytes = request_text.encode("utf-8")
     payload_size = len(payload_bytes)
     warn_bytes = _upstream_response_create_warn_bytes()
-    max_bytes = _upstream_response_create_max_bytes()
     if payload_size > warn_bytes:
         logger.warning(
             (
@@ -651,29 +592,20 @@ def _enforce_response_create_size_limit(request_state: _WebSocketRequestState) -
             payload_size,
             request_state.previous_response_id,
         )
-    if payload_size <= max_bytes:
-        return
-
-    payload = _response_create_too_large_error_envelope(payload_size, max_bytes)
-    error = payload["error"]
-    write_response_create_dump = _service_global_or("_write_response_create_dump", _write_response_create_dump)
-    write_response_create_dump(
-        request_state,
-        account_id_value=None,
-        error_code=cast(str, error.get("code") or "payload_too_large"),
-        error_message=error.get("message"),
-        log_prefix="guarded",
-    )
-    # The Codex client treats a wrapped 413 websocket error as retryable and,
-    # after its stream retry budget, resubmits through HTTPS. Preserve 400 for
-    # callers that are already on HTTP and cannot recover by changing transport.
-    status_code = 413 if request_state.transport == "websocket" else 400
-    raise ProxyResponseError(
-        status_code,
-        payload,
-        failure_phase="validation",
-        failure_detail=f"response.create_bytes={payload_size}",
-    )
+    # HTTP can carry frames beyond the WS ceiling. Bound fully expanded replay
+    # bodies by the Responses HTTP budget, including injected metadata.
+    max_bytes = get_settings().max_decompressed_responses_body_bytes
+    if payload_size > max_bytes:
+        raise ProxyResponseError(
+            400,
+            openai_error(
+                "context_length_exceeded",
+                "The expanded Responses input exceeds the HTTP request budget. Compact or reduce the input.",
+                error_type="invalid_request_error",
+            ),
+            failure_phase="validation",
+            failure_detail=f"response.create_bytes={payload_size}",
+        )
 
 
 def _maybe_dump_oversized_response_create_request(

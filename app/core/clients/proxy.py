@@ -2356,6 +2356,8 @@ def _resolve_stream_transport(
     payload_size_estimate_bytes: int | None = None,
 ) -> str:
     configured = _configured_stream_transport(transport=transport, transport_override=transport_override)
+    if payload_size_estimate_bytes is not None and payload_size_estimate_bytes > _UPSTREAM_RESPONSE_CREATE_MAX_BYTES:
+        return "http"
     if configured == "websocket":
         return "websocket"
     if configured == "http":
@@ -2775,7 +2777,6 @@ async def _close_unmanaged_websocket(websocket: Any | None) -> None:
 async def _stream_responses_via_websocket(
     *,
     payload_dict: JsonObject,
-    protected_agent_control_output_occurrences: Mapping[tuple[str, str], tuple[bool, ...]] | None = None,
     url: str,
     headers: Mapping[str, str],
     client_session: aiohttp.ClientSession,
@@ -2794,10 +2795,7 @@ async def _stream_responses_via_websocket(
     """Yield ``(sse_block, event_type)`` pairs from the upstream websocket."""
     websocket_url = _to_websocket_upstream_url(url)
     request_started_at = time.monotonic()
-    request_payload = _prepare_websocket_response_create_payload(
-        payload_dict,
-        protected_agent_control_output_occurrences=protected_agent_control_output_occurrences,
-    )
+    request_payload = _prepare_websocket_response_create_payload(payload_dict)
     websocket_cm: AsyncContextManager[aiohttp.ClientWebSocketResponse] | None = None
     websocket: aiohttp.ClientWebSocketResponse | None = None
     circuit_breaker = None
@@ -3021,35 +3019,10 @@ def _build_websocket_response_create_payload(payload_dict: JsonObject) -> JsonOb
 
 def _prepare_websocket_response_create_payload(
     payload_dict: JsonObject,
-    *,
-    protected_agent_control_output_occurrences: Mapping[tuple[str, str], tuple[bool, ...]] | None = None,
 ) -> JsonObject:
     request_payload = _build_websocket_response_create_payload(payload_dict)
     payload_text = json.dumps(request_payload, ensure_ascii=True, separators=(",", ":"))
     payload_size = len(payload_text.encode("utf-8"))
-    if payload_size > _UPSTREAM_RESPONSE_CREATE_MAX_BYTES:
-        slimmed_payload, slim_summary = _slim_response_create_payload_for_upstream(
-            request_payload,
-            max_bytes=_UPSTREAM_RESPONSE_CREATE_MAX_BYTES,
-            protected_agent_control_output_occurrences=protected_agent_control_output_occurrences,
-        )
-        if slim_summary is not None:
-            request_payload = slimmed_payload
-            slimmed_text = json.dumps(request_payload, ensure_ascii=True, separators=(",", ":"))
-            logger.warning(
-                (
-                    "Slimmed response.create before upstream websocket connect request_id=%s "
-                    "original_bytes=%s slimmed_bytes=%s historical_tool_outputs_slimmed=%s "
-                    "historical_images_slimmed=%s"
-                ),
-                get_request_id(),
-                payload_size,
-                len(slimmed_text.encode("utf-8")),
-                slim_summary["historical_tool_outputs_slimmed"],
-                slim_summary["historical_images_slimmed"],
-            )
-            payload_text = slimmed_text
-            payload_size = len(payload_text.encode("utf-8"))
     if payload_size > _UPSTREAM_RESPONSE_CREATE_WARN_BYTES:
         previous_response_id = request_payload.get("previous_response_id")
         logger.warning(
@@ -3575,7 +3548,7 @@ async def stream_responses(
     codex_lb_account_id: str | None = None,
     suppress_live_usage: bool = False,
     native_egress_client: NativeEgressClient | None = None,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
     effective_allow_direct_egress = allow_direct_egress or (route is None and session is not None)
     # aclosing() at every hop lets a consumer's aclose() reach the upstream
     # response teardown synchronously instead of via the asyncgen finalizer.
@@ -3674,11 +3647,6 @@ async def _stream_responses_with_session(
     failure_exception_type: str | None = None
     retryable_same_contract: bool | None = None
     client_session = session
-    protected_agent_control_output_occurrences = (
-        _historical_agent_control_output_occurrences(cast(list[JsonValue], payload.input))
-        if isinstance(payload.input, list)
-        else {}
-    )
     payload_dict = sanitize_native_responses_input(payload.to_payload())
     apply_codex_installation_metadata(payload_dict, codex_installation_id)
     if settings.image_inline_fetch_enabled:
@@ -3699,7 +3667,9 @@ async def _stream_responses_with_session(
         websocket_payload_dict,
         responses_lite=_payload_has_responses_lite_websocket_marker(websocket_payload_dict),
     )
-    payload_json = json.dumps(websocket_payload_dict, ensure_ascii=True, separators=(",", ":"))
+    payload_json = json.dumps(
+        _build_websocket_response_create_payload(websocket_payload_dict), ensure_ascii=True, separators=(",", ":")
+    )
     payload_size_estimate_bytes = len(payload_json.encode("utf-8"))
     non_streaming_http = payload.stream is False
     transport_mode = (
@@ -3825,6 +3795,22 @@ async def _stream_responses_with_session(
                         chatgpt_account_id=account_id,
                     )
                 if resp.status >= 400:
+                    if resp.status == 413 and not non_streaming_http:
+                        error_code = "context_length_exceeded"
+                        error_message = (
+                            "The upstream HTTP endpoint rejected the input size. "
+                            "Compact the conversation or reduce the input before retrying."
+                        )
+                        seen_terminal = True
+                        yield format_sse_event(
+                            synthetic_stream_failure_event(
+                                error_code,
+                                error_message,
+                                error_type="invalid_request_error",
+                                response_id=get_request_id(),
+                            )
+                        )
+                        return
                     if raise_for_status:
                         error_payload = await _error_payload_from_response(resp)
                         error_code, error_message = _error_details_from_envelope(error_payload)
@@ -3976,6 +3962,19 @@ async def _stream_responses_with_session(
                     chatgpt_account_id=account_id,
                 )
             if resp.status >= 400:
+                if resp.status == 413 and not non_streaming_http:
+                    error_code = "context_length_exceeded"
+                    error_message = (
+                        "The upstream HTTP endpoint rejected the input size. "
+                        "Compact the conversation or reduce the input before retrying."
+                    )
+                    seen_terminal = True
+                    yield format_sse_event(
+                        synthetic_stream_failure_event(
+                            error_code, error_message, error_type="invalid_request_error", response_id=get_request_id()
+                        )
+                    )
+                    return
                 if raise_for_status:
                     error_payload = await _error_payload_from_response(resp)
                     error_code, error_message = _error_details_from_envelope(error_payload)
@@ -4167,7 +4166,6 @@ async def _stream_responses_with_session(
             try:
                 async for event_block, event_type in _stream_responses_via_websocket(
                     payload_dict=payload_dict,
-                    protected_agent_control_output_occurrences=protected_agent_control_output_occurrences,
                     url=url,
                     headers=upstream_headers,
                     client_session=client_session,

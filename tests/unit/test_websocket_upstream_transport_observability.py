@@ -112,7 +112,9 @@ async def test_direct_websocket_connect_egress_uses_selected_installation_metada
         *,
         route: object,
         allow_direct_egress: bool,
+        initial_request_text: str | None,
     ) -> object:
+        assert initial_request_text is None
         captured["headers"] = dict(headers)
         captured["access_token"] = access_token
         captured["account_id"] = account_id

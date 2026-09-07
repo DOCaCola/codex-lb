@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import ssl
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping, NoReturn, Protocol, Sequence, cast
@@ -54,6 +56,7 @@ from app.core.conversation_archive import archive_bytes, archive_text
 from app.core.errors import OpenAIErrorDetail, OpenAIErrorEnvelope, openai_error
 from app.core.openai.models import OpenAIError
 from app.core.openai.parsing import parse_error_payload
+from app.core.openai.requests import ResponsesRequest
 from app.core.resilience.network_recovery import (
     PROCESS_NETWORK_UNAVAILABLE_CODE,
     process_network_error_code,
@@ -191,6 +194,7 @@ class UpstreamWebSocketMessage:
     close_reason: str | None = None
     error: str | None = None
     error_code: str | None = None
+    transport: str = "websocket"
 
 
 class UpstreamWebSocketTransportError(RuntimeError):
@@ -1244,18 +1248,56 @@ async def connect_responses_websocket(
     route: ResolvedUpstreamRoute | None = None,
     codex_client: CodexClient | None = None,
     allow_direct_egress: bool = False,
+    initial_request_text: str | None = None,
 ) -> UpstreamWebSocket:
+    from app.core.clients.proxy import stream_responses
+    from app.core.clients.responses_transport import ResponsesTransport
+
     settings = get_settings()
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
-    return await _connect_upstream_websocket(
-        headers,
-        access_token,
-        account_id,
-        url=_responses_websocket_url(upstream_base),
-        route=route,
-        codex_client=codex_client,
-        allow_direct_egress=allow_direct_egress,
-        policy=_RESPONSES_WEBSOCKET_POLICY,
+
+    async def connect() -> UpstreamWebSocket:
+        return await _connect_upstream_websocket(
+            headers,
+            access_token,
+            account_id,
+            url=_responses_websocket_url(upstream_base),
+            route=route,
+            codex_client=codex_client,
+            allow_direct_egress=allow_direct_egress,
+            policy=_RESPONSES_WEBSOCKET_POLICY,
+        )
+
+    async def stream_http(text: str) -> AsyncGenerator[str, None]:
+        payload = json.loads(text)
+        payload.pop("type", None)
+        payload["stream"] = True
+        async with aclosing(
+            stream_responses(
+                ResponsesRequest.model_validate(payload),
+                headers,
+                access_token,
+                account_id,
+                base_url=upstream_base,
+                upstream_stream_transport_override="http",
+                route=route,
+                codex_client=codex_client,
+                allow_direct_egress=allow_direct_egress,
+                enforce_openai_sdk_contract=False,
+            )
+        ) as events:
+            async for event in events:
+                yield event
+
+    oversized = (
+        initial_request_text is not None
+        and len(initial_request_text.encode("utf-8")) > settings.upstream_response_create_max_bytes
+    )
+    return ResponsesTransport(
+        None if oversized else await connect(),
+        connect=connect,
+        stream_http=stream_http,
+        max_frame_bytes=settings.upstream_response_create_max_bytes,
     )
 
 

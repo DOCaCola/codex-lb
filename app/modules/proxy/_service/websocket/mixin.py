@@ -4698,7 +4698,12 @@ class _WebSocketMixin:
                         error_type="server_error",
                     ),
                 ) from exc
-            if connect_progress is not None and route is None:
+            oversized = (
+                request_state is not None
+                and request_state.request_text is not None
+                and len(request_state.request_text.encode("utf-8")) > _facade()._UPSTREAM_RESPONSE_CREATE_MAX_BYTES
+            )
+            if connect_progress is not None and route is None and not oversized:
                 connect_progress.direct_upstream_connect_started = True
             upstream = await _facade()._call_with_supported_optional_kwargs(
                 _facade().connect_responses_websocket,
@@ -4708,11 +4713,12 @@ class _WebSocketMixin:
                 optional_kwargs={
                     "route": route,
                     "allow_direct_egress": route is None,
+                    "initial_request_text": request_state.request_text if request_state is not None else None,
                 },
             )
             if request_state is not None:
                 _record_websocket_route_metadata(request_state, upstream=upstream, route=route)
-            if route is None:
+            if route is None and not oversized:
                 # Symmetric with arming: a routed success proves only that one
                 # account's proxy endpoint is healthy, so it must not clear a
                 # denial state that direct-upstream evidence armed. Because a

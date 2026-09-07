@@ -9208,108 +9208,125 @@ def test_backend_responses_websocket_emits_terminal_failure_when_upstream_send_b
     assert log_calls[0]["status"] == "error"
 
 
-def test_backend_responses_websocket_rejects_oversized_response_create_before_upstream(
+def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account(
     app_instance,
     monkeypatch,
-    tmp_path,
 ):
-    class _FakeSettingsCache:
-        async def get(self):
-            return _websocket_settings()
+    from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
+    from app.core.clients.responses_transport import ResponsesTransport
+    from app.core.utils.sse import format_sse_event
 
-    async def allow_firewall(_websocket):
-        return None
+    limit = 2048
+    http_bodies = []
+    ws_bodies = []
+    log_calls = []
+    sockets = []
 
-    async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
-        return None
+    class Socket:
+        def __init__(self):
+            self.events = asyncio.Queue()
+            self.closed = False
 
-    async def fail_connect_proxy_websocket(
-        self,
-        headers,
-        *,
-        sticky_key,
-        sticky_kind,
-        reallocate_sticky,
-        sticky_max_age_seconds,
-        prefer_earlier_reset,
-        prefer_earlier_reset_window,
-        routing_strategy,
-        model,
-        request_state,
-        api_key,
-        client_send_lock,
-        websocket,
-    ):
-        del (
-            self,
-            headers,
-            sticky_key,
-            sticky_kind,
-            reallocate_sticky,
-            sticky_max_age_seconds,
-            prefer_earlier_reset,
-            prefer_earlier_reset_window,
-            routing_strategy,
-            model,
-            request_state,
-            api_key,
-            client_send_lock,
-            websocket,
+        async def send_text(self, text):
+            ws_bodies.append(json.loads(text))
+            for kind in ("created", "completed"):
+                await self.events.put(
+                    UpstreamWebSocketMessage(
+                        kind="text",
+                        text=json.dumps(
+                            {
+                                "type": "response." + kind,
+                                "response": {
+                                    "id": "resp_small",
+                                    "status": "completed" if kind == "completed" else "in_progress",
+                                    "output": [],
+                                    "usage": {"input_tokens": 3, "output_tokens": 2},
+                                },
+                            }
+                        ),
+                    )
+                )
+
+        async def receive(self):
+            return await self.events.get()
+
+        def response_header(self, name):
+            return None
+
+        async def close(self, code=1000, reason=""):
+            self.closed = True
+
+    async def connect():
+        socket = Socket()
+        sockets.append(socket)
+        return socket
+
+    async def stream_http(text):
+        http_bodies.append(json.loads(text))
+        for kind in ("created", "completed"):
+            yield format_sse_event(
+                {
+                    "type": "response." + kind,
+                    "response": {
+                        "id": "resp_large",
+                        "status": "completed" if kind == "completed" else "in_progress",
+                        "output": [],
+                        "usage": {"input_tokens": 5, "output_tokens": 4},
+                    },
+                }
+            )
+
+    async def select_account(self, headers, **kwargs):
+        return SimpleNamespace(id="acct_size", codex_installation_id="installation"), ResponsesTransport(
+            None,
+            connect=connect,
+            stream_http=stream_http,
+            max_frame_bytes=limit,
         )
-        raise AssertionError("oversized response.create must fail before upstream websocket connect")
 
-    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
-    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
-    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 64)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 128)
-    monkeypatch.setattr(proxy_module, "_OVERSIZED_RESPONSE_CREATE_DUMP_DIR", tmp_path)
-    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fail_connect_proxy_websocket)
+    async def write_log(self, **kwargs):
+        log_calls.append(kwargs)
 
-    request_payload = {
-        "type": "response.create",
-        "model": "gpt-5.4",
-        "instructions": "",
-        "input": [{"role": "user", "content": [{"type": "input_text", "text": "x" * 256}]}],
-        "stream": True,
-    }
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", AsyncMock(return_value=None))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        proxy_module, "get_settings_cache", lambda: SimpleNamespace(get=AsyncMock(return_value=_websocket_settings()))
+    )
+    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", limit)
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", select_account)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", write_log)
 
-    def send_oversized_request() -> dict[str, Any]:
-        with client.websocket_connect("/backend-api/codex/responses") as websocket:
-            websocket.send_text(json.dumps(request_payload))
-            return json.loads(websocket.receive_text())
-
-    with TestClient(app_instance) as client:
-        error_event = send_oversized_request()
-    assert error_event["type"] == "error"
-    assert error_event["status"] == 413
-    assert error_event["error"]["code"] == "payload_too_large"
-    assert error_event["error"]["type"] == "invalid_request_error"
-    assert error_event["error"]["param"] == "input"
-    assert "response.create is too large for upstream websocket" in error_event["error"]["message"]
-
-    meta_files = list(tmp_path.glob("*.meta.json"))
-    assert len(meta_files) == 1
-    meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
-    assert meta["reason"]["error_code"] == "payload_too_large"
-    assert meta["request"]["transport"] == "websocket"
-    assert meta["request"]["request_text_bytes"] > 128
-
-    with TestClient(app_instance) as client:
-        duplicate_event = send_oversized_request()
-    assert duplicate_event["status"] == 413
-    assert len(list(tmp_path.glob("*.response-create.json.gz"))) == 1
-    assert len(list(tmp_path.glob("*.meta.json"))) == 1
-    meta_files[0].unlink()
-    with TestClient(app_instance) as client:
-        orphan_retry_event = send_oversized_request()
-    assert orphan_retry_event["status"] == 413
-    complete_pairs = [
-        dump_path
-        for dump_path in tmp_path.glob("*.response-create.json.gz")
-        if (tmp_path / f"{dump_path.name[: -len('.response-create.json.gz')]}.meta.json").exists()
+    image = {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 4096}
+    input_items = [
+        {"role": "user", "content": [{"type": "input_text", "text": "old"}]},
+        {"type": "custom_tool_call", "call_id": "image", "name": "view_image", "input": "{}"},
+        {"type": "custom_tool_call_output", "call_id": "image", "output": [image]},
+        {"role": "user", "content": [{"type": "input_text", "text": "describe"}]},
     ]
-    assert complete_pairs
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/backend-api/codex/responses") as websocket:
+            websocket.send_json({"type": "response.create", "model": "gpt-5.4", "input": input_items})
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            assert not sockets
+            websocket.send_json(
+                {
+                    "type": "response.create",
+                    "model": "gpt-5.4",
+                    "previous_response_id": "resp_large",
+                    "input": [{"role": "user", "content": "continue"}],
+                }
+            )
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+
+    assert len(http_bodies) == 1
+    assert http_bodies[0]["input"] == input_items
+    assert len(ws_bodies) == 1
+    assert ws_bodies[0]["previous_response_id"] == "resp_large"
+    assert sockets[0].closed
+    assert len(log_calls) == 2
+    assert all(log["account_id"] == "acct_size" and log["status"] == "success" for log in log_calls)
 
 
 def test_backend_responses_websocket_rejects_non_terminal_compaction_trigger_before_upstream(
@@ -9394,7 +9411,7 @@ def test_backend_responses_websocket_rejects_non_terminal_compaction_trigger_bef
     )
 
 
-def test_backend_responses_websocket_slims_historical_inline_artifacts_and_succeeds(
+def test_backend_responses_websocket_preserves_historical_inline_artifacts_for_transport_selection(
     app_instance,
     monkeypatch,
 ):
@@ -9507,8 +9524,7 @@ def test_backend_responses_websocket_slims_historical_inline_artifacts_and_succe
     assert completed_event["type"] == "response.completed"
     sent_payload = json.loads(fake_upstream.sent_text[0])
     assert sent_payload["input"][-1]["content"][0]["text"] == "ping"
-    assert "data:image/" not in json.dumps(sent_payload["input"], ensure_ascii=True)
-    assert "historical tool output" in json.dumps(sent_payload["input"], ensure_ascii=True)
+    assert sent_payload["input"] == request_payload["input"]
 
 
 def test_backend_responses_websocket_keeps_downstream_open_after_clean_upstream_close(app_instance, monkeypatch):

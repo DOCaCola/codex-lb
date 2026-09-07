@@ -4125,7 +4125,7 @@ def test_resolve_stream_transport_keeps_websocket_for_small_or_unknown_auto_payl
     )
 
 
-def test_resolve_stream_transport_keeps_explicit_websocket_for_large_payload(monkeypatch) -> None:
+def test_resolve_stream_transport_uses_http_even_with_explicit_websocket_for_large_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         proxy_module,
         "get_model_registry",
@@ -4139,10 +4139,10 @@ def test_resolve_stream_transport_keeps_explicit_websocket_for_large_payload(mon
         transport_override=None,
         model="gpt-5.4",
         headers={},
-        payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes(settings) + 1,
+        payload_size_estimate_bytes=proxy_module._UPSTREAM_RESPONSE_CREATE_MAX_BYTES + 1,
     )
 
-    assert transport == "websocket"
+    assert transport == "http"
 
 
 def test_resolve_stream_transport_keeps_explicit_http_for_large_payload(monkeypatch) -> None:
@@ -5396,11 +5396,17 @@ def test_websocket_installation_metadata_stamping_rechecks_response_create_size(
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", max_bytes + 1, raising=False)
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", max_bytes, raising=False)
 
+    # Crossing the WS ceiling is allowed; expanded HTTP bodies remain bounded.
+    websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
+    monkeypatch.setattr(
+        "app.modules.proxy._service.response_create.get_settings",
+        lambda: SimpleNamespace(max_decompressed_responses_body_bytes=max_bytes),
+    )
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
 
-    assert exc_info.value.status_code == 413
-    assert exc_info.value.payload["error"]["code"] == "payload_too_large"
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.payload["error"]["code"] == "context_length_exceeded"
 
 
 def test_response_create_client_metadata_reads_turn_metadata_case_insensitively():
@@ -7054,6 +7060,46 @@ class _NativeSseResponse:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raise_for_status", [False, True])
+@pytest.mark.parametrize("routed", [False, True])
+async def test_http_provider_413_is_terminal_context_overflow(monkeypatch, raise_for_status, routed):
+    response = _SsePostResponse([])
+    response.status = 413
+    session = _SseSession(response)
+    route = (
+        ResolvedUpstreamRoute("account_bound", "pool", ResolvedProxyEndpoint("endpoint", "https", "proxy.test", 443))
+        if routed
+        else None
+    )
+    codex_client = SimpleNamespace(request=AsyncMock(return_value=response)) if routed else None
+    payload = ResponsesRequest(model="gpt-5.4", instructions="", input=[], stream=True)
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            {},
+            "token",
+            "account",
+            session=cast(Any, session),
+            upstream_stream_transport_override="http",
+            raise_for_status=raise_for_status,
+            route=route,
+            codex_client=codex_client,
+        )
+    ]
+    if routed:
+        codex_client.request.assert_awaited_once()
+        assert session.calls == []
+    else:
+        assert len(session.calls) == 1
+    assert len(events) == 1
+    event = parse_sse_data_json(events[0])
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == "context_length_exceeded"
+    assert event["response"]["error"]["type"] == "invalid_request_error"
 
 
 class _NativeEgressClientHarness:
@@ -9638,7 +9684,7 @@ def test_normalize_http_bridge_error_event_prefers_selected_replacement_failure_
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_websocket_rejects_oversized_response_create_before_connect(monkeypatch):
+async def test_stream_responses_oversized_create_uses_http_before_ws_connect(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_stream_transport = "websocket"
@@ -9662,28 +9708,35 @@ async def test_stream_responses_websocket_rejects_oversized_response_create_befo
             "input": [{"role": "user", "content": [{"type": "input_text", "text": "x" * 256}]}],
         }
     )
-    session = _WsSession(_WsResponse([]))
+    session = _WsSession(
+        _WsResponse([]),
+        _SsePostResponse(
+            [
+                b'data: {"type":"response.completed","response":{"id":"resp_http","status":"completed"}}\n\n',
+            ]
+        ),
+    )
 
-    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
-        _ = [
-            event
-            async for event in proxy_module.stream_responses(
-                payload,
-                headers={},
-                access_token="token",
-                account_id="acc_1",
-                session=cast(proxy_module.aiohttp.ClientSession, session),
-                raise_for_status=True,
-            )
-        ]
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            headers={},
+            access_token="token",
+            account_id="acc_1",
+            session=cast(proxy_module.aiohttp.ClientSession, session),
+            raise_for_status=True,
+        )
+    ]
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.payload["error"]["code"] == "payload_too_large"
+    assert json.loads(events[-1].split("data: ")[1])["type"] == "response.completed"
+    assert len(session.post_calls) == 1
+    assert session.post_calls[0]["json"]["input"] == payload.to_payload()["input"]
     assert session.ws_calls == []
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_websocket_slims_historical_inline_artifacts_and_succeeds(monkeypatch):
+async def test_stream_responses_http_preserves_historical_inline_artifacts_and_succeeds(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_stream_transport = "websocket"
@@ -9711,7 +9764,9 @@ async def test_stream_responses_websocket_slims_historical_inline_artifacts_and_
         ),
     ]
     websocket = _WsResponse(messages)
-    session = _WsSession(websocket)
+    session = _WsSession(
+        websocket, _SsePostResponse([("data: " + message.data + "\n\n").encode() for message in messages])
+    )
     payload = ResponsesRequest.model_validate(
         {
             "model": "gpt-5.1",
@@ -9749,21 +9804,13 @@ async def test_stream_responses_websocket_slims_historical_inline_artifacts_and_
     ]
 
     assert len(events) == 2
-    assert len(session.ws_calls) == 1
-    request_payload = websocket.sent_json[0]
-    request_input = cast(list[dict[str, object]], request_payload["input"])
-    assert request_input[1]["output"] == proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-        bytes=len(("data:image/png;base64," + ("A" * 1200)).encode("utf-8"))
-    )
-    assistant_item = request_input[2]
-    assert assistant_item["content"] == [
-        {"type": "input_text", "text": proxy_service._RESPONSE_CREATE_IMAGE_OMISSION_NOTICE}
-    ]
-    assert request_input[-1] == {"role": "user", "content": [{"type": "input_text", "text": "latest turn"}]}
+    assert session.ws_calls == []
+    assert len(session.post_calls) == 1
+    assert session.post_calls[0]["json"]["input"] == payload.to_payload()["input"]
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_websocket_slims_images_nested_in_tool_output_and_succeeds(monkeypatch):
+async def test_stream_responses_http_preserves_images_nested_in_tool_output_and_succeeds(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_stream_transport = "websocket"
@@ -9793,7 +9840,9 @@ async def test_stream_responses_websocket_slims_images_nested_in_tool_output_and
         ),
     ]
     websocket = _WsResponse(messages)
-    session = _WsSession(websocket)
+    session = _WsSession(
+        websocket, _SsePostResponse([("data: " + message.data + "\n\n").encode() for message in messages])
+    )
     payload = ResponsesRequest.model_validate(
         {
             "model": "gpt-5.1",
@@ -9825,15 +9874,9 @@ async def test_stream_responses_websocket_slims_images_nested_in_tool_output_and
     ]
 
     assert len(events) == 2
-    assert len(session.ws_calls) == 1
-    request_payload = websocket.sent_json[0]
-    request_input = cast(list[dict[str, object]], request_payload["input"])
-    tool_output_item = request_input[1]
-    assert tool_output_item["output"] == [
-        {"type": "input_text", "text": "screenshot taken"},
-        {"type": "input_text", "text": proxy_service._RESPONSE_CREATE_IMAGE_OMISSION_NOTICE},
-    ]
-    assert request_input[-1] == {"role": "user", "content": [{"type": "input_text", "text": "latest turn"}]}
+    assert session.ws_calls == []
+    assert len(session.post_calls) == 1
+    assert session.post_calls[0]["json"]["input"] == payload.to_payload()["input"]
 
 
 @pytest.mark.asyncio
@@ -11630,7 +11673,7 @@ async def test_stream_responses_uses_websocket_upstream_when_forced(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_websocket_preserves_agent_outputs_before_wire_namespace_strip(monkeypatch):
+async def test_stream_responses_http_preserves_all_outputs_before_wire_namespace_strip(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
@@ -11703,7 +11746,12 @@ async def test_stream_responses_websocket_preserves_agent_outputs_before_wire_na
             )
         ]
     )
-    session = _WsSession(response)
+    session = _WsSession(
+        response,
+        _SsePostResponse(
+            [b'data: {"type":"response.completed","response":{"id":"resp_http","status":"completed"}}\n\n']
+        ),
+    )
 
     events = [
         event
@@ -11717,19 +11765,11 @@ async def test_stream_responses_websocket_preserves_agent_outputs_before_wire_na
     ]
 
     assert len(events) == 1
-    upstream_input = cast(list[JsonValue], response.sent_json[0]["input"])
+    upstream_input = cast(list[JsonValue], session.post_calls[0]["json"]["input"])
     assert all("namespace" not in item for item in upstream_input if isinstance(item, dict))
     assert cast(dict[str, JsonValue], upstream_input[1])["output"] == agent_custom_output
-    assert cast(dict[str, JsonValue], upstream_input[3])["output"] == (
-        proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-            bytes=len(unrelated_custom_output.encode("utf-8"))
-        )
-    )
-    assert cast(dict[str, JsonValue], upstream_input[4])["output"] == (
-        proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-            bytes=len(reused_historical_output.encode("utf-8"))
-        )
-    )
+    assert cast(dict[str, JsonValue], upstream_input[3])["output"] == (unrelated_custom_output)
+    assert cast(dict[str, JsonValue], upstream_input[4])["output"] == (reused_historical_output)
 
 
 @pytest.mark.asyncio
@@ -25516,6 +25556,10 @@ async def test_prepare_websocket_response_create_request_releases_reservation_on
     monkeypatch.setattr(service, "_release_websocket_reservation", release_usage)
     monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
 
+    monkeypatch.setattr(
+        "app.modules.proxy._service.response_create.get_settings",
+        lambda: SimpleNamespace(max_decompressed_responses_body_bytes=128),
+    )
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         await service._prepare_websocket_response_create_request(
             {
@@ -25531,7 +25575,7 @@ async def test_prepare_websocket_response_create_request_releases_reservation_on
             api_key=api_key,
         )
 
-    assert exc_info.value.status_code == 413
+    assert exc_info.value.status_code == 400
     release_usage.assert_awaited_once_with(reservation)
 
 
@@ -26722,11 +26766,11 @@ async def test_prepare_websocket_full_replay_retry_text_uses_size_guard(monkeypa
     assert prepared.request_state.fresh_upstream_request_text is not None
     fresh_payload = json.loads(prepared.request_state.fresh_upstream_request_text)
     fresh_input = cast(list[JsonValue], fresh_payload["input"])
-    assert len(prepared.request_state.fresh_upstream_request_text.encode("utf-8")) <= 2048
+    assert len(prepared.request_state.fresh_upstream_request_text.encode("utf-8")) > 2048
     assert next(item for item in fresh_input if isinstance(item, dict) and item.get("call_id") == "call_large") == {
         "type": "function_call_output",
         "call_id": "call_large",
-        "output": proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(bytes=40000),
+        "output": "A" * 40000,
     }
     assert fresh_input[-1] == new_input
     assert fresh_payload["client_metadata"][proxy_module.CODEX_RESPONSES_LITE_WEBSOCKET_METADATA_KEY] == "true"
@@ -26734,7 +26778,7 @@ async def test_prepare_websocket_full_replay_retry_text_uses_size_guard(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_prepare_websocket_full_replay_rejects_oversized_unslimmable_payload(monkeypatch):
+async def test_prepare_websocket_full_replay_preserves_oversized_payload_for_http(monkeypatch):
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     reserve_usage = AsyncMock(return_value=None)
@@ -26773,27 +26817,26 @@ async def test_prepare_websocket_full_replay_rejects_oversized_unslimmable_paylo
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", reserve_usage)
     monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
 
-    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
-        await service._prepare_websocket_response_create_request(
-            cast(
-                dict[str, JsonValue],
-                {
-                    "type": "response.create",
-                    "model": "gpt-5.1",
-                    "input": [*historical_input, new_input],
-                },
-            ),
-            headers={"session_id": "turn_ws_trim_too_large"},
-            codex_session_affinity=True,
-            openai_cache_affinity=True,
-            sticky_threads_enabled=False,
-            openai_cache_affinity_max_age_seconds=300,
-            api_key=api_key,
-            continuity_state=continuity_state,
-        )
+    prepared = await service._prepare_websocket_response_create_request(
+        cast(
+            dict[str, JsonValue],
+            {
+                "type": "response.create",
+                "model": "gpt-5.1",
+                "input": [*historical_input, new_input],
+            },
+        ),
+        headers={"session_id": "turn_ws_trim_too_large"},
+        codex_session_affinity=True,
+        openai_cache_affinity=True,
+        sticky_threads_enabled=False,
+        openai_cache_affinity_max_age_seconds=300,
+        api_key=api_key,
+        continuity_state=continuity_state,
+    )
 
-    assert exc_info.value.status_code == 413
-    assert exc_info.value.payload["error"]["code"] == "payload_too_large"
+    assert json.loads(prepared.text_data)["input"] == [*historical_input, new_input]
+    assert len(prepared.text_data.encode("utf-8")) > 2048
 
 
 def test_websocket_continuity_state_reuses_codex_session_scope():
@@ -27937,7 +27980,7 @@ def test_prepare_response_bridge_pairs_same_protocol_reused_call_id_by_occurrenc
             ],
         }
     )
-    monkeypatch.setattr(proxy_http_bridge_request_submit, "_upstream_response_create_max_bytes", lambda: 256)
+    monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 256)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
 
     _, text_data = service._prepare_response_bridge_request_state(
@@ -27953,9 +27996,7 @@ def test_prepare_response_bridge_pairs_same_protocol_reused_call_id_by_occurrenc
     upstream_input = json.loads(text_data)["input"]
     assert all("namespace" not in item for item in upstream_input if isinstance(item, dict))
     assert upstream_input[1]["output"] == agent_wait_output
-    assert upstream_input[3]["output"] == proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-        bytes=len(shell_output.encode("utf-8"))
-    )
+    assert upstream_input[3]["output"] == shell_output
 
 
 @pytest.mark.parametrize(
@@ -28030,7 +28071,7 @@ def test_prepare_response_bridge_preserves_namespaced_custom_outputs_before_wire
             ],
         }
     )
-    monkeypatch.setattr(proxy_http_bridge_request_submit, "_upstream_response_create_max_bytes", lambda: 256)
+    monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 256)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
 
     _, text_data = service._prepare_response_bridge_request_state(
@@ -28047,12 +28088,8 @@ def test_prepare_response_bridge_preserves_namespaced_custom_outputs_before_wire
     assert all("namespace" not in item for item in upstream_input if isinstance(item, dict))
     assert upstream_input[1]["output"] == agent_function_output
     assert upstream_input[3]["output"] == agent_custom_output
-    assert upstream_input[5]["output"] == proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-        bytes=len(unrelated_custom_output.encode("utf-8"))
-    )
-    assert upstream_input[6]["output"] == proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-        bytes=len(reused_historical_output.encode("utf-8"))
-    )
+    assert upstream_input[5]["output"] == unrelated_custom_output
+    assert upstream_input[6]["output"] == reused_historical_output
 
 
 def test_slim_response_create_ignores_malformed_unhashable_item_type():
@@ -51518,11 +51555,8 @@ async def test_inline_http_bridge_image_urls_rechecks_expanded_payload_size(monk
     monkeypatch.setattr(proxy_service, "_write_response_create_dump", lambda *args, **kwargs: None)
 
     service = proxy_service.ProxyService.__new__(proxy_service.ProxyService)
-    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
-        await service._inline_http_bridge_image_urls(text_data, request_state)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.failure_phase == "validation"
+    await service._inline_http_bridge_image_urls(text_data, request_state)
+    assert json.loads(request_state.request_text) == expanded_payload
     assert request_state.request_text is not None
     assert "data:image/png;base64," in request_state.request_text
 
