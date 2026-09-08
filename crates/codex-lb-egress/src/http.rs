@@ -70,14 +70,14 @@ pub(crate) async fn execute_request(
     request: NativeRequest,
     client: reqwest::Client,
     output: &Output,
-) -> Result<(), RequestError> {
+) -> Result<NativeEvent, RequestError> {
     let sse = request.sse;
     let method = reqwest::Method::from_bytes(request.method.as_bytes())?;
     let headers = forwarded_headers(request.headers)?;
-    let mut builder = client
-        .request(method, request.url)
-        .headers(headers)
-        .timeout(Duration::from_millis(request.timeout_ms));
+    let mut builder = client.request(method, request.url).headers(headers);
+    if let Some(timeout_ms) = request.timeout_ms {
+        builder = builder.timeout(Duration::from_millis(timeout_ms));
+    }
     if let Some(encoded_body) = request.body {
         builder = builder.body(base64::engine::general_purpose::STANDARD.decode(encoded_body)?);
     }
@@ -105,9 +105,27 @@ pub(crate) async fn execute_request(
     )
     .await?;
 
-    if let Some(options) = sse.filter(|_| status < 400) {
-        if !execute_sse_body(&mut response, &request.request_id, options, output).await? {
-            return Ok(());
+    if let Some(options) = sse.filter(|options| {
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|value| String::from_utf8_lossy(value.as_bytes()))
+            .unwrap_or_default();
+        status < 400
+            && (!options.content_type_aware
+                || content_type.is_empty()
+                || content_type.split(';').next().is_some_and(|media_type| {
+                    media_type.trim().eq_ignore_ascii_case("text/event-stream")
+                }))
+    }) {
+        if let Some(error) =
+            execute_sse_body(&mut response, &request.request_id, options, output).await?
+        {
+            return Ok(NativeEvent::SseEventTooLarge {
+                request_id: request.request_id,
+                size_bytes: error.size_bytes,
+                limit_bytes: error.limit_bytes,
+            });
         }
     } else {
         while let Some(chunk) = response.chunk().await? {
@@ -121,14 +139,9 @@ pub(crate) async fn execute_request(
             .await?;
         }
     }
-    emit(
-        output,
-        &NativeEvent::End {
-            request_id: request.request_id,
-        },
-    )
-    .await?;
-    Ok(())
+    Ok(NativeEvent::End {
+        request_id: request.request_id,
+    })
 }
 
 async fn execute_sse_body(
@@ -136,7 +149,7 @@ async fn execute_sse_body(
     request_id: &str,
     options: NativeSseOptions,
     output: &Output,
-) -> Result<bool, RequestError> {
+) -> Result<Option<SseEventTooLarge>, RequestError> {
     let idle_timeout = Duration::from_millis(options.idle_timeout_ms);
     let mut framer = SseFramer::new(options.max_event_bytes);
     loop {
@@ -148,35 +161,29 @@ async fn execute_sse_body(
         };
         for read in chunk.chunks(SSE_READ_CHUNK_SIZE) {
             framer.push(read);
-            if !emit_available_sse_events(&mut framer, request_id, output).await? {
-                return Ok(false);
+            if let Some(error) = emit_available_sse_events(&mut framer, request_id, output).await? {
+                return Ok(Some(error));
             }
         }
     }
     match framer.finish() {
         Ok(Some(text)) => emit_sse(output, request_id, &text).await?,
         Ok(None) => {}
-        Err(error) => {
-            emit_sse_too_large(output, request_id, error).await?;
-            return Ok(false);
-        }
+        Err(error) => return Ok(Some(error)),
     }
-    Ok(true)
+    Ok(None)
 }
 
 async fn emit_available_sse_events(
     framer: &mut SseFramer,
     request_id: &str,
     output: &Output,
-) -> Result<bool, std::io::Error> {
+) -> Result<Option<SseEventTooLarge>, std::io::Error> {
     loop {
         match framer.next_event() {
             Ok(Some(text)) => emit_sse(output, request_id, &text).await?,
-            Ok(None) => return Ok(true),
-            Err(error) => {
-                emit_sse_too_large(output, request_id, error).await?;
-                return Ok(false);
-            }
+            Ok(None) => return Ok(None),
+            Err(error) => return Ok(Some(error)),
         }
     }
 }
@@ -194,22 +201,6 @@ async fn emit_sse(output: &Output, request_id: &str, text: &str) -> Result<(), s
         .await?;
     }
     Ok(())
-}
-
-async fn emit_sse_too_large(
-    output: &Output,
-    request_id: &str,
-    error: SseEventTooLarge,
-) -> Result<(), std::io::Error> {
-    emit(
-        output,
-        &NativeEvent::SseEventTooLarge {
-            request_id: request_id.to_owned(),
-            size_bytes: error.size_bytes,
-            limit_bytes: error.limit_bytes,
-        },
-    )
-    .await
 }
 
 fn forwarded_headers(request_headers: Vec<(String, String)>) -> Result<HeaderMap, RequestError> {
