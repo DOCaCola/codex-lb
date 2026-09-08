@@ -1048,6 +1048,7 @@ async def _process_and_forward_upstream_websocket_text(
         response_create_gate=response_create_gate,
         continuity_state=continuity_state,
         codex_session_affinity=codex_session_affinity,
+        upstream_transport=getattr(message, "transport", "websocket"),
         clock=clock,
     )
     suppress_downstream_event = upstream_control.suppress_downstream_event
@@ -3148,6 +3149,22 @@ class _WebSocketMixin:
             payload,
             openai_compat=openai_cache_affinity,
         )
+        if (
+            continuity_state is not None
+            and continuity_state.last_completed_response_transport == "http"
+            and responses_payload.previous_response_id == continuity_state.last_completed_response_id
+            and _websocket_client_previous_response_full_resend_is_retry_safe(
+                previous_response_id=responses_payload.previous_response_id,
+                input_value=responses_payload.input,
+                continuity_state=continuity_state,
+            )
+        ):
+            omitted_response_id = responses_payload.previous_response_id
+            responses_payload = responses_payload.model_copy(update={"previous_response_id": None})
+            _facade().logger.info(
+                "websocket_ephemeral_http_anchor_omitted previous_response_id=%s",
+                omitted_response_id,
+            )
         # The client's raw model, captured before enforcement normalizes
         # aliases (``gpt-5-high`` -> ``gpt-5``). The source-ownership guards
         # must judge the raw alias too, or an alias-only model source is
@@ -5400,6 +5417,7 @@ class _WebSocketMixin:
         continuity_state: "_WebSocketContinuityState | None" = None,
         codex_session_affinity: bool = False,
         parsed_frame: _ParsedUpstreamWebSocketFrame | None = None,
+        upstream_transport: str = "websocket",
         clock: Clock | None = None,
     ) -> str:
         proxy = cast(_WebSocketServiceProtocol, self)
@@ -5486,6 +5504,7 @@ class _WebSocketMixin:
             else:
                 release_create_gate = False
             if request_state is not None:
+                request_state.upstream_transport = upstream_transport
                 replay_created_will_be_suppressed = (
                     event_type == "response.created" and request_state.suppress_next_created_downstream
                 )
@@ -6067,6 +6086,7 @@ class _WebSocketMixin:
                 continuity_state,
                 request_state=request_state,
                 response_id=response_id,
+                upstream_transport=upstream_transport,
             )
 
         if request_state is not None and event_type in {"response.failed", "error"}:
@@ -6647,13 +6667,14 @@ class _WebSocketMixin:
                     )
                     if not isolate_account_health_failure:
                         raise
-            for remembered_response_id in _websocket_continuity_response_ids(request_state, response_id):
-                proxy._remember_websocket_previous_response_owner(
-                    previous_response_id=remembered_response_id,
-                    api_key_id=api_key.id if api_key is not None else None,
-                    account_id=account_id_value,
-                    session_id=request_state.session_id,
-                )
+            if request_state.upstream_transport != "http":
+                for remembered_response_id in _websocket_continuity_response_ids(request_state, response_id):
+                    proxy._remember_websocket_previous_response_owner(
+                        previous_response_id=remembered_response_id,
+                        api_key_id=api_key.id if api_key is not None else None,
+                        account_id=account_id_value,
+                        session_id=request_state.session_id,
+                    )
 
     async def _write_websocket_connect_failure(
         self,

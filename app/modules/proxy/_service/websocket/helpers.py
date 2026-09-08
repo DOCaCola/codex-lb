@@ -710,6 +710,8 @@ def _websocket_continuity_anchor_for_payload(
     previous_response_id = continuity_state.last_completed_response_id
     if previous_response_id is None:
         return None
+    if continuity_state.last_completed_response_transport == "http":
+        return None
     current_model_selector = raw_source_model or responses_payload.model
     # A model transition must keep the caller's full replay. Reusing the prior
     # selector's opaque response id can pin a source-owned model to the native
@@ -791,9 +793,11 @@ def _record_websocket_continuity_completion(
     *,
     request_state: _WebSocketRequestState,
     response_id: str | None,
+    upstream_transport: str = "websocket",
 ) -> None:
     if response_id is None:
         continuity_state.last_completed_response_id = None
+        continuity_state.last_completed_response_transport = None
         continuity_state.last_completed_model_selector = None
         continuity_state.last_completed_input_count = 0
         continuity_state.last_completed_input_prefix_fingerprint = None
@@ -808,6 +812,7 @@ def _record_websocket_continuity_completion(
     # is cleared rather than left stale when the completed turn cannot
     # provide one.
     continuity_state.last_completed_response_id = response_id
+    continuity_state.last_completed_response_transport = upstream_transport
     continuity_state.last_completed_model_selector = request_state.raw_source_model or request_state.model
     if request_state.input_item_count > 0 and request_state.input_full_fingerprint is not None:
         continuity_state.last_completed_input_count = request_state.input_item_count

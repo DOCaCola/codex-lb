@@ -1528,6 +1528,10 @@ def _http_bridge_session_supports_service_tier(
 class _WebSocketContinuityState:
     last_completed_input_count: int = 0
     last_completed_response_id: str | None = None
+    # HTTP fallback turns use independent Responses requests with ``store=false``.
+    # Their response ids identify the completed turn for downstream recovery,
+    # but cannot anchor a later upstream request.
+    last_completed_response_transport: str | None = None
     # Exact source-routing selector (enforced model or preserved raw alias)
     # that produced ``last_completed_response_id``. Implicit anchors are an
     # optimization for this selector, not provider-neutral conversation state.

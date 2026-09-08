@@ -9220,6 +9220,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     http_bodies = []
     ws_bodies = []
     log_calls = []
+    owner_calls = []
     sockets = []
 
     class Socket:
@@ -9263,12 +9264,13 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
 
     async def stream_http(text):
         http_bodies.append(json.loads(text))
+        response_id = f"resp_large_{len(http_bodies)}"
         for kind in ("created", "completed"):
             yield format_sse_event(
                 {
                     "type": "response." + kind,
                     "response": {
-                        "id": "resp_large",
+                        "id": response_id,
                         "status": "completed" if kind == "completed" else "in_progress",
                         "output": [],
                         "usage": {"input_tokens": 5, "output_tokens": 4},
@@ -9287,6 +9289,9 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     async def write_log(self, **kwargs):
         log_calls.append(kwargs)
 
+    def remember_owner(self, **kwargs):
+        owner_calls.append(kwargs)
+
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", AsyncMock(return_value=None))
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", AsyncMock(return_value=None))
     monkeypatch.setattr(
@@ -9295,6 +9300,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", limit)
     monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", select_account)
     monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", write_log)
+    monkeypatch.setattr(proxy_module.ProxyService, "_remember_websocket_previous_response_owner", remember_owner)
 
     image = {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 4096}
     input_items = [
@@ -9313,20 +9319,34 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
                 {
                     "type": "response.create",
                     "model": "gpt-5.4",
-                    "previous_response_id": "resp_large",
-                    "input": [{"role": "user", "content": "continue"}],
+                    "previous_response_id": "resp_large_1",
+                    "input": [*input_items, {"role": "user", "content": "continue"}],
+                }
+            )
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            websocket.send_json(
+                {
+                    "type": "response.create",
+                    "model": "gpt-5.4",
+                    "input": [{"role": "user", "content": "new small turn"}],
                 }
             )
             assert json.loads(websocket.receive_text())["type"] == "response.created"
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
 
-    assert len(http_bodies) == 1
+    assert len(http_bodies) == 2
     assert http_bodies[0]["input"] == input_items
+    assert "previous_response_id" not in http_bodies[1]
+    assert http_bodies[1]["input"] == [*input_items, {"role": "user", "content": "continue"}]
     assert len(ws_bodies) == 1
-    assert ws_bodies[0]["previous_response_id"] == "resp_large"
+    assert "previous_response_id" not in ws_bodies[0]
+    assert ws_bodies[0]["input"] == [{"role": "user", "content": "new small turn"}]
     assert sockets[0].closed
-    assert len(log_calls) == 2
+    assert len(log_calls) == 3
     assert all(log["account_id"] == "acct_size" and log["status"] == "success" for log in log_calls)
+    assert [log["upstream_transport"] for log in log_calls] == ["http", "http", "websocket"]
+    assert [call["previous_response_id"] for call in owner_calls] == ["resp_small"]
 
 
 def test_backend_responses_websocket_rejects_non_terminal_compaction_trigger_before_upstream(
