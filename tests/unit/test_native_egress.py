@@ -424,6 +424,43 @@ async def test_client_close_is_idempotent_and_prevents_restart(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_buffered_body_burst_reaches_active_consumer(tmp_path: Path) -> None:
+    helper = tmp_path / "native-helper"
+    _write_helper(
+        helper,
+        """#!/usr/bin/env python3
+import base64
+import json
+import sys
+for line in sys.stdin:
+    command = json.loads(line)
+    request_id = command["request_id"]
+    if command["type"] == "cancel":
+        print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
+        continue
+    events = [{"type": "head", "request_id": request_id, "status": 200,
+               "http_version": "HTTP/2.0", "headers": []}]
+    for index in range(256):
+        events.append({"type": "chunk", "request_id": request_id,
+                       "data": base64.b64encode(str(index).encode() + b",").decode()})
+    events.append({"type": "end", "request_id": request_id})
+    sys.stdout.write("".join(json.dumps(event) + "\\n" for event in events))
+    sys.stdout.flush()
+""",
+    )
+    client = SubprocessNativeEgressClient(helper)
+    try:
+        response = await client.request(
+            NativeEgressRequest(method="POST", url="https://example.test/responses", headers={}, body=b"{}")
+        )
+        assert await asyncio.wait_for(response.read(), timeout=2.0) == b"".join(
+            str(index).encode() + b"," for index in range(256)
+        )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_client_close_does_not_hang_when_stream_queue_is_full(tmp_path: Path) -> None:
     helper = tmp_path / "native-helper"
     _write_helper(
