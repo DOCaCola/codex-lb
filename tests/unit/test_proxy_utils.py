@@ -26476,28 +26476,26 @@ async def test_prepare_websocket_response_create_request_omits_ephemeral_http_an
     assert prepared.request_state.proxy_injected_previous_response_id is False
 
     delta_only = [{"role": "user", "content": [{"type": "input_text", "text": "delta only"}]}]
-    unsafe = await service._prepare_websocket_response_create_request(
-        cast(
-            dict[str, JsonValue],
-            {
-                "type": "response.create",
-                "model": "gpt-5.1",
-                "previous_response_id": "resp_ephemeral_http",
-                "input": delta_only,
-            },
-        ),
-        headers={"session_id": "turn_ws_http_anchor"},
-        codex_session_affinity=True,
-        openai_cache_affinity=True,
-        sticky_threads_enabled=False,
-        openai_cache_affinity_max_age_seconds=300,
-        api_key=api_key,
-        continuity_state=continuity_state,
-    )
-
-    unsafe_payload = json.loads(unsafe.text_data)
-    assert unsafe_payload["previous_response_id"] == "resp_ephemeral_http"
-    assert unsafe_payload["input"] == delta_only
+    with pytest.raises(proxy_service.ProxyResponseError) as failure:
+        await service._prepare_websocket_response_create_request(
+            cast(
+                dict[str, JsonValue],
+                {
+                    "type": "response.create",
+                    "model": "gpt-5.1",
+                    "previous_response_id": "resp_ephemeral_http",
+                    "input": delta_only,
+                },
+            ),
+            headers={"session_id": "turn_ws_http_anchor"},
+            codex_session_affinity=True,
+            openai_cache_affinity=True,
+            sticky_threads_enabled=False,
+            openai_cache_affinity_max_age_seconds=300,
+            api_key=api_key,
+            continuity_state=continuity_state,
+        )
+    assert failure.value.payload["error"]["code"] == "previous_response_not_found"
 
 
 @pytest.mark.asyncio

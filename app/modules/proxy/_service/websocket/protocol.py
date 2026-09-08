@@ -68,6 +68,7 @@ class _WebSocketServiceProtocol(Protocol):
     _try_open_websocket_connect_attempt: Any
     _touch_active_websocket_thread_affinity: Any
     _websocket_continuity_index: Any
+    _http_fallback_replay_store: Any
     _websocket_continuity_state_for_request: Any
     _websocket_previous_response_account_index: Any
     _write_request_log: Any

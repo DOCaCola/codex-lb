@@ -1008,6 +1008,8 @@ class _WebSocketRequestState:
     event_queue: asyncio.Queue[str | None] | None = None
     transport: str = _REQUEST_TRANSPORT_WEBSOCKET
     upstream_transport: str | None = _REQUEST_TRANSPORT_WEBSOCKET
+    http_replay_conversation_id: str | None = None
+    http_replay_input: JsonValue = None
     enforce_openai_sdk_contract: bool = True
     propagate_http_errors: bool = False
     request_kind: str = "normal"

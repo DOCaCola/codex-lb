@@ -310,11 +310,11 @@ async def test_find_latest_account_id_for_response_id_prefers_session_then_falls
     owner_requested_at = datetime(2026, 7, 11, 12, 0, 0)
     returned_values = iter(
         [
-            ("acc_latest", None, None),
-            ("acc_scoped", None, None),
-            ("acc_session", owner_requested_at, "sid_terminal_a"),
+            ("acc_latest", None, None, "websocket"),
+            ("acc_scoped", None, None, None),
+            ("acc_session", owner_requested_at, "sid_terminal_a", "http"),
             None,
-            ("acc_scoped", None, None),
+            ("acc_scoped", None, None, None),
             None,
         ]
     )
@@ -355,6 +355,7 @@ async def test_find_latest_account_id_for_response_id_prefers_session_then_falls
     assert owner_session.account_id == "acc_session"
     assert owner_session.requested_at == owner_requested_at
     assert owner_session.session_id == "sid_terminal_a"
+    assert owner_session.upstream_transport == "http"
     assert owner_session_fallback == "acc_scoped"
     assert owner_missing is None
     assert "request_logs.api_key_id = :api_key_id_1" not in executed_sql[0]
@@ -387,7 +388,7 @@ async def test_find_latest_account_id_for_response_id_ignores_blank_session_id_s
 
     async def _execute(statement):
         executed_sql.append(str(statement))
-        return SimpleNamespace(one_or_none=lambda: ("acc_scoped", None, None))
+        return SimpleNamespace(one_or_none=lambda: ("acc_scoped", None, None, None))
 
     session.execute.side_effect = _execute
 
@@ -407,7 +408,7 @@ async def test_find_latest_account_id_for_response_id_falls_back_when_session_sc
     session = AsyncMock()
     repo = RequestLogsRepository(session)
     executed_sql: list[str] = []
-    returned_values = iter([("   ", None, "sid_terminal_a"), ("acc_fallback", None, None)])
+    returned_values = iter([("   ", None, "sid_terminal_a", None), ("acc_fallback", None, None, None)])
 
     async def _execute(statement):
         executed_sql.append(str(statement))

@@ -37338,6 +37338,7 @@ async def test_heartbeat_maintenance_runs_all_bridge_passes() -> None:
         reconcile_durable_http_bridge_ownership=AsyncMock(return_value=0),
         abandon_stale_http_bridge_operations=AsyncMock(return_value=0),
         prune_idle_http_bridge_sessions=AsyncMock(return_value=0),
+        sweep_http_fallback_replay=AsyncMock(return_value=None),
     )
 
     await run_http_bridge_heartbeat_maintenance(proxy_service_double)
@@ -37345,6 +37346,7 @@ async def test_heartbeat_maintenance_runs_all_bridge_passes() -> None:
     proxy_service_double.reconcile_durable_http_bridge_ownership.assert_awaited_once()
     proxy_service_double.abandon_stale_http_bridge_operations.assert_awaited_once()
     proxy_service_double.prune_idle_http_bridge_sessions.assert_awaited_once()
+    proxy_service_double.sweep_http_fallback_replay.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -37357,12 +37359,14 @@ async def test_heartbeat_maintenance_isolates_a_failing_pass() -> None:
         reconcile_durable_http_bridge_ownership=AsyncMock(side_effect=RuntimeError("durable read failed")),
         abandon_stale_http_bridge_operations=AsyncMock(return_value=0),
         prune_idle_http_bridge_sessions=AsyncMock(return_value=0),
+        sweep_http_fallback_replay=AsyncMock(return_value=None),
     )
 
     await run_http_bridge_heartbeat_maintenance(proxy_service_double)
 
     proxy_service_double.abandon_stale_http_bridge_operations.assert_awaited_once()
     proxy_service_double.prune_idle_http_bridge_sessions.assert_awaited_once()
+    proxy_service_double.sweep_http_fallback_replay.assert_awaited_once()
 
 
 @pytest.mark.asyncio

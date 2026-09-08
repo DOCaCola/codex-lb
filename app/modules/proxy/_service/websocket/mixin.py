@@ -65,6 +65,7 @@ from app.core.clients.proxy_websocket import (
     is_account_neutral_websocket_error_code,
 )
 from app.core.clock import Clock, Scheduler, clock_for, scheduler_for
+from app.core.config.settings import get_settings as replay_settings
 from app.core.errors import (
     PREVIOUS_RESPONSE_MALFORMED_PARAM_REASON,
     PREVIOUS_RESPONSE_NOT_FOUND_CODE,
@@ -462,6 +463,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _wrapped_websocket_error_event,
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
+from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
     _is_synthesized_turn_state,
@@ -511,6 +513,7 @@ from app.modules.proxy.request_policy import (
     openai_invalid_payload_error,
     openai_validation_error,
     responses_source_route_excluded,
+    strip_terminal_compaction_trigger_input,
     validate_model_access,
     validate_top_level_compaction_trigger_input_shape,
 )
@@ -1327,6 +1330,13 @@ async def _process_upstream_websocket_transport_end(
 
 
 class _WebSocketMixin:
+    @cached_property
+    def _http_fallback_replay_store(self) -> HTTPFallbackReplayStore:
+        return HTTPFallbackReplayStore(replay_settings().data_dir / "http-fallback-replay", clock=clock_for(self))
+
+    async def sweep_http_fallback_replay(self) -> None:
+        await self._http_fallback_replay_store.sweep()
+
     @cached_property
     def _source_websocket_fallback_registry(self) -> SourceWebSocketFallbackRegistry:
         return SourceWebSocketFallbackRegistry()
@@ -3145,6 +3155,29 @@ class _WebSocketMixin:
             client_metadata_values=_websocket_capability_metadata_values(payload),
         )
         validate_top_level_compaction_trigger_input_shape(payload)
+        replay_conversation_id = conversation_id or _owner_lookup_session_id_from_headers(
+            headers, synthesized_turn_state=synthesized_turn_state
+        )
+        original_client_previous_id = _facade()._previous_response_id_from_payload(payload)
+        replay_account_id = None
+        if original_client_previous_id is not None and replay_conversation_id is not None:
+            retained = await self._http_fallback_replay_store.load(
+                ReplayScope(refreshed_api_key.id if refreshed_api_key is not None else None, replay_conversation_id),
+                original_client_previous_id,
+            )
+            if retained is not None:
+                delta = payload.get("input", [])
+                if isinstance(delta, str):
+                    delta = [{"role": "user", "content": delta}]
+                if isinstance(delta, list):
+                    payload = {**payload, "input": retained.expand(cast(list[JsonValue], delta))}
+                    payload.pop("previous_response_id", None)
+                    requested_model = payload.get("model")
+                    if isinstance(requested_model, str) and retained.model == effective_model_for_api_key(
+                        refreshed_api_key, requested_model
+                    ):
+                        replay_account_id = retained.account_id
+                    _facade().logger.info("websocket_http_history_expanded")
         responses_payload = normalize_responses_request_payload(
             payload,
             openai_compat=openai_cache_affinity,
@@ -3153,12 +3186,21 @@ class _WebSocketMixin:
             continuity_state is not None
             and continuity_state.last_completed_response_transport == "http"
             and responses_payload.previous_response_id == continuity_state.last_completed_response_id
-            and _websocket_client_previous_response_full_resend_is_retry_safe(
+            and responses_payload.previous_response_id is not None
+        ):
+            if not _websocket_client_previous_response_full_resend_is_retry_safe(
                 previous_response_id=responses_payload.previous_response_id,
                 input_value=responses_payload.input,
                 continuity_state=continuity_state,
-            )
-        ):
+            ):
+                raise ProxyResponseError(
+                    400,
+                    openai_error(
+                        PREVIOUS_RESPONSE_NOT_FOUND_CODE,
+                        "Previous response was not found; retry without previous_response_id.",
+                        error_type="invalid_request_error",
+                    ),
+                )
             omitted_response_id = responses_payload.previous_response_id
             responses_payload = responses_payload.model_copy(update={"previous_response_id": None})
             _facade().logger.info(
@@ -3333,7 +3375,7 @@ class _WebSocketMixin:
                 headers,
                 session_id=_sticky_key_from_session_header(headers),
                 turn_state=_sticky_key_from_turn_state_header(headers) or synthesized_turn_state,
-                previous_response_ids=(responses_payload.previous_response_id,),
+                previous_response_ids=(original_client_previous_id,),
                 client_metadata=client_metadata,
             ),
         )
@@ -3363,6 +3405,11 @@ class _WebSocketMixin:
         request_state.useragent = useragent
         request_state.useragent_group = useragent_group
         request_state.conversation_id = conversation_id
+        request_state.http_replay_conversation_id = (
+            replay_conversation_id if strip_terminal_compaction_trigger_input(responses_payload) is None else None
+        )
+        if not payload.get("previous_response_id"):
+            request_state.http_replay_input = payload.get("input")
         request_state.client_ip = client_ip
         request_state.raw_source_model = raw_source_model
         request_state.source_route_excluded = source_route_excluded
@@ -3494,6 +3541,7 @@ class _WebSocketMixin:
         # precedence, with conflicting hard signals failing closed.
         request_state.preferred_account_id = resolve_required_account_id(
             ("previous response or bridge", request_state.preferred_account_id),
+            ("HTTP replay", replay_account_id),
             ("input file", rewritten_file_account_id),
         )
         request_state.file_required_preferred_account = rewritten_file_account_id is not None
@@ -5029,6 +5077,16 @@ class _WebSocketMixin:
                     session_id=session_id_value,
                 )
             return fallback_account_id
+        if owner_record.upstream_transport == "http":
+            _record_lookup_metadata(source="request_logs", outcome="ephemeral_http")
+            raise ProxyResponseError(
+                400,
+                openai_error(
+                    PREVIOUS_RESPONSE_NOT_FOUND_CODE,
+                    "Previous response was not found; retry without previous_response_id.",
+                    error_type="invalid_request_error",
+                ),
+            )
         proxy._remember_websocket_previous_response_owner(
             previous_response_id=response_id,
             api_key_id=api_key_id,
@@ -6082,6 +6140,28 @@ class _WebSocketMixin:
             and completed_usage.output_tokens == 0
         )
         if event_type == "response.completed" and continuity_state is not None and not completed_empty_prewarm:
+            if (
+                upstream_transport == "http"
+                and request_state.http_replay_conversation_id is not None
+                and response_id is not None
+                and payload is not None
+            ):
+                completed_response = payload.get("response")
+                output = completed_response.get("output") if isinstance(completed_response, dict) else None
+                replay_text = request_state.fresh_upstream_request_text or request_state.request_text
+                if isinstance(output, list) and replay_text is not None:
+                    for replay_id in _websocket_continuity_response_ids(request_state, response_id):
+                        await self._http_fallback_replay_store.remember(
+                            ReplayScope(
+                                api_key.id if api_key is not None else None,
+                                request_state.http_replay_conversation_id,
+                            ),
+                            replay_id,
+                            replay_text,
+                            output,
+                            account_id_value,
+                            request_state.http_replay_input,
+                        )
             _record_websocket_continuity_completion(
                 continuity_state,
                 request_state=request_state,

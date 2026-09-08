@@ -9208,13 +9208,17 @@ def test_backend_responses_websocket_emits_terminal_failure_when_upstream_send_b
     assert log_calls[0]["status"] == "error"
 
 
+@pytest.mark.parametrize("full_resend", [False, True])
 def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account(
     app_instance,
     monkeypatch,
+    tmp_path,
+    full_resend,
 ):
     from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
     from app.core.clients.responses_transport import ResponsesTransport
     from app.core.utils.sse import format_sse_event
+    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore
 
     limit = 2048
     http_bodies = []
@@ -9222,6 +9226,19 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     log_calls = []
     owner_calls = []
     sockets = []
+    output = [
+        {
+            "type": "function_call",
+            "id": "fc_retained",
+            "call_id": "call_retained",
+            "name": "shell",
+            "arguments": "{}",
+            "status": "completed",
+        }
+    ]
+    delta = [{"type": "function_call_output", "call_id": "call_retained", "output": "tool result"}]
+    next_output = [{**output[0], "id": "fc_second", "call_id": "call_second"}]
+    next_delta = [{"type": "function_call_output", "call_id": "call_second", "output": "second result"}]
 
     class Socket:
         def __init__(self):
@@ -9265,6 +9282,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     async def stream_http(text):
         http_bodies.append(json.loads(text))
         response_id = f"resp_large_{len(http_bodies)}"
+        completed_output = output if len(http_bodies) == 1 else next_output
         for kind in ("created", "completed"):
             yield format_sse_event(
                 {
@@ -9272,7 +9290,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
                     "response": {
                         "id": response_id,
                         "status": "completed" if kind == "completed" else "in_progress",
-                        "output": [],
+                        "output": completed_output if kind == "completed" else [],
                         "usage": {"input_tokens": 5, "output_tokens": 4},
                     },
                 }
@@ -9301,6 +9319,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", select_account)
     monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", write_log)
     monkeypatch.setattr(proxy_module.ProxyService, "_remember_websocket_previous_response_owner", remember_owner)
+    monkeypatch.setattr(proxy_module.ProxyService, "_http_fallback_replay_store", HTTPFallbackReplayStore(tmp_path))
 
     image = {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 4096}
     input_items = [
@@ -9310,17 +9329,35 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
         {"role": "user", "content": [{"type": "input_text", "text": "describe"}]},
     ]
     with TestClient(app_instance) as client:
-        with client.websocket_connect("/backend-api/codex/responses") as websocket:
+        with client.websocket_connect(
+            "/backend-api/codex/responses", headers={"session_id": "http-replay-test"}
+        ) as websocket:
             websocket.send_json({"type": "response.create", "model": "gpt-5.4", "input": input_items})
             assert json.loads(websocket.receive_text())["type"] == "response.created"
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
             assert not sockets
+        # A new downstream connection must find history without an in-memory
+        # continuity slot. A new store instance also exercises restart loading.
+        monkeypatch.setattr(proxy_module.ProxyService, "_http_fallback_replay_store", HTTPFallbackReplayStore(tmp_path))
+        with client.websocket_connect(
+            "/backend-api/codex/responses", headers={"session_id": "http-replay-test"}
+        ) as websocket:
             websocket.send_json(
                 {
                     "type": "response.create",
                     "model": "gpt-5.4",
                     "previous_response_id": "resp_large_1",
-                    "input": [*input_items, {"role": "user", "content": "continue"}],
+                    "input": [*input_items, *output, *delta] if full_resend else delta,
+                }
+            )
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            websocket.send_json(
+                {
+                    "type": "response.create",
+                    "model": "gpt-5.4",
+                    "previous_response_id": "resp_large_2",
+                    "input": [*input_items, *output, *delta, *next_output, *next_delta] if full_resend else next_delta,
                 }
             )
             assert json.loads(websocket.receive_text())["type"] == "response.created"
@@ -9335,18 +9372,61 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
             assert json.loads(websocket.receive_text())["type"] == "response.created"
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
 
-    assert len(http_bodies) == 2
+    assert len(http_bodies) == 3
     assert http_bodies[0]["input"] == input_items
     assert "previous_response_id" not in http_bodies[1]
-    assert http_bodies[1]["input"] == [*input_items, {"role": "user", "content": "continue"}]
+    normalized_output = [{key: value for key, value in item.items() if key != "id"} for item in output]
+    assert http_bodies[1]["input"] == [*input_items, *normalized_output, *delta]
+    normalized_next_output = [{key: value for key, value in item.items() if key != "id"} for item in next_output]
+    assert "previous_response_id" not in http_bodies[2]
+    assert http_bodies[2]["input"] == [*input_items, *normalized_output, *delta, *normalized_next_output, *next_delta]
     assert len(ws_bodies) == 1
     assert "previous_response_id" not in ws_bodies[0]
     assert ws_bodies[0]["input"] == [{"role": "user", "content": "new small turn"}]
     assert sockets[0].closed
-    assert len(log_calls) == 3
+    assert len(log_calls) == 4
     assert all(log["account_id"] == "acct_size" and log["status"] == "success" for log in log_calls)
-    assert [log["upstream_transport"] for log in log_calls] == ["http", "http", "websocket"]
+    assert [log["upstream_transport"] for log in log_calls] == ["http", "http", "http", "websocket"]
     assert [call["previous_response_id"] for call in owner_calls] == ["resp_small"]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_code"),
+    [("/backend-api/codex/responses", "previous_response_not_found"), ("/v1/responses", "stream_incomplete")],
+)
+def test_backend_http_replay_cache_miss_requests_full_history_before_upstream(
+    app_instance, monkeypatch, tmp_path, endpoint, expected_code
+):
+    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore
+    from app.modules.request_logs.repository import PreviousResponseOwnerRecord, RequestLogsRepository
+
+    connect = AsyncMock(side_effect=AssertionError("Cache miss must not dispatch upstream"))
+    owner_lookup = AsyncMock(
+        return_value=PreviousResponseOwnerRecord("acct_http", datetime.now(timezone.utc), "thread_http", "http")
+    )
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", AsyncMock(return_value=None))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        proxy_module, "get_settings_cache", lambda: SimpleNamespace(get=AsyncMock(return_value=_websocket_settings()))
+    )
+    monkeypatch.setattr(proxy_module.ProxyService, "_http_fallback_replay_store", HTTPFallbackReplayStore(tmp_path))
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", connect)
+    monkeypatch.setattr(RequestLogsRepository, "find_latest_owner_record_for_response_id", owner_lookup)
+    with TestClient(app_instance) as client:
+        with client.websocket_connect(endpoint, headers={"session_id": "thread_http"}) as websocket:
+            websocket.send_json(
+                {
+                    "type": "response.create",
+                    "model": "gpt-5.4",
+                    "previous_response_id": "resp_http_evicted",
+                    "input": [{"type": "function_call_output", "call_id": "call_unavailable", "output": "result"}],
+                }
+            )
+            event = json.loads(websocket.receive_text())
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == expected_code
+    connect.assert_not_awaited()
+    owner_lookup.assert_awaited()
 
 
 def test_backend_responses_websocket_rejects_non_terminal_compaction_trigger_before_upstream(

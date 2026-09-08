@@ -172,6 +172,7 @@ async def run_http_bridge_heartbeat_maintenance(proxy_service: Any) -> None:
         ("reconcile_durable_http_bridge_ownership", "HTTP bridge durable ownership reconciliation failed"),
         ("abandon_stale_http_bridge_operations", "HTTP bridge stale operation abandonment failed"),
         ("prune_idle_http_bridge_sessions", "HTTP bridge idle sweep failed"),
+        ("sweep_http_fallback_replay", "HTTP fallback replay sweep failed"),
     ):
         pass_callable = getattr(proxy_service, attribute, None)
         if pass_callable is None:

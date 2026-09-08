@@ -8,6 +8,14 @@ See `openspec/specs/responses-api-compat/spec.md` for normative requirements.
 
 ## Rationale and Decisions
 
+### HTTP fallback continuation replay
+
+The oversized direct-WebSocket fallback uses independent upstream HTTP requests with `store=false`. A following Codex delta cannot use the returned id upstream. The proxy therefore retains the completed input and output locally, expands scoped deltas before normal policy checks, and removes the ephemeral id. This follows OpenCodex's replay and identity-checked full-resend behavior (`state.ts`, revision `9a27e86992d7a014e0aa92c046199b9fac148201`). Original client input is retained before upstream item-id normalization so repeated full resends can match without duplication.
+
+The cache lives under `<data_dir>/http-fallback-replay`. It retains conversation content in private plaintext files, with a one-hour TTL, 64 MiB resident serialized-byte budget, 256 MiB per-entry limit, 1000 entries, and a 1 GiB aggregate disk budget. Large histories spill out of RAM. Unlike OpenCodex's separate debounced snapshot and spill formats, both small and large entries use atomic, integrity-checked files so ordinary restarts preserve replay. Ring-heartbeat maintenance expires idle entries; reads do not renew expiry. This cache is separate from conversation archives and upstream response storage.
+
+For example, an HTTP completion containing a tool call can be followed by only its tool result. Replay supplies the original input and tool call before the new result; all current model, file, account, and capability checks still run. Native upstream WebSocket chaining remains unchanged. Cache eviction or loss requests full client replay before contacting upstream: `previous_response_not_found` on the Codex-native surface, `stream_incomplete` on public surfaces. Requests without stable scope and compaction turns do not seed this cache. Per-replica files are not a distributed history service; a cache miss on another replica follows the same recovery path.
+
 - **Responses as canonical wire format:** Internally we treat Responses as the source of truth to avoid divergent streaming semantics.
 - **Strict validation:** Required fields and mutually exclusive fields are enforced up front to match official client expectations.
 - **Cursor alias compatibility:** Cursor UI model labels may append reasoning or speed suffixes to GPT-5 slugs; those are normalized to canonical upstream fields before forwarding.
