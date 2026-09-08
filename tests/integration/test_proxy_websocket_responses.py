@@ -9209,11 +9209,17 @@ def test_backend_responses_websocket_emits_terminal_failure_when_upstream_send_b
 
 
 @pytest.mark.parametrize("full_resend", [False, True])
+@pytest.mark.parametrize("streamed_output", [False, True])
+@pytest.mark.parametrize("tool_type", ["function_call", "custom_tool_call"])
+@pytest.mark.parametrize("resume_websocket", [False, True])
 def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account(
     app_instance,
     monkeypatch,
     tmp_path,
     full_resend,
+    streamed_output,
+    tool_type,
+    resume_websocket,
 ):
     from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
     from app.core.clients.responses_transport import ResponsesTransport
@@ -9228,17 +9234,17 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     sockets = []
     output = [
         {
-            "type": "function_call",
+            "type": tool_type,
             "id": "fc_retained",
             "call_id": "call_retained",
             "name": "shell",
-            "arguments": "{}",
+            "arguments" if tool_type == "function_call" else "input": "{}",
             "status": "completed",
         }
     ]
-    delta = [{"type": "function_call_output", "call_id": "call_retained", "output": "tool result"}]
+    delta = [{"type": tool_type + "_output", "call_id": "call_retained", "output": "tool result"}]
     next_output = [{**output[0], "id": "fc_second", "call_id": "call_second"}]
-    next_delta = [{"type": "function_call_output", "call_id": "call_second", "output": "second result"}]
+    next_delta = [{"type": tool_type + "_output", "call_id": "call_second", "output": "second result"}]
 
     class Socket:
         def __init__(self):
@@ -9284,13 +9290,22 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
         response_id = f"resp_large_{len(http_bodies)}"
         completed_output = output if len(http_bodies) == 1 else next_output
         for kind in ("created", "completed"):
+            if kind == "completed" and streamed_output:
+                yield format_sse_event(
+                    {
+                        "type": "response.output_item.done",
+                        "response_id": response_id,
+                        "output_index": 0,
+                        "item": completed_output[0],
+                    }
+                )
             yield format_sse_event(
                 {
                     "type": "response." + kind,
                     "response": {
                         "id": response_id,
                         "status": "completed" if kind == "completed" else "in_progress",
-                        "output": completed_output if kind == "completed" else [],
+                        "output": completed_output if kind == "completed" and not streamed_output else [],
                         "usage": {"input_tokens": 5, "output_tokens": 4},
                     },
                 }
@@ -9301,7 +9316,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
             None,
             connect=connect,
             stream_http=stream_http,
-            max_frame_bytes=limit,
+            max_frame_bytes=100_000 if resume_websocket and http_bodies else limit,
         )
 
     async def write_log(self, **kwargs):
@@ -9334,6 +9349,8 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
         ) as websocket:
             websocket.send_json({"type": "response.create", "model": "gpt-5.4", "input": input_items})
             assert json.loads(websocket.receive_text())["type"] == "response.created"
+            if streamed_output:
+                assert json.loads(websocket.receive_text())["item"] == output[0]
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
             assert not sockets
         # A new downstream connection must find history without an in-memory
@@ -9351,7 +9368,15 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
                 }
             )
             assert json.loads(websocket.receive_text())["type"] == "response.created"
+            if streamed_output and not resume_websocket:
+                assert json.loads(websocket.receive_text())["item"] == next_output[0]
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            if resume_websocket:
+                assert len(http_bodies) == len(ws_bodies) == 1
+                assert "previous_response_id" not in ws_bodies[0]
+                normalized = [{key: value for key, value in item.items() if key != "id"} for item in output]
+                assert ws_bodies[0]["input"] == [*input_items, *normalized, *delta]
+                return
             websocket.send_json(
                 {
                     "type": "response.create",
@@ -9361,6 +9386,8 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
                 }
             )
             assert json.loads(websocket.receive_text())["type"] == "response.created"
+            if streamed_output:
+                assert json.loads(websocket.receive_text())["item"] == next_output[0]
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
             websocket.send_json(
                 {

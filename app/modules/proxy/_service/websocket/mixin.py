@@ -5563,6 +5563,8 @@ class _WebSocketMixin:
                 release_create_gate = False
             if request_state is not None:
                 request_state.upstream_transport = upstream_transport
+                if event_type in {"response.created", "response.failed", "response.incomplete", "error"}:
+                    request_state.http_replay_output.clear()
                 replay_created_will_be_suppressed = (
                     event_type == "response.created" and request_state.suppress_next_created_downstream
                 )
@@ -5613,6 +5615,13 @@ class _WebSocketMixin:
                     request_state.suppressed_duplicate_tool_call = True
                     upstream_control.suppress_downstream_event = True
                     return text
+                if (
+                    upstream_transport == "http"
+                    and request_state.http_replay_conversation_id is not None
+                    and event_type == "response.output_item.done"
+                    and payload is not None
+                ):
+                    request_state.http_replay_output.retain(payload)
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     request_state.downstream_visible = True
                 if event_type in _MODEL_OUTPUT_EVENT_TYPES:
@@ -6147,7 +6156,9 @@ class _WebSocketMixin:
                 and payload is not None
             ):
                 completed_response = payload.get("response")
-                output = completed_response.get("output") if isinstance(completed_response, dict) else None
+                output = request_state.http_replay_output.finish(
+                    completed_response.get("output") if isinstance(completed_response, dict) else None
+                )
                 replay_text = request_state.fresh_upstream_request_text or request_state.request_text
                 if isinstance(output, list) and replay_text is not None:
                     for replay_id in _websocket_continuity_response_ids(request_state, response_id):

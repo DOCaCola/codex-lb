@@ -47,6 +47,7 @@ from app.modules.proxy.load_balancer import (
     AccountSelection,
     CatalogOmissionQuotaAdmission,
 )
+from app.modules.proxy.replay_output import ReplayOutputCollector
 from app.modules.proxy.tool_call_dedupe import ToolCallDedupeKey
 from app.modules.proxy.work_admission import AdmissionLease
 
@@ -1010,6 +1011,7 @@ class _WebSocketRequestState:
     upstream_transport: str | None = _REQUEST_TRANSPORT_WEBSOCKET
     http_replay_conversation_id: str | None = None
     http_replay_input: JsonValue = None
+    http_replay_output: ReplayOutputCollector = field(default_factory=ReplayOutputCollector)
     enforce_openai_sdk_contract: bool = True
     propagate_http_errors: bool = False
     request_kind: str = "normal"
