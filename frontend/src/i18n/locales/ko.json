@@ -1328,7 +1328,6 @@
   "settings.routing.subscriptionOverflow.stagedNotice": "단계적으로 출시됩니다: source 선택과 preflight는 지금 사용할 수 있고, overflow routing 자체는 이후 릴리스에 포함됩니다.",
   "settings.routing.title": "Routing",
   "settings.routing.upstream.auto": "Auto",
-  "settings.routing.upstream.default": "서버 기본값",
   "settings.routing.upstream.description": "`codex-lb`가 streaming response를 위해 upstream에 연결하는 방식을 선택합니다.",
   "settings.routing.upstream.http": "Responses",
   "settings.routing.upstream.label": "Upstream stream transport",

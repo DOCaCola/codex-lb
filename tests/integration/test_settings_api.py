@@ -50,7 +50,7 @@ async def test_settings_api_get_and_update(async_client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["stickyThreadsEnabled"] is True
-    assert payload["upstreamStreamTransport"] == "default"
+    assert payload["upstreamStreamTransport"] == "auto"
     assert payload["prohibitFastMode"] is False
     # A fresh settings row seeds NULL overrides: the effective value inherits
     # the environment and the override is reported as absent.

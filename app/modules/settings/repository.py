@@ -29,7 +29,7 @@ class SettingsRepository:
         row = DashboardSettings(
             id=_SETTINGS_ID,
             sticky_threads_enabled=True,
-            upstream_stream_transport="default",
+            upstream_stream_transport="auto",
             prohibit_fast_mode=False,
             http_downstream_transport_policy=get_settings().http_downstream_transport_policy,
             # Account-capacity overrides are tri-state: NULL inherits the
