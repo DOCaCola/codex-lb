@@ -55,6 +55,26 @@ and this file is its human-readable rendering.
 - "It's a small CSS tweak" is not an exemption; small tweaks make small
   screenshots.
 
+## P6 — The dashboard is the primary configuration surface
+
+- A value an operator may want to change while the proxy is running belongs
+  in the dashboard (the database), not in an environment variable. The
+  environment is for **bootstrap** (what is needed before the database is
+  reachable) and **instance topology** (what legitimately differs between
+  replicas). One question decides: *may this value legitimately differ
+  between two replicas?* Yes → env. No → dashboard.
+- Precedence is fixed: code default < environment < dashboard. A non-NULL
+  dashboard value is never overridden by the environment, and the
+  environment is never copied into the dashboard row as a seed — it is a
+  fallback for a NULL dashboard value only.
+- Every new setting names its tier (T0 bootstrap, T1 instance topology,
+  T2 secret, T3 behaviour tunable, T4 incident debug) in the PR body; a T3
+  setting names its `dashboard_settings` column. Tiers are declared in
+  `app/core/config/tiers.py` and checked by `scripts/check_settings_tiers.py`
+  under `make lint`. Normative spec:
+  `openspec/changes/codify-configuration-tiers/specs/configuration-tiers/spec.md`
+  (moves to `openspec/specs/configuration-tiers/` on archive).
+
 ## Applying these principles
 
 | Principle | What the reviewer checks | Where the gate lives |
@@ -64,6 +84,7 @@ and this file is its human-readable rendering.
 | P3 budgets | README sections, `.env.example`, dashboard core nav within `.github/simplicity-budgets.toml` | CI budget check (`.github/workflows/simplicity-budgets.yml`); `simplicity-budget-approved` label for exceptions |
 | P4 docs placement | Feature docs land in `docs/` + OpenSpec, not new README sections | CONTRIBUTING [Simplicity gates](.github/CONTRIBUTING.md#simplicity-gates) |
 | P5 screenshots | Before/after screenshots for dashboard-visible changes | PR template "Screenshots / output" |
+| P6 dashboard-primary configuration | Each new setting has a tier; T3 settings live in `dashboard_settings`, not env-only; precedence default < env < dashboard is not inverted | `make lint` (`scripts/check_settings_tiers.py`, see P6 for the spec pointer); PR template "Simplicity" |
 
 Rationale, the erosion metrics that motivated codifying these rules, and a
 worked example live in
