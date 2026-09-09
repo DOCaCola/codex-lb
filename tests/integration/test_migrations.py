@@ -795,6 +795,31 @@ async def test_dashboard_settings_default_flip_migration_updates_fresh_seeded_ro
 
 
 @pytest.mark.asyncio
+async def test_fresh_database_bootstrap_ignores_removed_cache_affinity_env_var(tmp_path, monkeypatch):
+    # CODEX_LB_OPENAI_CACHE_AFFINITY_MAX_AGE_SECONDS was removed from Settings
+    # (remove-dead-env-settings); startup warns that it is ignored, so the
+    # migration chain that seeds the singleton row on a fresh database must not
+    # honour it either. The column default is 1800 (20260319_100937).
+    monkeypatch.setenv("CODEX_LB_OPENAI_CACHE_AFFINITY_MAX_AGE_SECONDS", "64")
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'removed-affinity-env.sqlite'}"
+
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=True))
+
+    engine = create_async_engine(db_url, future=True)
+    try:
+        async with engine.connect() as connection:
+            affinity_ttl = (
+                await connection.execute(
+                    text("SELECT openai_cache_affinity_max_age_seconds FROM dashboard_settings WHERE id = 1")
+                )
+            ).scalar_one()
+    finally:
+        await engine.dispose()
+
+    assert affinity_ttl == 1800
+
+
+@pytest.mark.asyncio
 async def test_dashboard_settings_default_flip_migration_updates_pristine_fresh_db_upgraded_in_steps(tmp_path):
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'dashboard-settings-defaults-staged-fresh.sqlite'}"
 
@@ -2461,3 +2486,94 @@ async def test_model_source_pins_index_migration_repairs_invalid_leftover_postgr
     assert indisvalid is True
     assert indexdef.endswith("(purge_at)")  # rebuilt on purge_at, not the accepted decoy on kind
     assert indexdef.startswith("CREATE INDEX ")  # non-unique, as the ORM declares it
+
+
+@pytest.mark.asyncio
+async def test_retired_prewarm_canary_columns_stay_insertable_for_legacy_replicas(tmp_path):
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.db.models import RequestLog
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'retired-prewarm-canary-columns.sqlite'}"
+    retired_columns = {"prewarm_canary_bucket", "prewarm_eligible_reason"}
+
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+
+    # The ORM no longer maps the retired columns...
+    assert not (retired_columns & set(RequestLog.__table__.columns.keys()))
+
+    engine = create_async_engine(db_url, future=True)
+    try:
+        async with engine.begin() as conn:
+            head_columns = await conn.run_sync(
+                lambda sync_conn: {column["name"] for column in sa_inspect(sync_conn).get_columns("request_logs")}
+            )
+            # ...but the head schema still carries them, so a replica running the
+            # previous release (which maps them and renders explicit NULLs in its
+            # INSERT) keeps writing request logs while the migration Job has
+            # already run ahead of the workload roll.
+            assert retired_columns <= head_columns
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO request_logs (
+                        id, account_id, request_id, requested_at, model, input_tokens, output_tokens,
+                        cached_input_tokens, reasoning_tokens, reasoning_effort, latency_ms, status,
+                        error_code, error_message, prewarm_status, prewarm_canary_bucket, prewarm_eligible_reason
+                    )
+                    VALUES (
+                        1, 'acc_prewarm_legacy', 'req_prewarm_legacy', '2026-07-01 00:00:00', 'gpt-5', 10, 20,
+                        0, 0, NULL, 100, 'ok', NULL, NULL, 'success', NULL, NULL
+                    )
+                    """
+                )
+            )
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("SELECT account_id, model, status, prewarm_status FROM request_logs WHERE id = 1")
+                )
+            ).one()
+        assert tuple(row) == ("acc_prewarm_legacy", "gpt-5", "ok", "success")
+    finally:
+        await engine.dispose()
+
+    # The retained physical columns are an allow-listed drift, not a schema defect.
+    assert await to_thread.run_sync(lambda: check_schema_drift(db_url)) == ()
+
+
+@pytest.mark.asyncio
+async def test_automation_run_claim_budget_migration_upgrade_and_downgrade(tmp_path):
+    """Upgrade adds the nullable ``automation_runs.claim_budget_seconds`` column,
+    downgrade drops it, and a final walk to head proves the revision sits on a
+    single-head graph."""
+    from alembic import command
+
+    from app.db.migrate import _build_alembic_config
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'automation-run-claim-budget.sqlite'}"
+    parent_revision = "20260909_060000_add_report_rollup"
+    claim_budget_revision = "20260909_070000_automation_run_claim_budget"
+
+    async def _automation_run_columns(engine) -> set[str]:
+        async with engine.connect() as conn:
+            rows = await conn.execute(text("PRAGMA table_info('automation_runs')"))
+            return {row[1] for row in rows}
+
+    await to_thread.run_sync(lambda: run_upgrade(db_url, parent_revision, bootstrap_legacy=False))
+    engine = create_async_engine(db_url, future=True)
+    try:
+        assert "claim_budget_seconds" not in await _automation_run_columns(engine)
+
+        await to_thread.run_sync(lambda: run_upgrade(db_url, claim_budget_revision, bootstrap_legacy=False))
+        assert "claim_budget_seconds" in await _automation_run_columns(engine)
+
+        config = _build_alembic_config(db_url)
+        await to_thread.run_sync(lambda: command.downgrade(config, parent_revision))
+        assert "claim_budget_seconds" not in await _automation_run_columns(engine)
+
+        result = await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+        assert result.current_revision == _HEAD_REVISION
+        assert "claim_budget_seconds" in await _automation_run_columns(engine)
+    finally:
+        await engine.dispose()

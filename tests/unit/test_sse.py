@@ -168,6 +168,12 @@ async def test_inject_sse_keepalives_keepalive_frame_is_sse_comment():
     assert SSE_KEEPALIVE_FRAME.endswith("\n\n")
 
 
+@pytest.mark.parametrize("block", ["data: [DONE]", ": keepalive\r\ndata:[DONE]\r\n", "data: [DONE]\n\n"])
+def test_extract_sse_data_can_retain_chat_terminal(block):
+    assert extract_sse_data(block) is None
+    assert extract_sse_data(block, include_done=True) == "[DONE]"
+
+
 def test_extract_sse_data_preserves_unicode_line_separators():
     # U+2028 / U+2029 are valid *unescaped* inside JSON strings. The SSE spec
     # delimits lines only by CR/LF/CRLF, so they must not split a data: payload.

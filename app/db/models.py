@@ -305,6 +305,39 @@ class AccountUsageRollupState(Base):
         server_default=text("'1970-01-01 00:00:00'"),
     )
 
+    reports_folded_through: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("'1970-01-01 00:00:00'"),
+    )
+
+
+class RequestReportHourlyRollup(Base):
+    """Permanent report measures; conversation remains a dimension for exact distinct counts.
+
+    Hours are assembled into timezone days at read time. Normal traffic only,
+    including detached/deleted accounts, matching the reports contract.
+    """
+
+    __tablename__ = "request_report_hourly_rollups"
+
+    bucket_epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    account_id: Mapped[str] = mapped_column(String, primary_key=True)
+    api_key_id: Mapped[str] = mapped_column(String, primary_key=True)
+    model: Mapped[str] = mapped_column(String, primary_key=True)
+    useragent_group: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String, primary_key=True)
+    first_requested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    request_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    error_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    cancelled_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    reasoning_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    reasoning_usage_known_requests: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    cached_input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+
 
 class RequestUsageHourlyRollup(Base):
     """Hour-bucketed request-usage sums (time-axis rollup).
@@ -525,12 +558,6 @@ class RequestLog(Base):
     latency_bridge_queue_wait_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prewarm_status: Mapped[str | None] = mapped_column(String, nullable=True)
     prewarm_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Deprecated: no longer written since the prewarm canary retirement
-    # (reduce-settings-surface-phase-4). Kept one release so old replicas can
-    # keep inserting during rolling upgrades; the column drop ships in the
-    # next release.
-    prewarm_canary_bucket: Mapped[str | None] = mapped_column(String, nullable=True)
-    prewarm_eligible_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     session_previous_gap_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -863,8 +890,8 @@ class DashboardSettings(Base):
     sticky_threads_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     upstream_stream_transport: Mapped[str] = mapped_column(
         String,
-        default="default",
-        server_default=text("'default'"),
+        default="auto",
+        server_default=text("'auto'"),
         nullable=False,
     )
     prohibit_fast_mode: Mapped[bool] = mapped_column(
@@ -895,6 +922,25 @@ class DashboardSettings(Base):
         Integer,
         nullable=True,
     )
+    # C2-1 timeouts: dashboard-managed upstream timeouts and request budgets.
+    # NULL = inherit the ``Settings`` field (environment value or code default).
+    upstream_connect_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    proxy_request_budget_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    compact_request_budget_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transcription_request_budget_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stream_idle_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    proxy_downstream_websocket_idle_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sse_keepalive_interval_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # end C2-1 timeouts
+    # C2-2 routing/overload: dashboard-managed routing weights and overload
+    # isolation. NULL inherits the process environment value (or the code
+    # default) at read time; a non-NULL value wins over the environment.
+    proxy_overload_isolation_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    proxy_account_error_rate_weighting_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    proxy_account_inflight_penalty_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    proxy_account_lease_token_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    proxy_account_lease_ttl_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # end C2-2 routing/overload
     prefer_earlier_reset_accounts: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true(), nullable=False
     )
@@ -1126,7 +1172,7 @@ class DashboardSettings(Base):
         nullable=False,
     )
     # Data retention windows in days; NULL = never set from the dashboard
-    # (the deprecated env alias then applies), 0 = explicitly disabled.
+    # (treated as disabled), 0 = explicitly disabled.
     request_log_retention_days: Mapped[int | None] = mapped_column(
         Integer,
         nullable=True,
@@ -1135,6 +1181,11 @@ class DashboardSettings(Base):
         Integer,
         nullable=True,
     )
+    # C2-3 resilience toggles: NULL inherits the deprecated ``CODEX_LB_*`` env
+    # alias (then the code default); a non-NULL value is dashboard-owned.
+    soft_drain_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    deterministic_failover_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    circuit_breaker_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     version: Mapped[int] = mapped_column(
         Integer,
         default=1,
@@ -1618,6 +1669,12 @@ class AutomationRun(Base):
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    # Compact request budget (seconds) in effect when this row was last
+    # claimed; the stale-claim reclaim window covers the larger of this value
+    # and the current budget so a later dashboard change cannot reclaim an
+    # in-flight run early. NULL on rows claimed before the column existed
+    # (they use the current budget).
+    claim_budget_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     job: Mapped[AutomationJob] = relationship("AutomationJob", back_populates="runs")

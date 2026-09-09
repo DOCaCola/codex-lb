@@ -222,14 +222,14 @@ def parse_sse_data_json(event_block: str) -> dict[str, JsonValue] | None:
     return None
 
 
-def extract_sse_data(event_block: str) -> str | None:
+def extract_sse_data(event_block: str, *, include_done: bool = False) -> str | None:
     data_lines = _extract_sse_data_lines(event_block)
     if data_lines is None:
         return None
     data = "\n".join(data_lines)
     if not data.strip():
         return None
-    if data.strip() == "[DONE]":
+    if not include_done and data.strip() == "[DONE]":
         return None
     return data
 
