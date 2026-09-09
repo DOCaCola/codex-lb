@@ -1829,22 +1829,6 @@ def test_compact_upstream_budget_uses_remaining_budget_with_reserve():
     assert proxy_compact_service._compact_upstream_budget_seconds(0.0) == pytest.approx(0.0)
 
 
-def test_compact_upstream_budget_honors_configured_timeout_with_reserve():
-    assert proxy_compact_service._compact_upstream_budget_seconds(650.0, 600.0) == pytest.approx(600.0)
-    assert proxy_compact_service._compact_upstream_budget_seconds(180.0, 600.0) == pytest.approx(150.0)
-    assert proxy_compact_service._compact_upstream_budget_seconds(20.0, 600.0) == pytest.approx(16.0)
-    assert proxy_compact_service._compact_upstream_budget_seconds(180.0, 30.0) == pytest.approx(30.0)
-
-
-def test_compact_upstream_budget_treats_missing_runtime_timeout_as_default():
-    class RuntimeSettings:
-        pass
-
-    configured = getattr(RuntimeSettings(), "upstream_compact_timeout_seconds", None)
-
-    assert proxy_compact_service._compact_upstream_budget_seconds(180.0, configured) == pytest.approx(150.0)
-
-
 def test_http_bridge_client_metadata_cannot_spoof_reserved_request_kind():
     assert (
         proxy_http_bridge_request_submit._request_kind_from_headers(
@@ -4638,7 +4622,6 @@ def test_resolve_stream_transport_does_not_force_websocket_for_custom_codex_orig
     )
 
     transport = proxy_module._resolve_stream_transport(
-        settings=SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024),
         transport="auto",
         transport_override=None,
         model="gpt-5.1",
@@ -4656,7 +4639,6 @@ def test_resolve_stream_transport_prefers_http_for_image_generation_even_with_na
     )
 
     transport = proxy_module._resolve_stream_transport(
-        settings=SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024),
         transport="auto",
         transport_override=None,
         model="gpt-5.4",
@@ -4675,7 +4657,6 @@ def test_resolve_stream_transport_keeps_explicit_websocket_override_for_image_ge
     )
 
     transport = proxy_module._resolve_stream_transport(
-        settings=SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024),
         transport="auto",
         transport_override="websocket",
         model="gpt-5.4",
@@ -4693,14 +4674,12 @@ def test_resolve_stream_transport_uses_http_for_large_auto_payload(monkeypatch) 
         lambda: SimpleNamespace(prefers_websockets=lambda model: model == "gpt-5.4"),
     )
 
-    settings = SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024)
     transport = proxy_module._resolve_stream_transport(
-        settings=settings,
         transport="auto",
         transport_override=None,
         model="gpt-5.4",
         headers={},
-        payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes(settings) + 1,
+        payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes() + 1,
     )
 
     assert transport == "http"
@@ -4713,11 +4692,8 @@ def test_resolve_stream_transport_keeps_websocket_for_small_or_unknown_auto_payl
         lambda: SimpleNamespace(prefers_websockets=lambda model: model == "gpt-5.4"),
     )
 
-    settings = SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024)
-
     assert (
         proxy_module._resolve_stream_transport(
-            settings=settings,
             transport="auto",
             transport_override=None,
             model="gpt-5.4",
@@ -4728,12 +4704,11 @@ def test_resolve_stream_transport_keeps_websocket_for_small_or_unknown_auto_payl
     )
     assert (
         proxy_module._resolve_stream_transport(
-            settings=settings,
             transport="auto",
             transport_override=None,
             model="gpt-5.4",
             headers={},
-            payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes(settings),
+            payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes(),
         )
         == "websocket"
     )
@@ -4746,9 +4721,7 @@ def test_resolve_stream_transport_uses_http_even_with_explicit_websocket_for_lar
         lambda: SimpleNamespace(prefers_websockets=lambda _model: False),
     )
 
-    settings = SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024)
     transport = proxy_module._resolve_stream_transport(
-        settings=settings,
         transport="websocket",
         transport_override=None,
         model="gpt-5.4",
@@ -4766,27 +4739,20 @@ def test_resolve_stream_transport_keeps_explicit_http_for_large_payload(monkeypa
         lambda: SimpleNamespace(prefers_websockets=lambda model: model == "gpt-5.4"),
     )
 
-    settings = SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024)
     transport = proxy_module._resolve_stream_transport(
-        settings=settings,
         transport="http",
         transport_override=None,
         model="gpt-5.4",
         headers={"originator": "codex_chatgpt_desktop"},
-        payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes(settings) + 1,
+        payload_size_estimate_bytes=proxy_module._ws_transport_payload_budget_bytes() + 1,
     )
 
     assert transport == "http"
 
 
 def test_ws_transport_payload_budget_uses_settings_limit() -> None:
-    assert (
-        proxy_module._ws_transport_payload_budget_bytes(SimpleNamespace(max_sse_event_bytes=16 * 1024 * 1024))
-        == 14 * 1024 * 1024
-    )
-    assert proxy_module._ws_transport_payload_budget_bytes(SimpleNamespace(max_sse_event_bytes=2 * 1024 * 1024)) == (
-        1 * 1024 * 1024
-    )
+    assert proxy_module._ws_transport_payload_budget_bytes(16 * 1024 * 1024) == 14 * 1024 * 1024
+    assert proxy_module._ws_transport_payload_budget_bytes(2 * 1024 * 1024) == (1 * 1024 * 1024)
 
 
 def test_responses_request_contains_input_image_detects_supported_shapes() -> None:
@@ -5240,7 +5206,6 @@ async def test_stream_http_bridge_or_retry_bypasses_bridge_for_large_payload(mon
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.http_responses_stream_request_budget_seconds = 180.0
-    settings.max_sse_event_bytes = 16 * 1024 * 1024
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(
@@ -5260,7 +5225,7 @@ async def test_stream_http_bridge_or_retry_bypasses_bridge_for_large_payload(mon
     oversized_payload = MagicMock()
     oversized_payload.to_payload.return_value = {
         "model": "gpt-5.4",
-        "input": "x" * (proxy_module._ws_transport_payload_budget_bytes(settings) + 1024),
+        "input": "x" * (proxy_module._ws_transport_payload_budget_bytes() + 1024),
     }
     resolve_file_account = AsyncMock(return_value="acc_pinned")
     monkeypatch.setattr(service, "_resolve_file_account_for_responses", resolve_file_account)
@@ -6013,8 +5978,8 @@ def test_websocket_installation_metadata_stamping_rechecks_response_create_size(
     # Crossing the WS ceiling is allowed; expanded HTTP bodies remain bounded.
     websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
     monkeypatch.setattr(
-        "app.modules.proxy._service.response_create.get_settings",
-        lambda: SimpleNamespace(max_decompressed_responses_body_bytes=max_bytes),
+        "app.modules.proxy._service.response_create.MAX_DECOMPRESSED_RESPONSES_BODY_BYTES",
+        max_bytes,
     )
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
@@ -6735,27 +6700,19 @@ def _make_proxy_settings(*, trace_channels: frozenset[str] = frozenset()) -> Sim
         sticky_reallocation_budget_threshold_pct=95.0,
         upstream_stream_transport="auto",
         openai_cache_affinity_max_age_seconds=300,
-        openai_prompt_cache_key_derivation_enabled=True,
         routing_strategy="usage_weighted",
         proxy_request_budget_seconds=75.0,
         compact_request_budget_seconds=75.0,
         transcription_request_budget_seconds=120.0,
-        upstream_compact_timeout_seconds=None,
         http_responses_session_bridge_gateway_safe_mode=False,
         trace_channels=trace_channels,
-        proxy_token_refresh_limit=32,
-        proxy_upstream_websocket_connect_limit=64,
         proxy_account_response_create_limit=4,
         proxy_account_stream_limit=8,
         proxy_account_stream_recovery_reserve=1,
         proxy_api_key_fair_share_congestion_threshold_pct=0,
         proxy_response_create_limit=64,
-        proxy_compact_response_create_limit=16,
-        proxy_admission_wait_timeout_seconds=10.0,
-        max_sse_event_bytes=16 * 1024 * 1024,
         http_responses_session_bridge_instance_id="test-instance",
         http_responses_session_bridge_instance_ring=[],
-        http_responses_session_bridge_anchor_poison_failure_threshold=7,
         http_downstream_transport_policy="smart",
     )
 
@@ -7048,8 +7005,6 @@ async def test_http_downstream_sticky_smart_auto_mode_keeps_websocket_handshake_
         upstream_stream_transport = "auto"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         log_upstream_request_summary = False
@@ -7288,7 +7243,6 @@ def _install_default_proxy_runtime_settings(monkeypatch: pytest.MonkeyPatch) -> 
     settings = _make_proxy_settings()
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
-    monkeypatch.setattr(proxy_affinity, "get_settings", lambda: settings)
 
 
 @pytest.fixture(autouse=True)
@@ -8336,10 +8290,8 @@ def test_log_proxy_request_shape_hashes_prompt_cache_key_without_raw_value(monke
 def test_log_proxy_request_shape_reports_derived_key_after_affinity_resolution(monkeypatch, caplog):
     class Settings:
         trace_channels = frozenset({"shape"})
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
-    monkeypatch.setattr(proxy_affinity, "get_settings", lambda: Settings())
 
     payload = ResponsesRequest.model_validate(
         {
@@ -8476,8 +8428,6 @@ async def test_stream_responses_starts_upstream_timer_after_image_inlining(monke
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
         stream_idle_timeout_seconds = 1.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = True
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -8533,8 +8483,6 @@ async def test_stream_responses_uses_http_responses_stream_budget(monkeypatch):
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 600.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 600.0
         http_responses_stream_request_budget_seconds = 7200.0
@@ -8572,8 +8520,6 @@ async def test_stream_responses_archives_http_error_before_raising(monkeypatch):
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
         stream_idle_timeout_seconds = 1.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -8638,8 +8584,6 @@ async def test_stream_responses_honors_timeout_overrides(monkeypatch):
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -8696,8 +8640,6 @@ async def test_stream_responses_maps_inner_pre_response_timeout_to_upstream_unav
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 5.0
 
@@ -8732,8 +8674,6 @@ async def test_stream_responses_keeps_pre_response_total_timeout_as_request_time
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 600.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 600.0
 
@@ -8771,8 +8711,6 @@ async def test_stream_responses_prefers_idle_timeout_when_total_deadline_ties_af
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 600.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 600.0
 
@@ -8810,8 +8748,6 @@ async def test_stream_responses_reports_idle_timeout_when_headers_never_arrive(m
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 180.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 7200.0
         http_responses_stream_request_budget_seconds = 7200.0
@@ -8855,8 +8791,6 @@ async def test_stream_responses_keeps_budget_timeout_after_recent_body_activity(
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 600.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 600.0
 
@@ -8895,8 +8829,6 @@ async def test_stream_responses_keeps_budget_timeout_when_budget_precedes_idle(m
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 600.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 300.0
 
@@ -8935,8 +8867,6 @@ async def test_stream_responses_preserves_connect_timeout_retry_provenance(monke
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 5.0
 
@@ -8993,8 +8923,6 @@ async def test_stream_responses_websocket_pre_dispatch_connect_failure_is_retrya
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 5.0
 
@@ -9043,8 +8971,6 @@ async def test_stream_responses_direct_http_tls_connect_failure_is_not_retryable
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 5.0
 
@@ -9096,8 +9022,6 @@ async def test_stream_responses_routed_http_tls_connect_failure_is_not_retryable
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 5.0
 
@@ -9156,8 +9080,6 @@ async def test_stream_responses_maps_typed_dns_failure_with_failed_session_prove
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         log_upstream_request_payload = False
         proxy_request_budget_seconds = 5.0
         trace_channels = frozenset()
@@ -9211,8 +9133,6 @@ async def test_stream_responses_raw_route_oserror_is_neutral_but_not_replayed(mo
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         log_upstream_request_payload = False
         proxy_request_budget_seconds = 5.0
         trace_channels = frozenset()
@@ -9254,8 +9174,6 @@ async def test_stream_responses_keeps_missing_environment_proxy_hostname_endpoin
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         log_upstream_request_payload = False
         proxy_request_budget_seconds = 5.0
         trace_channels = frozenset()
@@ -9310,8 +9228,6 @@ async def test_stream_responses_uses_native_websocket_upstream_for_codex_headers
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024 * 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9399,8 +9315,6 @@ async def test_stream_responses_falls_back_to_http_post_without_native_codex_hea
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9449,8 +9363,6 @@ async def test_stream_responses_direct_http_prefers_native_egress(monkeypatch: p
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9495,8 +9407,6 @@ async def test_stream_responses_direct_http_falls_back_when_native_helper_is_una
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9537,8 +9447,6 @@ async def test_stream_responses_does_not_replay_ambiguous_native_failure_through
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9585,8 +9493,6 @@ async def test_stream_responses_http_egress_uses_profiled_installation_identity(
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9639,8 +9545,6 @@ async def test_stream_responses_derives_lite_http_header_from_additional_tools(m
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 15.0
 
@@ -9710,8 +9614,6 @@ async def test_stream_responses_uses_websocket_transport_and_marks_lite_payload(
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         log_upstream_request_summary = False
@@ -9801,8 +9703,6 @@ async def test_stream_responses_websocket_normalizes_typeless_error_as_terminal(
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -9861,8 +9761,6 @@ async def test_stream_responses_websocket_normalizes_typeless_error_code_to_upst
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -10301,8 +10199,6 @@ async def test_stream_responses_oversized_create_uses_http_before_ws_connect(mon
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -10352,8 +10248,6 @@ async def test_stream_responses_http_preserves_historical_inline_artifacts_and_s
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -10426,8 +10320,6 @@ async def test_stream_responses_http_preserves_images_nested_in_tool_output_and_
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         log_upstream_request_payload = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
@@ -10496,8 +10388,6 @@ async def test_stream_responses_websocket_forces_response_create_event_type(monk
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -10548,8 +10438,6 @@ async def test_stream_responses_websocket_omits_http_only_transport_fields(monke
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -10788,8 +10676,6 @@ async def test_stream_responses_websocket_decodes_each_frame_once_and_skips_erro
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11319,8 +11205,6 @@ async def test_stream_responses_websocket_records_circuit_breaker_success_after_
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         circuit_breaker_enabled = True
@@ -11383,8 +11267,6 @@ async def test_stream_responses_websocket_records_circuit_breaker_failure_when_s
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         circuit_breaker_enabled = True
@@ -11554,8 +11436,6 @@ async def test_stream_responses_auto_transport_uses_model_preference(monkeypatch
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11604,8 +11484,6 @@ async def test_stream_responses_auto_transport_uses_bootstrap_model_preference_w
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11655,8 +11533,6 @@ async def test_stream_responses_auto_transport_prefers_http_for_image_generation
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11703,8 +11579,6 @@ async def test_stream_responses_http_transport_keeps_http(monkeypatch):
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11746,8 +11620,6 @@ async def test_non_streaming_responses_forces_http_and_preserves_json_request(mo
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11820,8 +11692,6 @@ async def test_stream_responses_http_transport_preserves_raw_error_shape_when_co
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11877,8 +11747,6 @@ async def test_stream_responses_http_transport_normalizes_error_sequence_number_
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11936,8 +11804,6 @@ async def test_stream_responses_auto_transport_keeps_http_for_bare_session_affin
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -11975,8 +11841,6 @@ async def test_stream_responses_auto_transport_falls_back_to_http_when_websocket
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -12046,8 +11910,6 @@ async def test_stream_responses_auto_transport_does_not_hide_forbidden_websocket
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -12171,8 +12033,6 @@ async def test_stream_responses_auto_transport_falls_back_for_edge_challenge(mon
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -12222,8 +12082,6 @@ async def test_stream_responses_uses_websocket_upstream_when_forced(monkeypatch)
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         upstream_websocket_mode = "force"
@@ -12291,8 +12149,6 @@ async def test_stream_responses_http_preserves_all_outputs_before_wire_namespace
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         upstream_websocket_mode = "force"
@@ -12391,8 +12247,6 @@ async def test_stream_responses_forced_websocket_does_not_fallback_on_handshake_
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -12434,8 +12288,6 @@ async def test_stream_responses_forced_websocket_preserves_rate_limit_code_on_ha
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -12476,8 +12328,6 @@ async def test_stream_responses_forced_websocket_preserves_quota_code_from_hands
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
 
@@ -12520,8 +12370,6 @@ async def test_stream_responses_uses_websocket_upstream_in_auto_mode_for_preferr
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         upstream_websocket_mode = "auto"
@@ -12575,8 +12423,6 @@ async def test_stream_responses_websocket_emits_incomplete_when_upstream_closes_
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 8.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
         proxy_request_budget_seconds = 75.0
         upstream_websocket_mode = "force"
@@ -12620,11 +12466,11 @@ async def test_compact_responses_starts_upstream_timer_after_image_inlining(monk
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
-        upstream_compact_timeout_seconds = 12.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = True
         trace_channels = frozenset()
+
+    # Override-only compact cap (the compact service pushes the remaining budget).
+    monkeypatch.setattr(proxy_module, "_effective_compact_total_timeout", lambda: 12.0)
 
     inline_ran = False
     recorded: dict[str, float | None] = {}
@@ -12677,10 +12523,7 @@ async def test_compact_responses_derives_lite_http_header_from_additional_tools(
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
-        upstream_compact_timeout_seconds = 12.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
@@ -12743,10 +12586,7 @@ async def test_compact_responses_normalizes_preexisting_terminal_trigger_without
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
-        upstream_compact_timeout_seconds = 12.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
@@ -12898,10 +12738,9 @@ async def test_compact_responses_without_trigger_canonicalization_hits_upstream_
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
-        upstream_compact_timeout_seconds = 12.0
-        max_sse_event_bytes = 16 * 1024 * 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
+
+    monkeypatch.setattr(proxy_module, "_effective_compact_total_timeout", lambda: 12.0)
 
     class _DuplicateTriggerResponse:
         status = 400
@@ -13019,8 +12858,6 @@ async def test_compact_responses_rejects_image_inlining_that_exceeds_wire_budget
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 1.0
-        upstream_compact_timeout_seconds = 12.0
-        image_inline_fetch_enabled = True
         trace_channels = frozenset()
 
     async def fake_inline(payload_dict, session, connect_timeout):
@@ -13082,11 +12919,11 @@ async def test_compact_responses_uses_configured_timeout_and_maps_read_timeout(m
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 2.0
-        upstream_compact_timeout_seconds = 123.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
+
+    # Override-only compact cap (the compact service pushes the remaining budget).
+    monkeypatch.setattr(proxy_module, "_effective_compact_total_timeout", lambda: 123.0)
 
     class _TimeoutCompactResponse:
         status = 200
@@ -13140,10 +12977,7 @@ async def test_compact_responses_defaults_to_no_configured_request_timeout(monke
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 2.0
-        upstream_compact_timeout_seconds = None
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
@@ -13178,10 +13012,7 @@ async def test_compact_responses_preserves_stream_idle_timeout_from_direct_sse(m
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 2.0
-        upstream_compact_timeout_seconds = 123.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
 
     async def fake_compact_response_payload_from_success_response(*args: object, **kwargs: object) -> JsonValue:
@@ -13222,11 +13053,10 @@ async def test_compact_responses_preserves_stream_event_too_large_from_routed_ss
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
         upstream_connect_timeout_seconds = 2.0
-        upstream_compact_timeout_seconds = 123.0
         stream_idle_timeout_seconds = 45.0
-        max_sse_event_bytes = 1024
-        image_inline_fetch_enabled = False
         trace_channels = frozenset()
+
+    monkeypatch.setattr(proxy_module, "MAX_SSE_EVENT_BYTES", 1024)
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
     monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
@@ -13894,42 +13724,7 @@ def test_sticky_key_for_compact_request_derives_prompt_cache_before_codex_sessio
     assert payload.prompt_cache_key
 
 
-def test_sticky_key_for_responses_request_respects_prompt_cache_derivation_flag(monkeypatch):
-    class Settings:
-        openai_prompt_cache_key_derivation_enabled = False
-
-    monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
-    monkeypatch.setattr(proxy_affinity, "get_settings", lambda: Settings())
-
-    payload = ResponsesRequest.model_validate(
-        {
-            "model": "gpt-5.1",
-            "instructions": "hi",
-            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
-            "stream": True,
-        }
-    )
-
-    policy = proxy_service._sticky_key_for_responses_request(
-        payload,
-        headers={"session_id": "codex-session-1"},
-        codex_session_affinity=True,
-        openai_cache_affinity=True,
-        openai_cache_affinity_max_age_seconds=300,
-        sticky_threads_enabled=False,
-    )
-
-    assert policy.kind == proxy_service.StickySessionKind.CODEX_SESSION
-    assert payload.prompt_cache_key is None
-
-
-def test_sticky_key_for_responses_request_preserves_client_supplied_prompt_cache_key_when_flag_off(monkeypatch):
-    class Settings:
-        openai_prompt_cache_key_derivation_enabled = False
-
-    monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
-    monkeypatch.setattr(proxy_affinity, "get_settings", lambda: Settings())
-
+def test_sticky_key_for_responses_request_preserves_client_supplied_prompt_cache_key():
     payload = ResponsesRequest.model_validate(
         {
             "model": "gpt-5.1",
@@ -20705,7 +20500,6 @@ async def test_stream_post_dispatch_network_failure_rotates_generation_for_next_
     settings.upstream_base_url = "https://chatgpt.com/backend-api"
     settings.upstream_connect_timeout_seconds = 8.0
     settings.stream_idle_timeout_seconds = 45.0
-    settings.image_inline_fetch_enabled = False
     settings.log_upstream_request_summary = False
     settings.log_upstream_request_payload = False
     settings.upstream_stream_transport = "http"
@@ -20785,7 +20579,6 @@ async def test_stream_websocket_network_drop_rotates_generation_for_next_request
     settings.upstream_base_url = "https://chatgpt.com/backend-api"
     settings.upstream_connect_timeout_seconds = 8.0
     settings.stream_idle_timeout_seconds = 45.0
-    settings.image_inline_fetch_enabled = False
     settings.log_upstream_request_summary = False
     settings.log_upstream_request_payload = False
     settings.upstream_stream_transport = "websocket"
@@ -24465,7 +24258,7 @@ async def test_connect_proxy_websocket_account_bound_replay_stays_on_owner(monke
 @pytest.mark.asyncio
 async def test_connect_proxy_websocket_surfaces_local_connect_overload_without_penalizing_account(monkeypatch):
     settings = _make_proxy_settings()
-    settings.proxy_upstream_websocket_connect_limit = 1
+    monkeypatch.setattr(proxy_service, "UPSTREAM_WEBSOCKET_CONNECT_LIMIT", 1)
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     account = _make_account("acc_ws_connect_overload")
@@ -26103,7 +25896,6 @@ async def test_prepare_websocket_response_create_request_logs_affinity_metadata(
 
     class Settings:
         trace_channels = frozenset({"shape"})
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", reserve_usage)
@@ -26159,7 +25951,6 @@ async def test_prepare_websocket_response_create_request_releases_reservation_on
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 64)
@@ -26169,8 +25960,8 @@ async def test_prepare_websocket_response_create_request_releases_reservation_on
     monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
 
     monkeypatch.setattr(
-        "app.modules.proxy._service.response_create.get_settings",
-        lambda: SimpleNamespace(max_decompressed_responses_body_bytes=128),
+        "app.modules.proxy._service.response_create.MAX_DECOMPRESSED_RESPONSES_BODY_BYTES",
+        128,
     )
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         await service._prepare_websocket_response_create_request(
@@ -26233,7 +26024,6 @@ async def test_websocket_lite_prewarm_acceptance_preserves_incremental_marker(
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", AsyncMock(return_value=None))
@@ -26406,7 +26196,6 @@ async def test_websocket_lite_incremental_requires_previous_response_linkage(
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", AsyncMock(return_value=None))
@@ -26466,7 +26255,6 @@ async def test_websocket_lite_fresh_replay_strips_trusted_marker(monkeypatch):
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", AsyncMock(return_value=None))
@@ -26590,7 +26378,6 @@ async def test_prepare_websocket_response_create_request_does_not_infer_previous
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", reserve_usage)
@@ -26635,7 +26422,6 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     historical_input: list[JsonValue] = [
         {"role": "user", "content": [{"type": "input_text", "text": "old question"}]},
@@ -26916,7 +26702,6 @@ async def test_prepare_websocket_goal_restart_keeps_full_resend_without_injected
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     historical_input: list[JsonValue] = [
         {"role": "user", "content": [{"type": "input_text", "text": "old question"}]},
@@ -26995,7 +26780,6 @@ async def test_prepare_websocket_response_create_request_does_not_fresh_retry_in
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     historical_input: list[JsonValue] = [
         {"type": "function_call_output", "call_id": "call_delta", "output": "ok"},
@@ -27059,7 +26843,6 @@ async def test_prepare_websocket_response_create_request_captures_client_full_re
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     full_resend_input: list[JsonValue] = [
         {"role": "user", "content": [{"type": "input_text", "text": "old question"}]},
@@ -27127,7 +26910,6 @@ async def test_prepare_websocket_response_create_request_does_not_fresh_retry_to
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     tool_output_delta: list[JsonValue] = [
         {"type": "function_call_output", "call_id": "call_delta_a", "output": "ok"},
@@ -27260,7 +27042,6 @@ async def test_prepare_websocket_response_create_request_fills_interrupted_pendi
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_response_id="resp_pending_tool_calls",
@@ -27377,7 +27158,6 @@ async def test_prepare_websocket_response_create_request_fills_interrupted_custo
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_response_id="resp_pending_custom_tool_calls",
@@ -27465,7 +27245,6 @@ async def test_prepare_websocket_full_replay_retry_text_uses_size_guard(monkeypa
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     historical_input: list[JsonValue] = [
         {
@@ -27544,7 +27323,6 @@ async def test_prepare_websocket_full_replay_preserves_oversized_payload_for_htt
 
     class Settings:
         trace_channels = frozenset()
-        openai_prompt_cache_key_derivation_enabled = True
 
     historical_input: list[JsonValue] = [
         {"role": "user", "content": [{"type": "input_text", "text": "H" * 5000}]},
@@ -42190,7 +41968,6 @@ async def test_compact_unsafe_network_failure_rotates_generation_for_next_reques
     settings = _make_proxy_settings()
     settings.upstream_base_url = "https://chatgpt.com/backend-api"
     settings.upstream_connect_timeout_seconds = 8.0
-    settings.image_inline_fetch_enabled = False
     settings.log_upstream_request_summary = False
     settings.log_upstream_request_payload = False
     request_logs = _RequestLogsRecorder()
@@ -44025,8 +43802,8 @@ async def test_compact_previous_response_not_found_is_masked_without_account_pen
 @pytest.mark.asyncio
 async def test_compact_responses_surfaces_local_create_overload_without_penalizing_account(monkeypatch):
     settings = _make_proxy_settings()
-    settings.proxy_compact_response_create_limit = 1
-    settings.proxy_admission_wait_timeout_seconds = 0.05
+    monkeypatch.setattr(proxy_service, "COMPACT_RESPONSE_CREATE_LIMIT", 1)
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda: 0.05)
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     account = _make_account("acc_compact_local_overload")
@@ -44067,8 +43844,8 @@ async def test_compact_responses_surfaces_local_create_overload_without_penalizi
 @pytest.mark.asyncio
 async def test_compact_responses_releases_account_create_lease_when_global_admission_times_out(monkeypatch):
     settings = _make_proxy_settings()
-    settings.proxy_compact_response_create_limit = 1
-    settings.proxy_admission_wait_timeout_seconds = 0.05
+    monkeypatch.setattr(proxy_service, "COMPACT_RESPONSE_CREATE_LIMIT", 1)
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda: 0.05)
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     account = _make_account("acc_compact_lease_release")
@@ -44186,7 +43963,6 @@ async def test_compact_responses_account_create_cap_is_local_overload(monkeypatc
 async def test_compact_responses_does_not_push_timeout_overrides_when_account_create_cap_raises(monkeypatch):
     settings = _make_proxy_settings()
     settings.proxy_account_response_create_limit = 1
-    settings.upstream_compact_timeout_seconds = None
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     account = _make_account("acc_compact_timeout_pop_on_cap")
@@ -44224,7 +44000,7 @@ async def test_compact_responses_does_not_push_timeout_overrides_when_account_cr
 @pytest.mark.asyncio
 async def test_ensure_fresh_skips_token_refresh_admission_for_fresh_account(monkeypatch):
     settings = _make_proxy_settings()
-    settings.proxy_token_refresh_limit = 1
+    monkeypatch.setattr(proxy_service, "TOKEN_REFRESH_LIMIT", 1)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     account = _make_account("acc_fresh_no_refresh")
 
@@ -44248,7 +44024,7 @@ async def test_ensure_fresh_skips_token_refresh_admission_for_fresh_account(monk
 async def test_ensure_fresh_same_stale_account_joins_singleflight_before_refresh_admission(monkeypatch):
     auth_manager_module._clear_refresh_singleflight_state()
     settings = _make_proxy_settings()
-    settings.proxy_token_refresh_limit = 1
+    monkeypatch.setattr(proxy_service, "TOKEN_REFRESH_LIMIT", 1)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     encryptor = TokenEncryptor()
     stale_refresh = utcnow().replace(year=utcnow().year - 1)
@@ -44304,7 +44080,7 @@ async def test_ensure_fresh_same_stale_account_joins_singleflight_before_refresh
 @pytest.mark.asyncio
 async def test_ensure_fresh_releases_token_refresh_admission_when_repo_factory_enter_fails(monkeypatch):
     settings = _make_proxy_settings()
-    settings.proxy_token_refresh_limit = 1
+    monkeypatch.setattr(proxy_service, "TOKEN_REFRESH_LIMIT", 1)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     account = _make_account("acc_refresh_repo_failure")
     account.last_refresh = utcnow().replace(year=utcnow().year - 1)
@@ -44330,7 +44106,7 @@ async def test_ensure_fresh_releases_token_refresh_admission_when_repo_factory_e
 async def test_response_create_admission_failure_releases_session_gate(monkeypatch):
     settings = _make_proxy_settings()
     settings.proxy_response_create_limit = 1
-    settings.proxy_admission_wait_timeout_seconds = 0.05
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda: 0.05)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     request_state = proxy_service._WebSocketRequestState(
         request_id="ws_req_gate_release",
@@ -44367,7 +44143,7 @@ async def test_response_create_admission_failure_releases_session_gate(monkeypat
 @pytest.mark.asyncio
 async def test_response_create_admission_cancellation_releases_account_lease(monkeypatch):
     settings = _make_proxy_settings()
-    settings.proxy_admission_wait_timeout_seconds = 5.0
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda: 5.0)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     request_state = proxy_service._WebSocketRequestState(
         request_id="ws_req_gate_cancel",
@@ -44411,7 +44187,7 @@ async def test_response_create_admission_cancellation_releases_account_lease(mon
 async def test_response_create_admission_session_gate_timeout_returns_stable_reason(monkeypatch):
     settings = _make_proxy_settings()
     settings.proxy_response_create_limit = 64
-    settings.proxy_admission_wait_timeout_seconds = 0.01
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda: 0.01)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     request_state = proxy_service._WebSocketRequestState(
         request_id="ws_req_gate_timeout",
@@ -44448,8 +44224,8 @@ async def test_response_create_admission_session_gate_timeout_returns_stable_rea
 async def test_response_create_admission_stuck_gate_retire_ignores_draining_pending(monkeypatch):
     settings = _make_proxy_settings()
     settings.proxy_response_create_limit = 64
-    settings.proxy_admission_wait_timeout_seconds = 0.01
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 1.0
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda: 0.01)
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 1.0)
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     blocked_request = proxy_service._WebSocketRequestState(
         request_id="ws_req_gate_timeout_with_draining",
@@ -45321,15 +45097,6 @@ async def test_compact_responses_propagates_selection_error_code(monkeypatch):
     assert _proxy_error_code(exc) == "no_additional_quota_eligible_accounts"
     assert await service.drain_persistence_tasks(timeout_seconds=1)
     assert request_logs.calls[0]["error_code"] == "no_additional_quota_eligible_accounts"
-
-
-def test_settings_parses_image_inline_allowlist_from_csv(monkeypatch):
-    monkeypatch.setenv("CODEX_LB_IMAGE_INLINE_ALLOWED_HOSTS", "a.example, b.example ,,C.Example")
-    from app.core.config.settings import Settings
-
-    settings = Settings()
-
-    assert settings.image_inline_allowed_hosts == ["a.example", "b.example", "c.example"]
 
 
 @pytest.mark.asyncio
@@ -49698,7 +49465,7 @@ async def test_http_bridge_session_events_retries_silent_pre_response_once(monke
     settings.stream_idle_timeout_seconds = 7200.0
     # The pre-response budget is derived from the owner-side stuck gate, not
     # from stream_idle_timeout_seconds; scale it down for the test clock.
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 0.002
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 0.002)
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_idle_retry",
         model="gpt-5.1",
@@ -49852,8 +49619,7 @@ async def test_http_bridge_eventless_retry_transport_failure_uses_bridge_timeout
     settings = _make_proxy_settings()
     settings.sse_keepalive_interval_seconds = 0.001
     settings.stream_idle_timeout_seconds = 1.0
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 0.002
-    settings.http_responses_session_bridge_anchor_poison_failure_threshold = 7
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 0.002)
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_retry_transport_failure",
         model="gpt-5.1",
@@ -49930,8 +49696,7 @@ async def test_http_bridge_eventless_retry_transport_failure_raises_bridge_timeo
     settings = _make_proxy_settings()
     settings.sse_keepalive_interval_seconds = 0.001
     settings.stream_idle_timeout_seconds = 1.0
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 0.002
-    settings.http_responses_session_bridge_anchor_poison_failure_threshold = 7
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 0.002)
     settings.http_responses_session_bridge_ambiguous_continuation_recovery_mode = "server_indefinite_recovery"
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_retry_transport_failure_proxy",
@@ -50003,18 +49768,17 @@ async def test_http_bridge_eventless_retry_transport_failure_raises_bridge_timeo
 async def test_http_bridge_retry_transport_failure_abandons_through_the_fenced_consult(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The retry-transport funnel must apply the same capped threshold and
+    # The retry-transport funnel must apply the same circuit threshold and
     # fenced abandonment as the idle-recovery exhaustion: the legacy shape
-    # waited for the raw configured threshold (7) after the circuit opened
-    # at 2 and cleared continuity unfenced, so it could erase an anchor a
-    # sibling registered during the window.
+    # waited for a higher configured threshold after the circuit opened at 2
+    # and cleared continuity unfenced, so it could erase an anchor a sibling
+    # registered during the window.
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.sse_keepalive_interval_seconds = 0.001
     settings.stream_idle_timeout_seconds = 1.0
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 0.002
-    settings.http_responses_session_bridge_anchor_poison_failure_threshold = 7
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 0.002)
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_transport_fenced_abandon",
         model="gpt-5.1",
@@ -50090,9 +49854,6 @@ async def test_http_bridge_retry_transport_failure_abandons_through_the_fenced_c
     consult.assert_awaited_once()
     assert consult.await_args is not None
     assert consult.await_args.kwargs["consecutive_failures"] == 2
-    assert consult.await_args.kwargs["configured_threshold"] == 7, (
-        "the consult receives the raw configured threshold and applies the circuit cap itself"
-    )
     abandon.assert_awaited_once()
     assert abandon.await_args is not None
     assert abandon.await_args.kwargs["expected_continuity"] == ("resp_poisoned", None), (
@@ -50114,8 +49875,7 @@ async def test_http_bridge_transport_terminal_publishes_before_the_settlement(
     settings = _make_proxy_settings()
     settings.sse_keepalive_interval_seconds = 0.001
     settings.stream_idle_timeout_seconds = 1.0
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 0.002
-    settings.http_responses_session_bridge_anchor_poison_failure_threshold = 2
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 0.002)
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_transport_publish_order",
         model="gpt-5.1",
@@ -50208,8 +49968,7 @@ async def test_http_bridge_primary_eventless_timeout_poisons_anchor_after_thresh
     settings = _make_proxy_settings()
     settings.sse_keepalive_interval_seconds = 0.001
     settings.stream_idle_timeout_seconds = 1.0
-    settings.http_responses_session_bridge_stuck_gate_retire_after_seconds = 0.002
-    settings.http_responses_session_bridge_anchor_poison_failure_threshold = 2
+    monkeypatch.setattr(http_bridge_helpers_module, "HTTP_BRIDGE_STUCK_GATE_RETIRE_AFTER_SECONDS", 0.002)
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_primary_eventless_poison",
         model="gpt-5.1",
@@ -52211,7 +51970,6 @@ async def test_inline_http_bridge_image_urls_converts_external_urls(monkeypatch)
         return d
 
     class FakeSettings:
-        image_inline_fetch_enabled = True
         upstream_connect_timeout_seconds = 5.0
 
     class FakeSession:
@@ -52293,7 +52051,6 @@ async def test_inline_http_bridge_image_urls_rechecks_expanded_payload_size(monk
         return expanded_payload
 
     class FakeSettings:
-        image_inline_fetch_enabled = True
         upstream_connect_timeout_seconds = 5.0
 
     class FakeSession:
@@ -52975,7 +52732,6 @@ async def test_inline_http_bridge_image_urls_converts_top_level_input_image(monk
         return {"type": "input_image", "image_url": data_url}, True
 
     class FakeSettings:
-        image_inline_fetch_enabled = True
         upstream_connect_timeout_seconds = 5.0
 
     class FakeSession:
@@ -53017,46 +52773,6 @@ async def test_inline_http_bridge_image_urls_converts_top_level_input_image(monk
 
 
 @pytest.mark.asyncio
-async def test_inline_http_bridge_image_urls_skips_when_disabled(monkeypatch):
-    """When image_inline_fetch_enabled is False, no inlining should happen."""
-
-    class FakeSettings:
-        image_inline_fetch_enabled = False
-
-    monkeypatch.setattr(proxy_service, "get_settings", lambda: FakeSettings())
-
-    original_payload = {
-        "type": "response.create",
-        "model": "gpt-5.5",
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_image", "image_url": "https://example.com/photo.png"},
-                ],
-            }
-        ],
-    }
-    text_data = json.dumps(original_payload, ensure_ascii=True, separators=(",", ":"))
-    request_state = proxy_service._WebSocketRequestState(
-        request_id="req_img_2",
-        model="gpt-5.5",
-        service_tier=None,
-        reasoning_effort=None,
-        api_key_reservation=None,
-        started_at=0.0,
-        awaiting_response_created=True,
-        request_text=text_data,
-    )
-
-    service = proxy_service.ProxyService.__new__(proxy_service.ProxyService)
-    result = await service._inline_http_bridge_image_urls(text_data, request_state)
-
-    assert result == text_data
-    assert request_state.request_text == text_data
-
-
-@pytest.mark.asyncio
 async def test_inline_http_bridge_image_urls_skips_data_urls(monkeypatch):
     """Payloads that already use data: URLs should pass through unchanged."""
 
@@ -53067,7 +52783,6 @@ async def test_inline_http_bridge_image_urls_skips_data_urls(monkeypatch):
         return dict(payload_dict)
 
     class FakeSettings:
-        image_inline_fetch_enabled = True
         upstream_connect_timeout_seconds = 5.0
 
     class FakeSession:
@@ -53124,7 +52839,6 @@ async def test_inline_http_bridge_image_urls_rejects_when_fetch_fails(monkeypatc
         return dict(payload_dict)
 
     class FakeSettings:
-        image_inline_fetch_enabled = True
         upstream_connect_timeout_seconds = 5.0
 
     class FakeSession:

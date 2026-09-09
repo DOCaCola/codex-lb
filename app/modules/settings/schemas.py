@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, StrictInt, field_validator
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -99,6 +99,10 @@ class DashboardSettingsResponse(DashboardModel):
     dashboard_session_ttl_seconds: int = Field(ge=3600)
     http_responses_session_bridge_prompt_cache_idle_ttl_seconds: int = Field(gt=0)
     http_responses_session_bridge_gateway_safe_mode: bool
+    # M3 codex prewarm: effective value; ``provenance[<name>]`` says whether it
+    # comes from the dashboard, the deprecated env alias or the code default.
+    http_responses_session_bridge_codex_prewarm_enabled: bool
+    # end M3 codex prewarm
     sticky_reallocation_budget_threshold_pct: float = Field(ge=0.0, le=100.0)
     sticky_reallocation_primary_budget_threshold_pct: float = Field(ge=0.0, le=100.0)
     sticky_reallocation_secondary_budget_threshold_pct: float = Field(ge=0.0, le=100.0)
@@ -146,6 +150,11 @@ class DashboardSettingsResponse(DashboardModel):
     proxy_downstream_websocket_idle_timeout_seconds: float
     sse_keepalive_interval_seconds: float
     # end C2-1 timeouts
+    # M1 stream/bridge budgets: effective values, unbounded like the C2-1
+    # timeouts above; ``provenance[<name>]`` names the source.
+    http_responses_stream_request_budget_seconds: float
+    http_responses_session_bridge_request_budget_seconds: float
+    # end M1 stream/bridge budgets
     # Provenance of every inheritable setting keyed by its setting name (the
     # ``dashboard_settings`` column / ``Settings`` field name). Additive: the
     # flat ``<name>``, ``<name>_environment_value`` and ``<name>_override``
@@ -157,7 +166,8 @@ class DashboardSettingsUpdateRequest(DashboardModel):
     """Partial update of the dashboard settings.
 
     Inheritable settings (the four account-capacity caps, the two retention
-    overrides and the three resilience toggles) are tri-state, decided by
+    overrides, the three resilience toggles and the Codex prewarm switch) are
+    tri-state, decided by
     ``model_fields_set``: a field that is
     omitted is left unchanged, an explicit ``null`` clears the dashboard value
     so the setting returns to inheriting the environment value or code default
@@ -212,6 +222,11 @@ class DashboardSettingsUpdateRequest(DashboardModel):
     dashboard_session_ttl_seconds: int | None = Field(default=None, ge=3600)
     http_responses_session_bridge_prompt_cache_idle_ttl_seconds: int | None = Field(default=None, gt=0)
     http_responses_session_bridge_gateway_safe_mode: bool | None = None
+    # M3 codex prewarm: tri-state via ``model_fields_set`` (absent = unchanged,
+    # null = clear the dashboard value and inherit the deprecated env alias /
+    # code default, value = store).
+    http_responses_session_bridge_codex_prewarm_enabled: bool | None = None
+    # end M3 codex prewarm
     sticky_reallocation_budget_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     sticky_reallocation_primary_budget_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     sticky_reallocation_secondary_budget_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
@@ -255,6 +270,12 @@ class DashboardSettingsUpdateRequest(DashboardModel):
     proxy_downstream_websocket_idle_timeout_seconds: float | None = Field(default=None, gt=0, le=86400)
     sse_keepalive_interval_seconds: float | None = Field(default=None, ge=0, le=86400)
     # end C2-1 timeouts
+    # M1 stream/bridge budgets: same tri-state contract and bounds as the
+    # C2-1 timeouts; the connect-within-stream-budget and stuck-gate-within-
+    # bridge-budget invariants are checked on the effective values.
+    http_responses_stream_request_budget_seconds: float | None = Field(default=None, gt=0, le=86400)
+    http_responses_session_bridge_request_budget_seconds: float | None = Field(default=None, gt=0, le=86400)
+    # end M1 stream/bridge budgets
 
     @field_validator("request_log_retention_override_days")
     @classmethod
@@ -330,6 +351,36 @@ class SubscriptionOverflowPreflightResponse(DashboardModel):
 
 class RuntimeConnectAddressResponse(DashboardModel):
     connect_address: str
+
+
+# M4 model catalogue: per-model context window overrides. ``source`` is
+# ``"dashboard"`` when a dashboard row exists for the slug and ``"env"`` when
+# only the ``CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES`` entry applies;
+# ``env_value`` is that entry (``None`` when the environment has none).
+class ModelContextWindowOverrideResponse(DashboardModel):
+    slug: str
+    context_window: int
+    source: Literal["dashboard", "env"]
+    env_value: int | None = None
+
+
+class ModelContextWindowOverridesResponse(DashboardModel):
+    overrides: list[ModelContextWindowOverrideResponse]
+
+
+# The column is a database ``Integer``, so PostgreSQL rejects anything wider at
+# commit time; bounding the request turns that 500 into a 422.
+MAX_MODEL_CONTEXT_WINDOW = 2_147_483_647
+
+
+class ModelContextWindowOverrideUpsertRequest(DashboardModel):
+    # StrictInt, not ``int``: a reported context window is a token count, so a
+    # bool, a float or a numeric string is an operator mistake to surface as a
+    # 422 rather than silently coerce into a stored window.
+    context_window: StrictInt = Field(ge=1, le=MAX_MODEL_CONTEXT_WINDOW)
+
+
+# end M4 model catalogue
 
 
 class UpstreamProxyEndpointCreateRequest(DashboardModel):

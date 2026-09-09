@@ -42,7 +42,8 @@ class Socket:
 async def test_oversized_turn_uses_same_account_http_and_next_small_turn_uses_ws(monkeypatch, routed):
     socket = Socket()
     connect = AsyncMock(return_value=socket)
-    settings = Settings(upstream_response_create_max_bytes=1024)
+    settings = Settings()
+    monkeypatch.setattr(http_client, "UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 1024)
     monkeypatch.setattr(ws_client, "get_settings", lambda: settings)
     monkeypatch.setattr(ws_client, "_connect_upstream_websocket", connect)
     calls = []

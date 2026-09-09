@@ -65,6 +65,10 @@ class DashboardSettingsData:
     dashboard_session_ttl_seconds: int
     http_responses_session_bridge_prompt_cache_idle_ttl_seconds: int
     http_responses_session_bridge_gateway_safe_mode: bool
+    # M3 codex prewarm: effective value (dashboard column, else the deprecated
+    # env alias, else the code default); provenance carries the source.
+    http_responses_session_bridge_codex_prewarm_enabled: bool
+    # end M3 codex prewarm
     sticky_reallocation_budget_threshold_pct: float
     sticky_reallocation_primary_budget_threshold_pct: float
     sticky_reallocation_secondary_budget_threshold_pct: float
@@ -108,6 +112,11 @@ class DashboardSettingsData:
     proxy_downstream_websocket_idle_timeout_seconds: float
     sse_keepalive_interval_seconds: float
     # end C2-1 timeouts
+    # M1 stream/bridge budgets: effective values (dashboard column, else
+    # environment, else code default); provenance carries the source.
+    http_responses_stream_request_budget_seconds: float
+    http_responses_session_bridge_request_budget_seconds: float
+    # end M1 stream/bridge budgets
     # Effective value, source and fallbacks of every inheritable setting, keyed
     # by setting name; the settings API exposes it as ``provenance``.
     provenance: Mapping[str, InheritableValue[Any]] = field(default_factory=dict)
@@ -212,6 +221,17 @@ class DashboardSettingsUpdateData:
     sse_keepalive_interval_seconds: float | None = None
     clear_sse_keepalive_interval_seconds: bool = False
     # end C2-1 timeouts
+    # M3 codex prewarm (tri-state: value = store, clear flag = back to NULL so
+    # the env alias / default applies again, neither = untouched).
+    http_responses_session_bridge_codex_prewarm_enabled: bool | None = None
+    clear_http_responses_session_bridge_codex_prewarm_enabled: bool = False
+    # end M3 codex prewarm
+    # M1 stream/bridge budgets (tri-state like the C2-1 timeouts).
+    http_responses_stream_request_budget_seconds: float | None = None
+    clear_http_responses_stream_request_budget_seconds: bool = False
+    http_responses_session_bridge_request_budget_seconds: float | None = None
+    clear_http_responses_session_bridge_request_budget_seconds: bool = False
+    # end M1 stream/bridge budgets
 
 
 class SettingsService:
@@ -334,6 +354,26 @@ class SettingsService:
             sse_keepalive_interval_seconds=payload.sse_keepalive_interval_seconds,
             clear_sse_keepalive_interval_seconds=payload.clear_sse_keepalive_interval_seconds,
             # end C2-1 timeouts
+            # M3 codex prewarm
+            http_responses_session_bridge_codex_prewarm_enabled=(
+                payload.http_responses_session_bridge_codex_prewarm_enabled
+            ),
+            clear_http_responses_session_bridge_codex_prewarm_enabled=(
+                payload.clear_http_responses_session_bridge_codex_prewarm_enabled
+            ),
+            # end M3 codex prewarm
+            # M1 stream/bridge budgets
+            http_responses_stream_request_budget_seconds=payload.http_responses_stream_request_budget_seconds,
+            clear_http_responses_stream_request_budget_seconds=(
+                payload.clear_http_responses_stream_request_budget_seconds
+            ),
+            http_responses_session_bridge_request_budget_seconds=(
+                payload.http_responses_session_bridge_request_budget_seconds
+            ),
+            clear_http_responses_session_bridge_request_budget_seconds=(
+                payload.clear_http_responses_session_bridge_request_budget_seconds
+            ),
+            # end M1 stream/bridge budgets
         )
         return _settings_data(row)
 
@@ -355,6 +395,9 @@ _ENVIRONMENT_INHERITABLE_SETTINGS = (
     "proxy_account_lease_token_weight",
     "proxy_account_lease_ttl_seconds",
     # end C2-2 routing/overload
+    # M3 codex prewarm: bool; a NULL column inherits the deprecated env alias.
+    "http_responses_session_bridge_codex_prewarm_enabled",
+    # end M3 codex prewarm
 )
 # Retention has no environment fallback: NULL = never set from the dashboard =
 # disabled; 0 = explicitly disabled.
@@ -458,6 +501,11 @@ def _settings_data(row: DashboardSettings) -> DashboardSettingsData:
             row.http_responses_session_bridge_prompt_cache_idle_ttl_seconds
         ),
         http_responses_session_bridge_gateway_safe_mode=row.http_responses_session_bridge_gateway_safe_mode,
+        # M3 codex prewarm
+        http_responses_session_bridge_codex_prewarm_enabled=bool(
+            resolved["http_responses_session_bridge_codex_prewarm_enabled"].value
+        ),
+        # end M3 codex prewarm
         sticky_reallocation_budget_threshold_pct=row.sticky_reallocation_budget_threshold_pct,
         sticky_reallocation_primary_budget_threshold_pct=row.sticky_reallocation_primary_budget_threshold_pct,
         sticky_reallocation_secondary_budget_threshold_pct=row.sticky_reallocation_secondary_budget_threshold_pct,
@@ -503,6 +551,14 @@ def _settings_data(row: DashboardSettings) -> DashboardSettingsData:
         ),
         sse_keepalive_interval_seconds=float(resolved["sse_keepalive_interval_seconds"].value),
         # end C2-1 timeouts
+        # M1 stream/bridge budgets
+        http_responses_stream_request_budget_seconds=float(
+            resolved["http_responses_stream_request_budget_seconds"].value
+        ),
+        http_responses_session_bridge_request_budget_seconds=float(
+            resolved["http_responses_session_bridge_request_budget_seconds"].value
+        ),
+        # end M1 stream/bridge budgets
         provenance=resolved,
     )
 

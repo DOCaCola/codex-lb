@@ -46,6 +46,7 @@ from app.core.clients.proxy import (
     _HOP_BY_HOP_HEADER_NAMES,
     CODEX_INSTALLATION_ID_HEADER,
     CODEX_ROUTING_HINT_HEADER,
+    MAX_SSE_EVENT_BYTES,
     ProxyResponseError,
     _is_native_codex_request,
     _is_upstream_edge_challenge,
@@ -931,7 +932,7 @@ async def _connect_upstream_websocket(
                     retry_network_errors=policy.retry_routed_network_errors,
                     headers=upstream_headers,
                     timeout=settings.upstream_connect_timeout_seconds,
-                    max_msg_size=settings.max_sse_event_bytes,
+                    max_msg_size=MAX_SSE_EVENT_BYTES,
                     heartbeat=heartbeat,
                     compress=15,
                     native_interpret_responses=policy.include_responses_beta,
@@ -949,7 +950,7 @@ async def _connect_upstream_websocket(
                     route=route,
                     headers=upstream_headers,
                     timeout=settings.upstream_connect_timeout_seconds,
-                    max_msg_size=settings.max_sse_event_bytes,
+                    max_msg_size=MAX_SSE_EVENT_BYTES,
                     heartbeat=heartbeat,
                     compress=15,
                     **protocol_kwargs,
@@ -1058,7 +1059,7 @@ async def _connect_upstream_websocket(
                     url=url,
                     headers=native_headers,
                     connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
-                    max_message_bytes=settings.max_sse_event_bytes,
+                    max_message_bytes=MAX_SSE_EVENT_BYTES,
                     ping_interval_seconds=20.0,
                     ping_timeout_seconds=ping_timeout,
                     proxy_url=proxy_url,
@@ -1105,7 +1106,7 @@ async def _connect_upstream_websocket(
             user_agent_header=user_agent,
             open_timeout=settings.upstream_connect_timeout_seconds,
             ping_timeout=ping_timeout,
-            max_size=settings.max_sse_event_bytes,
+            max_size=MAX_SSE_EVENT_BYTES,
             proxy=proxy_url,
             # Codex offers permessage-deflate on its upstream handshake. Keep
             # the direct path's default offer aligned with the routed aiohttp
@@ -1271,7 +1272,7 @@ async def connect_responses_websocket(
     initial_request_text: str | None = None,
     routing_hint: tuple[str, str | None] | None = None,
 ) -> UpstreamWebSocket:
-    from app.core.clients.proxy import stream_responses
+    from app.core.clients.proxy import UPSTREAM_RESPONSE_CREATE_MAX_BYTES, stream_responses
     from app.core.clients.responses_transport import ResponsesTransport
 
     settings = get_settings()
@@ -1314,13 +1315,13 @@ async def connect_responses_websocket(
 
     oversized = (
         initial_request_text is not None
-        and len(initial_request_text.encode("utf-8")) > settings.upstream_response_create_max_bytes
+        and len(initial_request_text.encode("utf-8")) > UPSTREAM_RESPONSE_CREATE_MAX_BYTES
     )
     return ResponsesTransport(
         None if oversized else await connect(),
         connect=connect,
         stream_http=stream_http,
-        max_frame_bytes=settings.upstream_response_create_max_bytes,
+        max_frame_bytes=UPSTREAM_RESPONSE_CREATE_MAX_BYTES,
     )
 
 

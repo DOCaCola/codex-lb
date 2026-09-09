@@ -17,6 +17,7 @@ from app.core.clients.proxy import (
     _AGENT_CONTROL_OUTPUT_ITEM_TYPES,
     _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE,
     CODEX_INSTALLATION_ID_HEADER,
+    UPSTREAM_RESPONSE_CREATE_MAX_BYTES,
     ImageFetchSession,
     ProxyResponseError,
     _agent_control_tool_output_occurrences,
@@ -34,6 +35,7 @@ from app.core.clients.proxy import (
 )
 from app.core.config.settings import DEFAULT_HOME_DIR, get_settings
 from app.core.errors import openai_error
+from app.core.ingress_limits import MAX_DECOMPRESSED_RESPONSES_BODY_BYTES
 from app.core.openai.requests import ResponsesRequest, sanitize_native_responses_input
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
@@ -47,7 +49,7 @@ from app.modules.proxy._service.support import (
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
 
-_UPSTREAM_RESPONSE_CREATE_MAX_BYTES = get_settings().upstream_response_create_max_bytes
+_UPSTREAM_RESPONSE_CREATE_MAX_BYTES = UPSTREAM_RESPONSE_CREATE_MAX_BYTES
 _UPSTREAM_RESPONSE_CREATE_WARN_BYTES = int(_UPSTREAM_RESPONSE_CREATE_MAX_BYTES * 0.8)
 _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS = 10
 _RESPONSE_CREATE_HISTORY_OMISSION_NOTICE = (
@@ -223,7 +225,7 @@ def _response_create_text_with_size_guard(
         include_type_field=include_type_field,
         client_metadata=client_metadata,
     )
-    return text if len(text.encode("utf-8")) <= get_settings().max_decompressed_responses_body_bytes else None
+    return text if len(text.encode("utf-8")) <= MAX_DECOMPRESSED_RESPONSES_BODY_BYTES else None
 
 
 def _response_create_text_with_account_installation_id(
@@ -515,7 +517,7 @@ def _enforce_response_create_size_limit(request_state: _WebSocketRequestState) -
         )
     # HTTP can carry frames beyond the WS ceiling. Bound fully expanded replay
     # bodies by the Responses HTTP budget, including injected metadata.
-    max_bytes = get_settings().max_decompressed_responses_body_bytes
+    max_bytes = MAX_DECOMPRESSED_RESPONSES_BODY_BYTES
     if payload_size > max_bytes:
         raise ProxyResponseError(
             400,

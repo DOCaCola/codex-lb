@@ -22,6 +22,10 @@ from app.core.auth.dependencies import (
 )
 from app.core.clients.http import _shared_ssl_context
 from app.core.config import settings as settings_module
+from app.core.config.context_window_overrides import (
+    get_model_context_window_overrides_cache,
+    resolve_context_window_overrides,
+)
 from app.core.config.dashboard_overrides import DASHBOARD_TIMEOUT_SETTINGS
 from app.core.config.settings import get_settings as get_app_settings
 from app.core.config.settings_cache import get_settings_cache
@@ -40,12 +44,16 @@ from app.modules.proxy.account_cache import (
     get_account_selection_cache,
     propagate_account_routing_change,
 )
+from app.modules.settings.repository import ModelContextWindowOverridesRepository
 from app.modules.settings.schemas import (
     AccountProxyBindingRequest,
     AccountProxyBindingResponse,
     AdditionalQuotaPolicy,
     DashboardSettingsResponse,
     DashboardSettingsUpdateRequest,
+    ModelContextWindowOverrideResponse,
+    ModelContextWindowOverridesResponse,
+    ModelContextWindowOverrideUpsertRequest,
     RuntimeConnectAddressResponse,
     SettingProvenance,
     SubscriptionOverflowPreflightResponse,
@@ -230,6 +238,11 @@ def _dashboard_settings_response(settings) -> DashboardSettingsResponse:
         dashboard_session_ttl_seconds=settings.dashboard_session_ttl_seconds,
         http_responses_session_bridge_prompt_cache_idle_ttl_seconds=settings.http_responses_session_bridge_prompt_cache_idle_ttl_seconds,
         http_responses_session_bridge_gateway_safe_mode=settings.http_responses_session_bridge_gateway_safe_mode,
+        # M3 codex prewarm
+        http_responses_session_bridge_codex_prewarm_enabled=(
+            settings.http_responses_session_bridge_codex_prewarm_enabled
+        ),
+        # end M3 codex prewarm
         sticky_reallocation_budget_threshold_pct=settings.sticky_reallocation_budget_threshold_pct,
         sticky_reallocation_primary_budget_threshold_pct=settings.sticky_reallocation_primary_budget_threshold_pct,
         sticky_reallocation_secondary_budget_threshold_pct=settings.sticky_reallocation_secondary_budget_threshold_pct,
@@ -272,6 +285,12 @@ def _dashboard_settings_response(settings) -> DashboardSettingsResponse:
         proxy_downstream_websocket_idle_timeout_seconds=settings.proxy_downstream_websocket_idle_timeout_seconds,
         sse_keepalive_interval_seconds=settings.sse_keepalive_interval_seconds,
         # end C2-1 timeouts
+        # M1 stream/bridge budgets
+        http_responses_stream_request_budget_seconds=settings.http_responses_stream_request_budget_seconds,
+        http_responses_session_bridge_request_budget_seconds=(
+            settings.http_responses_session_bridge_request_budget_seconds
+        ),
+        # end M1 stream/bridge budgets
         provenance={
             name: SettingProvenance(source=resolved.source, env_value=resolved.env_value, default=resolved.default)
             for name, resolved in settings.provenance.items()
@@ -689,6 +708,99 @@ _TIMEOUT_INVARIANT_DASHBOARD_SETTINGS: tuple[str, ...] = (
 )
 
 
+# M4 model catalogue: per-model context window overrides. One dashboard row per
+# slug (``model_context_window_overrides``); the
+# ``CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES`` entry is the per-slug fallback.
+MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = "/model-context-window-overrides"
+_MODEL_SLUG_MAX_LENGTH = 256
+
+
+def _validate_model_slug(slug: str) -> str:
+    # The raw segment is validated, never trimmed: silently storing " gpt-5.4 "
+    # as "gpt-5.4" would make the row the operator sees disagree with the slug
+    # they wrote, and the requirement rejects any slug containing whitespace.
+    if (
+        not slug
+        or len(slug) > _MODEL_SLUG_MAX_LENGTH
+        or any(character.isspace() or not character.isprintable() for character in slug)
+    ):
+        raise DashboardBadRequestError(
+            f"Model slug must be 1-{_MODEL_SLUG_MAX_LENGTH} printable characters without whitespace",
+            code="invalid_model_slug",
+        )
+    return slug
+
+
+async def _model_context_window_overrides_response(context: SettingsContext) -> ModelContextWindowOverridesResponse:
+    dashboard = await ModelContextWindowOverridesRepository(context.session).by_slug()
+    resolved = resolve_context_window_overrides(dashboard, get_app_settings().model_context_window_overrides)
+    return ModelContextWindowOverridesResponse(
+        overrides=[
+            ModelContextWindowOverrideResponse(
+                slug=override.slug,
+                context_window=override.context_window,
+                source=override.source,
+                env_value=override.env_value,
+            )
+            for override in resolved.values()
+        ]
+    )
+
+
+@router.get(MODEL_CONTEXT_WINDOW_OVERRIDES_PATH, response_model=ModelContextWindowOverridesResponse)
+async def get_model_context_window_overrides(
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    return await _model_context_window_overrides_response(context)
+
+
+@router.put(MODEL_CONTEXT_WINDOW_OVERRIDES_PATH + "/{slug:path}", response_model=ModelContextWindowOverridesResponse)
+async def put_model_context_window_override(
+    request: Request,
+    slug: str,
+    payload: ModelContextWindowOverrideUpsertRequest,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    normalized = _validate_model_slug(slug)
+    await ModelContextWindowOverridesRepository(context.session).upsert(normalized, payload.context_window)
+    # The catalog reads a cached snapshot of the rows: clear + durably bump
+    # before responding so every replica reports the new window.
+    await get_model_context_window_overrides_cache().invalidate()
+    # Audited like every other dashboard settings write: this one changes what
+    # the model catalog advertises to every client.
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_context_window_overrides"], "slug": normalized},
+    )
+    return await _model_context_window_overrides_response(context)
+
+
+@router.delete(MODEL_CONTEXT_WINDOW_OVERRIDES_PATH + "/{slug:path}", response_model=ModelContextWindowOverridesResponse)
+async def delete_model_context_window_override(
+    request: Request,
+    slug: str,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    normalized = _validate_model_slug(slug)
+    if not await ModelContextWindowOverridesRepository(context.session).delete(normalized):
+        raise DashboardNotFoundError(
+            "Model context window override not found", code="model_context_window_override_not_found"
+        )
+    await get_model_context_window_overrides_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_context_window_overrides"], "slug": normalized},
+    )
+    return await _model_context_window_overrides_response(context)
+
+
+# end M4 model catalogue
+
+
 def _proposed_timeout_settings(payload: DashboardSettingsUpdateRequest, current, startup_settings) -> dict[str, float]:
     """Effective timeout values after ``payload`` is applied: value = store, null = inherit, absent = current."""
     proposed: dict[str, float] = {}
@@ -1021,6 +1133,14 @@ async def update_settings(
                     if payload.http_responses_session_bridge_gateway_safe_mode is not None
                     else current.http_responses_session_bridge_gateway_safe_mode
                 ),
+                # M3 codex prewarm: tri-state via model_fields_set.
+                http_responses_session_bridge_codex_prewarm_enabled=_dashboard_value(
+                    payload, "http_responses_session_bridge_codex_prewarm_enabled"
+                ),
+                clear_http_responses_session_bridge_codex_prewarm_enabled=_clears_dashboard_value(
+                    payload, "http_responses_session_bridge_codex_prewarm_enabled"
+                ),
+                # end M3 codex prewarm
                 sticky_reallocation_budget_threshold_pct=resolved_legacy_threshold,
                 sticky_reallocation_primary_budget_threshold_pct=resolved_primary_threshold,
                 sticky_reallocation_secondary_budget_threshold_pct=(
@@ -1162,6 +1282,21 @@ async def update_settings(
                 sse_keepalive_interval_seconds=timeout_fields["sse_keepalive_interval_seconds"][0],
                 clear_sse_keepalive_interval_seconds=timeout_fields["sse_keepalive_interval_seconds"][1],
                 # end C2-1 timeouts
+                # M1 stream/bridge budgets (registered in DASHBOARD_TIMEOUT_SETTINGS,
+                # so the PUT-time invariant check and the audit loop cover them).
+                http_responses_stream_request_budget_seconds=timeout_fields[
+                    "http_responses_stream_request_budget_seconds"
+                ][0],
+                clear_http_responses_stream_request_budget_seconds=timeout_fields[
+                    "http_responses_stream_request_budget_seconds"
+                ][1],
+                http_responses_session_bridge_request_budget_seconds=timeout_fields[
+                    "http_responses_session_bridge_request_budget_seconds"
+                ][0],
+                clear_http_responses_session_bridge_request_budget_seconds=timeout_fields[
+                    "http_responses_session_bridge_request_budget_seconds"
+                ][1],
+                # end M1 stream/bridge budgets
             ),
             # CAS anchor: omitted fields above were merged from `current`
             # (version checked against expectedVersion when supplied), so the
@@ -1211,6 +1346,7 @@ async def update_settings(
             "dashboard_session_ttl_seconds",
             "http_responses_session_bridge_prompt_cache_idle_ttl_seconds",
             "http_responses_session_bridge_gateway_safe_mode",
+            "http_responses_session_bridge_codex_prewarm_enabled",  # M3 codex prewarm
             "sticky_reallocation_budget_threshold_pct",
             "sticky_reallocation_primary_budget_threshold_pct",
             "sticky_reallocation_secondary_budget_threshold_pct",
@@ -1278,6 +1414,13 @@ async def update_settings(
         ):
             changed_fields.append(field_name)
     # end C2-2 routing/overload
+    # M3 codex prewarm: storing the inherited value (or clearing it) changes
+    # ownership without changing the effective value; audit that too.
+    if "http_responses_session_bridge_codex_prewarm_enabled" not in changed_fields and current.provenance.get(
+        "http_responses_session_bridge_codex_prewarm_enabled"
+    ) != updated.provenance.get("http_responses_session_bridge_codex_prewarm_enabled"):
+        changed_fields.append("http_responses_session_bridge_codex_prewarm_enabled")
+    # end M3 codex prewarm
     if upstream_route_inputs_changed:
         # Durably bump ``upstream_route`` (with the coalesced retry fallback)
         # rather than relying solely on the ``settings`` bump issued above:
