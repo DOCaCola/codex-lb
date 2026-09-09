@@ -22,11 +22,13 @@ from app.core.auth.dependencies import (
 )
 from app.core.clients.http import _shared_ssl_context
 from app.core.config import settings as settings_module
+from app.core.config.background_jobs import BACKGROUND_JOB_SETTINGS
 from app.core.config.context_window_overrides import (
     get_model_context_window_overrides_cache,
     resolve_context_window_overrides,
 )
 from app.core.config.dashboard_overrides import DASHBOARD_TIMEOUT_SETTINGS
+from app.core.config.inheritable import resolve_inheritable
 from app.core.config.settings import get_settings as get_app_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
@@ -275,6 +277,12 @@ def _dashboard_settings_response(settings) -> DashboardSettingsResponse:
         soft_drain_enabled=settings.soft_drain_enabled,
         deterministic_failover_enabled=settings.deterministic_failover_enabled,
         circuit_breaker_enabled=settings.circuit_breaker_enabled,
+        # M2 background jobs
+        auth_guardian_enabled=settings.auth_guardian_enabled,
+        auth_guardian_blocked_by_topology=settings.auth_guardian_blocked_by_topology,
+        automations_scheduler_enabled=settings.automations_scheduler_enabled,
+        rate_limit_reset_credits_refresh_enabled=settings.rate_limit_reset_credits_refresh_enabled,
+        # end M2 background jobs
         version=settings.version,
         # C2-1 timeouts
         upstream_connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
@@ -866,6 +874,30 @@ def _validate_timeout_invariants(payload: DashboardSettingsUpdateRequest, curren
         )
 
 
+def _proposed_reset_credit_polling_enabled(payload: DashboardSettingsUpdateRequest, current) -> bool:
+    """M2 background jobs: the reset-credit polling toggle as it will be after this update.
+
+    A value in the payload wins; an explicit null returns to the inherited
+    environment / default value; an omitted field keeps the current effective
+    value (dashboard column, else the deprecated env alias, else the default).
+    """
+    name = "rate_limit_reset_credits_refresh_enabled"
+    if name not in payload.model_fields_set:
+        return bool(getattr(current, name))
+    proposed = getattr(payload, name)
+    if proposed is not None:
+        return bool(proposed)
+    inherited = current.provenance[name]
+    return bool(resolve_inheritable(None, inherited.env_value, inherited.default).value)
+
+
+def _proposed_auto_redeem_enabled(payload: DashboardSettingsUpdateRequest, current) -> bool:
+    """M2 background jobs: the auto-redeem opt-in as it will be after this update."""
+    if payload.auto_redeem_reset_credits_before_expiry is None:
+        return bool(current.auto_redeem_reset_credits_before_expiry)
+    return bool(payload.auto_redeem_reset_credits_before_expiry)
+
+
 def _timeout_field(payload: DashboardSettingsUpdateRequest, name: str) -> tuple[float | None, bool]:
     """(value to store, clear flag) for one tri-state timeout field of ``payload``."""
     if name not in payload.model_fields_set:
@@ -910,19 +942,28 @@ async def update_settings(
         current.subscription_overflow_drain_until,
         utcnow(),
     )
-    if (
-        payload.auto_redeem_reset_credits_before_expiry
-        and not current.auto_redeem_reset_credits_before_expiry
-        and not get_app_settings().rate_limit_reset_credits_refresh_enabled
-    ):
-        # The reset-credit refresh loop is the sole driver of automatic
-        # redemption; accepting the opt-in while polling is disabled would
-        # persist a setting that can never run.
-        raise DashboardBadRequestError(
-            "autoRedeemResetCreditsBeforeExpiry requires reset-credit polling; "
-            "set CODEX_LB_RATE_LIMIT_RESET_CREDITS_REFRESH_ENABLED=true first",
-            code="reset_credit_polling_disabled",
+    # The reset-credit refresh loop is the sole driver of automatic redemption,
+    # so "auto-redeem on, polling off" is a setting that can never run. The gate
+    # gets the effective (dashboard-aware) values this request would leave
+    # behind and is symmetric: it refuses both the request that turns the
+    # opt-in on and the one that turns polling off. A payload that only
+    # re-saves an already inconsistent pair is still accepted, so unrelated
+    # settings edits are never blocked by pre-existing state.
+    proposed_polling_enabled = _proposed_reset_credit_polling_enabled(payload, current)
+    proposed_auto_redeem_enabled = _proposed_auto_redeem_enabled(payload, current)
+    if proposed_auto_redeem_enabled and not proposed_polling_enabled:
+        enables_auto_redeem = not current.auto_redeem_reset_credits_before_expiry
+        disables_polling = (
+            "rate_limit_reset_credits_refresh_enabled" in payload.model_fields_set
+            and current.rate_limit_reset_credits_refresh_enabled
         )
+        if enables_auto_redeem or disables_polling:
+            raise DashboardBadRequestError(
+                "autoRedeemResetCreditsBeforeExpiry requires reset-credit polling; "
+                "keep rateLimitResetCreditsRefreshEnabled on (Settings -> Advanced -> Background jobs), "
+                "or turn the opt-in off in the same request",
+                code="reset_credit_polling_disabled",
+            )
     try:
         legacy_threshold_provided = payload.sticky_reallocation_budget_threshold_pct is not None
         primary_threshold_provided = payload.sticky_reallocation_primary_budget_threshold_pct is not None
@@ -1262,6 +1303,18 @@ async def update_settings(
                 clear_circuit_breaker_enabled=(
                     "circuit_breaker_enabled" in payload.model_fields_set and payload.circuit_breaker_enabled is None
                 ),
+                # M2 background jobs: tri-state via model_fields_set.
+                auth_guardian_enabled=_dashboard_value(payload, "auth_guardian_enabled"),
+                clear_auth_guardian_enabled=_clears_dashboard_value(payload, "auth_guardian_enabled"),
+                automations_scheduler_enabled=_dashboard_value(payload, "automations_scheduler_enabled"),
+                clear_automations_scheduler_enabled=_clears_dashboard_value(payload, "automations_scheduler_enabled"),
+                rate_limit_reset_credits_refresh_enabled=_dashboard_value(
+                    payload, "rate_limit_reset_credits_refresh_enabled"
+                ),
+                clear_rate_limit_reset_credits_refresh_enabled=_clears_dashboard_value(
+                    payload, "rate_limit_reset_credits_refresh_enabled"
+                ),
+                # end M2 background jobs
                 # C2-1 timeouts
                 upstream_connect_timeout_seconds=timeout_fields["upstream_connect_timeout_seconds"][0],
                 clear_upstream_connect_timeout_seconds=timeout_fields["upstream_connect_timeout_seconds"][1],
@@ -1374,13 +1427,15 @@ async def update_settings(
             "soft_drain_enabled",
             "deterministic_failover_enabled",
             "circuit_breaker_enabled",
+            *BACKGROUND_JOB_SETTINGS,  # M2 background jobs
             *DASHBOARD_TIMEOUT_SETTINGS,  # C2-1 timeouts
         )
         if getattr(current, field_name) != getattr(updated, field_name)
     ]
-    # C2-3 resilience toggles: storing the inherited value (or clearing it)
-    # changes ownership without changing the effective value; audit that too.
-    for field_name in RESILIENCE_TOGGLE_SETTINGS:
+    # C2-3 resilience toggles / M2 background jobs: storing the inherited value
+    # (or clearing it) changes ownership without changing the effective value;
+    # audit that too.
+    for field_name in (*RESILIENCE_TOGGLE_SETTINGS, *BACKGROUND_JOB_SETTINGS):
         if current.provenance[field_name] != updated.provenance[field_name] and field_name not in changed_fields:
             changed_fields.append(field_name)
     # C2-1 timeouts: a dashboard value equal to the inherited one still changes
