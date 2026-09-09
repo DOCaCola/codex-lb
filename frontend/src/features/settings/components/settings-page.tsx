@@ -19,6 +19,7 @@ import { AppearanceSettings } from "@/features/settings/components/appearance-se
 import { DataRetentionSettings } from "@/features/settings/components/data-retention-settings";
 import { GuestAccessSettings } from "@/features/settings/components/guest-access-settings";
 import { ImportSettings } from "@/features/settings/components/import-settings";
+import { ModelCatalogueSettings } from "@/features/settings/components/model-catalogue-settings";
 import { PasswordSettings } from "@/features/settings/components/password-settings";
 import { ResetCreditSettings } from "@/features/settings/components/reset-credit-settings";
 import { ResilienceSettings } from "@/features/settings/components/resilience-settings";
@@ -53,6 +54,9 @@ const FIREWALL_LAYOUT_QUERY_KEYS = [
   ["accounts", "list"],
   ["settings", "upstream-proxy"],
   ["model-sources", "list"],
+  // M4 model catalogue: the card sits above Firewall and grows by a table row
+  // per override, so a late response would push a #firewall scroll out of view.
+  ["settings", "model-context-window-overrides"],
 ] as const;
 
 export function SettingsPage() {
@@ -252,6 +256,7 @@ export function SettingsPage() {
                 />
               ) : null}
               <ModelSourcesSettings disabled={controlsDisabled} />
+              <ModelCatalogueSettings disabled={controlsDisabled} />
               <FirewallSection disabled={controlsDisabled} />
               <QuotaPlannerSection disabled={controlsDisabled} />
               <StickySessionsSection disabled={controlsDisabled} />

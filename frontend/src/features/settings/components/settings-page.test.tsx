@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -84,6 +84,10 @@ vi.mock("@/features/settings/components/resilience-settings", () => ({
 
 vi.mock("@/features/settings/components/session-bridge-settings", () => ({
   SessionBridgeSettings: () => <div>Session Bridge Settings</div>,
+}));
+
+vi.mock("@/features/settings/components/model-catalogue-settings", () => ({
+  ModelCatalogueSettings: () => <div>Model Catalogue Settings</div>,
 }));
 
 vi.mock("@/features/settings/components/data-retention-settings", () => ({
@@ -449,6 +453,50 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Firewall Section")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Hide advanced settings" })).toBeInTheDocument();
     expect(firewallSectionMock).toHaveBeenCalled();
+  });
+
+  it("waits for the model catalogue query before scrolling to firewall", async () => {
+    // The Model catalogue card sits above Firewall and grows by a table row per
+    // override, so a late overrides response would otherwise land after the
+    // one-shot #firewall scroll and push the target back out of view.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let resolveOverrides: ((value: unknown) => void) | undefined;
+    const overridesQuery = queryClient.fetchQuery({
+      queryKey: ["settings", "model-context-window-overrides"],
+      queryFn: () =>
+        new Promise((resolve) => {
+          resolveOverrides = resolve;
+        }),
+    });
+    const scrollIntoView = vi.fn();
+    const elementLookup = vi
+      .spyOn(document, "getElementById")
+      .mockReturnValue({ scrollIntoView } as unknown as HTMLElement);
+    const animationFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/settings?advanced=1#firewall"]}>
+          <SettingsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveOverrides?.({ overrides: [] });
+      await overridesQuery;
+    });
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    view.unmount();
+    animationFrame.mockRestore();
+    elementLookup.mockRestore();
   });
 
 });
