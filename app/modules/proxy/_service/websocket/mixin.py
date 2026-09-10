@@ -457,6 +457,10 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_response_id,
     _wrapped_websocket_error_event,
 )
+from app.modules.proxy._service.websocket.overflow import (
+    bounce_exhausted_websocket_turn,
+    bounce_pinned_or_anchored_websocket_turn,
+)
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
@@ -1871,6 +1875,15 @@ class _WebSocketMixin:
                                             request_state.previous_response_owner_account_id,
                                         ),
                                     )
+                                if await bounce_pinned_or_anchored_websocket_turn(
+                                    proxy,
+                                    websocket,
+                                    client_send_lock=client_send_lock,
+                                    api_key=request_state.api_key or api_key,
+                                    request_state=request_state,
+                                    headers=headers,
+                                ):
+                                    continue
                                 if (
                                     upstream is not None
                                     and account is not None
@@ -3712,6 +3725,7 @@ class _WebSocketMixin:
                     require_security_work_authorized=request_state.require_security_work_authorized,
                     require_preferred_account=require_preferred_account,
                     defer_no_account_error=last_failover_exc is not None and not require_preferred_account,
+                    headers=headers,
                 )
             except _WebSocketConnectFailureEmitted:
                 return None, None
@@ -3925,6 +3939,7 @@ class _WebSocketMixin:
         require_security_work_authorized: bool = False,
         require_preferred_account: bool = False,
         defer_no_account_error: bool = False,
+        headers: Mapping[str, str] | None = None,
     ) -> Account | None:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
@@ -4132,6 +4147,15 @@ class _WebSocketMixin:
                 error_code="previous_response_owner_unavailable",
                 error_message=message,
             )
+            return None
+        if error_code == USAGE_LIMIT_REACHED and await bounce_exhausted_websocket_turn(
+            proxy,
+            websocket,
+            client_send_lock=client_send_lock,
+            api_key=api_key,
+            request_state=request_state,
+            headers=headers or {},
+        ):
             return None
         _facade().logger.warning(
             "Websocket account selection failed request_id=%s model=%s preferred_account_id=%s "
@@ -6677,6 +6701,7 @@ class _WebSocketMixin:
         request_state: _WebSocketRequestState,
         error_code: str,
         error_message: str,
+        status: str = "error",
     ) -> None:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
@@ -6689,7 +6714,7 @@ class _WebSocketMixin:
             archive_request_id=request_state.archive_request_id,
             model=request_state.model or "",
             latency_ms=int((clock_for(proxy).monotonic() - request_state.started_at) * 1000),
-            status="error",
+            status=status,
             error_code=error_code,
             error_message=error_message,
             failure_phase=request_state.failure_phase_override,
@@ -6734,7 +6759,7 @@ class _WebSocketMixin:
                 else "direct"
             ),
             sticky=request_state.affinity_policy.key is not None or request_state.previous_response_id is not None,
-            status="error",
+            status=status,
         )
 
     async def _emit_websocket_connect_failure(
