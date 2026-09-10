@@ -209,6 +209,7 @@ class StickySelectionOwner(Protocol):
         allow_usage_exhaustion_error: bool = True,
         usage_exhaustion_states: Iterable[AccountState] | None = None,
         sticky_refresh_skip_deadline: datetime | None = None,
+        redact_sensitive_details: bool = False,
     ) -> _StickySelectionOutcome: ...
 
     async def release_account_lease(self, lease: AccountLease | None) -> None: ...
@@ -253,6 +254,10 @@ class StickySelectionRequest(Generic[SelectionInputsT]):
     allow_usage_exhaustion_error: bool = True
     api_key_id: str | None = None
     api_key_stream_fair_share_threshold_pct: int = 0
+    # Accounts this request's retry loop already failed over from. Distinct
+    # from the pre-exclusion continuity pool, which also differs from the
+    # routable pool by catalog-evidence model filtering.
+    exclude_account_ids: frozenset[str] = frozenset()
     # First-iteration owner read performed by the caller inside its shared
     # owner-lookup session (see load_balancer.select_account). Consumed exactly
     # once; retries re-read fresh ownership evidence through a repo bundle.
@@ -588,6 +593,31 @@ async def run_sticky_selection_path(
                     or require_unambiguous_account
                 )
             )
+            if (
+                not preserve_existing_mapping
+                and isinstance(sticky_existing_account_id, str)
+                and not hard_sticky
+                and not reallocate_sticky
+                and sticky_max_age_seconds is not None
+                and not owner_overload_isolated
+                and all(state.account_id != sticky_existing_account_id for state in selection_states)
+            ):
+                # A soft TTL-bounded owner (prompt-cache thread row) missing
+                # from this request's candidates only because of request-local
+                # pressure -- the per-account cap filter dropped it, or the
+                # retry loop excluded it after a transient upstream failure
+                # while its persisted status is still recoverable -- keeps its
+                # mapping. Same rule as bare-session cap spillover: serve the
+                # alternate for this request so the conversation returns to
+                # its warm owner next turn. A PAUSED/DEACTIVATED owner or one
+                # outside the request's continuity scope is still rebound.
+                preserve_existing_mapping = any(state.account_id == sticky_existing_account_id for state in states) or (
+                    sticky_existing_account_id in request.exclude_account_ids
+                    and any(
+                        account.id == sticky_existing_account_id and account.status in _RECOVERABLE_STATUSES
+                        for account in selection_inputs.effective_continuity_owner_candidates
+                    )
+                )
             if suppress_recovery_probe_candidates:
                 selection_states = _filter_recovery_probe_candidates(
                     selection_states,
@@ -740,6 +770,7 @@ async def run_sticky_selection_path(
                         allow_usage_exhaustion_error=allow_usage_exhaustion_error,
                         usage_exhaustion_states=states,
                         sticky_refresh_skip_deadline=sticky_refresh_skip_deadline,
+                        redact_sensitive_details=redact_sensitive_details,
                     )
                     result = sticky_outcome.selection
                     if (
@@ -1230,6 +1261,7 @@ async def _select_with_stickiness(
     sticky_refresh_skip_deadline: datetime | None = None,
     overload_backoff_runtime: Mapping[str, RuntimeState] | None = None,
     clock: Clock,
+    redact_sensitive_details: bool = False,
 ) -> _StickySelectionOutcome:
     if not sticky_key or not sticky_repo:
         return _StickySelectionOutcome(
@@ -1605,8 +1637,8 @@ async def _select_with_stickiness(
         # alone never turns this soft mapping into a distributed commit.
         logger.info(
             "internal_soft_affinity_spillover old_account_id=%s new_account_id=%s sticky_kind=%s",
-            existing,
-            chosen.account.account_id,
+            "<redacted>" if redact_sensitive_details else existing,
+            "<redacted>" if redact_sensitive_details else chosen.account.account_id,
             sticky_kind.value,
         )
     return finish_selection(chosen, effective_states=chosen_pool)

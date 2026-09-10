@@ -115,9 +115,7 @@ from app.modules.proxy._load_balancer.sticky_selection import (
 from app.modules.proxy._load_balancer.sticky_selection import (
     _filter_recovery_probe_candidates as _filter_recovery_probe_candidates,
 )
-from app.modules.proxy._load_balancer.sticky_selection import (
-    _persist_sticky_mutation as _persist_sticky_mutation,
-)
+from app.modules.proxy._load_balancer.sticky_selection import _persist_sticky_mutation as _persist_sticky_mutation
 from app.modules.proxy._load_balancer.sticky_selection import (
     _probing_result_requires_recovery_reservation as _probing_result_requires_recovery_reservation,
 )
@@ -127,9 +125,7 @@ from app.modules.proxy._load_balancer.sticky_selection import (
 from app.modules.proxy._load_balancer.sticky_selection import (
     _select_account_preferring_budget_safe as _select_account_preferring_budget_safe,
 )
-from app.modules.proxy._load_balancer.sticky_selection import (
-    _select_with_stickiness as _run_select_with_stickiness,
-)
+from app.modules.proxy._load_balancer.sticky_selection import _select_with_stickiness as _run_select_with_stickiness
 from app.modules.proxy._load_balancer.sticky_selection import (
     _state_above_budget_threshold as _state_above_budget_threshold,
 )
@@ -969,6 +965,7 @@ class LoadBalancer:
                     redact_sensitive_details=redact_sensitive_details,
                     api_key_id=api_key_id,
                     api_key_stream_fair_share_threshold_pct=api_key_stream_fair_share_threshold_pct,
+                    exclude_account_ids=frozenset(excluded_ids),
                     selection_inputs=selection_inputs,
                     reload_inputs=load_selection_inputs,
                     record_account_cap_rejection=_record_account_cap_rejection,
@@ -1684,6 +1681,7 @@ class LoadBalancer:
         allow_usage_exhaustion_error: bool = True,
         usage_exhaustion_states: Iterable[AccountState] | None = None,
         sticky_refresh_skip_deadline: datetime | None = None,
+        redact_sensitive_details: bool = False,
     ) -> _StickySelectionOutcome:
         return await _run_select_with_stickiness(
             states=states,
@@ -1711,6 +1709,7 @@ class LoadBalancer:
             sticky_refresh_skip_deadline=sticky_refresh_skip_deadline,
             overload_backoff_runtime=self._runtime,
             clock=self._clock,
+            redact_sensitive_details=redact_sensitive_details,
         )
 
     _persist_sticky_mutation = staticmethod(_persist_sticky_mutation)
