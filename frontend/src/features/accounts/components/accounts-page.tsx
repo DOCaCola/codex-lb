@@ -55,9 +55,13 @@ export function AccountsPage() {
     exportAuthMutation,
   } = useAccounts();
   const { settingsQuery } = useSettings();
-  const { upstreamProxyQuery, accountBindingMutation, testEndpointMutation } = useUpstreamProxyAdmin();
-  const oauth = useOauth();
   const canWrite = useAuthStore((state) => state.canWrite);
+  // Upstream-proxy administration is a write-only read on the backend; cached
+  // data from an earlier admin session must not be rendered either.
+  const { upstreamProxyQuery, accountBindingMutation, testEndpointMutation } = useUpstreamProxyAdmin({
+    enabled: canWrite,
+  });
+  const oauth = useOauth();
 
   const importDialog = useDialogState();
   const oauthDialog = useDialogState();
@@ -238,7 +242,7 @@ export function AccountsPage() {
                 securityWorkAuthorized: enabled,
               })
             }
-            upstreamProxyAdmin={upstreamProxyQuery.data ?? null}
+            upstreamProxyAdmin={canWrite ? (upstreamProxyQuery.data ?? null) : null}
             onProxyBindingSave={(accountId, payload) =>
               accountBindingMutation.mutateAsync({ accountId, payload })
             }
