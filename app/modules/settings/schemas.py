@@ -190,6 +190,20 @@ class DashboardSettingsResponse(DashboardModel):
     provenance: dict[str, SettingProvenance] = Field(default_factory=dict)
 
 
+#: ``DashboardSettingsUpdateRequest`` fields that change the security posture of
+#: the install. A request that changes any of them (value differs from the
+#: stored setting) requires ``security:write`` on top of the generic write gate.
+SECURITY_SETTINGS_FIELDS: frozenset[str] = frozenset(
+    {
+        "totp_required_on_login",
+        "api_key_auth_enabled",
+        "guest_access_enabled",
+        "dashboard_session_ttl_seconds",
+        "hide_upstream_quota_from_api_keys",
+    }
+)
+
+
 class DashboardSettingsUpdateRequest(DashboardModel):
     """Partial update of the dashboard settings.
 
