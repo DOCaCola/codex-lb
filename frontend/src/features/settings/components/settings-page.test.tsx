@@ -90,11 +90,19 @@ vi.mock("@/features/settings/components/model-catalogue-settings", () => ({
   ModelCatalogueSettings: () => <div>Model Catalogue Settings</div>,
 }));
 
+vi.mock("@/features/settings/components/background-jobs-settings", () => ({
+  BackgroundJobsSettings: () => <div>Background Jobs Settings</div>,
+}));
+
 vi.mock("@/features/settings/components/data-retention-settings", () => ({
   DataRetentionSettings: (props: unknown) => {
     dataRetentionSettingsMock(props);
     return <div>Data Retention Settings</div>;
   },
+}));
+
+vi.mock("@/features/settings/components/conversation-archive-settings", () => ({
+  ConversationArchiveSettings: () => <div>Conversation Archive Settings</div>,
 }));
 
 vi.mock("@/features/settings/components/upstream-timeout-settings", () => ({
@@ -277,6 +285,7 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Quota Planner Section")).toBeInTheDocument();
     expect(screen.getByText("Sticky Sessions Section")).toBeInTheDocument();
     expect(screen.getByText("Data Retention Settings")).toBeInTheDocument();
+    expect(screen.getByText("Conversation Archive Settings")).toBeInTheDocument();
     expect(screen.getByText("Upstream Timeout Settings")).toBeInTheDocument();
   });
 

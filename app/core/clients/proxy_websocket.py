@@ -39,6 +39,7 @@ from app.core.clients.native_egress import (
     NativeEgressUnavailable,
     NativeEgressWebSocket,
     NativeWebSocketRequest,
+    NativeWebSocketRoutingMetadata,
     discover_native_egress_client,
 )
 from app.core.clients.proxy import (
@@ -202,6 +203,7 @@ class UpstreamWebSocketMessage:
     responses_interpreted: bool = False
     event_type: str | None = None
     payload: dict[str, JsonValue] | None = None
+    routing: NativeWebSocketRoutingMetadata | None = None
 
 
 class UpstreamWebSocketTransportError(RuntimeError):
@@ -457,6 +459,7 @@ class NativeUpstreamWebSocket:
             responses_interpreted=message.responses_interpreted,
             event_type=message.event_type,
             payload=message.payload,
+            routing=message.routing,
         )
 
     async def close(self, code: int = 1000, reason: str = "") -> None:

@@ -137,6 +137,22 @@ class DashboardSettingsResponse(DashboardModel):
     soft_drain_enabled: bool
     deterministic_failover_enabled: bool
     circuit_breaker_enabled: bool
+    # M2 background jobs: effective values; ``provenance[<name>]`` says whether
+    # each comes from the dashboard, the deprecated env alias or the code
+    # default. ``auth_guardian_blocked_by_topology`` is True when a multi-replica
+    # ring without leader election keeps the guardian idle whatever the toggle.
+    auth_guardian_enabled: bool
+    auth_guardian_blocked_by_topology: bool
+    automations_scheduler_enabled: bool
+    rate_limit_reset_credits_refresh_enabled: bool
+    # end M2 background jobs
+    # M5 conversation archive: effective toggle (``provenance`` says whether it
+    # comes from the dashboard, the deprecated env alias or the default) and
+    # the read-only T1 archive directory of *this* replica (each replica writes
+    # its own local shard; ``None`` for read-only guests).
+    conversation_archive_enabled: bool
+    conversation_archive_dir: str | None = None
+    # end M5 conversation archive
     version: int = Field(ge=1)
     # C2-1 timeouts: effective values; ``provenance[<name>]`` says whether the
     # dashboard, the environment or the code default supplied each one. No
@@ -166,8 +182,8 @@ class DashboardSettingsUpdateRequest(DashboardModel):
     """Partial update of the dashboard settings.
 
     Inheritable settings (the four account-capacity caps, the two retention
-    overrides, the three resilience toggles and the Codex prewarm switch) are
-    tri-state, decided by
+    overrides, the three resilience toggles, the Codex prewarm switch and the
+    three background job toggles) are tri-state, decided by
     ``model_fields_set``: a field that is
     omitted is left unchanged, an explicit ``null`` clears the dashboard value
     so the setting returns to inheriting the environment value or code default
@@ -259,6 +275,17 @@ class DashboardSettingsUpdateRequest(DashboardModel):
     soft_drain_enabled: bool | None = None
     deterministic_failover_enabled: bool | None = None
     circuit_breaker_enabled: bool | None = None
+    # M2 background jobs: tri-state via ``model_fields_set`` like the
+    # resilience toggles.
+    auth_guardian_enabled: bool | None = None
+    automations_scheduler_enabled: bool | None = None
+    rate_limit_reset_credits_refresh_enabled: bool | None = None
+    # end M2 background jobs
+    # M5 conversation archive: tri-state like the resilience toggles. ``true``
+    # turns the proxy into a full prompt/response recorder; the dashboard asks
+    # for confirmation first and the API audits every effective on/off change.
+    conversation_archive_enabled: bool | None = None
+    # end M5 conversation archive
     # C2-1 timeouts: tri-state like the caps (absent = unchanged, null = clear
     # to inherit the environment / default, value = store). Cross-field timeout
     # invariants are checked against the effective values in the API handler.

@@ -16,6 +16,7 @@ import { buildSettingsUpdateRequest } from "@/features/settings/payload";
 import { shouldExpandAdvancedSettings } from "@/features/settings/advanced-settings-deeplink";
 import { AdvancedSettingsGroup } from "@/features/settings/components/advanced-settings-group";
 import { AppearanceSettings } from "@/features/settings/components/appearance-settings";
+import { ConversationArchiveSettings } from "@/features/settings/components/conversation-archive-settings";
 import { DataRetentionSettings } from "@/features/settings/components/data-retention-settings";
 import { GuestAccessSettings } from "@/features/settings/components/guest-access-settings";
 import { ImportSettings } from "@/features/settings/components/import-settings";
@@ -24,6 +25,7 @@ import { PasswordSettings } from "@/features/settings/components/password-settin
 import { ResetCreditSettings } from "@/features/settings/components/reset-credit-settings";
 import { ResilienceSettings } from "@/features/settings/components/resilience-settings";
 import { SessionBridgeSettings } from "@/features/settings/components/session-bridge-settings";
+import { BackgroundJobsSettings } from "@/features/settings/components/background-jobs-settings";
 import { RoutingSettings } from "@/features/settings/components/routing-settings";
 import { SessionSettings } from "@/features/settings/components/session-settings";
 import { UpstreamTimeoutSettings } from "@/features/settings/components/upstream-timeout-settings";
@@ -242,6 +244,7 @@ export function SettingsPage() {
               />
               <ResilienceSettings settings={settings} busy={controlsDisabled} onSave={handleSave} />
               <SessionBridgeSettings settings={settings} busy={controlsDisabled} onSave={handleSave} />
+              <BackgroundJobsSettings settings={settings} busy={controlsDisabled} onSave={handleSave} />
               {upstreamProxyQuery.data ? (
                 <UpstreamProxySettings
                   admin={upstreamProxyQuery.data}
@@ -271,6 +274,8 @@ export function SettingsPage() {
                 busy={controlsDisabled}
                 onSave={handleSave}
               />
+              {/* M5 conversation archive: next to Data retention (same "what we keep" family). */}
+              <ConversationArchiveSettings settings={settings} busy={controlsDisabled} onSave={handleSave} />
               <UpstreamTimeoutSettings
                 key={[
                   settings.version,

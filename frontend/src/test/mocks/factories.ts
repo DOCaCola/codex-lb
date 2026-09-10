@@ -566,6 +566,13 @@ export function createDashboardSettings(
 		deterministicFailoverEnabled: true,
 		circuitBreakerEnabled: false,
 		httpResponsesSessionBridgeCodexPrewarmEnabled: false,
+		authGuardianEnabled: true,
+		authGuardianBlockedByTopology: false,
+		automationsSchedulerEnabled: true,
+		rateLimitResetCreditsRefreshEnabled: true,
+		// M5 conversation archive
+		conversationArchiveEnabled: false,
+		conversationArchiveDir: "/var/lib/codex-lb/conversation-archive",
 		...overrides,
 	});
 }

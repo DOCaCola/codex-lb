@@ -1196,6 +1196,17 @@ class DashboardSettings(Base):
     soft_drain_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     deterministic_failover_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     circuit_breaker_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # M2 background jobs: NULL inherits the deprecated ``CODEX_LB_*`` env alias
+    # (then the code default); schedulers read the value at every cycle entry.
+    auth_guardian_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    automations_scheduler_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rate_limit_reset_credits_refresh_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # end M2 background jobs
+    # M5 conversation archive: NULL inherits the deprecated
+    # ``CODEX_LB_CONVERSATION_ARCHIVE_ENABLED`` env alias (then the code
+    # default, off); a non-NULL value is dashboard-owned.
+    conversation_archive_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # end M5 conversation archive
     version: Mapped[int] = mapped_column(
         Integer,
         default=1,
@@ -2353,6 +2364,21 @@ Index(
 Index("idx_logs_source_requested_at", RequestLog.source, RequestLog.requested_at.desc())
 Index("idx_logs_requested_at_id", RequestLog.requested_at.desc(), RequestLog.id.desc())
 Index(
+    "idx_logs_missing_cost",
+    RequestLog.model_source_id,
+    RequestLog.id,
+    postgresql_where=text(
+        "cost_usd IS NULL AND model_source_id IS NULL AND input_tokens IS NOT NULL "
+        "AND (output_tokens IS NOT NULL OR reasoning_tokens IS NOT NULL) "
+        "AND (model_source_kind IS NULL OR model_source_kind = 'subscription')"
+    ),
+    sqlite_where=text(
+        "cost_usd IS NULL AND model_source_id IS NULL AND input_tokens IS NOT NULL "
+        "AND (output_tokens IS NOT NULL OR reasoning_tokens IS NOT NULL) "
+        "AND (model_source_kind IS NULL OR model_source_kind = 'subscription')"
+    ),
+)
+Index(
     "idx_logs_deleted_at_requested_at_id",
     RequestLog.deleted_at,
     RequestLog.requested_at.desc(),
@@ -2402,6 +2428,32 @@ Index(
     RequestLog.error_code,
     RequestLog.requested_at.desc(),
     RequestLog.id.desc(),
+)
+# Live-row partial indexes for the unfiltered request-log facet skip scan
+# (recursive ``facet_skip`` probes: ``min(column) WHERE deleted_at IS NULL AND
+# column > previous``). The predicate matches the probe so a probe never walks
+# the soft-deleted cohort sharing a value. Account ids need none: soft deletion
+# detaches account_id (NULL), which ``account_id > previous`` never walks.
+# Enforced via the manual drift index requirements like the covering index.
+Index(
+    "idx_logs_live_api_key",
+    RequestLog.api_key_id,
+    postgresql_where=text("deleted_at IS NULL"),
+    sqlite_where=text("deleted_at IS NULL"),
+)
+Index(
+    "idx_logs_live_model_effort",
+    RequestLog.model,
+    RequestLog.reasoning_effort,
+    postgresql_where=text("deleted_at IS NULL"),
+    sqlite_where=text("deleted_at IS NULL"),
+)
+Index(
+    "idx_logs_live_status_error",
+    RequestLog.status,
+    RequestLog.error_code,
+    postgresql_where=text("deleted_at IS NULL"),
+    sqlite_where=text("deleted_at IS NULL"),
 )
 Index(
     "idx_logs_request_status_api_key_time",

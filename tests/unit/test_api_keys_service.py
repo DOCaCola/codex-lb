@@ -9,6 +9,8 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from app.core.usage import pricing_catalog
+from app.core.usage.pricing import DEFAULT_PRICING_MODELS
 from app.core.utils.time import utcnow
 from app.db.models import (
     Account,
@@ -2206,7 +2208,10 @@ async def test_usage_reservation_uses_frontier_model_pricing(
     model: str,
     expected_reserved_microdollars: int,
     expected_final_microdollars: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Exercise reservation/settlement against fixed rates, independent of daily catalog updates.
+    monkeypatch.setattr(pricing_catalog, "_prices", dict(DEFAULT_PRICING_MODELS))
     repo = _FakeApiKeysRepository()
     service = ApiKeysService(repo)
     created = await service.create_key(

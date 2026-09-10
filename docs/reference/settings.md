@@ -176,7 +176,7 @@ anything else belongs in `app/core/config/settings.py`.
 
 | Environment variable | Tier | Type | Default |
 | --- | --- | --- | --- |
-| `CODEX_LB_AUTH_GUARDIAN_ENABLED` | T3 | `bool` | `True` |
+| `CODEX_LB_AUTH_GUARDIAN_ENABLED` | T3 (dashboard) | `bool` | `True` |
 | `CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS` | T3 | `int` | `8` |
 
 ## Usage
@@ -184,14 +184,14 @@ anything else belongs in `app/core/config/settings.py`.
 | Environment variable | Tier | Type | Default |
 | --- | --- | --- | --- |
 | `CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE` | T1 | `Path \| None` | `None` |
-| `CODEX_LB_RATE_LIMIT_RESET_CREDITS_REFRESH_ENABLED` | T3 | `bool` | `True` |
+| `CODEX_LB_RATE_LIMIT_RESET_CREDITS_REFRESH_ENABLED` | T3 (dashboard) | `bool` | `True` |
 
 ## Model registry
 
 | Environment variable | Tier | Type | Default |
 | --- | --- | --- | --- |
 | `CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES` | T3 (dashboard) | `dict[str, int]` | `{}` |
-| `CODEX_LB_MODEL_REGISTRY_CLIENT_VERSION` | T1 | `str` | `'0.153.4'` |
+| `CODEX_LB_MODEL_REGISTRY_CLIENT_VERSION` | T1 | `str` | `'0.154.0'` |
 | `CODEX_LB_MODEL_REGISTRY_SNAPSHOT_MAX_AGE_SECONDS` | T1 | `int` | `86400` |
 
 ## Firewall
@@ -218,14 +218,14 @@ anything else belongs in `app/core/config/settings.py`.
 | Environment variable | Tier | Type | Default |
 | --- | --- | --- | --- |
 | `CODEX_LB_CONVERSATION_ARCHIVE_DIR` | T1 | `Path` | `<data_dir>/conversation-archive` |
-| `CODEX_LB_CONVERSATION_ARCHIVE_ENABLED` | T3 | `bool` | `False` |
+| `CODEX_LB_CONVERSATION_ARCHIVE_ENABLED` | T3 (dashboard) | `bool` | `False` |
 | `CODEX_LB_CONVERSATION_ARCHIVE_QUEUE_MAX_BYTES` | T1 | `int` | `268435456` |
 
 ## Schedulers
 
 | Environment variable | Tier | Type | Default |
 | --- | --- | --- | --- |
-| `CODEX_LB_AUTOMATIONS_SCHEDULER_ENABLED` | T3 | `bool` | `True` |
+| `CODEX_LB_AUTOMATIONS_SCHEDULER_ENABLED` | T3 (dashboard) | `bool` | `True` |
 
 ## Multi-replica
 

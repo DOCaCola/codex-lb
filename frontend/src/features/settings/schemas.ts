@@ -208,6 +208,19 @@ export const DashboardSettingsSchema = z
     // M3 codex prewarm: effective value; `provenance[<snake_name>]` says
     // whether the dashboard, the environment or the default owns it.
     httpResponsesSessionBridgeCodexPrewarmEnabled: z.boolean().optional().default(false),
+    // M2 background jobs: effective values; `provenance[<snake_name>]` says
+    // which layer supplied each. `authGuardianBlockedByTopology` is true when a
+    // multi-replica ring without leader election keeps the guardian idle.
+    authGuardianEnabled: z.boolean().optional().default(true),
+    authGuardianBlockedByTopology: z.boolean().optional().default(false),
+    automationsSchedulerEnabled: z.boolean().optional().default(true),
+    rateLimitResetCreditsRefreshEnabled: z.boolean().optional().default(true),
+    // M5 conversation archive: effective toggle (`provenance.conversation_archive_enabled`
+    // says which layer it comes from) and this replica's read-only archive
+    // directory (environment-only; null for read-only guests / older backends).
+    conversationArchiveEnabled: z.boolean().optional().default(false),
+    conversationArchiveDir: z.string().nullable().optional().default(null),
+    // end M5 conversation archive
     version: z.number().int().min(1).optional(),
   })
   .transform((settings) => {
@@ -302,6 +315,15 @@ export const SettingsUpdateRequestSchema = z
     // M3 codex prewarm: tri-state (omitted = unchanged, null = reset to
     // inherited, boolean = dashboard value).
     httpResponsesSessionBridgeCodexPrewarmEnabled: z.boolean().nullable().optional(),
+    // M2 background jobs: tri-state like the resilience toggles.
+    authGuardianEnabled: z.boolean().nullable().optional(),
+    automationsSchedulerEnabled: z.boolean().nullable().optional(),
+    rateLimitResetCreditsRefreshEnabled: z.boolean().nullable().optional(),
+    // M5 conversation archive: tri-state (omitted = unchanged, null = reset to
+    // inherited, boolean = dashboard value). The card only sends `true` after
+    // the confirmation dialog.
+    conversationArchiveEnabled: z.boolean().nullable().optional(),
+    // end M5 conversation archive
     // C2-1 timeouts, tri-state like the caps: absent = unchanged, null = clear
     // (inherit environment / default), value = store. Cross-field invariants
     // are enforced by the backend against the effective values.
