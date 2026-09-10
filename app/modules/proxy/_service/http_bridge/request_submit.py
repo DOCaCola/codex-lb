@@ -2563,6 +2563,31 @@ class _HTTPBridgeRequestSubmitMixin:
             request_state.prewarm_status = "skipped"
             _record_http_bridge_prewarm_outcome(outcome="skipped")
             return
+        # The two settings readers the locked body reaches -- the admission
+        # gate's account caps/tunables and the reconnect the timeout path takes
+        # -- get this one row instead of reading it themselves, so nothing
+        # awaits the settings cache while ``prewarm_lock`` is held. A refresh
+        # behind that read runs a DB query under a process-global lock; one
+        # stalled query would then hold this session's prewarm lock and stall
+        # every later turn on it (issues #1971 and #1972).
+        settings_cache = _service_get_settings_cache()
+        try:
+            dashboard_settings = await settings_cache.get()
+        except Exception:  # noqa: BLE001 - a prewarm must never fail a servable request
+            # The same fallback the request entry point's dashboard-overrides
+            # middleware applies to this row: prefer the last one this replica
+            # loaded. With no row at all the prewarm is skipped rather than run
+            # without a snapshot, which would put the read back under the lock.
+            dashboard_settings = settings_cache.cached_row()
+            logger.warning(
+                "HTTP bridge prewarm settings snapshot unavailable; %s",
+                "using the last loaded dashboard values" if dashboard_settings is not None else "skipping the prewarm",
+                exc_info=True,
+            )
+            if dashboard_settings is None:
+                request_state.prewarm_status = "skipped"
+                _record_http_bridge_prewarm_outcome(outcome="skipped")
+                return
         async with prewarm_lock:
             if session.prewarmed:
                 request_state.prewarm_status = "skipped"
@@ -2605,6 +2630,7 @@ class _HTTPBridgeRequestSubmitMixin:
                     account_id=session.account.id,
                     surface="http_bridge_prewarm",
                     bridge_session=session,
+                    dashboard_settings=dashboard_settings,
                 )
                 gate_acquired = True
                 async with session.lifecycle_lock:
@@ -2677,6 +2703,7 @@ class _HTTPBridgeRequestSubmitMixin:
                                     kind=session.key.affinity_kind,
                                     key=session.key.affinity_key,
                                 ),
+                                dashboard_settings=dashboard_settings,
                             )
                         except Exception:
                             session.closed = True

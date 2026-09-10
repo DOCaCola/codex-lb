@@ -3629,20 +3629,28 @@ async def test_maybe_prewarm_http_bridge_session_honours_dashboard_switch_over_e
 
 
 @pytest.mark.asyncio
-async def test_maybe_prewarm_http_bridge_session_adds_no_settings_read_under_the_prewarm_lock(
+async def test_maybe_prewarm_http_bridge_session_success_path_reads_no_settings_under_the_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M3 codex prewarm: driving a full prewarm body (warm-up built, admitted,
-    sent upstream, completed) adds no settings-cache read of its own, because the
-    dashboard switch arrives on the request-bound overlay.
+    """Driving a prewarm to completion (warm-up built, admitted, sent upstream,
+    stream ended) reads the settings cache exactly once, before the lock.
 
     A settings read under ``prewarm_lock`` can refresh the cache, run a DB query
     and suspend while the lock is held; issues #1971/#1972 wedged every keyed
-    submit on exactly that pattern. The lock body's admission gate has its own
-    snapshot read that predates this change, so the assertion is scoped by call
-    site: no read is attributed to ``_maybe_prewarm_http_bridge_session``
-    itself, and any read taken while the lock is held comes from that
-    pre-existing helper. Either way nothing may open a database session.
+    submit on exactly that pattern. The dashboard switch itself arrives on the
+    request-bound overlay (no read at all), and the row the prewarm's own
+    helpers need -- the admission gate's account caps/tunables, and the
+    reconnect the timeout path takes -- is resolved by
+    ``_maybe_prewarm_http_bridge_session`` before the lock and threaded in. So
+    the recorded callers must be exactly one pre-lock read from the prewarm
+    helper, with nothing opening a database session.
+
+    Scope: this is the success path, which never reconnects. The timeout path
+    does reconnect under the lock, and beyond the reconnect helper itself that
+    reaches account selection, token refresh and upstream route resolution,
+    which keep their own settings reads and database sessions (out of scope
+    here; ``test_prewarm_timeout_pins_only_account_neutral_recovery_session``
+    covers that the reconnect is handed this snapshot).
     """
     from unittest.mock import MagicMock
 
@@ -3709,13 +3717,77 @@ async def test_maybe_prewarm_http_bridge_session_adds_no_settings_read_under_the
     assert lock.enter_count == 1
     assert len(sent) == 1
     assert json.loads(sent[0])["generate"] is False
-    # The prewarm path itself reads no snapshot, before or under the lock ...
-    assert [caller for caller, _ in reads if caller == "_maybe_prewarm_http_bridge_session"] == []
-    # ... and the only reads under the lock are the admission gate's own, which
-    # must actually have happened -- otherwise the body was never driven and the
-    # assertion above would be vacuous.
-    assert reads == [("_acquire_request_state_response_create_admission", True)]
+    # Nothing on this path read the settings cache while the lock was held ...
+    assert [caller for caller, held in reads if held] == []
+    # ... and the one read that did happen is the prewarm helper's own pre-lock
+    # snapshot. Asserting the whole list keeps this non-vacuous: had the body
+    # not been driven, or had the admission gate kept reading for itself, the
+    # recorded callers would differ.
+    assert reads == [("_maybe_prewarm_http_bridge_session", False)]
     session_factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("stale_row_available", "expected_status", "expected_prewarmed"),
+    [(True, "success", True), (False, "skipped", False)],
+)
+@pytest.mark.asyncio
+async def test_maybe_prewarm_http_bridge_session_survives_an_unreadable_settings_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    stale_row_available: bool,
+    expected_status: str,
+    expected_prewarmed: bool,
+) -> None:
+    """An unreadable settings row must not fail a request the bridge can serve.
+
+    The pre-lock snapshot applies the same fallback as the request entry
+    point's dashboard-overrides middleware: the last row this replica loaded,
+    and with no row at all the prewarm is skipped rather than run without a
+    snapshot -- which would put the read back under the lock.
+    """
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    state, session = _make_prewarm_candidate(_PREWARM_CANDIDATE_TEXT)
+    lock = _SpyPrewarmLock()
+    session.prewarm_lock = cast(Any, lock)
+    service._http_bridge_sessions[session.key] = session
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: with_dashboard_overrides(_make_app_settings()))
+
+    row = DashboardSettings()
+    row.http_responses_session_bridge_codex_prewarm_enabled = True
+    cache = SimpleNamespace(
+        get=AsyncMock(side_effect=RuntimeError("settings database unavailable")),
+        cached_row=lambda: row if stale_row_available else None,
+    )
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: cache)
+
+    sent: list[str] = []
+
+    async def fake_send(
+        target_session: proxy_service._HTTPBridgeSession,
+        warmup_state: proxy_service._WebSocketRequestState,
+        text: str,
+        **kwargs: Any,
+    ) -> None:
+        del target_session, kwargs
+        sent.append(text)
+        queue = warmup_state.event_queue
+        assert queue is not None
+        queue.put_nowait(None)
+
+    monkeypatch.setattr(http_bridge_request_submit_module, "_send_http_bridge_request_text_with_archive_id", fake_send)
+
+    with dashboard_overrides_bound(row):
+        await service._maybe_prewarm_http_bridge_session(
+            session,
+            request_state=state,
+            text_data=state.request_text or "{}",
+        )
+
+    # The request is served either way; only the prewarm is affected.
+    assert state.prewarm_status == expected_status
+    assert session.prewarmed is expected_prewarmed
+    assert len(sent) == (1 if stale_row_available else 0)
+    assert lock.enter_count == (1 if stale_row_available else 0)
 
 
 @pytest.mark.asyncio
@@ -12624,6 +12696,80 @@ async def test_reconnect_goal_restart_can_leave_owner_that_failed_before_dispatc
     assert selection_kwargs[0]["preferred_account_id"] == old_account.id
     assert selection_kwargs[0]["fallback_on_preferred_account_unavailable"] is True
     assert session.account is replacement
+
+
+@pytest.mark.asyncio
+async def test_reconnect_with_caller_snapshot_takes_no_settings_read_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller that already resolved the dashboard row passes it in and the
+    reconnect helper itself awaits no settings read.
+
+    The prewarm timeout path reconnects while holding ``prewarm_lock``; a cache
+    refresh behind that read runs a DB query under a process-global lock and
+    would suspend the critical section (issues #1971/#1972).
+
+    Scope: only the helper's own read is removed. The account selection, token
+    refresh and upstream route resolution it goes on to call are stubbed here
+    and keep their own settings reads and database sessions -- deliberately out
+    of scope for this change -- so the assertion is by call site rather than a
+    blanket "nothing read anything".
+    """
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(
+        key=proxy_service._HTTPBridgeSessionKey("session_header", "sid-snapshot-reconnect", None),
+        key_value="sid-snapshot-reconnect",
+    )
+    replacement = cast(
+        Any,
+        SimpleNamespace(
+            id="acc-snapshot-reconnect-replacement",
+            status=AccountStatus.ACTIVE,
+            plan_type="plus",
+        ),
+    )
+
+    async def select_account(_deadline: float, **_kwargs: object) -> proxy_service.AccountSelection:
+        return proxy_service.AccountSelection(account=replacement, error_message=None)
+
+    replacement_upstream = cast(Any, SimpleNamespace(response_header=lambda _name: None, close=AsyncMock()))
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-snapshot-reconnect",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+    )
+    snapshot = _bridge_selection_settings()
+    reads: list[str] = []
+
+    async def spying_get() -> Any:
+        reads.append(sys._getframe(1).f_code.co_name)
+        return snapshot
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: SimpleNamespace(get=spying_get))
+    monkeypatch.setattr(service, "_select_account_with_budget_for_stream", select_account)
+    monkeypatch.setattr(service, "_ensure_fresh_with_budget", AsyncMock(return_value=replacement))
+    monkeypatch.setattr(
+        service,
+        "_open_upstream_websocket_with_budget",
+        AsyncMock(return_value=replacement_upstream),
+    )
+
+    await service._reconnect_http_bridge_session(
+        session,
+        request_state=request_state,
+        dashboard_settings=cast(Any, snapshot),
+    )
+
+    # The reconnect completed on the caller's snapshot alone: no read is
+    # attributed to the helper itself, and with the selection/refresh/route
+    # calls stubbed out nothing else read either.
+    assert session.account is replacement
+    assert [caller for caller in reads if caller == "_reconnect_http_bridge_session"] == []
+    assert reads == []
 
 
 @pytest.mark.asyncio
@@ -24848,6 +24994,9 @@ async def test_prewarm_timeout_pins_only_account_neutral_recovery_session(
     reconnect_call = reconnect.await_args
     assert reconnect_call is not None
     assert reconnect_call.kwargs["require_same_account"] is expected_same_account
+    # This reconnect runs under ``prewarm_lock``, so it is handed the snapshot
+    # resolved before the lock instead of reading the settings cache itself.
+    assert reconnect_call.kwargs["dashboard_settings"] is not None
 
 
 @pytest.mark.asyncio
