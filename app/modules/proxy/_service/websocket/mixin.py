@@ -473,6 +473,7 @@ from app.modules.proxy.affinity import (
     _sticky_key_from_turn_state_header,
     _websocket_continuity_aliases_from_headers,
 )
+from app.modules.proxy.affinity_observation import AffinityObservation
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.capability_routing import (
     CAPABILITY_ROUTING_UNAVAILABLE_CODE,
@@ -3498,6 +3499,7 @@ class _WebSocketMixin:
             prompt_cache_key_set=_prompt_cache_key_from_request_model(responses_payload) is not None,
         )
         request_state.affinity_policy = affinity_policy
+        request_state.affinity_observation = AffinityObservation.from_policy(sticky_key_source, affinity_policy)
 
         # First-turn ``input_file.file_id`` references must land on the
         # account that registered the upload (chatgpt-account-id-scoped).
@@ -6591,6 +6593,7 @@ class _WebSocketMixin:
             )
             try:
                 await proxy._write_request_log(
+                    affinity_observation=request_state.affinity_observation,
                     account_id=account_id_value,
                     api_key=api_key,
                     request_id=request_log_response_id,
@@ -6746,6 +6749,7 @@ class _WebSocketMixin:
         if request_state.skip_request_log:
             return
         await proxy._write_request_log(
+            affinity_observation=request_state.affinity_observation,
             account_id=account_id,
             api_key=api_key,
             request_id=request_state.request_log_id or request_state.request_id,
@@ -7120,6 +7124,7 @@ class _WebSocketMixin:
                     )
             try:
                 await proxy._write_request_log(
+                    affinity_observation=request_state.affinity_observation,
                     account_id=account_id_value,
                     # HTTP-bridge callers fan a shared session failure out to
                     # requests from multiple API keys, so they pass api_key=None;

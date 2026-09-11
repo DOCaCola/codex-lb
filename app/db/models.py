@@ -513,6 +513,10 @@ class RequestLog(Base):
         Index("idx_logs_client_ip", "client_ip"),
     )
 
+    sticky_key_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    sticky_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    sticky_key_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str | None] = mapped_column(
         String,

@@ -1041,6 +1041,9 @@ class RequestLogsRepository:
         upstream_proxy_fallback_used: bool | None = None,
         upstream_proxy_fail_closed_reason: str | None = None,
         archive_request_id: str | None = None,
+        sticky_key_source: str | None = None,
+        sticky_kind: str | None = None,
+        sticky_key_hash: str | None = None,
     ) -> RequestLog:
         async with sqlite_writer_section():
             # Telemetry write: this transaction only appends one request-log
@@ -1058,6 +1061,9 @@ class RequestLogsRepository:
             resolved_conversation_id = _normalize_conversation_id(conversation_id)
             resolved_client_ip = client_ip if not isinstance(client_ip, str) or client_ip.strip() else None
             log = RequestLog(
+                sticky_key_source=sticky_key_source,
+                sticky_kind=sticky_kind,
+                sticky_key_hash=sticky_key_hash,
                 account_id=account_id,
                 model_source_id=model_source_id,
                 model_source_kind=model_source_kind,

@@ -250,6 +250,7 @@ from app.modules.proxy.affinity import (
     _sticky_key_from_session_header,
     _sticky_key_from_turn_state_header,
 )
+from app.modules.proxy.affinity_observation import AffinityObservation
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.continuity import (
     is_http_bridge_account_neutral_replay,
@@ -1817,6 +1818,7 @@ class _HTTPBridgeStreamingMixin:
             )
         request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
         request_state.affinity_policy = affinity
+        request_state.affinity_observation = AffinityObservation.from_policy(sticky_key_source, affinity)
         _apply_http_bridge_downstream_turn_state(
             request_state,
             downstream_turn_state=downstream_turn_state,
@@ -2117,6 +2119,7 @@ class _HTTPBridgeStreamingMixin:
                 request_state.operation_rebind_required = True
             request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
             request_state.affinity_policy = affinity
+            request_state.affinity_observation = AffinityObservation.from_policy(sticky_key_source, affinity)
             request_state.excluded_account_ids.update(fresh_replay_excluded_account_ids)
             if downstream_turn_state is not None:
                 request_state.session_id = _normalize_session_id(downstream_turn_state)
@@ -2696,6 +2699,9 @@ class _HTTPBridgeStreamingMixin:
                     )
                     retry_request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
                     retry_request_state.affinity_policy = affinity
+                    retry_request_state.affinity_observation = AffinityObservation.from_policy(
+                        sticky_key_source, affinity
+                    )
                     _apply_http_bridge_downstream_turn_state(
                         retry_request_state,
                         downstream_turn_state=downstream_turn_state,
@@ -2881,6 +2887,7 @@ class _HTTPBridgeStreamingMixin:
             request_state, text_data = prepare_bridge_request(effective_payload)
             request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
             request_state.affinity_policy = affinity
+            request_state.affinity_observation = AffinityObservation.from_policy(sticky_key_source, affinity)
             request_state.transport = _REQUEST_TRANSPORT_HTTP
             request_state.request_stage = _http_bridge_request_stage(
                 headers=headers,
@@ -3014,6 +3021,7 @@ class _HTTPBridgeStreamingMixin:
             request_state, text_data = prepare_bridge_request(submit_payload)
             request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
             request_state.affinity_policy = affinity
+            request_state.affinity_observation = AffinityObservation.from_policy(sticky_key_source, affinity)
             _apply_http_bridge_downstream_turn_state(
                 request_state,
                 downstream_turn_state=downstream_turn_state,
@@ -3923,6 +3931,7 @@ class _HTTPBridgeStreamingMixin:
                     # atomically moves it back to submitted before send.
                     retry_request_state.operation_rebind_required = True
                 retry_request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
+                retry_request_state.affinity_observation = AffinityObservation.from_policy(sticky_key_source, affinity)
                 _apply_http_bridge_downstream_turn_state(
                     retry_request_state,
                     downstream_turn_state=downstream_turn_state,

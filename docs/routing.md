@@ -17,6 +17,16 @@ For low-volume, policy-compliant personal use, start with **Capacity weighted** 
 
 Change the strategy live in the dashboard under **Settings → Routing** — no restart required.
 
+## Inspect affinity decisions
+
+Request logs record `sticky_key_source`, `sticky_kind`, and `sticky_key_hash` for Responses and compact traffic without enabling trace logs. Callers with `conversations:read` permission can read them as `stickyKeySource`, `stickyKind`, and `stickyKeyHash` through `GET /api/request-logs`. Responses without that permission hide these fields.
+
+The hash is the first 16 lowercase hexadecimal characters of SHA-256 over the UTF-8-encoded resolved selection key. Compare hashes to identify repeated keys; raw session headers can differ from selection keys. Historical rows and paths without an observation return null. Source `none` means resolution explicitly found no affinity.
+
+Each row keeps its existing meaning: direct streams can emit attempt rows; compact, native WebSocket, and bridge rows describe their final request state. A final row does not enumerate every retry. Existing recovery can clear a key, leaving a null hash with the original source classification. These fields do not by themselves explain account-owner precedence or why an account was skipped.
+
+The columns follow existing request-log retention and never store raw keys or prompts. See the [affinity observation contract](https://github.com/Soju06/codex-lb/blob/main/openspec/specs/proxy-runtime-observability/spec.md) and [query example and privacy notes](https://github.com/Soju06/codex-lb/blob/main/openspec/specs/proxy-runtime-observability/context.md#affinity-decisions-in-request-logs).
+
 ## Routing, quotas, and eligibility explainer
 
 ### Account eligibility vs displayed status
