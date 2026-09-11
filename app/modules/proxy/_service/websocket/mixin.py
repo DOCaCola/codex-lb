@@ -3166,6 +3166,7 @@ class _WebSocketMixin:
         synthesized_turn_state: str | None = None,
         capability_header_values: tuple[str, ...] | None = None,
     ) -> _PreparedWebSocketRequest:
+        """Validate a create frame, reserve usage, and prepare safe continuity metadata."""
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         refreshed_api_key = await proxy._refresh_websocket_api_key_policy(api_key)
@@ -3299,6 +3300,7 @@ class _WebSocketMixin:
                 continuity_state,
                 responses_payload=responses_payload,
                 codex_session_affinity=codex_session_affinity,
+                api_key_id=refreshed_api_key.id if refreshed_api_key is not None else None,
             )
         if session_anchor is not None:
             original_input_items = cast(list[JsonValue], responses_payload.input)
