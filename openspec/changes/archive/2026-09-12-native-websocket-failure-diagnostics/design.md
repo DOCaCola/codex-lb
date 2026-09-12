@@ -1,0 +1,2 @@
+# Design
+Capture request correlation when the adapter is created so background receive tasks retain it. Log once when a native exception becomes a relay error, excluding expected cancellation. Restrict phases to a fixed vocabulary; unknown helper-provided values become unknown. Local queue exceptions carry a typed queue name rather than parsing their prose. Do not change the public failure text or classification. Diagnostic state is connection-local, not a global deduplication cache.

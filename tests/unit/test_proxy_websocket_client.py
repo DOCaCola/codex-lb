@@ -6,7 +6,7 @@ import errno
 import json
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import aiohttp
 import pytest
@@ -19,8 +19,10 @@ from websockets.http11 import Response
 import app.core.clients.proxy_websocket as proxy_websocket_module
 from app.core.clients.codex import CodexTransportError, CodexWebSocketResult
 from app.core.clients.native_egress import (
+    NativeEgressProtocolError,
     NativeEgressTransportError,
     NativeEgressUnavailable,
+    NativeEgressWebSocket,
     NativeWebSocketMessage,
     NativeWebSocketRequest,
 )
@@ -318,6 +320,83 @@ async def test_native_direct_adapter_classifies_helper_pong_timeout() -> None:
 
     assert message.kind == "error"
     assert message.error_code == UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE
+
+
+@pytest.mark.parametrize("phase", ["consumer_backpressure", "helper_exit", "transport", "secret-url\nsecret-token"])
+@pytest.mark.asyncio
+async def test_native_receive_logs_safe_phase_once_with_opening_request_id(monkeypatch, caplog, phase):
+    class Connection(_FakeNativeWebSocket):
+        async def receive(self):
+            raise NativeEgressTransportError(
+                "secret-payload secret-authorization",
+                failure_phase=phase,
+                queue_name="websocket_messages" if phase == "consumer_backpressure" else None,
+            )
+
+    monkeypatch.setattr(proxy_websocket_module, "get_request_id", lambda: "ws_opening")
+    websocket = NativeUpstreamWebSocket(cast(Any, Connection()))
+    monkeypatch.setattr(proxy_websocket_module, "get_request_id", lambda: None)
+    first = await websocket.receive()
+    second = await websocket.receive()
+    assert first == second
+    assert first.error == "Upstream websocket receive failed"
+    records = [r for r in caplog.records if r.message.startswith("native_websocket_receive_failed ")]
+    assert len(records) == 1
+    assert "request_id=ws_opening" in records[0].message
+    expected_phase = "unknown" if phase.startswith("secret") else phase
+    assert f"failure_phase={expected_phase}" in records[0].message
+    assert "secret" not in records[0].message
+    assert records[0].exc_info is None
+    if phase == "consumer_backpressure":
+        assert "queue=websocket_messages" in records[0].message
+
+
+@pytest.mark.asyncio
+async def test_native_protocol_error_diagnostic_omits_exception_text(caplog):
+    class Connection(_FakeNativeWebSocket):
+        async def receive(self):
+            raise NativeEgressProtocolError("secret-content")
+
+    message = await NativeUpstreamWebSocket(cast(Any, Connection())).receive()
+    assert message.error == "Upstream websocket receive failed"
+    assert "failure_phase=protocol" in caplog.text
+    assert "secret-content" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_native_message_queue_overflow_reaches_receive_diagnostic(caplog):
+    events = asyncio.Queue()
+    client = SimpleNamespace(_abort_request=AsyncMock(), _finish_request=Mock())
+    native = NativeEgressWebSocket(
+        status=101,
+        headers=(),
+        client=cast(Any, client),
+        process=cast(Any, None),
+        request_id="native-test",
+        generation=1,
+        events=events,
+    )
+    adapter = NativeUpstreamWebSocket(native)
+    for _ in range(native._messages.maxsize + 1):
+        events.put_nowait({"type": "websocket_text", "text": "private-payload"})
+    await asyncio.wait_for(native._pump_task, timeout=2)
+    message = await adapter.receive()
+    assert message.error == "Upstream websocket receive failed"
+    assert "failure_phase=consumer_backpressure queue=websocket_messages" in caplog.text
+    assert "private-payload" not in caplog.text
+    client._abort_request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_native_receive_success_and_cancellation_are_quiet(caplog):
+    await NativeUpstreamWebSocket(cast(Any, _FakeNativeWebSocket())).receive()
+
+    class Connection(_FakeNativeWebSocket):
+        async def receive(self):
+            raise NativeEgressTransportError("closed locally", failure_phase="cancelled")
+
+    await NativeUpstreamWebSocket(cast(Any, Connection())).receive()
+    assert "native_websocket_receive_failed" not in caplog.text
 
 
 @pytest.mark.asyncio

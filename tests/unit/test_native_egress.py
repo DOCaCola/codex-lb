@@ -511,8 +511,9 @@ for line in sys.stdin:
     healthy = await client.request(NativeEgressRequest(method="GET", url="https://example.test/healthy", headers={}))
 
     assert await asyncio.wait_for(healthy.read(), timeout=2.0) == b"ok"
-    with pytest.raises(NativeEgressTransportError, match="bounded event queue"):
+    with pytest.raises(NativeEgressTransportError, match="bounded event queue") as failure:
         await stalled.read()
+    assert failure.value.queue_name == "stream_events"
 
     await asyncio.wait_for(client.aclose(), timeout=2.0)
 

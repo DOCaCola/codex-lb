@@ -1,5 +1,11 @@
 # Responses API Compatibility Ops
 
+## Native receive failure diagnostics
+
+`native_websocket_receive_failed request_id=ws_... failure_phase=consumer_backpressure queue=websocket_messages`
+
+This warning is emitted once per failed native WebSocket, not for successful receives or expected cancellation. `request_id` identifies the connection-opening request. `websocket_messages` identifies the per-WebSocket message queue; `stream_events` identifies the helper reader's per-request event queue. Other phases distinguish helper lifecycle, liveness timeout, protocol, and transport faults; unrecognized phases become `unknown`. No exception prose, payloads, headers, or URLs are logged. Correlate timestamps with existing loop-lag and frame-size warnings. Public errors and account-health handling are unchanged.
+
 ## Purpose
 
 This runbook describes the fastest repeatable way to answer three questions for a specific ChatGPT account:

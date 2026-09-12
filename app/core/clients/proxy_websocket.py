@@ -427,6 +427,8 @@ class NativeUpstreamWebSocket:
 
     def __init__(self, websocket: NativeEgressWebSocket) -> None:
         self._websocket = websocket
+        self._opening_request_id = get_request_id()
+        self._receive_failure_logged = False
 
     async def send_text(self, text: str) -> None:
         try:
@@ -445,6 +447,15 @@ class NativeUpstreamWebSocket:
             message = await self._websocket.receive()
         except NativeEgressError as exc:
             error = _native_websocket_transport_error(exc, operation="receive")
+            phase = exc.failure_phase if isinstance(exc, NativeEgressTransportError) else "protocol"
+            if not self._receive_failure_logged and phase != "cancelled":
+                self._receive_failure_logged = True
+                logger.warning(
+                    "native_websocket_receive_failed request_id=%s failure_phase=%s queue=%s",
+                    self._opening_request_id,
+                    phase if phase in _NATIVE_RECEIVE_FAILURE_PHASES else "unknown",
+                    exc.queue_name if isinstance(exc, NativeEgressTransportError) else None,
+                )
             return UpstreamWebSocketMessage(
                 kind="error",
                 error=str(error),
@@ -467,6 +478,25 @@ class NativeUpstreamWebSocket:
 
     def response_header(self, name: str) -> str | None:
         return self._websocket.response_header(name)
+
+
+_NATIVE_RECEIVE_FAILURE_PHASES = frozenset(
+    {
+        "request",
+        "connect",
+        "timeout",
+        "transport",
+        "protocol",
+        "websocket_receive",
+        "websocket_send",
+        "consumer_backpressure",
+        "liveness_timeout",
+        "helper_exit",
+        "helper_read",
+        "helper_write",
+        "shutdown",
+    }
+)
 
 
 def _native_websocket_transport_error(

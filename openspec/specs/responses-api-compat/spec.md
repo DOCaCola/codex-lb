@@ -7462,6 +7462,7 @@ HTTP fallback replay MUST collect response.output_item.done items by output_inde
 #### Scenario: Reconstruction exceeds its bound
 - **WHEN** completed items exceed collection limits and terminal output is empty
 - **THEN** no partial replay history is retained and existing missing-history recovery remains available
+
 ### Requirement: HTTP bridge cleanup ownership survives caller cancellation
 
 Grouped HTTP bridge terminal persistence MUST keep each terminal append barrier and terminal delivery barrier under exactly one strongly owned task until that barrier completes. A barrier MUST NOT be considered released before its callback finishes. If caller cancellation arrives while terminal append, terminal enqueue, or either barrier is pending, the service MUST complete the required terminal delivery and barrier ordering before propagating the original cancellation, and MUST NOT invoke either barrier callback more than once.
@@ -10980,3 +10981,15 @@ Requests above the WebSocket frame threshold but within the configured expanded 
 #### Scenario: Injected output exceeds the HTTP budget
 - **WHEN** injecting an interrupted tool output exceeds the expanded HTTP request budget
 - **THEN** the proxy rejects the turn before dispatch and releases its reservation
+
+### Requirement: Native WebSocket receive diagnostics preserve safe provenance
+The native WebSocket adapter MUST emit at most one warning per connection when a native receive exception is surfaced, identifying the opening request ID, an allowlisted failure phase, and the local queue name if the failure originated from a bounded queue. Unknown phase values MUST be reported as unknown. Expected cancellation and successful receives MUST NOT emit this warning. The warning MUST NOT include exception prose, payloads, headers, URLs, or credentials. Public error envelopes and recovery decisions MUST remain unchanged.
+
+#### Scenario: Backpressure failure retains its queue provenance
+- **WHEN** a local native WebSocket message queue overflows
+- **THEN** the receive warning identifies consumer_backpressure and websocket_messages
+- **AND** repeated receives do not duplicate that warning
+
+#### Scenario: Untrusted error text is excluded
+- **WHEN** a native failure contains sensitive prose or an unknown phase
+- **THEN** the warning omits the prose and renders the phase as unknown

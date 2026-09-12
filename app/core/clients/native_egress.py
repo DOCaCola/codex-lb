@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from multidict import CIMultiDict
 
@@ -143,6 +143,7 @@ class NativeEgressTransportError(NativeEgressError):
         message: str,
         *,
         failure_phase: str = "request",
+        queue_name: Literal["stream_events", "websocket_messages"] | None = None,
         retryable_same_contract: bool = False,
         is_tls_verification_failure: bool = False,
         status_code: int | None = None,
@@ -151,6 +152,7 @@ class NativeEgressTransportError(NativeEgressError):
     ) -> None:
         super().__init__(message)
         self.failure_phase = failure_phase
+        self.queue_name = queue_name
         self.retryable_same_contract = retryable_same_contract
         self.is_tls_verification_failure = is_tls_verification_failure
         self.status_code = status_code
@@ -696,6 +698,7 @@ class NativeEgressWebSocket:
             raise NativeEgressTransportError(
                 "native websocket consumer exceeded the bounded message queue",
                 failure_phase="consumer_backpressure",
+                queue_name="websocket_messages",
             ) from exc
 
     def _queue_terminal(self, failure: BaseException) -> None:
@@ -1089,6 +1092,7 @@ class SubprocessNativeEgressClient:
                     overflow_failure = NativeEgressTransportError(
                         "native stream consumer exceeded the bounded event queue",
                         failure_phase="consumer_backpressure",
+                        queue_name="stream_events",
                     )
                     self._finish_request(request_id, generation, events)
                     while not events.empty():
