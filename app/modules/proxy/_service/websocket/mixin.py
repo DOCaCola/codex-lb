@@ -6,6 +6,7 @@ import logging
 import sys
 from collections import deque
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cached_property
@@ -85,6 +86,7 @@ from app.core.openai.parsing import (
 )
 from app.core.openai.requests import (
     ResponsesRequest,
+    validate_passthrough_depth,
 )
 from app.core.resilience.network_recovery import (
     NetworkRecoveryDecision,
@@ -3229,6 +3231,17 @@ class _WebSocketMixin:
                     ):
                         replay_account_id = retained.account_id
                     _facade().logger.info("websocket_http_history_expanded")
+        # Normalization may retain nested client objects. Own the complete
+        # replay history before any normalization or upstream shaping occurs.
+        replay_input = None
+        if not payload.get("previous_response_id"):
+            replay_input = payload.get("input")
+            # Copying is recursive; enforce the input depth budget first.
+            try:
+                validate_passthrough_depth(replay_input)
+            except ValueError as exc:
+                raise ClientPayloadError(str(exc), param="input") from exc
+            replay_input = deepcopy(replay_input)
         responses_payload = normalize_responses_request_payload(
             payload,
             openai_compat=openai_cache_affinity,
@@ -3460,8 +3473,7 @@ class _WebSocketMixin:
         request_state.http_replay_conversation_id = (
             replay_conversation_id if strip_terminal_compaction_trigger_input(responses_payload) is None else None
         )
-        if not payload.get("previous_response_id"):
-            request_state.http_replay_input = payload.get("input")
+        request_state.http_replay_input = replay_input
         request_state.client_ip = client_ip
         request_state.raw_source_model = raw_source_model
         request_state.source_route_excluded = source_route_excluded

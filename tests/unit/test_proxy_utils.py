@@ -26198,6 +26198,103 @@ async def test_prepare_websocket_response_create_request_logs_affinity_metadata(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("history_mode", ["fresh", "expanded", "unresolved"])
+async def test_websocket_replay_snapshot_owns_pre_normalization_history(monkeypatch, tmp_path, history_mode):
+    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    store = HTTPFallbackReplayStore(tmp_path)
+    monkeypatch.setattr(service, "_http_fallback_replay_store", store)
+    monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", AsyncMock(return_value=None))
+    original_items: list[JsonValue] = [
+        {
+            "type": "additional_tools",
+            "tools": [{"type": "function", "name": "original", "parameters": {"type": "object"}}],
+        },
+        {"role": "user", "content": "continue"},
+    ]
+    retained_input: list[JsonValue] = [{"role": "user", "content": "earlier"}]
+    retained_output: list[JsonValue] = [{"type": "message", "id": "msg_old", "role": "assistant", "content": "done"}]
+    scope = ReplayScope(None, "snapshot-thread")
+    if history_mode == "expanded":
+        await store.remember(
+            scope, "resp_old", json.dumps({"model": "gpt-5.1", "input": retained_input}), retained_output, "account"
+        )
+    body: dict[str, JsonValue] = {"model": "gpt-5.1", "instructions": "", "input": original_items}
+    if history_mode != "fresh":
+        body["previous_response_id"] = "resp_old"
+    expected = deepcopy(
+        [*retained_input, *retained_output, *original_items] if history_mode == "expanded" else original_items
+    )
+    normalize = websocket_mixin.normalize_responses_request_payload
+
+    def normalize_and_mutate(payload, *, openai_compat):
+        normalized = normalize(payload, openai_compat=openai_compat)
+        assert isinstance(normalized.input, list)
+        for item in normalized.input:
+            assert isinstance(item, dict)
+            if item.get("type") == "additional_tools":
+                tools = item["tools"]
+                assert isinstance(tools, list)
+                tool = tools[0]
+                assert isinstance(tool, dict)
+                tool["name"] = "normalized"
+        return normalized
+
+    monkeypatch.setattr(websocket_mixin, "normalize_responses_request_payload", normalize_and_mutate)
+    prepared = await service._prepare_websocket_response_create_request(
+        body,
+        headers={"session_id": "snapshot-thread"},
+        codex_session_affinity=False,
+        openai_cache_affinity=False,
+        sticky_threads_enabled=False,
+        openai_cache_affinity_max_age_seconds=300,
+        api_key=None,
+    )
+    snapshot = prepared.request_state.http_replay_input
+    if history_mode == "unresolved":
+        assert snapshot is None
+        await store.remember(scope, "resp_new", prepared.text_data, [], "account", snapshot)
+        assert await store.load(scope, "resp_new") is None
+    else:
+        assert snapshot == expected
+        assert "normalized" in json.dumps(body)
+        original_items.clear()
+        assert snapshot == expected
+        await store.remember(scope, "resp_new", prepared.text_data, [], "account", snapshot)
+        saved = await store.load(scope, "resp_new")
+        assert saved is not None
+        assert saved.input == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depth", [300, 5000])
+async def test_websocket_replay_snapshot_rejects_deep_input_before_copy(monkeypatch, depth):
+    from app.core.openai.exceptions import ClientPayloadError
+
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    reserve = AsyncMock(return_value=None)
+    monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", reserve)
+    nested: JsonValue = "leaf"
+    for _ in range(depth):
+        nested = [nested]
+    with pytest.raises(ClientPayloadError, match="nesting exceeds") as error:
+        await service._prepare_websocket_response_create_request(
+            {"model": "gpt-5.1", "instructions": "", "input": nested},
+            headers={},
+            codex_session_affinity=False,
+            openai_cache_affinity=False,
+            sticky_threads_enabled=False,
+            openai_cache_affinity_max_age_seconds=300,
+            api_key=None,
+        )
+    assert error.value.param == "input"
+    reserve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_prepare_websocket_response_create_request_releases_reservation_on_payload_too_large(monkeypatch):
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))

@@ -21,6 +21,8 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 
+import app.core.clients.proxy as upstream_http_module
+import app.core.clients.proxy_websocket as upstream_websocket_module
 import app.core.middleware.dashboard_overrides as dashboard_overrides_middleware_module
 import app.modules.proxy.load_balancer as load_balancer_module
 import app.modules.proxy.service as proxy_module
@@ -38,6 +40,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, DashboardSettings, HttpBridgeSessionState, RequestLog, StickySession
 from app.db.session import SessionLocal
 from app.dependencies import get_proxy_service_for_app
+from app.modules.proxy._service import response_create as response_create_module
 from app.modules.proxy._service import support as proxy_support
 from app.modules.proxy._service.http_bridge import helpers as http_bridge_helpers_module
 from app.modules.proxy._service.http_bridge import quarantine as http_bridge_quarantine_module
@@ -5700,12 +5703,8 @@ async def test_v1_responses_http_bridge_injects_interrupted_custom_tool_output_o
 async def test_v1_responses_http_bridge_size_guard_covers_injected_interrupted_tool_outputs(
     async_client,
     monkeypatch,
-    tmp_path,
 ):
     _install_bridge_settings(monkeypatch, enabled=True)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 10_000_000)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 10_000_000)
-    monkeypatch.setattr(proxy_module, "_OVERSIZED_RESPONSE_CREATE_DUMP_DIR", tmp_path)
     account_id = await _import_account(
         async_client,
         "acc_http_bridge_custom_interrupt_size",
@@ -5785,7 +5784,9 @@ async def test_v1_responses_http_bridge_size_guard_covers_injected_interrupted_t
             # The anchored follow-up fits the limit as sent by the client;
             # prepending synthetic interrupted outputs pushes it over.
             followup_cap_armed = True
-            proxy_module._UPSTREAM_RESPONSE_CREATE_MAX_BYTES = len(text_data.encode("utf-8")) + 100
+            monkeypatch.setattr(
+                response_create_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", len(text_data.encode("utf-8")) + 100
+            )
         return request_state, text_data
 
     monkeypatch.setattr(proxy_module.ProxyService, "_prepare_http_bridge_request", capping_prepare)
@@ -5825,7 +5826,7 @@ async def test_v1_responses_http_bridge_size_guard_covers_injected_interrupted_t
     assert followup_cap_armed is True
     assert second.status_code == 400
     error = second.json()["error"]
-    assert error["code"] == "payload_too_large"
+    assert error["code"] == "context_length_exceeded"
     assert error["type"] == "invalid_request_error"
     # The over-limit injected request must never be forwarded upstream.
     assert len(fake_upstream.sent_text) == 1
@@ -10064,15 +10065,12 @@ async def test_backend_responses_http_bridge_retries_precreated_server_overload(
 
 
 @pytest.mark.asyncio
-async def test_v1_responses_http_bridge_rejects_oversized_response_create_before_upstream(
+async def test_v1_responses_http_bridge_rejects_expanded_http_budget_before_upstream(
     async_client,
     monkeypatch,
-    tmp_path,
 ):
     _install_bridge_settings(monkeypatch, enabled=True)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 64)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 128)
-    monkeypatch.setattr(proxy_module, "_OVERSIZED_RESPONSE_CREATE_DUMP_DIR", tmp_path)
+    monkeypatch.setattr(response_create_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", 128)
 
     async def fail_get_or_create_http_bridge_session(self, *args, **kwargs):
         del self, args, kwargs
@@ -10095,128 +10093,95 @@ async def test_v1_responses_http_bridge_rejects_oversized_response_create_before
 
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error"]["code"] == "payload_too_large"
+    assert payload["error"]["code"] == "context_length_exceeded"
     assert payload["error"]["type"] == "invalid_request_error"
-    assert payload["error"]["param"] == "input"
-    assert "response.create is too large for upstream websocket" in payload["error"]["message"]
-
-    meta_files = list(tmp_path.glob("*.meta.json"))
-    assert len(meta_files) == 1
-    meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
-    assert meta["reason"]["error_code"] == "payload_too_large"
-    assert meta["request"]["transport"] == "http"
-    assert meta["request"]["request_text_bytes"] > 128
-
-    duplicate_response = await async_client.post("/v1/responses", json=request_json)
-    assert duplicate_response.status_code == 400
-    assert len(list(tmp_path.glob("*.response-create.json.gz"))) == 1
-    assert len(list(tmp_path.glob("*.meta.json"))) == 1
-
-    meta_files[0].unlink()
-    orphan_retry_response = await async_client.post("/v1/responses", json=request_json)
-    assert orphan_retry_response.status_code == 400
-    complete_pairs = [
-        dump_path
-        for dump_path in tmp_path.glob("*.response-create.json.gz")
-        if (tmp_path / f"{dump_path.name[: -len('.response-create.json.gz')]}.meta.json").exists()
-    ]
-    assert complete_pairs
+    assert "HTTP request budget" in payload["error"]["message"]
+    # Dump publication, deduplication and orphan repair have independent
+    # product-path coverage in test_proxy_utils; this is an HTTP-budget guard.
 
 
 @pytest.mark.asyncio
-async def test_v1_responses_http_bridge_slims_historical_inline_artifacts_and_succeeds(
+async def test_v1_responses_http_bridge_preserves_history_over_http_then_resumes_websocket(
     async_client,
     monkeypatch,
 ):
     _install_bridge_settings(monkeypatch, enabled=True)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 64)
-    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 640)
-    account_id = await _import_account(async_client, "acc_http_bridge_slim", "http-bridge-slim@example.com")
+    monkeypatch.setattr(upstream_http_module, "UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 1024)
+    account_id = await _import_account(async_client, "acc_http_bridge_fallback", "http-fallback@example.com")
     account = await _get_account(account_id)
-    fake_upstream = _FakeBridgeUpstreamWebSocket()
+    fake_websocket = _FakeBridgeUpstreamWebSocket()
+    connect_websocket = AsyncMock(return_value=fake_websocket)
+    http_calls = []
 
-    async def fake_select_account_with_budget(
-        self,
-        deadline,
-        *,
-        request_id,
-        kind,
-        request_stage="first_turn",
-        sticky_key,
-        sticky_kind,
-        reallocate_sticky,
-        sticky_max_age_seconds,
-        prefer_earlier_reset_accounts,
-        routing_strategy,
-        model,
-        exclude_account_ids=None,
-        additional_limit_name=None,
-        api_key=None,
-        preferred_account_id=None,
-    ):
-        del preferred_account_id
-        del (
-            self,
-            deadline,
-            request_id,
-            kind,
-            request_stage,
-            sticky_key,
-            sticky_kind,
-            reallocate_sticky,
-            sticky_max_age_seconds,
-            prefer_earlier_reset_accounts,
-            routing_strategy,
-            model,
-            exclude_account_ids,
-            additional_limit_name,
-            api_key,
-        )
-        return AccountSelection(account=account, error_message=None, error_code=None)
-
-    async def fake_ensure_fresh_with_budget(self, target, *, force=False, timeout_seconds):
-        del self, force, timeout_seconds
-        return target
-
-    async def fake_connect_responses_websocket(
-        headers,
-        access_token,
-        account_id_header,
-        *,
-        base_url=None,
-        session=None,
-    ):
-        del headers, access_token, account_id_header, base_url, session
-        return fake_upstream
-
-    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget", fake_select_account_with_budget)
-    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
-    monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
-
-    response = await async_client.post(
-        "/v1/responses",
-        json={
-            "model": "gpt-5.1",
-            "instructions": "Return exactly OK.",
-            "input": [
-                {"role": "user", "content": [{"type": "input_text", "text": "old turn"}]},
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_1",
-                    "output": "data:image/png;base64," + ("A" * 1500),
+    async def stream_http(payload, headers, access_token, account_id_header, **kwargs):
+        http_calls.append((payload.to_payload(), account_id_header, kwargs))
+        for event in (
+            {"type": "response.created", "response": {"id": "resp_http_fallback", "status": "in_progress"}},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_http_fallback",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [
+                        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "OK"}]}
+                    ],
+                    "usage": {"input_tokens": 24, "output_tokens": 2, "total_tokens": 26},
                 },
-                {"role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
-                {"role": "user", "content": [{"type": "input_text", "text": "ping"}]},
-            ],
-            "prompt_cache_key": "slim-http-bridge",
-        },
-    )
+            },
+        ):
+            yield "data: " + json.dumps(event) + "\n\n"
 
-    assert response.status_code == 200
-    sent_payload = json.loads(fake_upstream.sent_text[0])
-    assert sent_payload["input"][-1]["content"][0]["text"] == "ping"
-    assert "data:image/" not in json.dumps(sent_payload["input"], ensure_ascii=True)
-    assert "historical tool output" in json.dumps(sent_payload["input"], ensure_ascii=True)
+    monkeypatch.setattr(
+        proxy_module.ProxyService,
+        "_select_account_with_budget",
+        AsyncMock(return_value=AccountSelection(account=account, error_message=None, error_code=None)),
+    )
+    monkeypatch.setattr(
+        proxy_module.ProxyService,
+        "_ensure_fresh_with_budget",
+        AsyncMock(return_value=account),
+    )
+    # Keep the real adapter. Only mock the two network boundaries.
+    monkeypatch.setattr(
+        proxy_module, "connect_responses_websocket", upstream_websocket_module.connect_responses_websocket
+    )
+    monkeypatch.setattr(upstream_websocket_module, "_connect_upstream_websocket", connect_websocket)
+    monkeypatch.setattr(upstream_http_module, "stream_responses", stream_http)
+
+    history = [
+        {"role": "user", "content": [{"type": "input_text", "text": "old turn"}]},
+        {"type": "function_call", "call_id": "call_1", "name": "image", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "data:image/png;base64," + ("A" * 4096)},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "ping"}]},
+    ]
+    body = {
+        "model": "gpt-5.1",
+        "instructions": "Return exactly OK.",
+        "input": history,
+        "prompt_cache_key": "http-fallback-history",
+    }
+    response = await async_client.post("/v1/responses", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == "resp_http_fallback"
+    assert len(http_calls) == 1
+    sent, http_account, options = http_calls[0]
+    assert sent["input"] == history
+    assert http_account == account.chatgpt_account_id
+    assert options["upstream_stream_transport_override"] == "http"
+    # The bridge may establish an idle WS while allocating its session;
+    # the oversized turn itself must only be dispatched over HTTP.
+    assert fake_websocket.sent_text == []
+
+    short_input = [{"role": "user", "content": [{"type": "input_text", "text": "next"}]}]
+    response = await async_client.post("/v1/responses", json={**body, "input": short_input})
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == "resp_bridge_1"
+    assert len(http_calls) == 1
+    connect_websocket.assert_awaited_once()
+    assert connect_websocket.call_args.args[2] == http_account
+    assert json.loads(fake_websocket.sent_text[0])["input"] == short_input
 
 
 @pytest.mark.asyncio

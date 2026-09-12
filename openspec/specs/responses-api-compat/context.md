@@ -325,3 +325,7 @@ Issue #2149 bounds aggregate detached-session lock waiting during request finali
 ## Fork replay identity and checkpoint safety
 
 An item_reference ID is its payload, unlike a lookup-only ID attached to a fully materialized message. store=false governs the new response, so a reference to an already persisted item keeps its ID. Corrupt proxy-owned checkpoints are rejected explicitly rather than converted to a successful but history-free continuation.
+
+Replay input is independently snapshotted after successful history expansion and before normalization, whose passthrough objects may share nested structures. For example, mutating a normalized additional_tools definition must not alter the stored original. The existing depth budget is checked before recursive copying; unresolved anchored deltas do not seed complete history.
+
+Bridge size tests distinguish the upstream WebSocket frame threshold (choose same-account HTTP, preserving history) from the expanded HTTP budget (reject before dispatch, including synthetic output and metadata). An idle WebSocket may already be allocated; no oversized frame may be sent over it. Oversized-error dump publication, deduplication and orphan repair are tested independently of the obsolete WebSocket-size rejection path.
