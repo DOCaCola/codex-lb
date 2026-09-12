@@ -1149,8 +1149,11 @@ async def test_native_images_preserve_status_body_and_do_not_replay(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("result", ["success", "error", "transport", "cancel"])
-async def test_native_images_release_capacity_and_settle_scoped_key(async_client, monkeypatch, result):
+@pytest.mark.parametrize(
+    "result", ["success", "zero_usage", "missing_usage", "invalid_usage", "error", "transport", "cancel"]
+)
+@pytest.mark.parametrize("operation", ["generations", "edits"])
+async def test_native_images_release_capacity_and_settle_scoped_key(async_client, monkeypatch, result, operation):
     from app.core.clients.proxy import ProxyResponseError
     from app.db.models import Account
 
@@ -1167,7 +1170,10 @@ async def test_native_images_release_capacity_and_settle_scoped_key(async_client
         json={
             "name": "native-limited",
             "allowedModels": ["gpt-image-2", "openrouter/z-ai/glm-5.3-flash"],
-            "limits": [{"limitType": "total_tokens", "limitWindow": "weekly", "maxValue": 1000000}],
+            "limits": [
+                {"limitType": "total_tokens", "limitWindow": "weekly", "maxValue": 1000000},
+                {"limitType": "cost_usd", "limitWindow": "weekly", "maxValue": 1000000},
+            ],
         },
     )
     assert created.status_code == 200, created.text
@@ -1193,10 +1199,17 @@ async def test_native_images_release_capacity_and_settle_scoped_key(async_client
             raise asyncio.CancelledError()
         if result == "transport":
             raise ProxyResponseError(502, {"error": {"code": "upstream_unavailable", "message": "connection lost"}})
-        status = 200 if result == "success" else 429
+        status = 429 if result == "error" else 200
+        body = {"created": 1, "data": [{"b64_json": "image"}]}
+        if result != "missing_usage":
+            body["usage"] = {
+                "input_tokens": "invalid" if result == "invalid_usage" else 0 if result == "zero_usage" else 3,
+                "output_tokens": 0 if result == "zero_usage" else 7,
+                "input_tokens_details": {"cached_tokens": 0 if result == "zero_usage" else 2},
+            }
         return proxy_module.CodexControlResponse(
             status,
-            b'{"created":1,"data":[{"b64_json":"image"}],"usage":{"input_tokens":3,"output_tokens":7}}',
+            json.dumps(body).encode(),
             {"content-type": "application/json"},
         )
 
@@ -1204,16 +1217,16 @@ async def test_native_images_release_capacity_and_settle_scoped_key(async_client
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fresh)
     monkeypatch.setattr(proxy_module, "core_codex_control_request", native)
     request = async_client.post(
-        "/backend-api/codex/images/generations",
+        f"/backend-api/codex/images/{operation}",
         headers={"Authorization": f"Bearer {key['key']}"},
-        json={"model": "gpt-image-2", "prompt": "hello"},
+        json={"model": "gpt-image-2", "prompt": "hello", "images": [{"image_url": "data:image/png;base64,aA=="}]},
     )
     if result == "cancel":
         with pytest.raises(asyncio.CancelledError):
             await request
     else:
         response = await request
-        assert response.status_code == {"success": 200, "error": 429, "transport": 502}[result], response.text
+        assert response.status_code == {"error": 429, "transport": 502}.get(result, 200), response.text
     assert calls == ["native-scope"]
     assert selection_models == [None]
     assert await services[0].drain_persistence_tasks(timeout_seconds=5)
@@ -1232,9 +1245,25 @@ async def test_native_images_release_capacity_and_settle_scoped_key(async_client
             .all()
         )
         assert len(rows) == 1
-        assert rows[0].status == ("finalized" if result == "success" else "released")
+        assert rows[0].status == ("finalized" if result in {"success", "zero_usage"} else "released")
         limits = await ApiKeysRepository(session).get_limits_by_key(key["id"])
-        assert limits[0].current_value == (10 if result == "success" else 0)
+        values = {limit.limit_type.value: limit.current_value for limit in limits}
+        assert values["total_tokens"] == (10 if result == "success" else 0)
+        assert values["cost_usd"] == (219 if result == "success" else 0)
+
+    logs = await async_client.get(f"/api/request-logs?accountId={assigned_id}")
+    assert logs.status_code == 200, logs.text
+    entries = [entry for entry in logs.json()["requests"] if entry["model"] == "gpt-image-2"]
+    assert len(entries) == 1
+    entry = entries[0]
+    absent = 0 if result == "zero_usage" else None
+    assert entry["inputTokens"] == (3 if result == "success" else absent)
+    assert entry["outputTokens"] == (7 if result == "success" else absent)
+    assert entry["cachedInputTokens"] == (2 if result == "success" else absent)
+    if result == "success":
+        assert entry["costUsd"] == pytest.approx(0.000219)
+    else:
+        assert entry["costUsd"] == absent
 
 
 @pytest.mark.asyncio
@@ -1261,15 +1290,35 @@ async def test_native_images_do_not_bypass_account_admission(async_client, monke
 @pytest.mark.asyncio
 @pytest.mark.parametrize("image_url", ["data:image/png;base64,aW1hZ2U=", "https://images.example/reference.png"])
 async def test_backend_codex_images_edits_json_data_urls_round_trip(async_client, monkeypatch, image_url):
+    from app.modules.proxy import native_image_usage
+
     await _import_account(async_client, "acc_images_edit_codex", "img-edit-codex@example.com")
     captured = {}
+    services = []
+    usage_parses = []
+    original_log = proxy_module.ProxyService._write_request_log
+    original_parse = native_image_usage.reported_image_usage
+
+    async def record_log(self, **kwargs):
+        services.append(self)
+        await original_log(self, **kwargs)
+
+    def parse_usage(response):
+        usage_parses.append(response)
+        return original_parse(response)
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", record_log)
+    monkeypatch.setattr(native_image_usage, "reported_image_usage", parse_usage)
 
     async def fake_native(path, **kwargs):
         captured.update(kwargs)
         captured["path"] = path
         return proxy_module.CodexControlResponse(
             status_code=200,
-            body=b'{"created":1,"data":[{"b64_json":"EDITED_B64","generation_id":"gen-native"}],"background":"opaque"}',
+            body=(
+                b'{"created":1,"data":[{"b64_json":"EDITED_B64","generation_id":"gen-native"}],'
+                b'"background":"opaque","usage":{"input_tokens":3,"output_tokens":7}}'
+            ),
             headers={"content-type": "application/json", "x-codex-imagegen-request-id": "native-id"},
         )
 
@@ -1293,6 +1342,16 @@ async def test_backend_codex_images_edits_json_data_urls_round_trip(async_client
     assert json.loads(captured["payload"]) == payload
     assert captured["access_token"] == "access-token"
     assert captured["account_id"] == "acc_images_edit_codex"
+    assert len(usage_parses) == 1
+    assert len(services) == 1
+    assert await services[0].drain_persistence_tasks(timeout_seconds=5)
+    assert response.content == usage_parses[0].body
+    logs = await async_client.get("/api/request-logs")
+    entries = [entry for entry in logs.json()["requests"] if entry["model"] == "gpt-image-2"]
+    assert len(entries) == 1
+    assert entries[0]["inputTokens"] == 3
+    assert entries[0]["outputTokens"] == 7
+    assert entries[0]["costUsd"] == pytest.approx(0.000225)
 
 
 @pytest.mark.asyncio

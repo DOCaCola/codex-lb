@@ -15,6 +15,7 @@ from app.dependencies import ProxyContext
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy.images_observability import IMAGE_ROUTE_STARTED_AT_STATE, record_images_route_observability
 from app.modules.proxy.images_service import make_invalid_request_error
+from app.modules.proxy.native_image_usage import NativeImageAccounting
 from app.modules.proxy.request_policy import openai_validation_error
 
 
@@ -32,35 +33,6 @@ class NativeImageRequest(BaseModel):
     model: str = Field(default="gpt-image-2", pattern=r"^gpt-image-")
     prompt: str = Field(min_length=1)
     images: list[NativeImageUrl] | None = None
-
-
-class NativeImageInputUsage(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True)
-    cached_tokens: int | None = Field(default=None, ge=0)
-
-
-class NativeImageUsage(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True)
-    input_tokens: int | None = Field(default=None, ge=0)
-    output_tokens: int | None = Field(default=None, ge=0)
-    input_tokens_details: NativeImageInputUsage | None = None
-
-    @property
-    def cached_input_tokens(self) -> int | None:
-        return self.input_tokens_details.cached_tokens if self.input_tokens_details is not None else None
-
-
-def reported_image_usage(response: CodexControlResponse) -> NativeImageUsage:
-    if not 200 <= response.status_code < 300:
-        return NativeImageUsage()
-    try:
-        body = json.loads(response.body)
-        if isinstance(body, dict) and isinstance(body.get("usage"), dict):
-            return NativeImageUsage.model_validate(body["usage"])
-    except (ValueError, UnicodeDecodeError):
-        pass
-    # Missing or unreadable usage is not evidence of token consumption.
-    return NativeImageUsage()
 
 
 async def native_image_response(
@@ -126,12 +98,12 @@ async def native_image_response(
             request_model=model,
             request_service_tier=None,
         )
-        usage = NativeImageUsage()
+        accounting = NativeImageAccounting(model=model)
         settled = False
 
-        async def settle(_account_id: str, response: CodexControlResponse) -> bool:
-            nonlocal usage, settled
-            usage = reported_image_usage(response)
+        async def settle(_account_id: str, _response: CodexControlResponse) -> bool:
+            nonlocal settled
+            usage = accounting.usage
             await api._finalize_image_reservation(
                 context.service,
                 api_key,
@@ -154,7 +126,7 @@ async def native_image_response(
                 headers={**dict(request.headers), "content-type": "application/json"},
                 codex_session_affinity=False,
                 api_key=api_key,
-                image_model=model,
+                image_accounting=accounting,
                 success_gate=settle,
             )
             status = response.status_code
@@ -166,6 +138,7 @@ async def native_image_response(
             return Response(response.body, status_code=status, headers=safe_headers)
         finally:
             if not settled:
+                usage = accounting.usage
                 await context.service.settle_image_api_key_usage(
                     api_key,
                     reservation,

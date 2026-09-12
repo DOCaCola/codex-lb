@@ -46,6 +46,7 @@ from app.modules.proxy.load_balancer import (
     effective_account_concurrency_caps,
     effective_routing_tunables,
 )
+from app.modules.proxy.native_image_usage import NativeImageAccounting
 from app.modules.proxy.selection_errors import selection_failure_response
 
 logger = logging.getLogger("app.modules.proxy.service")
@@ -279,14 +280,14 @@ class _CodexControlMixin:
         codex_session_affinity: bool = True,
         api_key: ApiKeyData | None = None,
         success_gate: Callable[[str, CodexControlResponse], Awaitable[bool]] | None = None,
-        image_model: str | None = None,
+        image_accounting: NativeImageAccounting | None = None,
         privacy_policy: CodexControlRequestPrivacyPolicy = CodexControlRequestPrivacyPolicy.STANDARD,
     ) -> CodexControlResponse:
         proxy = cast(_CodexControlServiceProtocol, self)
         filtered = filter_inbound_headers(headers)
         normalized_path = path.strip("/")
         native_image = normalized_path in {"images/generations", "images/edits"}
-        if native_image and image_model is None:
+        if native_image and image_accounting is None:
             raise ValueError("Native image requests require the public image model")
         effective_privacy_policy = (
             CodexControlRequestPrivacyPolicy.PRIVATE_REALTIME if normalized_path == "realtime/calls" else privacy_policy
@@ -463,6 +464,8 @@ class _CodexControlMixin:
                 try:
                     response = await _call_control(account)
                     native_status = response.status_code
+                    assert image_accounting is not None
+                    image_accounting.capture(response)
                     if success_gate is not None:
                         await success_gate(account.id, response)
                     if 200 <= response.status_code < 300:
@@ -650,7 +653,12 @@ class _CodexControlMixin:
                 account_id=None if sensitive_realtime_request else account_id_value,
                 api_key=api_key,
                 request_id=request_id,
-                model=image_model if native_image else None,
+                model=image_accounting.model if image_accounting is not None else None,
+                input_tokens=image_accounting.usage.input_tokens if image_accounting is not None else None,
+                output_tokens=image_accounting.usage.output_tokens if image_accounting is not None else None,
+                cached_input_tokens=image_accounting.usage.cached_input_tokens
+                if image_accounting is not None
+                else None,
                 latency_ms=int((_service_time().monotonic() - start) * 1000),
                 status=log_status,
                 error_code=None if sensitive_realtime_request else log_error_code,

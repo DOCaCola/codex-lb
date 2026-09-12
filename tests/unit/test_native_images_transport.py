@@ -99,7 +99,7 @@ async def test_native_image_body_limit_closes_stream(monkeypatch):
     ],
 )
 def test_native_usage_is_authoritative_only(body, expected):
-    from app.modules.proxy.native_images import reported_image_usage
+    from app.modules.proxy.native_image_usage import reported_image_usage
 
     usage = reported_image_usage(proxy.CodexControlResponse(200, json.dumps(body).encode(), {}))
     assert (usage.input_tokens, usage.output_tokens) == expected

@@ -116,6 +116,18 @@ Verification uses mocked upstreams and loopback HTTP servers; it does not
 establish image entitlement or service availability for a particular real
 account. No live generation or production deployment was performed.
 
+## Native image accounting
+
+Native image accounting uses one request-owned usage snapshot for both API-key
+settlement and request-log persistence, including cached input counts. Request
+logs therefore expose the existing API-equivalent price estimate whenever
+upstream supplies usage, even if the caller has no quota reservation. For
+example, 3 input tokens (2 cached) and 7 output tokens use the existing
+gpt-image-2 rates to estimate $0.000219. This is not a subscription charge.
+Missing or malformed usage remains unknown; explicit zero usage remains zero.
+Historical requests whose usage was not persisted cannot be backfilled from
+their model name and duration alone. No pricing-rate changes accompany this fix.
+
 ## Internal host compatibility
 
 Public Images adapters and default account probes prefer `gpt-5.6-luna`, then `gpt-5.5`,
