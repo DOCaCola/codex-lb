@@ -58,7 +58,10 @@ max_items = 5
 # dashboard row, PR-2c-2); 96 -> 95 constantize-token-refresh-interval fixed
 # the proactive token-refresh window at eight days and emptied the `MIGRATING`
 # backlog.
-max = 95
+# 95 -> 96 configurable Responses admission: image-heavy compaction exceeds
+# the former fixed cap; replicas have different memory budgets, so raising
+# the global default is not appropriate (configurable-responses-body-budget).
+max = 96
 
 [root_files]
 # Complete allowlist of tracked repository-root entries (files and

@@ -13,8 +13,8 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.middleware.request_body_limit import (
-    REQUEST_BODY_TOO_LARGE_MESSAGE,
     request_body_limit_for_path,
+    request_body_too_large_response,
     request_ingress_error_response,
 )
 
@@ -165,11 +165,11 @@ class RequestDecompressionMiddleware:
         try:
             decompressed = _decompress_body(body, encodings, max_size)
         except _DecompressedBodyTooLarge:
-            response = request_ingress_error_response(
+            response = request_body_too_large_response(
                 Request(scope),
-                status_code=413,
-                code="payload_too_large",
-                message=REQUEST_BODY_TOO_LARGE_MESSAGE,
+                limit=max_size,
+                measured_bytes=max_size + 1,
+                measurement="decoded_lower_bound",
             )
             await response(scope, receive, send)
             return

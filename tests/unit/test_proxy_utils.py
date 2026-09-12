@@ -6092,14 +6092,14 @@ def test_websocket_installation_metadata_stamping_rechecks_response_create_size(
     # Crossing the WS ceiling is allowed; expanded HTTP bodies remain bounded.
     websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
     monkeypatch.setattr(
-        "app.modules.proxy._service.response_create.MAX_DECOMPRESSED_RESPONSES_BODY_BYTES",
-        max_bytes,
+        "app.modules.proxy._service.response_create.responses_body_limit_bytes",
+        lambda: max_bytes,
     )
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         websocket_mixin._websocket_enforce_response_create_text_size(request_state, stamped_text)
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.payload["error"]["code"] == "context_length_exceeded"
+    assert exc_info.value.payload["error"]["code"] == "outbound_body_too_large"
 
 
 def test_response_create_client_metadata_reads_turn_metadata_case_insensitively():
@@ -26326,8 +26326,8 @@ async def test_prepare_websocket_response_create_request_releases_reservation_on
     monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
 
     monkeypatch.setattr(
-        "app.modules.proxy._service.response_create.MAX_DECOMPRESSED_RESPONSES_BODY_BYTES",
-        128,
+        "app.modules.proxy._service.response_create.responses_body_limit_bytes",
+        lambda: 128,
     )
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         await service._prepare_websocket_response_create_request(

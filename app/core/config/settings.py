@@ -17,6 +17,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.auth.dashboard_mode import DashboardAuthMode, normalize_dashboard_auth_proxy_header
 from app.core.clients.codex_version_snapshot import CODEX_VERSION
+from app.core.ingress_limits import (
+    MAX_CONFIGURABLE_RESPONSES_BODY_BYTES,
+    MAX_DECOMPRESSED_BODY_BYTES,
+    MAX_DECOMPRESSED_RESPONSES_BODY_BYTES,
+)
 from app.core.utils.proxy_env import outbound_proxy_env_configured
 
 logger = logging.getLogger(__name__)
@@ -298,6 +303,12 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Field(default_factory=_default_home_dir)
+    # T1: per-instance memory admission; changing this requires a restart.
+    responses_body_limit_bytes: int = Field(
+        default=MAX_DECOMPRESSED_RESPONSES_BODY_BYTES,
+        ge=MAX_DECOMPRESSED_BODY_BYTES,
+        le=MAX_CONFIGURABLE_RESPONSES_BODY_BYTES,
+    )
     database_url: str = DEFAULT_DATABASE_URL
     # Pool timeout and recycle are fixed constants in ``app/db/session.py``;
     # the background-task engine always derives its pool sizing from the two

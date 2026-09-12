@@ -9599,7 +9599,7 @@ def test_http_bridge_request_text_rejects_installation_metadata_size_overflow(
 
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", max_bytes + 1, raising=False)
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", max_bytes, raising=False)
-    monkeypatch.setattr(response_create_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", max_bytes)
+    monkeypatch.setattr(response_create_module, "responses_body_limit_bytes", lambda: max_bytes)
 
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
         service._http_bridge_text_with_account_installation_id(
@@ -9609,7 +9609,7 @@ def test_http_bridge_request_text_rejects_installation_metadata_size_overflow(
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.payload["error"]["code"] == "context_length_exceeded"
+    assert exc_info.value.payload["error"]["code"] == "outbound_body_too_large"
 
 
 def test_submit_http_bridge_request_uses_bridge_installation_metadata_helper() -> None:
@@ -9796,7 +9796,7 @@ def test_http_bridge_installation_stamp_memoizes_fresh_text_and_size_check(
     request_state.fresh_upstream_request_text = oversized_fresh
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 65, raising=False)
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 64, raising=False)
-    monkeypatch.setattr(response_create_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", 64)
+    monkeypatch.setattr(response_create_module, "responses_body_limit_bytes", lambda: 64)
     with pytest.raises(proxy_service.ProxyResponseError):
         service._http_bridge_text_with_account_installation_id(session, request_state, stamped)
     assert request_state.installation_stamp_fresh_text is not oversized_fresh

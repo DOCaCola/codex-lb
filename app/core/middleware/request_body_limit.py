@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from typing import Literal, cast
 
 from fastapi import FastAPI
 from starlette._utils import get_route_path
@@ -10,7 +12,8 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.errors import dashboard_error, openai_error
-from app.core.ingress_limits import MAX_DECOMPRESSED_BODY_BYTES, MAX_DECOMPRESSED_RESPONSES_BODY_BYTES
+from app.core.ingress_limits import MAX_CONFIGURABLE_RESPONSES_BODY_BYTES, MAX_DECOMPRESSED_BODY_BYTES
+from app.core.ingress_policy import responses_body_limit_bytes
 from app.core.middleware.multipart_content_encoding import (
     is_route_owned_multipart_operation,
     multipart_content_encoding_gate_was_applied,
@@ -23,6 +26,9 @@ _RESPONSES_INGRESS_PATHS = frozenset(
     {
         "/backend-api/codex/responses",
         "/v1/responses",
+        "/backend-api/codex/responses/compact",
+        "/v1/responses/compact",
+        "/internal/bridge/responses",
     }
 )
 _OPENAI_INGRESS_PATH_PREFIXES = (
@@ -40,10 +46,41 @@ class _RequestBodyTooLarge(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class _BodyLimitExceeded:
+    """Retain diagnostic counts, never an exception traceback or body bytes."""
+
+    limit: int
+    measured_bytes: int
+
+
 def request_body_limit_for_path(path: str) -> int:
     if path.rstrip("/") in _RESPONSES_INGRESS_PATHS:
-        return max(MAX_DECOMPRESSED_BODY_BYTES, MAX_DECOMPRESSED_RESPONSES_BODY_BYTES)
+        return responses_body_limit_bytes()
     return MAX_DECOMPRESSED_BODY_BYTES
+
+
+def request_body_too_large_response(
+    request: Request,
+    *,
+    limit: int,
+    measured_bytes: int,
+    measurement: Literal["declared_wire", "observed_wire_lower_bound", "decoded_lower_bound"],
+) -> JSONResponse:
+    """Describe local Responses admission without implying a provider verdict."""
+    code = "payload_too_large"
+    message = REQUEST_BODY_TOO_LARGE_MESSAGE
+    if get_route_path(request.scope).rstrip("/") in _RESPONSES_INGRESS_PATHS:
+        code = "inbound_body_too_large"
+        qualifier = "declared " if measurement == "declared_wire" else "at least "
+        message = (
+            f"codex-lb refused the request before upstream dispatch: {qualifier}{measured_bytes} bytes "
+            f"exceeds the configured {limit}-byte budget (measurement={measurement}). "
+            "This is a local proxy limit, not a provider refusal. Increase "
+            f"CODEX_LB_RESPONSES_BODY_LIMIT_BYTES (maximum {MAX_CONFIGURABLE_RESPONSES_BODY_BYTES}) "
+            "and restart, or reduce the input."
+        )
+    return request_ingress_error_response(request, status_code=413, code=code, message=message)
 
 
 def _path_belongs_to(path: str, prefix: str) -> bool:
@@ -82,13 +119,18 @@ def request_ingress_error_response(
     )
 
 
-def request_body_limit_was_exceeded(request: Request) -> bool:
-    return getattr(request.state, _REQUEST_BODY_TOO_LARGE_STATE, False) is True
+def request_body_limit_error_response(request: Request) -> JSONResponse | None:
+    error = cast(_BodyLimitExceeded | None, getattr(request.state, _REQUEST_BODY_TOO_LARGE_STATE, None))
+    if error is None:
+        return None
+    return request_body_too_large_response(
+        request, limit=error.limit, measured_bytes=error.measured_bytes, measurement="observed_wire_lower_bound"
+    )
 
 
-def _mark_request_body_limit_exceeded(scope: Scope) -> None:
+def _mark_request_body_limit_exceeded(scope: Scope, error: _BodyLimitExceeded) -> None:
     state = scope.setdefault("state", {})
-    state[_REQUEST_BODY_TOO_LARGE_STATE] = True
+    state[_REQUEST_BODY_TOO_LARGE_STATE] = error
 
 
 def _is_unencoded_multipart(headers: Headers) -> bool:
@@ -127,11 +169,11 @@ class RequestBodyLimitMiddleware:
         limit = request_body_limit_for_path(path)
         declared_length = _declared_content_length(headers)
         if declared_length is not None and declared_length > limit:
-            response = request_ingress_error_response(
+            response = request_body_too_large_response(
                 Request(scope),
-                status_code=413,
-                code="payload_too_large",
-                message=REQUEST_BODY_TOO_LARGE_MESSAGE,
+                limit=limit,
+                measured_bytes=declared_length,
+                measurement="declared_wire",
             )
             await response(scope, receive, send)
             return
@@ -145,7 +187,7 @@ class RequestBodyLimitMiddleware:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > limit:
-                    _mark_request_body_limit_exceeded(scope)
+                    _mark_request_body_limit_exceeded(scope, _BodyLimitExceeded(limit, received))
                     raise _RequestBodyTooLarge
             return message
 
@@ -160,12 +202,8 @@ class RequestBodyLimitMiddleware:
         except _RequestBodyTooLarge:
             if response_started:
                 raise
-            response = request_ingress_error_response(
-                Request(scope),
-                status_code=413,
-                code="payload_too_large",
-                message=REQUEST_BODY_TOO_LARGE_MESSAGE,
-            )
+            response = request_body_limit_error_response(Request(scope))
+            assert response is not None
             await response(scope, receive, send)
 
 

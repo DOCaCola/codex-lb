@@ -720,8 +720,8 @@ The following values MUST be fixed at their previously documented defaults:
   reset-credits polling interval (60 s); the always-on switches for usage
   refresh, live usage ingestion, sticky-session cleanup, the model registry
   and the quota planner scheduler (the dashboard `quota_planner_settings.mode
-  = "off"` remains the only planner switch); the HTTP ingress body budgets
-  (32 MiB general, 128 MiB Responses); inline image fetching (always on, no
+  = "off"` remains the only planner switch); the general HTTP ingress body budget
+  (32 MiB; Responses uses the separate bounded instance resource setting); inline image fetching (always on, no
   host allowlist); the public default image model (`gpt-image-2`); and
   proxy-generated prompt-cache-key derivation (always on). There is no
   separate upstream compact timeout: the dashboard compact request budget is
@@ -980,4 +980,3 @@ The chart README's `Upgrading` section MUST state that the shim is removed in th
 - **WHEN** the operator reads the chart README's `Upgrading` section
 - **THEN** it states that the shim is removed in this release
 - **AND** it tells the operator to upgrade to a `1.24.x` chart first, plan that step as a maintenance window, verify the cutover, and only then upgrade to this release
-

@@ -2,7 +2,9 @@
 
 ## Purpose
 Incremental, budget-reusing bounds on raw HTTP request ingress, including encoded bodies before and after decompression and exact route-owned multipart exceptions.
+
 ## Requirements
+
 ### Requirement: Raw HTTP request ingress is bounded incrementally
 
 The service MUST enforce the applicable request-body budget against actual raw bytes received for each guarded HTTP request. It MUST reject the request before exposing a chunk that would make the cumulative raw body exceed the budget, and it MUST NOT prebuffer the complete body solely to enforce this limit.
@@ -30,7 +32,7 @@ The service MUST enforce the applicable request-body budget against actual raw b
 
 ### Requirement: HTTP ingress reuses existing budgets
 
-The service MUST use the fixed general HTTP body budget (`MAX_DECOMPRESSED_BODY_BYTES`, 32 MiB, in `app/core/ingress_limits.py`) as the general raw and decompressed HTTP request-body budget. When an owning route capability defines a larger fixed budget (the Responses budget `MAX_DECOMPRESSED_RESPONSES_BODY_BYTES`, 128 MiB, in the same module), the ingress guard MUST use that route budget. Neither budget is operator-configurable; the HTTP ingress guard MUST NOT add a setting or change the fixed values.
+The service MUST use the fixed general HTTP body budget (`MAX_DECOMPRESSED_BODY_BYTES`, 32 MiB, in `app/core/ingress_limits.py`) as the general raw and decompressed HTTP request-body budget. Responses and compact operations MUST instead use the configured Responses instance budget, default 128 MiB. The general budget MUST remain fixed.
 
 Route-specific budget and error-envelope selection MUST use the application-relative route path after removing any matching ASGI `root_path` prefix.
 
@@ -98,13 +100,13 @@ For request bodies using `gzip`, `deflate`, `zstd`, `identity`, or supported sta
 
 ### Requirement: HTTP ingress failures use the path-family error envelope
 
-Ingress failures on `/v1/*`, `/backend-api/*`, `/api/codex/*`, and `/internal/bridge/*` MUST use an OpenAI-compatible error envelope with `type = invalid_request_error`. Equivalent paths MUST be classified after the existing outer path canonicalization. Other ingress paths MUST retain the dashboard-compatible error envelope. Oversized requests MUST use `code = payload_too_large`; malformed or unsupported compression MUST use `code = invalid_request_error` on OpenAI paths and `code = invalid_request` on other paths.
+Ingress failures on `/v1/*`, `/backend-api/*`, `/api/codex/*`, and `/internal/bridge/*` MUST use an OpenAI-compatible error envelope with `type = invalid_request_error`. Equivalent paths MUST be classified after the existing outer path canonicalization. Other ingress paths MUST retain the dashboard-compatible error envelope. Oversized Responses and compact requests MUST use `code = inbound_body_too_large`; other oversized requests MUST retain `code = payload_too_large`. Malformed or unsupported compression MUST use `code = invalid_request_error` on OpenAI paths and `code = invalid_request` on other paths.
 
 #### Scenario: OpenAI path rejects an oversized body
 
 - **WHEN** a raw or decompressed request body on an OpenAI-compatible proxy path exceeds its budget
 - **THEN** the service returns HTTP 413
-- **AND** the response has OpenAI error `code = payload_too_large` and `type = invalid_request_error`
+- **AND** the response has OpenAI error `code = inbound_body_too_large` on Responses/compact operations, otherwise `payload_too_large`, and `type = invalid_request_error`
 
 #### Scenario: OpenAI path rejects invalid compression
 
@@ -332,3 +334,18 @@ leaves a 3.3x margin).
   integer
 - **THEN** startup fails with an error naming the flag and variable
 
+### Requirement: Responses admission has a bounded instance budget
+
+The service MUST use `CODEX_LB_RESPONSES_BODY_LIMIT_BYTES` for raw and decoded admission on `/v1/responses`, `/backend-api/codex/responses`, their `/compact` operations, and `/internal/bridge/responses`, including canonicalized aliases, trailing slashes, and mounted paths. The default MUST be 128 MiB and configuration MUST be an integer from 32 through 512 MiB inclusive; invalid configuration MUST fail startup. Changes MUST require restart. The default downstream WebSocket allowance and expanded replay guards MUST use the same configured budget. Explicit listener overrides MUST retain their existing precedence. Unrelated routes MUST retain their existing budgets.
+
+#### Scenario: Large history admitted for compaction
+
+- **WHEN** a Responses or compact history fits a configured 256 MiB budget but exceeds 128 MiB
+- **THEN** neither raw nor decoded admission rejects it under the old fixed budget
+- **AND** admission preserves the entire request content
+
+#### Scenario: Local refusal is distinguishable
+
+- **WHEN** Responses ingress exceeds its configured budget
+- **THEN** it returns HTTP 413 with `inbound_body_too_large`, identifies codex-lb and the budget, and distinguishes declared lengths from observed lower bounds
+- **AND** expanded replay refusals use `outbound_body_too_large` rather than asserting an upstream context verdict

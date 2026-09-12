@@ -5785,7 +5785,7 @@ async def test_v1_responses_http_bridge_size_guard_covers_injected_interrupted_t
             # prepending synthetic interrupted outputs pushes it over.
             followup_cap_armed = True
             monkeypatch.setattr(
-                response_create_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", len(text_data.encode("utf-8")) + 100
+                response_create_module, "responses_body_limit_bytes", lambda: len(text_data.encode("utf-8")) + 100
             )
         return request_state, text_data
 
@@ -5826,7 +5826,7 @@ async def test_v1_responses_http_bridge_size_guard_covers_injected_interrupted_t
     assert followup_cap_armed is True
     assert second.status_code == 400
     error = second.json()["error"]
-    assert error["code"] == "context_length_exceeded"
+    assert error["code"] == "outbound_body_too_large"
     assert error["type"] == "invalid_request_error"
     # The over-limit injected request must never be forwarded upstream.
     assert len(fake_upstream.sent_text) == 1
@@ -10070,7 +10070,7 @@ async def test_v1_responses_http_bridge_rejects_expanded_http_budget_before_upst
     monkeypatch,
 ):
     _install_bridge_settings(monkeypatch, enabled=True)
-    monkeypatch.setattr(response_create_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", 128)
+    monkeypatch.setattr(response_create_module, "responses_body_limit_bytes", lambda: 128)
 
     async def fail_get_or_create_http_bridge_session(self, *args, **kwargs):
         del self, args, kwargs
@@ -10093,9 +10093,9 @@ async def test_v1_responses_http_bridge_rejects_expanded_http_budget_before_upst
 
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error"]["code"] == "context_length_exceeded"
+    assert payload["error"]["code"] == "outbound_body_too_large"
     assert payload["error"]["type"] == "invalid_request_error"
-    assert "HTTP request budget" in payload["error"]["message"]
+    assert "local proxy limit" in payload["error"]["message"]
     # Dump publication, deduplication and orphan repair have independent
     # product-path coverage in test_proxy_utils; this is an HTTP-budget guard.
 

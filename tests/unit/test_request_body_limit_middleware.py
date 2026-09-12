@@ -6,9 +6,10 @@ from collections.abc import AsyncIterator
 from typing import cast
 
 import pytest
+import zstandard as zstd
 from fastapi import Body, Depends, FastAPI, HTTPException
 from httpx import ASGITransport, AsyncByteStream, AsyncClient
-from starlette.types import Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import app.core.middleware.request_body_limit as request_body_limit_module
 from app.core.handlers import add_exception_handlers
@@ -23,9 +24,50 @@ from app.main import create_app
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/v1/responses",
+        "/v1/responses/compact",
+        "/backend-api/codex/responses",
+        "/backend-api/codex/responses/compact",
+        "/backend-api/codex/v1/responses",
+        "/backend-api/codex/v1/responses/compact",
+        "/internal/bridge/responses",
+    ],
+)
+@pytest.mark.parametrize("trailing", ["", "/"])
+@pytest.mark.parametrize("encoding", [None, "zstd"])
+@pytest.mark.asyncio
+async def test_responses_and_compact_share_decoded_budget(monkeypatch, route, trailing, encoding):
+    _configure_limits(monkeypatch, general=32, responses=256)
+    path = route + trailing
+    inner = _BodyConsumer()
+    app = BackendApiCodexV1AliasMiddleware(RequestBodyLimitMiddleware(RequestDecompressionMiddleware(inner)))
+    # Exactly the Responses cap, above the general cap; all content is preserved.
+    body = b"x" * 256
+    wire = zstd.ZstdCompressor().compress(body) if encoding else body
+    headers = [(b"content-encoding", b"zstd")] if encoding else []
+    accepted = await _run_direct(app, _http_scope(path, headers=headers), _request_messages(wire))
+    assert accepted[0]["status"] == 204
+    assert b"".join(inner.chunks) == body
+
+    inner.chunks.clear()
+    wire = zstd.ZstdCompressor().compress(body + b"x") if encoding else body + b"x"
+    rejected = await _run_direct(app, _http_scope(path, headers=headers), _request_messages(wire))
+    assert rejected[0]["status"] == 413
+    assert inner.chunks == []
+    error = cast(dict[str, str], _json_response_body(rejected)["error"])
+    assert error["code"] == "inbound_body_too_large"
+    assert "at least 257 bytes" in error["message"]
+    assert "configured 256-byte budget" in error["message"]
+    assert "provider refusal" in error["message"]
+    assert ("decoded_lower_bound" if encoding else "observed_wire_lower_bound") in error["message"]
+
+
 def _configure_limits(monkeypatch: pytest.MonkeyPatch, *, general: int, responses: int | None = None) -> None:
     monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_BODY_BYTES", general)
-    monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", responses or general)
+    monkeypatch.setattr(request_body_limit_module, "responses_body_limit_bytes", lambda: responses or general)
 
 
 def _http_scope(
@@ -83,7 +125,7 @@ class _BodyConsumer:
 
 
 async def _run_direct(
-    middleware: RequestBodyLimitMiddleware,
+    middleware: ASGIApp,
     scope: Scope,
     messages: list[Message],
 ) -> list[Message]:
@@ -220,9 +262,9 @@ async def test_malformed_content_length_falls_back_to_stream_count(monkeypatch: 
     ("path", "expected_code", "expected_type"),
     [
         ("/v1/chat/completions", "payload_too_large", "invalid_request_error"),
-        ("/backend-api/codex/responses", "payload_too_large", "invalid_request_error"),
+        ("/backend-api/codex/responses", "inbound_body_too_large", "invalid_request_error"),
         ("/api/codex/rate-limit-reset-credits/consume", "payload_too_large", "invalid_request_error"),
-        ("/internal/bridge/responses", "payload_too_large", "invalid_request_error"),
+        ("/internal/bridge/responses", "inbound_body_too_large", "invalid_request_error"),
         ("/api/settings", "payload_too_large", None),
     ],
 )
@@ -286,11 +328,11 @@ async def test_root_path_responses_uses_route_budget_and_openai_envelope(monkeyp
     )
 
     assert rejected[0]["status"] == 413
-    assert _json_response_body(rejected)["error"] == {
-        "message": "Request body exceeds the maximum allowed size",
-        "type": "invalid_request_error",
-        "code": "payload_too_large",
-    }
+    error = cast(dict[str, str], _json_response_body(rejected)["error"])
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "inbound_body_too_large"
+    assert "declared 9 bytes" in error["message"]
+    assert "8-byte budget" in error["message"]
 
 
 @pytest.mark.asyncio

@@ -128,9 +128,9 @@ async def test_proxy_malformed_compression_uses_openai_envelope(async_client, mo
 
 
 @pytest.mark.asyncio
-async def test_trailing_slash_responses_route_bounds_chunked_body_without_redirect(async_client, monkeypatch):
+async def test_trailing_slash_responses_route_bounds_chunked_body_without_redirect(async_client, monkeypatch, caplog):
     monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_BODY_BYTES", 8)
-    monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", 32)
+    monkeypatch.setattr(request_body_limit_module, "responses_body_limit_bytes", lambda: 32)
 
     response = await async_client.post(
         "/v1/responses/",
@@ -141,13 +141,16 @@ async def test_trailing_slash_responses_route_bounds_chunked_body_without_redire
 
     assert response.status_code == 413
     assert response.headers.get("location") is None
-    assert response.json()["error"]["code"] == "payload_too_large"
+    assert response.json()["error"]["code"] == "inbound_body_too_large"
+    assert "measurement=observed_wire_lower_bound" in response.json()["error"]["message"]
+    refusals = [record for record in caplog.records if 'code="inbound_body_too_large"' in record.getMessage()]
+    assert len(refusals) == 1
 
 
 @pytest.mark.asyncio
 async def test_aliased_responses_budget_preserves_real_proxy_authorization(app_instance, monkeypatch):
     monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_BODY_BYTES", 8)
-    monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", 256)
+    monkeypatch.setattr(request_body_limit_module, "responses_body_limit_bytes", lambda: 256)
     body = json.dumps(
         {
             "model": "gpt-5.1",

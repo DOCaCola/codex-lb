@@ -403,7 +403,9 @@ Behaviour is unchanged; each env name gets the one-release WARN.
   no new column).
 - Ingress / images / models: `CODEX_LB_MAX_DECOMPRESSED_BODY_BYTES` (32 MiB)
   and `CODEX_LB_MAX_DECOMPRESSED_RESPONSES_BODY_BYTES` (128 MiB) in
-  `app/core/ingress_limits.py`, the same constant that seeds `--ws-max-size`;
+  `app/core/ingress_limits.py`. These legacy names remain removed; the new
+  `CODEX_LB_RESPONSES_BODY_LIMIT_BYTES` instance setting separately controls
+  Responses/compact admission, replay, and the default `--ws-max-size`;
   `CODEX_LB_IMAGE_INLINE_FETCH_ENABLED` (always on) and
   `CODEX_LB_IMAGE_INLINE_ALLOWED_HOSTS` (the allowlist was never populated;
   the scheme, literal-host and disallowed-IP SSRF guards stay);

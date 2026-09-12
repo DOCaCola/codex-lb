@@ -39,9 +39,7 @@ from app.core.middleware.multipart_content_encoding import (
     multipart_error_response,
 )
 from app.core.middleware.request_body_limit import (
-    REQUEST_BODY_TOO_LARGE_MESSAGE,
-    request_body_limit_was_exceeded,
-    request_ingress_error_response,
+    request_body_limit_error_response,
 )
 from app.core.multipart import MultipartPayloadTooLarge
 from app.core.runtime_logging import log_error_response
@@ -341,13 +339,9 @@ def add_exception_handlers(app: FastAPI) -> None:
         request: Request,
         exc: StarletteHTTPException,
     ) -> Response:
-        if request_body_limit_was_exceeded(request):
-            return request_ingress_error_response(
-                request,
-                status_code=413,
-                code="payload_too_large",
-                message=REQUEST_BODY_TOO_LARGE_MESSAGE,
-            )
+        body_limit_response = request_body_limit_error_response(request)
+        if body_limit_response is not None:
+            return body_limit_response
         fmt = _error_format(request)
         detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
         if fmt == "dashboard":

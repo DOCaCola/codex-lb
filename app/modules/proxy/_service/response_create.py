@@ -36,7 +36,8 @@ from app.core.clients.proxy import (
 )
 from app.core.config.settings import DEFAULT_HOME_DIR, get_settings
 from app.core.errors import openai_error
-from app.core.ingress_limits import MAX_DECOMPRESSED_RESPONSES_BODY_BYTES
+from app.core.ingress_limits import MAX_CONFIGURABLE_RESPONSES_BODY_BYTES
+from app.core.ingress_policy import responses_body_limit_bytes
 from app.core.openai.requests import ResponsesRequest, sanitize_native_responses_input
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
@@ -285,7 +286,7 @@ def _response_create_text_with_size_guard(
         include_type_field=include_type_field,
         client_metadata=client_metadata,
     )
-    return text if len(text.encode("utf-8")) <= MAX_DECOMPRESSED_RESPONSES_BODY_BYTES else None
+    return text if len(text.encode("utf-8")) <= responses_body_limit_bytes() else None
 
 
 def _response_create_text_with_account_installation_id(
@@ -577,13 +578,17 @@ def _enforce_response_create_size_limit(request_state: _WebSocketRequestState) -
         )
     # HTTP can carry frames beyond the WS ceiling. Bound fully expanded replay
     # bodies by the Responses HTTP budget, including injected metadata.
-    max_bytes = MAX_DECOMPRESSED_RESPONSES_BODY_BYTES
+    max_bytes = responses_body_limit_bytes()
     if payload_size > max_bytes:
         raise ProxyResponseError(
             400,
             openai_error(
-                "context_length_exceeded",
-                "The expanded Responses input exceeds the HTTP request budget. Compact or reduce the input.",
+                "outbound_body_too_large",
+                f"codex-lb refused expanded Responses input before upstream dispatch: {payload_size} bytes "
+                f"exceeds the configured {max_bytes}-byte budget. This is a local proxy limit, not a provider "
+                "refusal. Increase CODEX_LB_RESPONSES_BODY_LIMIT_BYTES "
+                f"(maximum {MAX_CONFIGURABLE_RESPONSES_BODY_BYTES}) and restart, "
+                "or reduce the input.",
                 error_type="invalid_request_error",
             ),
             failure_phase="validation",

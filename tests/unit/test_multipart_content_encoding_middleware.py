@@ -258,7 +258,7 @@ class _TrackingBody(AsyncByteStream):
 
 def _configure_tiny_generic_ingress_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_BODY_BYTES", 5)
-    monkeypatch.setattr(request_body_limit_module, "MAX_DECOMPRESSED_RESPONSES_BODY_BYTES", 5)
+    monkeypatch.setattr(request_body_limit_module, "responses_body_limit_bytes", lambda: 5)
 
 
 @pytest.mark.asyncio
