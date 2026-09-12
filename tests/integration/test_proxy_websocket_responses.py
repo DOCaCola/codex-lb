@@ -33,6 +33,7 @@ from app.core.clients.proxy_websocket import (
     WebsocketsUpstreamWebSocket,
 )
 from app.core.config.settings_cache import get_settings_cache
+from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.db.models import Account, AccountStatus, ApiKeyUsageReservation, RequestLog
 from app.db.session import SessionLocal
@@ -9288,7 +9289,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     async def stream_http(text):
         http_bodies.append(json.loads(text))
         response_id = f"resp_large_{len(http_bodies)}"
-        completed_output = output if len(http_bodies) == 1 else next_output
+        completed_output: list[JsonValue] = list(output if len(http_bodies) == 1 else next_output)
         for kind in ("created", "completed"):
             if kind == "completed" and streamed_output:
                 yield format_sse_event(
@@ -9299,17 +9300,16 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
                         "item": completed_output[0],
                     }
                 )
-            yield format_sse_event(
-                {
-                    "type": "response." + kind,
-                    "response": {
-                        "id": response_id,
-                        "status": "completed" if kind == "completed" else "in_progress",
-                        "output": completed_output if kind == "completed" and not streamed_output else [],
-                        "usage": {"input_tokens": 5, "output_tokens": 4},
-                    },
-                }
-            )
+            event_payload: dict[str, JsonValue] = {
+                "type": "response." + kind,
+                "response": {
+                    "id": response_id,
+                    "status": "completed" if kind == "completed" else "in_progress",
+                    "output": completed_output if kind == "completed" and not streamed_output else [],
+                    "usage": {"input_tokens": 5, "output_tokens": 4},
+                },
+            }
+            yield format_sse_event(event_payload)
 
     async def select_account(self, headers, **kwargs):
         return SimpleNamespace(id="acct_size", codex_installation_id="installation"), ResponsesTransport(

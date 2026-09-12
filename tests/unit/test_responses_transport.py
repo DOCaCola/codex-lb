@@ -8,11 +8,18 @@ import pytest
 
 import app.core.clients.proxy as http_client
 import app.core.clients.proxy_websocket as ws_client
-from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
+from app.core.clients.proxy_websocket import UpstreamWebSocket, UpstreamWebSocketMessage
 from app.core.clients.responses_transport import ResponsesTransport
 from app.core.config.settings import Settings
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
 from app.core.utils.sse import format_sse_event
+
+
+async def receive_json(transport: UpstreamWebSocket):
+    message = await transport.receive()
+    assert message.kind == "text"
+    assert message.text is not None
+    return json.loads(message.text)
 
 
 class Socket:
@@ -83,8 +90,8 @@ async def test_oversized_turn_uses_same_account_http_and_next_small_turn_uses_ws
     try:
         connect.assert_not_awaited()
         await transport.send_text(text)
-        assert json.loads((await transport.receive()).text)["type"] == "response.created"
-        assert json.loads((await transport.receive()).text)["type"] == "response.completed"
+        assert (await receive_json(transport))["type"] == "response.created"
+        assert (await receive_json(transport))["type"] == "response.completed"
         connect.assert_not_awaited()
         assert len(calls) == 1
         body, headers, token, account, kwargs = calls[0]
@@ -124,13 +131,13 @@ async def test_utf8_boundary_and_interleaved_events_preserve_existing_ws_turn():
         await transport.send_text("é" * 4)
         assert socket.sent == ["é" * 4]
         await transport.send_text("é" * 4 + "x")
-        assert json.loads((await transport.receive()).text)["response"]["id"] == "http"
+        assert (await receive_json(transport))["response"]["id"] == "http"
         await socket.events.put(
             UpstreamWebSocketMessage(kind="text", text='{"type":"response.completed","response":{"id":"ws"}}')
         )
-        assert json.loads((await transport.receive()).text)["response"]["id"] == "ws"
+        assert (await receive_json(transport))["response"]["id"] == "ws"
         release_http.set()
-        assert json.loads((await transport.receive()).text)["type"] == "response.completed"
+        assert (await receive_json(transport))["type"] == "response.completed"
         assert http_bodies == ["é" * 4 + "x"]
         assert not socket.closed
     finally:
@@ -177,7 +184,7 @@ async def test_ws_close_waits_for_http_terminal():
         await transport.receive()
         await socket.events.put(UpstreamWebSocketMessage(kind="closed", close_code=1000))
         release.set()
-        assert json.loads((await transport.receive()).text)["type"] == "response.completed"
+        assert (await receive_json(transport))["type"] == "response.completed"
         assert (await transport.receive()).kind == "closed"
     finally:
         await transport.close()
@@ -252,7 +259,7 @@ async def test_new_http_turn_cannot_dispatch_behind_pending_ws_close():
         await asyncio.sleep(0)
         waiting = asyncio.create_task(transport.send_text("second"))
         release.set()
-        assert json.loads((await transport.receive()).text)["type"] == "response.completed"
+        assert (await receive_json(transport))["type"] == "response.completed"
         with pytest.raises(RuntimeError, match="websocket has closed"):
             await waiting
         assert calls == ["first"]

@@ -426,6 +426,73 @@ def _install_decision(
     return spy
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [CODEX_ROUTE, V1_ROUTE])
+@pytest.mark.parametrize("invalid_history", [False, True])
+@pytest.mark.parametrize("invalid_summary", [False, True])
+async def test_overflow_compaction_preserves_protocol_and_claims(
+    async_client, source_upstream, monkeypatch, path, invalid_history, invalid_summary
+):
+    calls = []
+
+    async def responses(request: web.Request) -> web.Response:
+        calls.append(await request.json())
+        return web.json_response(
+            {
+                "id": "resp_overflow_compact",
+                "object": "response",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "" if invalid_summary else "retained summary"}],
+                    }
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            }
+        )
+
+    source_id = await _create_overflow_source(
+        async_client, source_upstream, responses, name="overflow-compact", model="overflow-compact", designate=False
+    )
+    source = await _load_source(source_id)
+    dispatch = _dispatch_double(source, model="overflow-compact", route=ROUTE_CODEX_RESPONSES)
+    _install_decision(monkeypatch, lambda: dispatch)
+    body = _codex_body(input=[{"role": "user", "content": "history"}, {"type": "compaction_trigger"}])
+    if invalid_history:
+        body["previous_response_id"] = "unresolved"
+    response = await async_client.post(path, json=body)
+    await _drain(async_client)
+    assert dispatch.claims.released is True
+    assert get_source_bulkhead().in_flight(source_id) == 0
+    if invalid_history:
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "compaction_history_unavailable"
+        assert calls == []
+        assert dispatch.claims.owner is None
+        assert await _source_rows(source_id) == []
+    else:
+        assert len(calls) == 1
+        assert calls[0]["stream"] is False
+        assert calls[0]["store"] is False
+        assert "compaction_trigger" not in str(calls[0]["input"])
+        assert "CONTEXT CHECKPOINT COMPACTION" in str(calls[0]["input"])
+        if invalid_summary:
+            assert response.status_code == 502, response.text
+            assert response.json()["error"]["code"] == "model_source_compaction_invalid"
+        else:
+            assert response.status_code == 200, response.text
+            terminal = _events(response.text)[-1]
+            assert terminal["type"] == "response.completed"
+            assert terminal["response"]["output"][0]["encrypted_content"].startswith("clb1:")
+        assert dispatch.claims.owner is not None
+        rows = await _source_rows(source_id)
+        assert len(rows) == 1
+        assert rows[0].source == REQUEST_LOG_SOURCE_FRESH
+
+
 def _dispatch_double(
     source: ModelSource,
     *,
@@ -2003,7 +2070,7 @@ async def test_abandonment_d_cancellation_between_the_reservation_and_the_open(
     def interrupt(*args: object, **kwargs: object) -> dict[str, Any]:
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(proxy_api, "_shape_source_responses_payload", interrupt)
+    monkeypatch.setattr(proxy_api, "_open_owned_source_stream", interrupt)
     stream = _AsgiStream(
         app=_app(async_client),
         path=CODEX_ROUTE,

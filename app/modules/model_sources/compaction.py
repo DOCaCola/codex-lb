@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from app.core.openai.compaction import COMPACTION_PROMPT, lower_opaque_compaction_items_for_model_source
+from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
@@ -41,6 +42,13 @@ class SourceCompactionResultError(ValueError):
 
 def build_source_compaction_request(payload: ResponsesCompactRequest) -> ResponsesRequest:
     compact_payload = dict(payload.to_payload())
+    for handle in ("previous_response_id", "conversation"):
+        if compact_payload.get(handle) is not None:
+            raise ClientPayloadError(
+                f"Source compaction requires complete materialized history; resend the full input without {handle}.",
+                param=handle,
+                code="compaction_history_unavailable",
+            )
     input_value = compact_payload.get("input")
     input_items = input_value if is_json_list(input_value) else [input_value]
     history = [

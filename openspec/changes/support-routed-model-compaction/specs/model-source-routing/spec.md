@@ -7,14 +7,13 @@ selection on the HTTP route. A selected source SHALL receive an ordinary,
 non-streaming summarization request rather than the private
 `compaction_trigger` protocol. The request MUST omit tools, tool choice,
 parallel tool calls, input-carried `additional_tools`, structured-output
-controls, continuation identifiers, and the terminal trigger; it MUST append
+controls and the terminal trigger; it MUST reject unresolved continuation identifiers and append
 the Codex handoff-summary instruction and replace image inputs with an explicit
 omission marker.
 
 When a model source receives replayed compaction history that was minted by a
-native backend and cannot be decoded by codex-lb, the proxy MUST replace that
-opaque item with an explicit unavailable-history note rather than forwarding
-it to the source.
+native backend and cannot be decoded by codex-lb, the proxy MUST reject the request
+with an actionable history-unavailable error rather than silently losing history.
 
 #### Scenario: Source model summarizes through its normal Responses API
 
@@ -29,5 +28,5 @@ it to the source.
 
 - **GIVEN** input contains a native compaction item that codex-lb cannot decode
 - **WHEN** the next request is routed to a model source
-- **THEN** the source receives an explicit unavailable-history note
+- **THEN** the client receives an actionable history-unavailable error
 - **AND** it does not receive the opaque encrypted item

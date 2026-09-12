@@ -3552,9 +3552,11 @@ async def test_source_responses_preserves_effortless_provider_thinking_object(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
 async def test_source_terminal_compaction_runs_plain_summary_turn_and_returns_proxy_envelope(
     async_client,
     source_upstream,
+    path,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -3590,7 +3592,7 @@ async def test_source_terminal_compaction_runs_plain_summary_turn_and_returns_pr
     )
 
     response = await async_client.post(
-        "/backend-api/codex/responses",
+        path,
         json={
             "model": model,
             "instructions": "work normally",
@@ -3621,6 +3623,52 @@ async def test_source_terminal_compaction_runs_plain_summary_turn_and_returns_pr
     assert done["item"]["encrypted_content"].startswith("clb1:")
     completed = next(event for event in events if event["type"] == "response.completed")
     assert completed["response"]["output"] == [done["item"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
+@pytest.mark.parametrize(
+    ("history_kind", "terminal"),
+    [
+        ("previous_response_id", True),
+        ("conversation", True),
+        ("opaque", True),
+        ("corrupt", True),
+        ("opaque", False),
+        ("corrupt", False),
+    ],
+)
+async def test_source_rejects_unavailable_compaction_history(
+    async_client, source_upstream, path, history_kind, terminal
+):
+    calls = []
+
+    async def responses(request: web.Request) -> web.Response:
+        calls.append(await request.json())
+        return web.json_response({})
+
+    base_url = await source_upstream(responses)
+    model = "source-unsafe-compact"
+    await _create_model_source(async_client, name=model, model=model, base_url=base_url, supports_responses=True)
+    body = {
+        "model": model,
+        "instructions": "summarize",
+        "input": [{"type": "compaction_trigger"}],
+        "stream": True,
+    }
+    if history_kind in {"previous_response_id", "conversation"}:
+        body[history_kind] = "history_anchor"
+    else:
+        body["input"] = [
+            {"type": "compaction", "encrypted_content": "native-opaque" if history_kind == "opaque" else "clb1:!"},
+            {"type": "compaction_trigger"},
+        ]
+    if not terminal:
+        body["input"].pop()
+    response = await async_client.post(path, json=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "compaction_history_unavailable"
+    assert calls == []
 
 
 @pytest.mark.asyncio

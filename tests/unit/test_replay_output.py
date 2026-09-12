@@ -1,5 +1,6 @@
 import pytest
 
+from app.core.types import JsonValue
 from app.modules.proxy.replay_output import ReplayOutputCollector
 
 
@@ -40,7 +41,7 @@ def test_unidentifiable_item_prevents_partial_replay(index):
 def test_authoritative_terminal_wins_even_after_overflow():
     collector = ReplayOutputCollector(max_items=0)
     collector.retain({"output_index": 0, "item": {"type": "message"}})
-    terminal = [{"type": "custom_tool_call", "call_id": "complete"}]
+    terminal: list[JsonValue] = [{"type": "custom_tool_call", "call_id": "complete"}]
     assert collector.finish(terminal) == terminal
     assert collector.finish([]) == []
 

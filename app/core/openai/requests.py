@@ -1896,6 +1896,7 @@ def strip_unstored_lookup_item_ids(payload: Mapping[str, JsonValue]) -> MutableJ
         if (
             not is_json_mapping(item)
             or "id" not in item
+            or item.get("type") == "item_reference"
             or (isinstance(item.get("encrypted_content"), str) and bool(item["encrypted_content"]))
         ):
             normalized_input.append(item)

@@ -42,6 +42,7 @@ from app.core import shutdown as shutdown_state
 from app.core.auth.refresh import RefreshError
 from app.core.balancer import HEALTH_TIER_DRAINING
 from app.core.balancer.types import UpstreamError
+from app.core.clients.codex import CodexClient, CodexRequestResult
 from app.core.clients.proxy import _build_upstream_headers, filter_inbound_headers
 from app.core.clients.proxy_websocket import (
     UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
@@ -7805,7 +7806,14 @@ async def test_http_provider_413_is_terminal_context_overflow(monkeypatch, raise
         if routed
         else None
     )
-    codex_client = SimpleNamespace(request=AsyncMock(return_value=response)) if routed else None
+    codex_client = None
+    if route is not None:
+        codex_client = MagicMock(
+            spec=CodexClient,
+            request_with_route_metadata=AsyncMock(
+                return_value=CodexRequestResult(response=response, route=route, fallback_used=False)
+            ),
+        )
     payload = ResponsesRequest(model="gpt-5.4", instructions="", input=[], stream=True)
     events = [
         event
@@ -7822,15 +7830,21 @@ async def test_http_provider_413_is_terminal_context_overflow(monkeypatch, raise
         )
     ]
     if routed:
-        codex_client.request.assert_awaited_once()
+        assert codex_client is not None
+        codex_client.request_with_route_metadata.assert_awaited_once()
         assert session.calls == []
     else:
         assert len(session.calls) == 1
     assert len(events) == 1
     event = parse_sse_data_json(events[0])
+    assert isinstance(event, dict)
     assert event["type"] == "response.failed"
-    assert event["response"]["error"]["code"] == "context_length_exceeded"
-    assert event["response"]["error"]["type"] == "invalid_request_error"
+    failed_response = event["response"]
+    assert isinstance(failed_response, dict)
+    error = failed_response["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "context_length_exceeded"
+    assert error["type"] == "invalid_request_error"
 
 
 class _NativeEgressClientHarness:
@@ -10467,7 +10481,9 @@ async def test_stream_responses_oversized_create_uses_http_before_ws_connect(mon
 
     assert json.loads(events[-1].split("data: ")[1])["type"] == "response.completed"
     assert len(session.post_calls) == 1
-    assert session.post_calls[0]["json"]["input"] == payload.to_payload()["input"]
+    sent_payload = session.post_calls[0]["json"]
+    assert isinstance(sent_payload, dict)
+    assert sent_payload["input"] == payload.to_payload()["input"]
     assert session.ws_calls == []
 
 
@@ -10540,7 +10556,9 @@ async def test_stream_responses_http_preserves_historical_inline_artifacts_and_s
     assert len(events) == 2
     assert session.ws_calls == []
     assert len(session.post_calls) == 1
-    assert session.post_calls[0]["json"]["input"] == payload.to_payload()["input"]
+    sent_payload = session.post_calls[0]["json"]
+    assert isinstance(sent_payload, dict)
+    assert sent_payload["input"] == payload.to_payload()["input"]
 
 
 @pytest.mark.asyncio
@@ -10608,7 +10626,9 @@ async def test_stream_responses_http_preserves_images_nested_in_tool_output_and_
     assert len(events) == 2
     assert session.ws_calls == []
     assert len(session.post_calls) == 1
-    assert session.post_calls[0]["json"]["input"] == payload.to_payload()["input"]
+    sent_payload = session.post_calls[0]["json"]
+    assert isinstance(sent_payload, dict)
+    assert sent_payload["input"] == payload.to_payload()["input"]
 
 
 @pytest.mark.asyncio
@@ -12463,7 +12483,9 @@ async def test_stream_responses_http_preserves_all_outputs_before_wire_namespace
     ]
 
     assert len(events) == 1
-    upstream_input = cast(list[JsonValue], session.post_calls[0]["json"]["input"])
+    upstream_payload = session.post_calls[0]["json"]
+    assert isinstance(upstream_payload, dict)
+    upstream_input = cast(list[JsonValue], upstream_payload["input"])
     assert all("namespace" not in item for item in upstream_input if isinstance(item, dict))
     assert cast(dict[str, JsonValue], upstream_input[1])["output"] == agent_custom_output
     assert cast(dict[str, JsonValue], upstream_input[3])["output"] == (unrelated_custom_output)
@@ -52382,8 +52404,8 @@ async def test_inline_http_bridge_image_urls_rechecks_expanded_payload_size(monk
 
     service = proxy_service.ProxyService.__new__(proxy_service.ProxyService)
     await service._inline_http_bridge_image_urls(text_data, request_state)
-    assert json.loads(request_state.request_text) == expanded_payload
     assert request_state.request_text is not None
+    assert json.loads(request_state.request_text) == expanded_payload
     assert "data:image/png;base64," in request_state.request_text
 
 

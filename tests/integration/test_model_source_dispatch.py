@@ -888,7 +888,7 @@ async def test_cancellation_between_the_reservation_and_the_open_releases(
     def interrupt(*args: object, **kwargs: object) -> dict[str, Any]:
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(proxy_api, "_shape_source_responses_payload", interrupt)
+    monkeypatch.setattr(proxy_api, "_open_owned_source_stream", interrupt)
     stream = _AsgiStream(
         app=_app(async_client),
         path="/v1/responses",

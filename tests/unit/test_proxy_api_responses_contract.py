@@ -1059,12 +1059,13 @@ async def test_normalize_public_responses_stream_synthesizes_delta_from_complete
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_does_not_synthesize_delta_from_reasoning_output() -> None:
-    reasoning_item = {
+    reasoning_item: dict[str, JsonValue] = {
         "id": "rs_litellm",
         "type": "reasoning",
         "status": "completed",
         "content": [{"type": "reasoning_text", "text": "private analysis"}],
     }
+    reasoning_output: list[JsonValue] = [reasoning_item]
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -1097,7 +1098,7 @@ async def test_normalize_public_responses_stream_does_not_synthesize_delta_from_
                             "id": "resp_litellm",
                             "object": "response",
                             "status": "completed",
-                            "output": [reasoning_item],
+                            "output": reasoning_output,
                         },
                     }
                 ),
@@ -1117,7 +1118,9 @@ async def test_normalize_public_responses_stream_does_not_synthesize_delta_from_
     assert done["item"] == reasoning_item
     completed = payloads[2]
     assert completed is not None
-    assert completed["response"]["output"] == [reasoning_item]
+    response = completed["response"]
+    assert isinstance(response, dict)
+    assert response["output"] == [reasoning_item]
 
 
 @pytest.mark.asyncio

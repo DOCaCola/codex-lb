@@ -16,10 +16,9 @@ from __future__ import annotations
 import contextlib
 import time
 import uuid
-from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Callable, Protocol, cast
+from typing import Callable, Protocol
 
 from app.core.auth.refresh import RefreshError
 from app.core.clients.codex import CodexTransportError
@@ -158,10 +157,7 @@ class CacheProbeSender:
                 allow_direct_egress=route is None,
                 codex_lb_account_id=account.id,
             )
-            # ``stream_responses`` is an async generator function; its
-            # annotation widens to ``AsyncIterator``, which does not
-            # advertise ``aclose``.
-            async with contextlib.aclosing(cast("AsyncGenerator[str, None]", stream)):
+            async with contextlib.aclosing(stream):
                 async for event_block in stream:
                     event = parse_sse_event(event_block)
                     if event is None:

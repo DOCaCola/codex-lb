@@ -14,7 +14,7 @@ sanitation.
 
 Immediately before any native or source-routed Responses request with
 `store: false` is sent, the proxy MUST remove `id` from every top-level input
-item unless that item carries non-empty opaque `encrypted_content`. It MUST
+item unless that item is an `item_reference` or carries non-empty opaque `encrypted_content`. It MUST
 preserve opaque-state IDs, `call_id`, and all other item fields. Requests whose
 effective `store` value is true or omitted MUST retain their item IDs.
 
@@ -29,8 +29,8 @@ message item.
 
 Before any later upstream request, the proxy SHALL lower a valid `clb1:` replay
 item into explicit summary context and SHALL NOT forward the proxy-owned
-envelope as native encrypted state. A malformed `clb1:` item MUST become an
-explicit unavailable-history note.
+envelope as native encrypted state. A malformed `clb1:` item MUST produce an
+actionable history-unavailable error.
 
 #### Scenario: Foreign plaintext reasoning is accepted by native Responses
 

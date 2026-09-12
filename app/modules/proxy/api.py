@@ -5254,11 +5254,16 @@ async def _source_synthetic_compaction_response(
     api_key: ApiKeyData | None,
     rate_limit_headers: Mapping[str, str],
     pre_normalization_effort: str | None,
+    context: ProxyContext | None = None,
+    overflow: OverflowDispatch | None = None,
 ) -> Response:
-    compact_payload = build_terminal_compact_request(payload)
-    if compact_payload is None:
-        raise RuntimeError("source compaction requires a terminal compaction trigger")
-    source_request = build_source_compaction_request(compact_payload)
+    try:
+        compact_payload = build_terminal_compact_request(payload)
+        if compact_payload is None:
+            raise RuntimeError("source compaction requires a terminal compaction trigger")
+        source_request = build_source_compaction_request(compact_payload)
+    except ClientPayloadError as exc:
+        return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     source_response = await _source_responses_response(
         request,
         source_request,
@@ -5266,6 +5271,8 @@ async def _source_synthetic_compaction_response(
         api_key=api_key,
         rate_limit_headers=rate_limit_headers,
         pre_normalization_effort=pre_normalization_effort,
+        context=context,
+        overflow=overflow,
     )
     if source_response.status_code != 200:
         return source_response
@@ -5340,6 +5347,17 @@ async def _overflow_source_response(
         payload.stream = True
     try:
         rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
+        if strip_terminal_compaction_trigger_input(payload, strip_trigger=False) is not None:
+            return await _source_synthetic_compaction_response(
+                request,
+                payload,
+                source=overflow.source,
+                api_key=api_key,
+                rate_limit_headers=rate_limit_headers,
+                pre_normalization_effort=pre_normalization_effort,
+                context=context,
+                overflow=overflow,
+            )
         return await _source_responses_response(
             request,
             payload,
@@ -5394,6 +5412,14 @@ async def _source_responses_response(
         source,
         pre_normalization_effort=pre_normalization_effort,
     )
+    try:
+        source_payload = _shape_source_responses_payload(
+            payload, source, api_key=api_key, strip_service_tier=overflow is not None
+        )
+        if overflow is not None:
+            source_payload = restore_client_store(source_payload, payload)
+    except ClientPayloadError as exc:
+        return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     claims = overflow.claims if overflow is not None else try_claim_source_admission(source)
     if claims is None:
         return _logged_error_json_response(
@@ -5434,18 +5460,6 @@ async def _source_responses_response(
         claims.release_if_unowned()
         raise
     try:
-        source_payload = _shape_source_responses_payload(
-            payload,
-            source,
-            api_key=api_key,
-            strip_service_tier=overflow is not None,
-        )
-        if overflow is not None:
-            # The source keeps the client's storage intent (an SDK
-            # ``previous_response_id`` chain resolves only at a source that
-            # stored the previous response); the ChatGPT-forced ``store: false``
-            # stays on direct routing.
-            source_payload = restore_client_store(source_payload, payload)
         if payload.stream:
             await open_with_disconnect_watch(request, owner, _open_owned_source_stream(owner, source_payload))
             stream = owner.stream

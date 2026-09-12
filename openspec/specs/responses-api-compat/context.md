@@ -321,3 +321,7 @@ advance the stream from different tasks.
 ## Detached retirement sweep deadline
 
 Issue #2149 bounds aggregate detached-session lock waiting during request finalization. A sweep shares five seconds: if its first attempt consumes three seconds, the next receives two, and later attempts stop at expiry. Deferred generations remain tracked for later requests and their lifecycle owners. The deadline does not cancel resource-close owners or replace their existing close timeout.
+
+## Fork replay identity and checkpoint safety
+
+An item_reference ID is its payload, unlike a lookup-only ID attached to a fully materialized message. store=false governs the new response, so a reference to an already persisted item keeps its ID. Corrupt proxy-owned checkpoints are rejected explicitly rather than converted to a successful but history-free continuation.

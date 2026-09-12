@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-from types import SimpleNamespace
 
 import pytest
 
+from app.core.clock import RealClock
+from app.core.types import JsonValue
 from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
 
 
@@ -13,9 +14,9 @@ from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplay
 async def test_replay_survives_restart_and_scopes_content(tmp_path):
     store = HTTPFallbackReplayStore(tmp_path)
     scope = ReplayScope("key-a", "thread-a")
-    input_items = [{"role": "user", "content": "private question"}]
-    output = [{"id": "fc_1", "type": "function_call", "call_id": "call_1", "arguments": "{}"}]
-    delta = [{"type": "function_call_output", "call_id": "call_1", "output": "private result"}]
+    input_items: list[JsonValue] = [{"role": "user", "content": "private question"}]
+    output: list[JsonValue] = [{"id": "fc_1", "type": "function_call", "call_id": "call_1", "arguments": "{}"}]
+    delta: list[JsonValue] = [{"type": "function_call_output", "call_id": "call_1", "output": "private result"}]
     await store.remember(scope, "resp_1", json.dumps({"model": "gpt-6-astra", "input": input_items}), output, "acct")
     restarted = HTTPFallbackReplayStore(tmp_path)
     retained = await restarted.load(scope, "resp_1")
@@ -81,7 +82,12 @@ async def test_unresolved_delta_never_seeds_cache(tmp_path):
 @pytest.mark.asyncio
 async def test_replay_spills_beyond_ram_budget_and_sweeps_without_requests(tmp_path):
     now = [1000.0]
-    store = HTTPFallbackReplayStore(tmp_path, max_memory_bytes=200, clock=SimpleNamespace(time=lambda: now[0]))
+
+    class TestClock(RealClock):
+        def time(self) -> float:
+            return now[0]
+
+    store = HTTPFallbackReplayStore(tmp_path, max_memory_bytes=200, clock=TestClock())
     scope = ReplayScope(None, "thread")
     await store.remember(scope, "small", '{"model":"m","input":[]}', [], "acct")
     await store.remember(scope, "large", json.dumps({"model": "m", "input": "image" * 500}), [], "acct")

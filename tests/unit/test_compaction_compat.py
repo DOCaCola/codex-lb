@@ -5,12 +5,12 @@ import pytest
 from app.core.openai.compaction import (
     CODEX_LB_COMPACTION_PREFIX,
     COMPACTION_SUMMARY_PREFIX,
-    COMPACTION_UNAVAILABLE_NOTE,
     decode_codex_lb_compaction_summary,
     encode_codex_lb_compaction_summary,
     lower_codex_lb_compaction_items,
     lower_opaque_compaction_items_for_model_source,
 )
+from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
@@ -56,10 +56,10 @@ def test_codex_lb_compaction_envelope_round_trips_and_lowers() -> None:
     assert request.to_payload()["input"] == payload["input"]
 
 
-def test_malformed_proxy_envelope_becomes_explicit_unavailable_note() -> None:
+def test_malformed_proxy_envelope_rejects_history_loss() -> None:
     payload: dict[str, JsonValue] = {"input": [{"type": "compaction", "encrypted_content": "clb1:not-base64!"}]}
-    lower_codex_lb_compaction_items(payload)
-    assert COMPACTION_UNAVAILABLE_NOTE in str(payload["input"])
+    with pytest.raises(ClientPayloadError, match="corrupt"):
+        lower_codex_lb_compaction_items(payload)
 
 
 def test_native_opaque_compaction_is_lowered_only_for_model_sources() -> None:
@@ -67,8 +67,8 @@ def test_native_opaque_compaction_is_lowered_only_for_model_sources() -> None:
     lower_codex_lb_compaction_items(payload)
     assert payload["input"] == [{"type": "compaction", "encrypted_content": "native-opaque"}]
 
-    lower_opaque_compaction_items_for_model_source(payload)
-    assert COMPACTION_UNAVAILABLE_NOTE in str(payload["input"])
+    with pytest.raises(ClientPayloadError, match="original provider"):
+        lower_opaque_compaction_items_for_model_source(payload)
 
 
 def test_native_reasoning_sanitizer_removes_foreign_output_fields() -> None:
@@ -102,6 +102,7 @@ def test_unstored_responses_sanitizer_removes_lookup_ids_only() -> None:
             "arguments": "{}",
         },
         {"type": "reasoning", "id": "rs_tmp_jp91555aji", "content": []},
+        {"type": "item_reference", "id": "msg_stored"},
         {"type": "compaction", "id": "cmp_bound", "encrypted_content": "opaque"},
     ]
     unstored: dict[str, JsonValue] = {"store": False, "input": input_items}
@@ -112,6 +113,7 @@ def test_unstored_responses_sanitizer_removes_lookup_ids_only() -> None:
         {"type": "message", "role": "assistant", "content": "hello"},
         {"type": "function_call", "call_id": "call_1", "name": "ping", "arguments": "{}"},
         {"type": "reasoning", "content": []},
+        {"type": "item_reference", "id": "msg_stored"},
         {"type": "compaction", "id": "cmp_bound", "encrypted_content": "opaque"},
     ]
     assert unstored["input"] == input_items
@@ -125,7 +127,7 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
             "model": "openrouter/stealth/ox-alpha",
             "instructions": "base instructions",
             "input": [
-                {"type": "compaction", "encrypted_content": "native-opaque"},
+                {"type": "compaction", "encrypted_content": encode_codex_lb_compaction_summary("retained history")},
                 {
                     "type": "additional_tools",
                     "role": "user",
@@ -153,9 +155,20 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
     assert "compaction_trigger" not in str(wire["input"])
     assert "additional_tools" not in str(wire["input"])
     assert "desktop_tool" not in str(wire["input"])
-    assert COMPACTION_UNAVAILABLE_NOTE in str(wire["input"])
+    assert "retained history" in str(wire["input"])
     assert "[image omitted for compaction]" in str(wire["input"])
     assert "CONTEXT CHECKPOINT COMPACTION" in str(wire["input"])
+
+
+@pytest.mark.parametrize("handle", ["previous_response_id", "conversation"])
+def test_source_compaction_requires_materialized_history(handle: str) -> None:
+    compact = ResponsesCompactRequest.model_validate(
+        {"model": "source", "instructions": "summarize", "input": [], handle: "stored_history"}
+    )
+    with pytest.raises(ClientPayloadError) as error:
+        build_source_compaction_request(compact)
+    assert error.value.code == "compaction_history_unavailable"
+    assert error.value.param == handle
 
 
 def test_source_compaction_accepts_only_completed_nonempty_message_text() -> None:

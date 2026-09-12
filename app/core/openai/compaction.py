@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from binascii import Error as Base64Error
 
+from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
@@ -12,9 +13,6 @@ COMPACTION_SUMMARY_PREFIX = (
     "You also have access to the state of the tools that were used by that language model. Use this to build "
     "on the work that has already been done and avoid duplicating work. Here is the summary produced by the "
     "other language model, use the information in this summary to assist with your own analysis:"
-)
-COMPACTION_UNAVAILABLE_NOTE = (
-    "[earlier conversation was compacted; the summary is stored in a format this model cannot read]"
 )
 COMPACTION_PROMPT = (
     "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will "
@@ -67,9 +65,13 @@ def lower_codex_lb_compaction_items(payload: MutableJsonObject) -> None:
             lowered.append(item)
             continue
         summary = decode_codex_lb_compaction_summary(encrypted_content)
-        lowered.append(
-            _summary_message(summary) if summary is not None else _summary_message(COMPACTION_UNAVAILABLE_NOTE)
-        )
+        if summary is None:
+            raise ClientPayloadError(
+                "The proxy compaction checkpoint is corrupt; resend the complete history or a valid checkpoint.",
+                param="input",
+                code="compaction_history_unavailable",
+            )
+        lowered.append(_summary_message(summary))
         changed = True
     if changed:
         payload["input"] = lowered
@@ -78,27 +80,23 @@ def lower_codex_lb_compaction_items(payload: MutableJsonObject) -> None:
 def lower_opaque_compaction_items_for_model_source(payload: MutableJsonObject) -> None:
     """Prevent native opaque compaction state from reaching a routed source."""
 
+    lower_codex_lb_compaction_items(payload)
     input_value = payload.get("input")
     if not is_json_list(input_value):
         return
-    changed = False
-    lowered: list[JsonValue] = []
     for item in input_value:
         if not is_json_mapping(item) or item.get("type") not in _COMPACTION_ITEM_TYPES:
-            lowered.append(item)
             continue
-        encrypted_content = item.get("encrypted_content")
-        if not isinstance(encrypted_content, str):
-            lowered.append(item)
-            continue
-        lowered.append(_summary_message(COMPACTION_UNAVAILABLE_NOTE))
-        changed = True
-    if changed:
-        payload["input"] = lowered
+        raise ClientPayloadError(
+            "This model source cannot read the compaction checkpoint; use the original provider or resend "
+            "the complete materialized history.",
+            param="input",
+            code="compaction_history_unavailable",
+        )
 
 
 def _summary_message(summary: str) -> dict[str, JsonValue]:
-    text = summary if summary == COMPACTION_UNAVAILABLE_NOTE else f"{COMPACTION_SUMMARY_PREFIX}\n\n{summary}"
+    text = f"{COMPACTION_SUMMARY_PREFIX}\n\n{summary}"
     return {
         "type": "message",
         "role": "user",
