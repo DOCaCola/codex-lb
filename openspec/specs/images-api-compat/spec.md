@@ -1,9 +1,8 @@
 # images-api-compat Specification
 
 ## Purpose
-Define the OpenAI-compatible Images API adapter that exposes public `gpt-image-*`
-requests while routing through the existing Responses `image_generation` tool
-pipeline.
+Define native Codex image forwarding through ChatGPT accounts and the separate
+OpenAI-compatible public Images adapter over Responses `image_generation`.
 
 ## Requirements
 
@@ -146,42 +145,54 @@ The system SHALL emit structured route-completion logs and Prometheus metrics fo
 - **THEN** the recorded duration uses the start time stamped into the request scope state at HTTP ingress
 - **AND** non-image HTTP paths and WebSocket scopes receive no such stamp
 
-### Requirement: Codex-base Images API aliases
+### Requirement: Native Codex image forwarding
 
 The system SHALL expose `POST /backend-api/codex/images/generations` and
-`POST /backend-api/codex/images/edits` as Codex-base equivalents of the
-existing `/v1/images/generations` and `/v1/images/edits` handlers. The edit
-route MUST accept Codex's JSON `images` array, whose entries contain base64
-`image_url` data URLs, and decode those entries before it delegates to the
-existing edit pipeline. The aliases MUST apply the same authentication,
-validation, account-routing, observability, response-shape, and error-envelope
-behavior as their `/v1` counterparts. The aliases MUST NOT be included in the
-OpenAPI schema because `/v1/images/*` remains the canonical OpenAI-compatible
-surface.
+`POST /backend-api/codex/images/edits` as native ChatGPT image endpoints, excluded
+from OpenAPI. Requests MUST pass proxy authorization, required-capability
+transport denial, public image-model policy, API-key limits and scoped account
+admission before dispatch. The selected ChatGPT account's credentials MUST
+replace downstream credentials. Account selection MUST NOT use a Responses
+host model, the conversation's model source or a quota-bypassing control fallback.
 
-#### Scenario: Codex-base image generation uses the existing handler
+The system MUST forward the original JSON, including reference image URLs and
+unknown native fields, except for applying an enforced/default public image
+model. It MUST NOT fetch reference URLs locally, convert native requests into
+Responses tool calls, fall back to API-credit providers, follow credentialed
+redirects, or replay an image POST after dispatch. Only source-proven
+pre-dispatch egress failover MAY occur. Response buffering MUST stop before
+retaining more than 100 MiB, including when using a configured egress proxy.
 
-- **WHEN** a Codex client sends `POST /backend-api/codex/images/generations`
-  with an invalid image model
-- **THEN** the service returns the same 400 OpenAI `invalid_request_error` with
-  `param: model` as `POST /v1/images/generations`
+The native upstream status and body MUST be returned unchanged when within the
+response budget. Safe response headers MUST retain the image request ID and
+Retry-After; cookies and hop-by-hop framing headers MUST NOT be forwarded.
+Prompts and image bytes MUST NOT appear in upstream payload traces. Request
+logs MUST identify the public image model and upstream HTTP status. Missing or
+invalid token usage MUST NOT be fabricated. Authoritative image usage MUST
+settle API-key reservations through the tracked image settlement lifecycle;
+errors, cancellation and unavailable usage MUST release reservations through
+tracked cleanup. Account admission leases MUST be released on every exit.
+The public `/v1/images/*` Responses adapter MUST remain unchanged.
 
-#### Scenario: Codex-base image editing uses the existing handler
+#### Scenario: Native edit is independent of conversation model
+- **WHEN** Codex sends an image edit while its conversation uses a model source
+- **THEN** the original JSON is sent to a permitted ChatGPT account's native image edit endpoint without selecting a Responses host
 
-- **WHEN** a Codex client sends JSON `POST /backend-api/codex/images/edits`
-  without a non-empty `images[].image_url` data URL
-- **THEN** the service returns a 400 OpenAI `invalid_request_error` with
-  `param: images`, rather than `405 Method Not Allowed` or a missing-prompt error
+#### Scenario: Native failure remains visible
+- **WHEN** the upstream image endpoint returns an error status and body
+- **THEN** the same status and body reach the client without an image retry or API-credit fallback
 
-#### Scenario: Codex-base alias failures before the handler record route observability
+#### Scenario: Native success preserves metadata
+- **WHEN** upstream returns image bytes, generation IDs and an image request ID
+- **THEN** the response bytes and image request ID are preserved for Codex
 
-- **WHEN** a request to `POST /backend-api/codex/images/generations` or
-  `POST /backend-api/codex/images/edits` fails before the route handler runs
-  (for example API-key authentication or request-body validation handled by
-  the shared exception layer)
-- **THEN** the service records the `images_route_complete` observability entry
-  (log and metrics) with the same `generations`/`edits` route label as the
-  `/v1` counterpart, exactly once
+#### Scenario: Scoped admission and cancellation remain safe
+- **WHEN** a scoped API-key image request completes, fails or is cancelled
+- **THEN** only an assigned eligible account may be used, its admission lease is released, and its reservation has exactly one tracked settlement or release owner
+
+#### Scenario: Native image route rejects unauthenticated requests
+- **WHEN** a native image request fails proxy authorization
+- **THEN** no upstream image operation is dispatched and existing authentication-error observability is retained
 
 ### Requirement: Image edit multipart uploads are authorized and bounded
 
@@ -274,7 +285,7 @@ The Codex-base and `/v1` image generation and edit routes MUST require a valid p
 - **THEN** the route retains its existing authentication, validation, account-routing, observability, and response behavior
 
 ### Requirement: Internal host selection
-Images generation and edit routes MUST select the first candidate with nonempty registry plan visibility and no suppression, ordered as `gpt-5.6-luna`, `gpt-5.5`. If none qualifies, they MUST use `gpt-5.6-luna`. Public image model IDs MUST remain unchanged.
+Public `/v1/images/*` generation and edit adapters MUST select the first candidate with nonempty registry plan visibility and no suppression, ordered as `gpt-5.6-luna`, `gpt-5.5`. If none qualifies, they MUST use `gpt-5.6-luna`. Public image model IDs MUST remain unchanged. Native Codex image routes MUST NOT select an internal host.
 
 #### Scenario: Cold registry prefers the current host
 - **WHEN** the registry uses the bootstrap catalog

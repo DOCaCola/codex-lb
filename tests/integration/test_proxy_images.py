@@ -146,10 +146,12 @@ async def test_images_generations_unsupported_model_returns_400(async_client, ca
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("base", ["/v1", "/backend-api/codex"])
 async def test_images_generations_model_policy_rejection_records_route_observability(
     async_client,
     monkeypatch,
     caplog,
+    base,
 ):
     def reject_model_access(*args, **kwargs):
         del args, kwargs
@@ -159,7 +161,7 @@ async def test_images_generations_model_policy_rejection_records_route_observabi
 
     with caplog.at_level(logging.WARNING, logger="app.modules.proxy.api"):
         response = await async_client.post(
-            "/v1/images/generations",
+            f"{base}/images/generations",
             json={"model": "gpt-image-2", "prompt": "a red circle"},
         )
     assert response.status_code == 403
@@ -172,7 +174,8 @@ async def test_images_generations_model_policy_rejection_records_route_observabi
 
 
 @pytest.mark.asyncio
-async def test_images_generations_quota_rejection_records_route_observability(async_client, monkeypatch, caplog):
+@pytest.mark.parametrize("base", ["/v1", "/backend-api/codex"])
+async def test_images_generations_quota_rejection_records_route_observability(async_client, monkeypatch, caplog, base):
     async def reject_request_limits(*args, **kwargs):
         del args, kwargs
         raise ProxyRateLimitError("API key quota exceeded")
@@ -181,7 +184,7 @@ async def test_images_generations_quota_rejection_records_route_observability(as
 
     with caplog.at_level(logging.INFO, logger="app.modules.proxy.api"):
         response = await async_client.post(
-            "/v1/images/generations",
+            f"{base}/images/generations",
             json={"model": "gpt-image-2", "prompt": "a red circle"},
         )
 
@@ -1112,74 +1115,184 @@ async def test_images_edits_basic_round_trip(async_client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_backend_codex_images_edits_json_data_urls_round_trip(async_client, monkeypatch):
-    await _import_account(async_client, "acc_images_edit_codex", "img-edit-codex@example.com")
+@pytest.mark.parametrize("operation", ["generations", "edits"])
+@pytest.mark.parametrize("upstream_status", [200, 400, 401, 429, 502, 307])
+async def test_native_images_preserve_status_body_and_do_not_replay(
+    async_client, monkeypatch, operation, upstream_status
+):
+    await _import_account(async_client, "native-errors", "native-errors@example.com")
+    calls = []
+    raw_response = b'{"created":1,"data":[{"b64_json":"IMAGE"}],"error":{"code":"native_error","detail":"kept"}}'
 
-    captured: dict[str, object] = {}
-
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
-        del headers, access_token, base_url, raise_for_status, kwargs
-        captured["input"] = payload.input
-        captured["tools"] = list(payload.tools)
-        captured["account_id"] = account_id
-        yield _sse(
-            {
-                "type": "response.output_item.done",
-                "item": {
-                    "type": "image_generation_call",
-                    "id": "ig_edit_codex",
-                    "status": "completed",
-                    "result": "EDITED_B64",
-                    "revised_prompt": "edited",
-                    "size": "1024x1024",
-                    "quality": "auto",
-                    "background": "auto",
-                    "output_format": "png",
-                },
-            }
+    async def fake_native(path, **kwargs):
+        calls.append((path, kwargs))
+        return proxy_module.CodexControlResponse(
+            status_code=upstream_status,
+            body=raw_response,
+            headers={"content-type": "application/json", "retry-after": "17", "set-cookie": "secret=value"},
         )
-        yield _sse({"type": "response.completed", "response": {}})
 
-    async def fake_ensure_fresh(self, account, **kwargs):
-        del self, kwargs
+    async def fresh(self, account, **kwargs):
         return account
 
-    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
-    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh)
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_native)
+    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fresh)
+    payload = {"model": "gpt-image-2", "prompt": "hello", "images": [{"image_url": "data:image/png;base64,aA=="}]}
+    response = await async_client.post(f"/backend-api/codex/images/{operation}", json=payload)
+    assert response.status_code == upstream_status, response.text
+    assert response.content == raw_response
+    assert "set-cookie" not in response.headers
+    assert response.headers["retry-after"] == "17"
+    assert len(calls) == 1
+    assert calls[0][0] == f"images/{operation}"
+    assert json.loads(calls[0][1]["payload"]) == payload
 
-    image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-    image_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    response = await async_client.post(
-        "/backend-api/codex/images/edits",
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result", ["success", "error", "transport", "cancel"])
+async def test_native_images_release_capacity_and_settle_scoped_key(async_client, monkeypatch, result):
+    from app.core.clients.proxy import ProxyResponseError
+    from app.db.models import Account
+
+    await _import_account(async_client, "native-scope", "native-scope@example.com")
+    await _import_account(async_client, "not-assigned", "not-assigned@example.com")
+    async with SessionLocal() as session:
+        account = (
+            await session.execute(select(Account).where(Account.chatgpt_account_id == "native-scope"))
+        ).scalar_one()
+        assigned_id = account.id
+    await _enable_api_key_auth(async_client)
+    created = await async_client.post(
+        "/api/api-keys/",
         json={
-            "model": "gpt-image-2",
-            "prompt": "make it green",
-            "images": [{"image_url": image_url}],
+            "name": "native-limited",
+            "allowedModels": ["gpt-image-2", "openrouter/z-ai/glm-5.3-flash"],
+            "limits": [{"limitType": "total_tokens", "limitWindow": "weekly", "maxValue": 1000000}],
         },
     )
+    assert created.status_code == 200, created.text
+    key = created.json()
+    scoped = await async_client.patch(f"/api/api-keys/{key['id']}", json={"assignedAccountIds": [assigned_id]})
+    assert scoped.status_code == 200, scoped.text
+    services = []
+    calls = []
+    selection_models = []
+    original_select = proxy_module.ProxyService._select_account_with_budget
 
+    async def select_account(self, *args, **kwargs):
+        services.append(self)
+        selection_models.append(kwargs.get("model"))
+        return await original_select(self, *args, **kwargs)
+
+    async def fresh(self, account, **kwargs):
+        return account
+
+    async def native(path, **kwargs):
+        calls.append(kwargs["account_id"])
+        if result == "cancel":
+            raise asyncio.CancelledError()
+        if result == "transport":
+            raise ProxyResponseError(502, {"error": {"code": "upstream_unavailable", "message": "connection lost"}})
+        status = 200 if result == "success" else 429
+        return proxy_module.CodexControlResponse(
+            status,
+            b'{"created":1,"data":[{"b64_json":"image"}],"usage":{"input_tokens":3,"output_tokens":7}}',
+            {"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget", select_account)
+    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fresh)
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", native)
+    request = async_client.post(
+        "/backend-api/codex/images/generations",
+        headers={"Authorization": f"Bearer {key['key']}"},
+        json={"model": "gpt-image-2", "prompt": "hello"},
+    )
+    if result == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await request
+    else:
+        response = await request
+        assert response.status_code == {"success": 200, "error": 429, "transport": 502}[result], response.text
+    assert calls == ["native-scope"]
+    assert selection_models == [None]
+    assert await services[0].drain_persistence_tasks(timeout_seconds=5)
+    pressure = await services[0]._load_balancer.account_pressure_snapshot(assigned_id)
+    assert pressure == (0, 0, 0.0)
+    async with SessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ApiKeyUsageReservation).where(
+                        ApiKeyUsageReservation.api_key_id == key["id"],
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].status == ("finalized" if result == "success" else "released")
+        limits = await ApiKeysRepository(session).get_limits_by_key(key["id"])
+        assert limits[0].current_value == (10 if result == "success" else 0)
+
+
+@pytest.mark.asyncio
+async def test_native_images_do_not_bypass_account_admission(async_client, monkeypatch):
+    from app.modules.proxy.load_balancer import AccountSelection
+
+    async def denied(self, *args, **kwargs):
+        return AccountSelection(account=None, error_message="quota unavailable", error_code="no_accounts")
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("native images must not bypass admission or try a different backend")
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget_compatible", denied)
+    monkeypatch.setattr(proxy_module.ProxyService, "_select_codex_control_account_without_budget", forbidden)
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", forbidden)
+    response = await async_client.post(
+        "/backend-api/codex/images/generations",
+        json={"model": "gpt-image-2", "prompt": "hello"},
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "no_accounts"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("image_url", ["data:image/png;base64,aW1hZ2U=", "https://images.example/reference.png"])
+async def test_backend_codex_images_edits_json_data_urls_round_trip(async_client, monkeypatch, image_url):
+    await _import_account(async_client, "acc_images_edit_codex", "img-edit-codex@example.com")
+    captured = {}
+
+    async def fake_native(path, **kwargs):
+        captured.update(kwargs)
+        captured["path"] = path
+        return proxy_module.CodexControlResponse(
+            status_code=200,
+            body=b'{"created":1,"data":[{"b64_json":"EDITED_B64","generation_id":"gen-native"}],"background":"opaque"}',
+            headers={"content-type": "application/json", "x-codex-imagegen-request-id": "native-id"},
+        )
+
+    async def fake_ensure_fresh(self, account, **kwargs):
+        return account
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_native)
+    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh)
+    payload = {
+        "model": "gpt-image-2",
+        "prompt": "make it green",
+        "images": [{"image_url": image_url}],
+        "future_native_field": {"keep": True},
+    }
+    response = await async_client.post("/backend-api/codex/images/edits", json=payload)
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["data"] == [{"b64_json": "EDITED_B64", "revised_prompt": "edited"}]
-    input_items = cast(list[dict[str, Any]], captured["input"])
-    content = cast(list[dict[str, Any]], input_items[0]["content"])
-    assert content[1]["type"] == "input_image"
-
-    # Verify the upstream payload contained the image as an input_image data
-    # URL alongside the prompt text.
-    input_value = cast(list[Any], captured["input"])
-    assert input_value
-    first_message = cast(dict[str, Any], input_value[0])
-    content = cast(list[Any], first_message["content"])
-    text_part = cast(dict[str, Any], content[0])
-    assert text_part["type"] == "input_text"
-    assert text_part["text"] == "make it green"
-    image_parts: list[dict[str, Any]] = [
-        cast(dict[str, Any], p) for p in content if isinstance(p, dict) and p.get("type") == "input_image"
-    ]
-    assert len(image_parts) == 1
-    image_url_value = cast(str, image_parts[0]["image_url"])
-    assert image_url_value.startswith("data:image/png;base64,")
+    assert response.json()["data"] == [{"b64_json": "EDITED_B64", "generation_id": "gen-native"}]
+    assert response.json()["background"] == "opaque"
+    assert response.headers["x-codex-imagegen-request-id"] == "native-id"
+    assert captured["path"] == "images/edits"
+    assert json.loads(captured["payload"]) == payload
+    assert captured["access_token"] == "access-token"
+    assert captured["account_id"] == "acc_images_edit_codex"
 
 
 @pytest.mark.asyncio

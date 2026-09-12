@@ -3,9 +3,10 @@
 ## Purpose and scope
 
 codex-lb exposes OpenAI-compatible `/v1/images/*` endpoints and Codex-native
-aliases below `/backend-api/codex/images/*`. The native aliases let Codex's
-built-in `$imagegen` tool use the same account selection, validation, usage
-accounting, and response pipeline as other image clients.
+routes below `/backend-api/codex/images/*`. Native routes forward Codex JSON
+to the ChatGPT image endpoints with scoped account selection and API-key
+policy. Public `/v1/images/*` remains a Responses tool adapter, including
+multipart edit and streaming translation support.
 
 Codex client setup is part of this compatibility boundary. A working server
 route is insufficient when a custom-provider gateway hides the image tool
@@ -91,12 +92,33 @@ keeps `requires_openai_auth = true` does not activate the actor-authorized path.
 3. Start a new CLI or IDE session and invoke `$imagegen`.
 4. When the remaining model and feature gates allow the tool, Codex posts to
    `/backend-api/codex/images/generations` or
-   `/backend-api/codex/images/edits`; codex-lb handles the request through the
-   existing Images compatibility pipeline.
+   `/backend-api/codex/images/edits`; codex-lb forwards it to the corresponding
+   native ChatGPT image endpoint.
+
+## Native transport fidelity
+
+Codex commit `c4017a87aacc7558002b7cb510025e967c1d765e` uses the active
+provider's URL and authentication for standalone image requests. With ChatGPT
+authentication the upstream base is `https://chatgpt.com/backend-api/codex`;
+no platform API-key exchange is involved. Native forwarding preserves image
+metadata, generation IDs, request IDs and upstream errors rather than translating
+them through a Luna Responses tool call. This works independently of whether
+the conversation itself uses a LiteLLM/OpenAI-compatible model source.
+
+Native image operations are non-idempotent. The proxy does not retry after
+dispatch and does not follow redirects; the Codex client may still retry 5xx
+according to its own policy. Reference URLs are forwarded, never fetched
+locally. Responses are bounded to 100 MiB, and prompts/image bytes are omitted
+from payload traces. Unknown usage releases the token reservation rather than
+inventing charges. A native failure does not trigger a paid-API fallback.
+
+Verification uses mocked upstreams and loopback HTTP servers; it does not
+establish image entitlement or service availability for a particular real
+account. No live generation or production deployment was performed.
 
 ## Internal host compatibility
 
-Images and default account probes prefer `gpt-5.6-luna`, then `gpt-5.5`,
+Public Images adapters and default account probes prefer `gpt-5.6-luna`, then `gpt-5.5`,
 using registry plan visibility and suppression. With neither candidate available,
 they default to Luna. For example, a stale catalog still advertising both now
 selects Luna rather than the withdrawn host reported in #2134. Visibility does

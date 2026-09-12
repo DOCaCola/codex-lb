@@ -2883,11 +2883,6 @@ async def v1_embeddings(
     )
 
 
-@router.post(
-    "/images/generations",
-    response_model=None,
-    include_in_schema=False,
-)
 @v1_router.post(
     "/images/generations",
     response_model=None,
@@ -3152,145 +3147,26 @@ async def v1_images_edits(
     )
 
 
+@router.post("/images/generations", response_model=None, include_in_schema=False)
+async def codex_images_generations(
+    request: Request,
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    from app.modules.proxy.native_images import native_image_response
+
+    return await native_image_response(request, context, api_key, operation="generations")
+
+
 @router.post("/images/edits", response_model=None, include_in_schema=False)
 async def codex_images_edits(
     request: Request,
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    """Accept Codex's JSON data-URL image-edit payload on its native base URL.
+    from app.modules.proxy.native_images import native_image_response
 
-    The built-in Codex image tool sends ``images: [{"image_url":
-    "data:<mime>;base64,..."}]`` rather than the multipart ``image`` parts
-    used by the public OpenAI Images API. Decode that transport shape here,
-    then delegate to the shared edit pipeline so validation and upstream
-    behavior remain identical.
-    """
-    capability_transport_denial = await _required_capability_http_transport_denial(request, api_key)
-    if capability_transport_denial is not None:
-        _record_required_capability_image_transport_denial(
-            request,
-            route="edits",
-            model=None,
-            stream=False,
-        )
-        return capability_transport_denial
-    started_at = time.perf_counter()
-    try:
-        raw_payload = await request.json()
-    except (JSONDecodeError, UnicodeDecodeError):
-        _record_images_edit_early_rejection(
-            model=None,
-            stream=False,
-            started_at=started_at,
-        )
-        return _logged_error_json_response(
-            request,
-            400,
-            images_service_module.make_invalid_request_error(
-                "Expected a JSON request body.",
-                param="prompt",
-            ),
-        )
-    if not is_json_mapping(raw_payload):
-        _record_images_edit_early_rejection(
-            model=None,
-            stream=False,
-            started_at=started_at,
-        )
-        return _logged_error_json_response(
-            request,
-            400,
-            images_service_module.make_invalid_request_error(
-                "Expected a JSON object request body.",
-                param="prompt",
-            ),
-        )
-
-    raw_model = raw_payload.get("model")
-    observability_model = raw_model if isinstance(raw_model, str) else None
-    raw_stream = raw_payload.get("stream", False)
-    observability_stream = raw_stream if isinstance(raw_stream, bool) else False
-    raw_form: dict[str, object] = {
-        "model": raw_model,
-        "prompt": raw_payload.get("prompt"),
-        "n": raw_payload.get("n", 1),
-        "size": raw_payload.get("size", "auto"),
-        "quality": raw_payload.get("quality", "auto"),
-        "background": raw_payload.get("background", "auto"),
-        "output_format": raw_payload.get("output_format", "png"),
-        "output_compression": raw_payload.get("output_compression", 100),
-        "moderation": raw_payload.get("moderation", "auto"),
-        "partial_images": raw_payload.get("partial_images"),
-        "stream": raw_payload.get("stream", False),
-        "input_fidelity": raw_payload.get("input_fidelity"),
-        "user": raw_payload.get("user"),
-    }
-    try:
-        form_payload = V1ImagesEditsForm.model_validate(raw_form)
-    except ValidationError as exc:
-        _record_images_edit_early_rejection(
-            model=observability_model,
-            stream=observability_stream,
-            started_at=started_at,
-        )
-        return _logged_error_json_response(request, 400, openai_validation_error(exc))
-
-    raw_images = raw_payload.get("images")
-    if not isinstance(raw_images, list) or not raw_images:
-        _record_images_edit_early_rejection(
-            model=form_payload.model,
-            stream=bool(form_payload.stream),
-            started_at=started_at,
-        )
-        return _logged_error_json_response(
-            request,
-            400,
-            images_service_module.make_invalid_request_error(
-                "At least one `images[].image_url` data URL is required.",
-                param="images",
-            ),
-        )
-
-    images: list[tuple[bytes, str | None]] = []
-    for index, raw_image in enumerate(raw_images):
-        if not is_json_mapping(raw_image) or not isinstance(image_url := raw_image.get("image_url"), str):
-            _record_images_edit_early_rejection(
-                model=form_payload.model,
-                stream=bool(form_payload.stream),
-                started_at=started_at,
-            )
-            return _logged_error_json_response(
-                request,
-                400,
-                images_service_module.make_invalid_request_error(
-                    f"images[{index}].image_url must be a base64 data URL.",
-                    param="images",
-                ),
-            )
-        try:
-            images.append(images_service_module.decode_data_url(image_url))
-        except ValueError as exc:
-            _record_images_edit_early_rejection(
-                model=form_payload.model,
-                stream=bool(form_payload.stream),
-                started_at=started_at,
-            )
-            return _logged_error_json_response(
-                request,
-                400,
-                images_service_module.make_invalid_request_error(str(exc), param="images"),
-            )
-
-    return await _proxy_images_edit_request(
-        request=request,
-        payload=form_payload,
-        images=images,
-        mask=None,
-        context=context,
-        api_key=api_key,
-        started_at=started_at,
-    )
+    return await native_image_response(request, context, api_key, operation="edits")
 
 
 @v1_router.post("/images/variations", include_in_schema=False)

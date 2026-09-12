@@ -363,7 +363,7 @@ def render_settings_reference() -> str:
             "",
             "## Removed",
             "",
-            "Images and default account probes choose `gpt-5.6-luna`, then `gpt-5.5`,",
+            "Public Images adapters and default account probes choose `gpt-5.6-luna`, then `gpt-5.5`,",
             "using registry plan visibility and suppression. If neither qualifies, they",
             "use `gpt-5.6-luna`. Catalog visibility does not guarantee account access.",
             "There is no host-model setting. See the",

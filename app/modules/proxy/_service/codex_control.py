@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -8,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, NoReturn, Protocol, TypeVar, cast
 
 import aiohttp
+import anyio
 
 from app.core.auth.refresh import RefreshError
 from app.core.balancer import (
@@ -37,7 +39,10 @@ from app.modules.proxy._service.support import _request_log_client_fields, _Requ
 from app.modules.proxy.affinity import _AffinityPolicy, _sticky_key_for_codex_control_request
 from app.modules.proxy.helpers import _header_account_id, _normalize_error_code, _parse_openai_error
 from app.modules.proxy.load_balancer import (
+    AccountConcurrencyCaps,
+    AccountLease,
     AccountSelection,
+    RoutingTunables,
     effective_account_concurrency_caps,
     effective_routing_tunables,
 )
@@ -102,6 +107,15 @@ class _CodexControlServiceProtocol(Protocol):
         privacy_policy: CodexControlRequestPrivacyPolicy = CodexControlRequestPrivacyPolicy.STANDARD,
     ) -> None: ...
     async def _write_request_log(self, **kwargs: Any) -> None: ...
+    async def _acquire_account_response_create_lease_or_overload(
+        self,
+        *,
+        account_id: str,
+        request_id: str,
+        surface: str,
+        concurrency_caps: AccountConcurrencyCaps,
+        routing_tunables: RoutingTunables | None = None,
+    ) -> AccountLease: ...
     async def _resolve_upstream_route_for_account(
         self, account: Account, *, operation: str
     ) -> ResolvedUpstreamRoute | None: ...
@@ -265,11 +279,15 @@ class _CodexControlMixin:
         codex_session_affinity: bool = True,
         api_key: ApiKeyData | None = None,
         success_gate: Callable[[str, CodexControlResponse], Awaitable[bool]] | None = None,
+        image_model: str | None = None,
         privacy_policy: CodexControlRequestPrivacyPolicy = CodexControlRequestPrivacyPolicy.STANDARD,
     ) -> CodexControlResponse:
         proxy = cast(_CodexControlServiceProtocol, self)
         filtered = filter_inbound_headers(headers)
         normalized_path = path.strip("/")
+        native_image = normalized_path in {"images/generations", "images/edits"}
+        if native_image and image_model is None:
+            raise ValueError("Native image requests require the public image model")
         effective_privacy_policy = (
             CodexControlRequestPrivacyPolicy.PRIVATE_REALTIME if normalized_path == "realtime/calls" else privacy_policy
         )
@@ -286,6 +304,10 @@ class _CodexControlMixin:
             codex_session_affinity=codex_session_affinity,
         )
         selection_model = api_key.enforced_model if api_key is not None else None
+        if native_image:
+            # Image entitlement is decided by the native endpoint, not the
+            # Responses catalog or the conversation's model-source slug.
+            selection_model = None
         routing_strategy = _routing_strategy(settings)
         account_id_value: str | None = None
         log_status = "error"
@@ -297,6 +319,7 @@ class _CodexControlMixin:
         route_endpoint_id: str | None = None
         route_fallback_used: bool | None = None
         route_fail_closed_reason: str | None = None
+        native_status: int | None = None
         request_kind = f"codex_control_{normalized_path.replace('/', '_')}"
 
         def _account_id_for_log(account_id: str) -> str:
@@ -338,6 +361,9 @@ class _CodexControlMixin:
                 redact_sensitive_details=sensitive_realtime_request,
             )
             account = selection.account
+            if not account and native_image:
+                status_code, error_payload = selection_failure_response(selection)
+                raise ProxyResponseError(status_code, error_payload)
             if not account:
                 account = await proxy._select_codex_control_account_without_budget(
                     affinity=affinity,
@@ -418,6 +444,46 @@ class _CodexControlMixin:
                     exclude_account_ids=excluded_account_ids,
                     redact_sensitive_details=sensitive_realtime_request,
                 )
+
+            if native_image:
+                # Refresh before dispatch is safe. Once dispatched, return the
+                # native result or failure without replaying billed image work.
+                account = await proxy._ensure_fresh_with_budget_or_auth_error(
+                    account,
+                    timeout_seconds=_remaining_budget_seconds(deadline),
+                )
+                account_id_value = account.id
+                lease = await proxy._acquire_account_response_create_lease_or_overload(
+                    account_id=account.id,
+                    request_id=request_id,
+                    surface="images",
+                    concurrency_caps=effective_account_concurrency_caps(settings),
+                    routing_tunables=effective_routing_tunables(settings),
+                )
+                try:
+                    response = await _call_control(account)
+                    native_status = response.status_code
+                    if success_gate is not None:
+                        await success_gate(account.id, response)
+                    if 200 <= response.status_code < 300:
+                        log_status = "success"
+                        await proxy._load_balancer.record_success(account)
+                    else:
+                        # Keep raw upstream bytes for the caller; only retain
+                        # a bounded error code in operational logging.
+                        log_error_code = "upstream_image_error"
+                        try:
+                            error_body = json.loads(response.body)
+                        except (ValueError, UnicodeDecodeError):
+                            error_body = None
+                        if isinstance(error_body, dict):
+                            error = error_body.get("error")
+                            if isinstance(error, dict) and isinstance(code := error.get("code"), str):
+                                log_error_code = code[:128]
+                    return response
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        await proxy._load_balancer.release_account_lease(lease)
 
             try:
                 account = await proxy._ensure_previsible_unary_fresh_with_failover(
@@ -584,7 +650,7 @@ class _CodexControlMixin:
                 account_id=None if sensitive_realtime_request else account_id_value,
                 api_key=api_key,
                 request_id=request_id,
-                model=None,
+                model=image_model if native_image else None,
                 latency_ms=int((_service_time().monotonic() - start) * 1000),
                 status=log_status,
                 error_code=None if sensitive_realtime_request else log_error_code,
@@ -595,7 +661,13 @@ class _CodexControlMixin:
                 failure_exception_type=(
                     None if sensitive_realtime_request else failure_metadata.failure_exception_type
                 ),
-                upstream_status_code=None if sensitive_realtime_request else failure_metadata.upstream_status_code,
+                upstream_status_code=(
+                    native_status
+                    if native_status is not None
+                    else None
+                    if sensitive_realtime_request
+                    else failure_metadata.upstream_status_code
+                ),
                 upstream_error_code=None if sensitive_realtime_request else failure_metadata.upstream_error_code,
                 bridge_stage=None if sensitive_realtime_request else failure_metadata.bridge_stage,
                 upstream_proxy_route_mode=None if sensitive_realtime_request else route_mode,

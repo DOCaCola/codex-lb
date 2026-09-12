@@ -405,6 +405,34 @@ async def test_thread_goal_request_uses_codex_client_when_route_is_resolved(rout
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 401, 429, 502, 307])
+async def test_native_images_use_resolved_route_without_rewriting_errors(route, status):
+    upstream = _Response()
+    upstream.status_code = status
+    upstream.content = b'{"error":{"code":"native-error","extra":"kept"}}'
+    client = _CodexClient(upstream)
+    response = await codex_control_request(
+        "images/generations",
+        method="POST",
+        payload=b'{"model":"gpt-image-2","prompt":"test"}',
+        query_params={},
+        headers={"content-type": "application/json"},
+        access_token="access",
+        account_id="chatgpt_account",
+        base_url="https://chatgpt.test",
+        route=route,
+        codex_client=cast(Any, client),
+    )
+    assert response.status_code == status
+    assert response.body == upstream.content
+    assert len(client.calls) == 1
+    assert client.calls[0]["url"] == "https://chatgpt.test/codex/images/generations"
+    assert client.calls[0]["allow_redirects"] is False
+    assert client.calls[0]["buffer_response"] is False
+    assert client.calls[0]["route"] is route
+
+
+@pytest.mark.asyncio
 async def test_codex_control_request_uses_codex_client_when_route_is_resolved(route: ResolvedUpstreamRoute) -> None:
     client = _CodexClient()
     trace = UpstreamProxyRouteTrace()

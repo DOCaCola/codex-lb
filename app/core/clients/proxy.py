@@ -26,6 +26,7 @@ from typing import (
     Callable,
     Final,
     Mapping,
+    NoReturn,
     Protocol,
     Sequence,
     TypeAlias,
@@ -5524,6 +5525,34 @@ async def thread_goal_request(
                 await lease.close()
 
 
+_NATIVE_IMAGE_RESPONSE_MAX_BYTES = 100 * 1024 * 1024
+
+
+async def _native_image_response_body(response: Any) -> bytes:
+    """Bound native image buffering, including routed HTTP responses."""
+
+    def reject_oversize() -> NoReturn:
+        raise ProxyResponseError(
+            502,
+            openai_error("upstream_response_too_large", "Native image response exceeds 100 MiB"),
+            failure_phase="body_read",
+        )
+
+    if isinstance(response.content, bytes):
+        if len(response.content) > _NATIVE_IMAGE_RESPONSE_MAX_BYTES:
+            reject_oversize()
+        return response.content
+    body = bytearray()
+    try:
+        async for chunk in response.content.iter_chunked(64 * 1024):
+            if len(body) + len(chunk) > _NATIVE_IMAGE_RESPONSE_MAX_BYTES:
+                reject_oversize()
+            body.extend(chunk)
+        return bytes(body)
+    finally:
+        response.release()
+
+
 async def codex_control_request(
     path: str,
     *,
@@ -5545,6 +5574,7 @@ async def codex_control_request(
     settings = with_dashboard_overrides(get_settings())
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
     normalized_path = path.strip("/")
+    native_image = normalized_path in {"images/generations", "images/edits"}
     effective_privacy_policy = (
         CodexControlRequestPrivacyPolicy.PRIVATE_REALTIME if normalized_path == "realtime/calls" else privacy_policy
     )
@@ -5593,7 +5623,13 @@ async def codex_control_request(
     error_message: str | None = None
     payload_summary: dict[str, JsonValue] | None = None
     sensitive_realtime_payload = effective_privacy_policy.redacts_sensitive_details
-    if not sensitive_realtime_payload and payload and content_type and "json" in content_type.lower():
+    if (
+        not native_image
+        and not sensitive_realtime_payload
+        and payload
+        and content_type
+        and "json" in content_type.lower()
+    ):
         with contextlib.suppress(Exception):
             decoded = json.loads(payload)
             if isinstance(decoded, dict):
@@ -5610,7 +5646,10 @@ async def codex_control_request(
         ),
         payload_json=(
             payload.decode("utf-8", errors="replace")
-            if not sensitive_realtime_payload and payload is not None and "upstream_payload" in settings.trace_channels
+            if not native_image
+            and not sensitive_realtime_payload
+            and payload is not None
+            and "upstream_payload" in settings.trace_channels
             else None
         ),
         privacy_policy=effective_privacy_policy,
@@ -5627,6 +5666,9 @@ async def codex_control_request(
                     "headers": upstream_headers,
                     "timeout": total_timeout,
                 }
+                if native_image:
+                    request_kwargs["allow_redirects"] = False
+                    request_kwargs["buffer_response"] = False
                 request_with_metadata = getattr(active_codex_client, "request_with_route_metadata", None)
                 if callable(request_with_metadata):
                     result = await request_with_metadata(request_method, url, **request_kwargs)
@@ -5637,14 +5679,17 @@ async def codex_control_request(
                     response = await active_codex_client.request(request_method, url, **request_kwargs)
                     if route_trace is not None:
                         route_trace.record(route=route, fallback_used=False)
+                if native_image:
+                    body = await _native_image_response_body(response)
             finally:
                 if owns_codex_client:
                     close = getattr(active_codex_client, "close", None)
                     if callable(close):
                         await close()
             status_code = _codex_response_status(response)
-            body = await _codex_response_body(response)
-            if status_code >= 400:
+            if not native_image:
+                body = await _codex_response_body(response)
+            if status_code >= 400 and not native_image:
                 error_payload = await _codex_error_payload_from_response(response)
                 error_code, error_message = _error_details_from_envelope(error_payload)
                 raise ProxyResponseError(status_code, error_payload)
@@ -5662,13 +5707,14 @@ async def codex_control_request(
                 data=payload,
                 headers=upstream_headers,
                 timeout=timeout,
+                **({"allow_redirects": False} if native_image else {}),
             ),
             settings=settings,
             account_id=account_id,
         ) as resp:
             status_code = resp.status
             try:
-                body = await resp.read()
+                body = await _native_image_response_body(resp) if native_image else await resp.read()
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 message = str(exc) or "Request to upstream timed out"
                 error_code = "upstream_unavailable"
@@ -5678,7 +5724,7 @@ async def codex_control_request(
                     openai_error("upstream_unavailable", message),
                     failure_phase="body_read",
                 ) from exc
-            if resp.status >= 400:
+            if resp.status >= 400 and not native_image:
                 error_payload = await _error_payload_from_raw_body(resp, body)
                 error_code, error_message = _error_details_from_envelope(error_payload)
                 raise ProxyResponseError(resp.status, error_payload, failure_phase="status")
