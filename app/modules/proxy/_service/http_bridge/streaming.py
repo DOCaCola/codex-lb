@@ -1339,6 +1339,7 @@ class _HTTPBridgeStreamingMixin:
             headers,
             sticky_kind=inbound_affinity_observation.kind,
             sticky_key_source=inbound_affinity_observation.source,
+            derivation_outcome=affinity.prompt_cache_derivation_outcome,
             prompt_cache_key_set=_prompt_cache_key_from_request_model(payload) is not None,
         )
 

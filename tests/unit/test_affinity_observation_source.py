@@ -129,7 +129,17 @@ def test_every_emitted_source_is_in_the_documented_domain() -> None:
 def test_responses_and_compact_paths_agree_on_one_policy(headers: dict[str, str], expected: str) -> None:
     responses_policy = _policy(headers)
     compact_policy = _sticky_key_for_compact_request(
-        ResponsesCompactRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": []}),
+        # Same transcript as the responses fixture. An empty ``input`` is
+        # unanchorable, so the derived-key arm would resolve to ``none`` on the
+        # compact side only and the two transports would disagree for a reason
+        # that has nothing to do with the ladder this test is about.
+        ResponsesCompactRequest.model_validate(
+            {
+                "model": "gpt-5.1",
+                "instructions": "hi",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
+            }
+        ),
         headers,
         codex_session_affinity=True,
         openai_cache_affinity=True,

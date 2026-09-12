@@ -6,6 +6,7 @@ import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Any, NoReturn, Protocol, TypeVar, cast
 
 import aiohttp
@@ -440,11 +441,18 @@ def _sticky_key_for_compact_request(
     sticky_threads_enabled: bool,
     api_key: ApiKeyData | None = None,
 ) -> _AffinityPolicy:
-    cache_key, cache_key_source = _resolve_prompt_cache_key(
+    # A compact body is already trimmed, so it rarely extends the ordinary
+    # turns' transcript and will usually mint a new anchor. That is the same
+    # answer the ordinary path gives for a compacted turn, and it is correct:
+    # the upstream prefix cache is cold after compaction.
+    resolution = _resolve_prompt_cache_key(
         payload,
         openai_cache_affinity=openai_cache_affinity,
         api_key=api_key,
+        max_age_seconds=openai_cache_affinity_max_age_seconds,
     )
+    cache_key = resolution.sticky_key
+    cache_key_source = resolution.source
     turn_state_key = _sticky_key_from_turn_state_header(headers)
     if turn_state_key:
         policy = _AffinityPolicy(
@@ -484,6 +492,7 @@ def _sticky_key_for_compact_request(
         )
     else:
         policy = _AffinityPolicy()
+    policy = replace(policy, prompt_cache_derivation_outcome=resolution.outcome)
     return _affinity_with_payload_continuity(policy, payload)
 
 
@@ -871,6 +880,7 @@ class _CompactMixin:
             headers,
             sticky_kind=affinity_observation.kind,
             sticky_key_source=affinity_observation.source,
+            derivation_outcome=affinity.prompt_cache_derivation_outcome,
             prompt_cache_key_set=_prompt_cache_key_from_request_model(payload) is not None,
         )
         routing_strategy = _routing_strategy(settings)

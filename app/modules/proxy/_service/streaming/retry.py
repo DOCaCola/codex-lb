@@ -468,6 +468,7 @@ class _StreamingRetryMixin:
             headers,
             sticky_kind=affinity_observation.kind,
             sticky_key_source=affinity_observation.source,
+            derivation_outcome=affinity.prompt_cache_derivation_outcome,
             prompt_cache_key_set=_prompt_cache_key_from_request_model(payload) is not None,
         )
         routing_strategy = _facade()._routing_strategy(settings)
