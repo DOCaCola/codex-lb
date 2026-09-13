@@ -61,7 +61,11 @@ max_items = 5
 # 95 -> 96 configurable Responses admission: image-heavy compaction exceeds
 # the former fixed cap; replicas have different memory budgets, so raising
 # the global default is not appropriate (configurable-responses-body-budget).
-max = 96
+# 96 -> 97 thread_cache_identity_mode (a fleet-wide behaviour switch an
+# operator must be able to roll back without a deploy, so it needs a dashboard
+# home; the environment leg exists only so an operator locked out of the
+# dashboard can still pin the mode at boot, and it is a fallback, never a seed).
+max = 97
 
 [root_files]
 # Complete allowlist of tracked repository-root entries (files and

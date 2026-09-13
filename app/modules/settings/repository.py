@@ -69,6 +69,9 @@ class SettingsRepository:
             proxy_account_stream_limit=None,
             proxy_account_stream_recovery_reserve=None,
             proxy_api_key_fair_share_congestion_threshold_pct=None,
+            # Thread cache identity: same tri-state rule, seeded NULL.
+            # NULL inherits the environment value and then ``shared``.
+            thread_cache_identity_mode=None,
             # C2-2 routing/overload: same tri-state rule, seeded NULL.
             proxy_overload_isolation_seconds=None,
             proxy_account_error_rate_weighting_enabled=None,
@@ -93,15 +96,12 @@ class SettingsRepository:
             totp_required_on_login=False,
             totp_required_for_admin_role=False,
             local_login_policy=LocalLoginPolicy.ENABLED.value,
-            password_hash=None,
             guest_access_enabled=False,
             guest_password_hash=None,
             bootstrap_token_encrypted=None,
             bootstrap_token_hash=None,
             api_key_auth_enabled=False,
             hide_upstream_quota_from_api_keys=False,
-            totp_secret_encrypted=None,
-            totp_last_verified_step=None,
             sticky_reallocation_primary_budget_threshold_pct=95.0,
             sticky_reallocation_secondary_budget_threshold_pct=100.0,
             additional_quota_routing_policies_json="{}",
@@ -152,6 +152,8 @@ class SettingsRepository:
         upstream_stream_transport: str | None = None,
         prohibit_fast_mode: bool | None = None,
         http_downstream_transport_policy: str | None = None,
+        thread_cache_identity_mode: str | None = None,
+        clear_thread_cache_identity_mode: bool = False,
         proxy_account_response_create_limit: int | None = None,
         clear_proxy_account_response_create_limit: bool = False,
         proxy_account_stream_limit: int | None = None,
@@ -308,6 +310,10 @@ class SettingsRepository:
             settings.proxy_api_key_fair_share_congestion_threshold_pct = (
                 proxy_api_key_fair_share_congestion_threshold_pct
             )
+        if clear_thread_cache_identity_mode:
+            settings.thread_cache_identity_mode = None
+        elif thread_cache_identity_mode is not None:
+            settings.thread_cache_identity_mode = thread_cache_identity_mode
         # C2-2 routing/overload
         if clear_proxy_overload_isolation_seconds:
             settings.proxy_overload_isolation_seconds = None

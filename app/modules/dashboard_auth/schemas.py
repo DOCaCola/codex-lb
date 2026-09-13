@@ -25,7 +25,7 @@ class DashboardSessionUser(DashboardModel):
     role: DashboardUserRoleSummary
 
 
-LoginProviderKind = Literal["password", "trusted_header"]
+LoginProviderKind = Literal["password", "trusted_header", "oidc"]
 #: ``dashboard_settings.local_login_policy`` on the wire (PLAN §4.6).
 LocalLoginPolicyValue = Literal["enabled", "admins_only", "break_glass_only"]
 
@@ -155,6 +155,17 @@ class StepUpRequest(DashboardModel):
 class StepUpResponse(DashboardModel):
     verified_at: int
     expires_at: int
+
+
+class OidcStartResponse(DashboardModel):
+    """Where the dashboard must send the browser to begin a signed-in OIDC round trip.
+
+    The URL is returned rather than served as a redirect because the caller is
+    the dashboard's own script, which opens it in a popup (falling back to the
+    current tab) and waits for the callback to land back on the settings page.
+    """
+
+    authorization_url: str
 
 
 class PasswordSetupRequest(DashboardModel):

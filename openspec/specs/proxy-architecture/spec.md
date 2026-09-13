@@ -86,7 +86,7 @@ _wait_for_websocket_continuity_gap = ["scheduler", "clock"]
 "app/modules/proxy/_service/websocket/helpers.py" = 3
 "app/modules/proxy/account_cache.py" = 2
 "app/modules/proxy/account_eligibility.py" = 1
-"app/modules/proxy/api.py" = 8
+"app/modules/proxy/api.py" = 7
 "app/modules/proxy/durable_bridge_repository.py" = 2
 "app/modules/proxy/images_observability.py" = 1
 "app/modules/proxy/images_service.py" = 2
@@ -366,4 +366,3 @@ The required repository architecture gate SHALL reject a bare `await` of an asyn
 
 - **WHEN** a function creates a task whose coroutine neither drives an async iterator nor calls a deferring helper and awaits it directly
 - **THEN** the gate reports no violation
-

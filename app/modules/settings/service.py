@@ -8,6 +8,10 @@ from datetime import datetime
 from typing import Any
 
 from app.core.auth.dashboard_access import is_admin_level
+from app.core.clients.thread_cache_identity import (
+    THREAD_CACHE_IDENTITY_MODE_DEFAULT,
+    normalize_thread_cache_identity_mode,
+)
 from app.core.config.background_jobs import BACKGROUND_JOB_SETTINGS
 from app.core.config.dashboard_overrides import DASHBOARD_TIMEOUT_SETTINGS
 
@@ -21,7 +25,7 @@ from app.core.config.settings import Settings, get_settings
 from app.core.config.spool_retention import OPERATION_SPOOL_RETENTION_SETTING
 from app.core.conversation_archive import CONVERSATION_ARCHIVE_SETTING
 from app.core.resilience.toggles import RESILIENCE_TOGGLE_SETTINGS
-from app.db.models import COMPAT_ADMIN_USERNAME, DashboardSettings, LocalLoginPolicy
+from app.db.models import DashboardSettings, LocalLoginPolicy
 from app.modules.dashboard_roles.service import resolve_role_grants
 from app.modules.dashboard_users.break_glass import BreakGlassRequiresTotpError
 from app.modules.settings.repository import SettingsRepository
@@ -38,6 +42,9 @@ class DashboardSettingsData:
     upstream_stream_transport: str
     prohibit_fast_mode: bool
     http_downstream_transport_policy: str
+    # Effective mode; ``provenance`` carries the source and the fallbacks.
+    thread_cache_identity_mode: str
+    thread_cache_identity_mode_override: str | None
     proxy_account_response_create_limit: int
     proxy_account_response_create_limit_override: int | None
     proxy_account_stream_limit: int
@@ -153,6 +160,8 @@ class DashboardSettingsUpdateData:
     upstream_stream_transport: str
     prohibit_fast_mode: bool
     http_downstream_transport_policy: str
+    thread_cache_identity_mode: str | None
+    clear_thread_cache_identity_mode: bool
     proxy_account_response_create_limit: int | None
     clear_proxy_account_response_create_limit: bool
     proxy_account_stream_limit: int | None
@@ -277,15 +286,6 @@ class DashboardSettingsUpdateData:
     # end M1 stream/bridge budgets
 
 
-class CompatAdminUnenrolledError(Exception):
-    """Requiring TOTP at sign-in while the migrated ``admin`` account has no secret.
-
-    A previous-release replica reads the legacy settings columns: with the
-    policy on and no secret there it would refuse that account forever.
-    Remove together with the legacy mirror in release N+1.
-    """
-
-
 @dataclass(frozen=True, slots=True)
 class TotpEnrollmentSummary:
     """Who still has to enrol, and whether the acting account already did."""
@@ -293,7 +293,6 @@ class TotpEnrollmentSummary:
     actor_configured: bool
     users_without_totp: int
     admins_without_totp: int
-    compat_admin_unenrolled: bool
 
 
 class SettingsService:
@@ -307,7 +306,6 @@ class SettingsService:
             actor_configured=any(user.id == actor_user_id and user.totp_secret_encrypted is not None for user in users),
             users_without_totp=len(without_totp),
             admins_without_totp=sum(1 for user in without_totp if is_admin_level(resolve_role_grants(user.role))),
-            compat_admin_unenrolled=any(user.username == COMPAT_ADMIN_USERNAME for user in without_totp),
         )
 
     async def get_settings(self, *, actor_user_id: str | None = None) -> DashboardSettingsData:
@@ -340,11 +338,6 @@ class SettingsService:
             enrollment = await self.totp_enrollment(actor_user_id)
             if not enrollment.actor_configured:
                 raise ValueError("Set up your own TOTP before requiring it at sign-in")
-            if enabling_global and enrollment.compat_admin_unenrolled:
-                raise CompatAdminUnenrolledError(
-                    "Enrol the 'admin' account in two-factor, or remove its password, "
-                    "before requiring two-factor at sign-in"
-                )
         # Closing the local password form is the most dangerous button in the
         # product: it is also the setting that locks the install out when the
         # identity provider is down. Only the tightening transition is gated
@@ -376,6 +369,8 @@ class SettingsService:
             upstream_stream_transport=payload.upstream_stream_transport,
             prohibit_fast_mode=payload.prohibit_fast_mode,
             http_downstream_transport_policy=payload.http_downstream_transport_policy,
+            thread_cache_identity_mode=payload.thread_cache_identity_mode,
+            clear_thread_cache_identity_mode=payload.clear_thread_cache_identity_mode,
             proxy_account_response_create_limit=payload.proxy_account_response_create_limit,
             clear_proxy_account_response_create_limit=payload.clear_proxy_account_response_create_limit,
             proxy_account_stream_limit=payload.proxy_account_stream_limit,
@@ -530,6 +525,8 @@ _ROUTING_POLICIES = frozenset({"inherit", "normal", "burn_first", "preserve"})
 # Inheritable settings with an environment fallback: the ``dashboard_settings``
 # column, the ``Settings`` field and the provenance key share one name.
 _ENVIRONMENT_INHERITABLE_SETTINGS = (
+    # Thread cache identity mode (str): NULL inherits the env value, then "shared".
+    "thread_cache_identity_mode",
     "proxy_account_response_create_limit",
     "proxy_account_stream_limit",
     "proxy_account_stream_recovery_reserve",
@@ -606,6 +603,16 @@ def _resolve_inheritable_settings(
     resolved: dict[str, InheritableValue[Any]] = {
         name: _resolve_environment_inheritable(row, name) for name in _ENVIRONMENT_INHERITABLE_SETTINGS
     }
+    # A stale or hand-edited column value is not a valid decision, so it is
+    # normalized away before it can reach the pattern-constrained settings
+    # response and fail ``GET /api/settings`` for every setting at once. A
+    # NULL-equivalent column simply falls back to the environment/default legs.
+    resolved["thread_cache_identity_mode"] = resolve_inheritable(
+        normalize_thread_cache_identity_mode(row.thread_cache_identity_mode),
+        normalize_thread_cache_identity_mode(getattr(get_settings(), "thread_cache_identity_mode", None))
+        or THREAD_CACHE_IDENTITY_MODE_DEFAULT,
+        THREAD_CACHE_IDENTITY_MODE_DEFAULT,
+    )
     resolved["request_log_retention_days"] = resolve_inheritable(
         row.request_log_retention_days, None, _RETENTION_DISABLED_DAYS
     )
@@ -626,6 +633,8 @@ def _settings_data(row: DashboardSettings, totp: TotpEnrollmentSummary) -> Dashb
         upstream_stream_transport=row.upstream_stream_transport,
         prohibit_fast_mode=row.prohibit_fast_mode,
         http_downstream_transport_policy=row.http_downstream_transport_policy,
+        thread_cache_identity_mode=resolved["thread_cache_identity_mode"].value,
+        thread_cache_identity_mode_override=normalize_thread_cache_identity_mode(row.thread_cache_identity_mode),
         proxy_account_response_create_limit=resolved["proxy_account_response_create_limit"].value,
         proxy_account_response_create_limit_override=row.proxy_account_response_create_limit,
         proxy_account_stream_limit=resolved["proxy_account_stream_limit"].value,

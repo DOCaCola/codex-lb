@@ -4,7 +4,7 @@ import hashlib
 import logging
 from time import time
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.core.audit.service import AuditActor, AuditService, AuditTarget
@@ -110,6 +110,7 @@ from app.modules.dashboard_auth.service import (
     get_step_up_cookie_store,
     get_totp_rate_limiter,
     hash_password,
+    is_local_password_session,
     log_login_failed,
     session_clock,
     session_user,
@@ -239,8 +240,11 @@ async def _decorate_session_response(
     # local login policy admits the account -- the same call the session gate
     # makes, so ``password_session_active`` never advertises a fallback the
     # gate would refuse.
-    fallback_admitted = resolved is None or local_login_admits(
-        resolved.user, (await get_settings_cache().get()).local_login_policy
+    fallback_admitted = resolved is None or (
+        # An OIDC session is not the local fallback (it is the very thing the
+        # policy closes the local door against), so it never reports one.
+        is_local_password_session(resolved.state)
+        and local_login_admits(resolved.user, (await get_settings_cache().get()).local_login_policy)
     )
     fallback_authorized = fully_authorized and fallback_admitted
 
@@ -359,7 +363,7 @@ async def _trusted_header_session_response(
             "totp_enrollment_required": False,
             "access_summary": await context.service.access_summary() if manages_users else None,
             "assignable_role_ids": assignable_role_ids() if manages_users else [],
-            "step_up": step_up_state(user, verified_at=recorded_step_up(request, user)),
+            "step_up": await step_up_state(user, verified_at=recorded_step_up(request, user)),
         }
     )
 
@@ -1181,6 +1185,20 @@ async def step_up(
 
     verified_at = session_clock()
     response = _step_up_response(verified_at)
+    await record_step_up_on(response, request, user, verified_at=verified_at)
+    return response
+
+
+async def record_step_up_on(response: Response, request: Request, user: DashboardUser, *, verified_at: int) -> None:
+    """Write a completed step-up onto ``response``, by whichever of the two paths fits.
+
+    A cookie session carries the proof in its own ``su`` claim; a principal
+    that has no session cookie (a trusted-header account) carries it in the
+    generation-bound step-up cookie. Shared with the OIDC step-up completion so
+    that flow mints the proof through these same two paths instead of adding a
+    third: one function, one set of cookie attributes, one lifetime.
+    """
+
     state = get_dashboard_session_store().get(request.cookies.get(DASHBOARD_SESSION_COOKIE))
     if state is not None and state.is_user and state.user_id == user.id and state.password_verified:
         # Keep the session exactly as it was (method, TOTP step, remaining life); only ``su`` changes.
@@ -1195,7 +1213,6 @@ async def step_up(
         _set_session_cookie(response, session_id, request, max_age_seconds=session_ttl_seconds)
     else:
         _set_step_up_cookie(response, user, request, verified_at=verified_at)
-    return response
 
 
 async def _step_up_header_account(
@@ -1234,7 +1251,7 @@ def _step_up_response(verified_at: int) -> JSONResponse:
     return JSONResponse(status_code=200, content=body.model_dump(by_alias=True))
 
 
-def _set_step_up_cookie(response: JSONResponse, user: DashboardUser, request: Request, *, verified_at: int) -> None:
+def _set_step_up_cookie(response: Response, user: DashboardUser, request: Request, *, verified_at: int) -> None:
     response.set_cookie(
         key=STEP_UP_COOKIE,
         value=get_step_up_cookie_store().create(
@@ -1260,7 +1277,7 @@ async def logout_dashboard(
     return response
 
 
-def _set_session_cookie(response: JSONResponse, session_id: str, request: Request, *, max_age_seconds: int) -> None:
+def _set_session_cookie(response: Response, session_id: str, request: Request, *, max_age_seconds: int) -> None:
     response.set_cookie(
         key=DASHBOARD_SESSION_COOKIE,
         value=session_id,
@@ -1270,3 +1287,9 @@ def _set_session_cookie(response: JSONResponse, session_id: str, request: Reques
         max_age=max_age_seconds,
         path="/",
     )
+
+
+# The OIDC sign-in routes are written in their own module but mount on *this*
+# router: one prefix, one error format, one set of middleware exemptions, no
+# second ``include_router``. Imported last, when ``router`` exists.
+from app.modules.dashboard_auth import oidc_api as _oidc_api  # noqa: E402,F401

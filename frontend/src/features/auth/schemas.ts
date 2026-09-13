@@ -105,11 +105,18 @@ export const AccessSummarySchema = z.object({
 // Step-up (re-verification for sensitive changes): when the account last
 // re-verified, and which factors `/step-up` will ask for. Empty `methods`
 // means the account must enrol two-factor or set a password first.
-export const StepUpMethodSchema = z.enum(["password", "totp"]);
+export const StepUpMethodSchema = z.enum(["password", "totp", "oidc"]);
 export const StepUpStateSchema = z.object({
   verifiedAt: z.number().int().nullable().default(null),
   expiresAt: z.number().int().nullable().default(null),
   methods: z.array(StepUpMethodSchema).default([]),
+});
+
+// Where to send the browser to begin a signed-in round trip at the identity
+// provider. The server builds the URL from the stored configuration; the app
+// only follows it.
+export const OidcStartResponseSchema = z.object({
+  authorizationUrl: z.string(),
 });
 
 export const AuthSessionSchema = z.object({
@@ -253,6 +260,7 @@ export type TotpSetupStartResponse = z.infer<typeof TotpSetupStartResponseSchema
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
 export type StepUpState = z.infer<typeof StepUpStateSchema>;
 export type StepUpRequest = z.infer<typeof StepUpRequestSchema>;
+export type OidcStartResponse = z.infer<typeof OidcStartResponseSchema>;
 
 export function getFirstZodIssueMessage(error: unknown): string | null {
   if (!(error instanceof z.ZodError)) {
