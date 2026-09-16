@@ -1,32 +1,21 @@
 import { z } from "zod";
 import type { TFunction } from "i18next";
 
-import type {
-  ModelSource,
-  ModelSourceModelInput,
-} from "@/features/model-sources/schemas";
+import type { ModelSource } from "@/features/model-sources/schemas";
 
 export function createModelSourceFormSchema(t: TFunction) {
   return z.object({
     name: z.string().min(1, t("modelSources.validation.nameRequired")),
     baseUrl: z.string().min(1, t("modelSources.validation.baseUrlRequired")),
     apiKey: z.string(),
-    models: z.string().min(1, t("modelSources.validation.modelsRequired")),
   });
 }
 
-export const modelSourceFormSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  baseUrl: z.string().min(1, "Base URL is required"),
-  apiKey: z.string(),
-  models: z.string().min(1, "At least one model is required"),
-});
+export type ModelSourceFormValues = z.infer<
+  ReturnType<typeof createModelSourceFormSchema>
+>;
 
-export type ModelSourceFormValues = z.infer<typeof modelSourceFormSchema>;
-
-// Per-model settings the dialogs apply uniformly across every model ID entered
-// for the source. Pricing is USD per 1M tokens; blank means "unknown" (cost
-// settles at $0 for that model).
+// Connection and selected-model field values. Dialogs keep a separate draft for each model.
 export type ModelSourceDraft = {
   supportsChatCompletions: boolean;
   supportsResponses: boolean;
@@ -72,20 +61,6 @@ export function modelSourceDraftReducer(
   patch: Partial<ModelSourceDraft>,
 ): ModelSourceDraft {
   return { ...state, ...patch };
-}
-
-function parsePositiveInt(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number.parseInt(trimmed, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function parseNonNegativeFloat(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number.parseFloat(trimmed);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 // The backend has no first-class reasoning column; the flag lives in the
@@ -162,51 +137,10 @@ export function mergeReasoningMetadata(
   return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
 }
 
-export function modelInputsFromForm(
-  values: ModelSourceFormValues,
-  draft: ModelSourceDraft,
-  existingRawMetadata: Record<string, string | null> = {},
-  existingEnabledByModel: Record<string, boolean> = {},
-): ModelSourceModelInput[] {
-  const contextWindow = parsePositiveInt(draft.contextWindow);
-  const maxOutputTokens = parsePositiveInt(draft.maxOutputTokens);
-  const inputPer1M = parseNonNegativeFloat(draft.inputPer1M);
-  const cachedInputPer1M = parseNonNegativeFloat(draft.cachedInputPer1M);
-  const outputPer1M = parseNonNegativeFloat(draft.outputPer1M);
-  const audioPerMinute = parseNonNegativeFloat(draft.audioPerMinute);
-  return values.models
-    .split(/[\n,]/)
-    .map((model) => model.trim())
-    .filter(Boolean)
-    .map((model) => ({
-      model,
-      displayName: model,
-      contextWindow,
-      maxOutputTokens,
-      supportsStreaming: draft.supportsStreaming,
-      supportsTools: draft.supportsTools,
-      supportsVision: draft.supportsVision,
-      inputPer1M: inputPer1M ?? null,
-      cachedInputPer1M: cachedInputPer1M ?? null,
-      outputPer1M: outputPer1M ?? null,
-      audioPerMinute: audioPerMinute ?? null,
-      rawMetadataJson: mergeReasoningMetadata(
-        existingRawMetadata[model],
-        draft.supportsReasoning,
-        draft.reasoningEfforts,
-        draft.defaultReasoningEffort,
-      ),
-      isEnabled: existingEnabledByModel[model] ?? true,
-    }));
-}
-
 function numberToInput(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
-// Derive the shared draft from an existing source. The create UI applies one
-// set of per-model settings to every model, so editing mirrors that by reading
-// the first model's values as the representative settings.
 function parseReasoningMetadata(rawMetadataJson: string | null | undefined): {
   supportsReasoning: boolean;
   reasoningEffortsInput: string;
@@ -222,7 +156,11 @@ function parseReasoningMetadata(rawMetadataJson: string | null | undefined): {
   if (!rawMetadataJson) return fallback;
   try {
     const parsed: unknown = JSON.parse(rawMetadataJson);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return fallback;
     }
     const metadata = parsed as Record<string, unknown>;
@@ -231,14 +169,21 @@ function parseReasoningMetadata(rawMetadataJson: string | null | undefined): {
       ? dedupeReasoningEfforts(
           metadata.supported_reasoning_levels.flatMap((value): string[] => {
             if (typeof value === "string") return [value];
-            if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+            if (
+              typeof value !== "object" ||
+              value === null ||
+              Array.isArray(value)
+            )
+              return [];
             const effort = (value as Record<string, unknown>).effort;
             return typeof effort === "string" ? [effort] : [];
           }),
         )
       : [];
     const reasoningEfforts =
-      supportsReasoning && declaredLevels.length === 0 ? DEFAULT_REASONING_EFFORTS : declaredLevels;
+      supportsReasoning && declaredLevels.length === 0
+        ? DEFAULT_REASONING_EFFORTS
+        : declaredLevels;
 
     return {
       supportsReasoning,
@@ -278,16 +223,4 @@ export function draftFromSource(source: ModelSource): ModelSourceDraft {
     outputPer1M: numberToInput(firstModel?.outputPer1M),
     audioPerMinute: numberToInput(firstModel?.audioPerMinute),
   };
-}
-
-export function modelIdsToInput(source: ModelSource): string {
-  return source.models.map((model) => model.model).join(", ");
-}
-
-export function rawMetadataByModel(source: ModelSource): Record<string, string | null> {
-  return Object.fromEntries(source.models.map((model) => [model.model, model.rawMetadataJson]));
-}
-
-export function enabledByModel(source: ModelSource): Record<string, boolean> {
-  return Object.fromEntries(source.models.map((model) => [model.model, model.isEnabled]));
 }

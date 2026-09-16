@@ -17,16 +17,6 @@ import type {
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
-function modelPriceLabel(source: ModelSource): string | null {
-  const priced = source.models.find(
-    (model) => model.inputPer1M !== null || model.outputPer1M !== null,
-  );
-  if (!priced) return null;
-  const input = priced.inputPer1M ?? 0;
-  const output = priced.outputPer1M ?? 0;
-  return `$${input}/$${output} per 1M`;
-}
-
 export type ModelSourcesSettingsProps = {
   disabled?: boolean;
 };
@@ -40,14 +30,12 @@ function protocolBadges(source: ModelSource) {
   ].filter((value): value is string => value !== null);
 }
 
-export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsProps) {
+export function ModelSourcesSettings({
+  disabled = false,
+}: ModelSourcesSettingsProps) {
   const { t } = useTranslation();
-  const {
-    modelSourcesQuery,
-    createMutation,
-    updateMutation,
-    deleteMutation,
-  } = useModelSources();
+  const { modelSourcesQuery, createMutation, updateMutation, deleteMutation } =
+    useModelSources();
   const createDialog = useDialogState();
   const editDialog = useDialogState<ModelSource>();
   const deleteDialog = useDialogState<ModelSource>();
@@ -68,7 +56,10 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
     await createMutation.mutateAsync(payload);
   };
 
-  const updateSource = async (sourceId: string, payload: ModelSourceUpdateRequest) => {
+  const updateSource = async (
+    sourceId: string,
+    payload: ModelSourceUpdateRequest,
+  ) => {
     await updateMutation.mutateAsync({ sourceId, payload });
   };
 
@@ -80,8 +71,10 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
             <Database className="h-4 w-4 text-primary" aria-hidden="true" />
           </div>
           <div>
-	            <h3 className="text-sm font-semibold">{t("modelSources.title")}</h3>
-	            <p className="text-xs text-muted-foreground">{t("modelSources.description")}</p>
+            <h3 className="text-sm font-semibold">{t("modelSources.title")}</h3>
+            <p className="text-xs text-muted-foreground">
+              {t("modelSources.description")}
+            </p>
           </div>
         </div>
         <Button
@@ -92,7 +85,7 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
           onClick={() => createDialog.show()}
         >
           <Plus className="h-3.5 w-3.5" />
-	          {t("modelSources.actions.addSource")}
+          {t("modelSources.actions.addSource")}
         </Button>
       </div>
 
@@ -107,7 +100,9 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{source.name}</span>
                     <Badge variant={source.isEnabled ? "default" : "secondary"}>
-	                      {source.isEnabled ? t("common.states.enabled") : t("common.states.disabled")}
+                      {source.isEnabled
+                        ? t("common.states.enabled")
+                        : t("common.states.disabled")}
                     </Badge>
                     {protocolBadges(source).map((protocol) => (
                       <Badge key={protocol} variant="secondary">
@@ -115,21 +110,15 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
                       </Badge>
                     ))}
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">{source.baseUrl}</div>
-                  <div className="flex flex-wrap items-center gap-1 pt-1">
-                    {source.models.map((model) => (
-                      <Badge key={model.id} variant={model.isEnabled ? "outline" : "secondary"}>
-                        {model.model}
-                      </Badge>
-                    ))}
-                    {modelPriceLabel(source) ? (
-                      <Badge variant="secondary">{modelPriceLabel(source)}</Badge>
-                    ) : null}
+                  <div className="truncate text-xs text-muted-foreground">
+                    {source.baseUrl}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Switch
-	                    aria-label={t("modelSources.actions.toggleAria", { name: source.name })}
+                    aria-label={t("modelSources.actions.toggleAria", {
+                      name: source.name,
+                    })}
                     checked={source.isEnabled}
                     disabled={busy}
                     onCheckedChange={(checked) =>
@@ -147,7 +136,11 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
                     onClick={() => editDialog.show(source)}
                   >
                     <Pencil className="size-4" />
-	                    <span className="sr-only">{t("modelSources.actions.editAria", { name: source.name })}</span>
+                    <span className="sr-only">
+                      {t("modelSources.actions.editAria", {
+                        name: source.name,
+                      })}
+                    </span>
                   </Button>
                   <Button
                     type="button"
@@ -157,15 +150,72 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
                     onClick={() => deleteDialog.show(source)}
                   >
                     <Trash2 className="size-4" />
-	                    <span className="sr-only">{t("modelSources.actions.deleteAria", { name: source.name })}</span>
+                    <span className="sr-only">
+                      {t("modelSources.actions.deleteAria", {
+                        name: source.name,
+                      })}
+                    </span>
                   </Button>
                 </div>
+              </div>
+              <div className="mt-3 space-y-2 border-t pt-3">
+                {source.models.map((model) => (
+                  <div
+                    key={model.id}
+                    className="space-y-1 rounded-md bg-muted/40 p-2 text-xs"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="break-all font-medium">
+                        {model.displayName || model.model}
+                      </span>
+                      {!model.isEnabled ? (
+                        <Badge variant="secondary">
+                          {t("common.states.disabled")}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    {model.displayName && model.displayName !== model.model ? (
+                      <div className="break-all text-muted-foreground">
+                        {model.model}
+                      </div>
+                    ) : null}
+                    <div className="text-muted-foreground">
+                      {t("modelSources.fields.pricing")}
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+                      <span>
+                        {t("common.units.input")}:{" "}
+                        {model.inputPer1M === null
+                          ? "—"
+                          : `$${model.inputPer1M}`}
+                      </span>
+                      <span>
+                        {t("common.units.cached")}:{" "}
+                        {model.cachedInputPer1M === null
+                          ? "—"
+                          : `$${model.cachedInputPer1M}`}
+                      </span>
+                      <span>
+                        {t("common.units.output")}:{" "}
+                        {model.outputPer1M === null
+                          ? "—"
+                          : `$${model.outputPer1M}`}
+                      </span>
+                      {model.audioPerMinute !== null ? (
+                        <span>
+                          {t("modelSources.fields.perMinute")}: $
+                          {model.audioPerMinute}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))
         ) : (
           <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-	            {t("modelSources.empty")}
+            {t("modelSources.empty")}
           </div>
         )}
       </div>
@@ -187,13 +237,15 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
 
       <ConfirmDialog
         open={deleteDialog.open}
-	        title={t("modelSources.deleteDialog.title")}
-	        description={t("modelSources.deleteDialog.description")}
-	        confirmLabel={t("common.actions.delete")}
+        title={t("modelSources.deleteDialog.title")}
+        description={t("modelSources.deleteDialog.description")}
+        confirmLabel={t("common.actions.delete")}
         onOpenChange={deleteDialog.onOpenChange}
         onConfirm={() => {
           if (!deleteDialog.data) return;
-          void deleteMutation.mutateAsync(deleteDialog.data.id).finally(() => deleteDialog.hide());
+          void deleteMutation
+            .mutateAsync(deleteDialog.data.id)
+            .finally(() => deleteDialog.hide());
         }}
       />
     </section>

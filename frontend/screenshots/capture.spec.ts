@@ -22,6 +22,7 @@ import {
   createConversationDetails,
   createConversationEntry,
   createConversationsResponse,
+  createModelSource,
 } from "../src/test/mocks/factories";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -372,6 +373,29 @@ test("accounts list card ends after the final row when all accounts fit", async 
 test("settings — light", async ({ page }) => {
   await capture(page, { file: "settings.jpg", theme: "light", route: "/settings", fullPage: true });
 });
+
+for (const width of [1440, 390]) {
+  test(`model source editor — ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await applyTheme(page, "light");
+    await interceptApi(page);
+    const source = createModelSource({ name: "Model gateway" });
+    source.models[0] = { ...source.models[0], displayName: "Local Coder", inputPer1M: 0.5, cachedInputPer1M: 0.1, outputPer1M: 1.5 };
+    source.models.push({ ...source.models[0], id: 2, model: "free-model", displayName: "Free Model", inputPer1M: 0, outputPer1M: 0 });
+    await page.route("**/api/model-sources/", (route) => fulfill(route, { sources: [source] }));
+    await page.goto(`${BASE_URL}/settings`);
+    await page.getByRole("button", { name: "Show advanced settings" }).click();
+    await page.getByRole("button", { name: "Edit Model gateway" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog").getByRole("button", { name: "Save", exact: true })).toBeVisible();
+    const dialog = page.getByRole("dialog");
+    const box = await dialog.boundingBox();
+    expect(box!.width).toBeLessThanOrEqual(width);
+    await page.screenshot({ animations: "disabled", path: path.join(SCREENSHOT_DIR, `model-source-editor-${width}.png`) });
+    await page.getByTestId("model-source-edit-scroll-region").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.screenshot({ animations: "disabled", path: path.join(SCREENSHOT_DIR, `model-source-editor-${width}-bottom.png`) });
+  });
+}
 
 test("settings — dark", async ({ page }) => {
   await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings", fullPage: true });

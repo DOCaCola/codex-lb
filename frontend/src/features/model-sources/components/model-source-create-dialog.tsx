@@ -13,11 +13,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Form } from "@/components/ui/form";
+import { ModelSourceModelEditor } from "./model-source-model-editor";
+import {
+  useModelRows,
+  modelRowsToInputs,
+  validateModelRows,
+} from "./model-source-model-draft";
 import { ModelSourceFormFields } from "@/features/model-sources/components/model-source-form-fields";
 import {
   initialModelSourceDraft,
   createModelSourceFormSchema,
-  modelInputsFromForm,
   modelSourceDraftReducer,
   type ModelSourceFormValues,
 } from "@/features/model-sources/components/model-source-form";
@@ -30,7 +35,16 @@ export type ModelSourceCreateDialogProps = {
   onSubmit: (payload: ModelSourceCreateRequest) => Promise<void>;
 };
 
-export function ModelSourceCreateDialog({
+export function ModelSourceCreateDialog(props: ModelSourceCreateDialogProps) {
+  return (
+    <ModelSourceCreateDialogContent
+      key={props.open ? "open" : "closed"}
+      {...props}
+    />
+  );
+}
+
+function ModelSourceCreateDialogContent({
   open,
   busy,
   onOpenChange,
@@ -43,12 +57,22 @@ export function ModelSourceCreateDialog({
       name: "",
       baseUrl: "",
       apiKey: "",
-      models: "",
     },
   });
-  const [draft, updateDraft] = useReducer(modelSourceDraftReducer, initialModelSourceDraft);
+  const [draft, updateDraft] = useReducer(
+    modelSourceDraftReducer,
+    initialModelSourceDraft,
+  );
+
+  const [rows, setRows] = useModelRows();
 
   const handleSubmit = async (values: ModelSourceFormValues) => {
+    if (!validateModelRows(rows)) {
+      form.setError("root.models", {
+        message: t("modelSources.modelEditor.validation"),
+      });
+      return;
+    }
     const payload: ModelSourceCreateRequest = {
       name: values.name,
       baseUrl: values.baseUrl,
@@ -57,9 +81,13 @@ export function ModelSourceCreateDialog({
       supportsResponses: draft.supportsResponses,
       supportsAudioTranscriptions: draft.supportsAudioTranscriptions,
       supportsEmbeddings: draft.supportsEmbeddings,
-      models: modelInputsFromForm(values, draft),
+      models: modelRowsToInputs(rows),
     };
-    await onSubmit(payload);
+    try {
+      await onSubmit(payload);
+    } catch {
+      return;
+    }
     onOpenChange(false);
   };
 
@@ -67,12 +95,17 @@ export function ModelSourceCreateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-clip p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 px-6 pt-6 pr-12 pb-2">
-	          <DialogTitle>{t("modelSources.createDialog.title")}</DialogTitle>
-	          <DialogDescription>{t("modelSources.createDialog.description")}</DialogDescription>
+          <DialogTitle>{t("modelSources.createDialog.title")}</DialogTitle>
+          <DialogDescription>
+            {t("modelSources.createDialog.description")}
+          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="flex min-h-0 flex-1 flex-col">
+          <form
+            onSubmit={form.handleSubmit(handleSubmit)}
+            className="flex min-h-0 flex-1 flex-col"
+          >
             <div
               className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 pb-4"
               data-testid="model-source-create-scroll-region"
@@ -83,10 +116,26 @@ export function ModelSourceCreateDialog({
                 updateDraft={updateDraft}
                 apiKeyLabel={t("modelSources.fields.upstreamApiKey")}
               />
+              <ModelSourceModelEditor
+                rows={rows}
+                control={form.control}
+                onChange={(next) => {
+                  setRows(next);
+                  form.clearErrors("root.models");
+                }}
+              />
+              {form.formState.errors.root?.models ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {form.formState.errors.root?.models.message}
+                </p>
+              ) : null}
             </div>
             <DialogFooter className="shrink-0 border-t px-6 py-4">
-              <Button type="submit" disabled={busy || form.formState.isSubmitting}>
-	                {t("common.actions.create")}
+              <Button
+                type="submit"
+                disabled={busy || form.formState.isSubmitting}
+              >
+                {t("common.actions.create")}
               </Button>
             </DialogFooter>
           </form>

@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
@@ -13,155 +13,51 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Form } from "@/components/ui/form";
+import { ModelSourceModelEditor } from "./model-source-model-editor";
+import {
+  useModelRows,
+  modelRowsToInputs,
+  validateModelRows,
+} from "./model-source-model-draft";
 import { ModelSourceFormFields } from "@/features/model-sources/components/model-source-form-fields";
 import {
   createModelSourceFormSchema,
   draftFromSource,
-  mergeReasoningMetadata,
-  modelIdsToInput,
   modelSourceDraftReducer,
-  type ModelSourceDraft,
   type ModelSourceFormValues,
 } from "@/features/model-sources/components/model-source-form";
 import type {
   ModelSource,
-  ModelSourceModel,
   ModelSourceUpdateRequest,
-  ModelSourceModelInput,
 } from "@/features/model-sources/schemas";
-
-type ModelDraftChangeFlags = {
-  contextWindow: boolean;
-  maxOutputTokens: boolean;
-  inputPer1M: boolean;
-  cachedInputPer1M: boolean;
-  outputPer1M: boolean;
-  audioPerMinute: boolean;
-  supportsStreaming: boolean;
-  supportsTools: boolean;
-  supportsVision: boolean;
-  supportsReasoning: boolean;
-};
-
-function parsePositiveInt(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number.parseInt(trimmed, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function parseNonNegativeFloat(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number.parseFloat(trimmed);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function splitModelIds(value: string): string[] {
-  return value
-    .split(/[\n,]/)
-    .map((model) => model.trim())
-    .filter(Boolean);
-}
-
-function modelIdsMatch(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((model, index) => model === right[index]);
-}
-
-function getModelDraftChangeFlags(
-  draft: ModelSourceDraft,
-  initialDraft: ModelSourceDraft,
-): ModelDraftChangeFlags {
-  return {
-    contextWindow: draft.contextWindow !== initialDraft.contextWindow,
-    maxOutputTokens: draft.maxOutputTokens !== initialDraft.maxOutputTokens,
-    inputPer1M: draft.inputPer1M !== initialDraft.inputPer1M,
-    cachedInputPer1M: draft.cachedInputPer1M !== initialDraft.cachedInputPer1M,
-    outputPer1M: draft.outputPer1M !== initialDraft.outputPer1M,
-    audioPerMinute: draft.audioPerMinute !== initialDraft.audioPerMinute,
-    supportsStreaming: draft.supportsStreaming !== initialDraft.supportsStreaming,
-    supportsTools: draft.supportsTools !== initialDraft.supportsTools,
-    supportsVision: draft.supportsVision !== initialDraft.supportsVision,
-    supportsReasoning:
-      draft.supportsReasoning !== initialDraft.supportsReasoning ||
-      JSON.stringify(draft.reasoningEfforts) !== JSON.stringify(initialDraft.reasoningEfforts) ||
-      draft.defaultReasoningEffort !== initialDraft.defaultReasoningEffort,
-  };
-}
-
-function hasAnyModelDraftChange(flags: ModelDraftChangeFlags): boolean {
-  return Object.values(flags).some(Boolean);
-}
-
-function buildModelInputs(
-  modelNames: string[],
-  draft: ModelSourceDraft,
-  draftChangeFlags: ModelDraftChangeFlags,
-  existingModelsByName: Map<string, ModelSourceModel>,
-): ModelSourceModelInput[] {
-  return modelNames.map((model) => {
-    const existingModel = existingModelsByName.get(model);
-
-    return {
-      model,
-      displayName: existingModel?.displayName ?? model,
-      contextWindow: draftChangeFlags.contextWindow
-        ? parsePositiveInt(draft.contextWindow)
-        : existingModel?.contextWindow ?? null,
-      maxOutputTokens: draftChangeFlags.maxOutputTokens
-        ? parsePositiveInt(draft.maxOutputTokens)
-        : existingModel?.maxOutputTokens ?? null,
-      supportsStreaming: draftChangeFlags.supportsStreaming
-        ? draft.supportsStreaming
-        : existingModel?.supportsStreaming ?? true,
-      supportsTools: draftChangeFlags.supportsTools
-        ? draft.supportsTools
-        : existingModel?.supportsTools ?? false,
-      supportsVision: draftChangeFlags.supportsVision
-        ? draft.supportsVision
-        : existingModel?.supportsVision ?? false,
-      inputPer1M: draftChangeFlags.inputPer1M
-        ? parseNonNegativeFloat(draft.inputPer1M)
-        : existingModel?.inputPer1M ?? null,
-      cachedInputPer1M: draftChangeFlags.cachedInputPer1M
-        ? parseNonNegativeFloat(draft.cachedInputPer1M)
-        : existingModel?.cachedInputPer1M ?? null,
-      outputPer1M: draftChangeFlags.outputPer1M
-        ? parseNonNegativeFloat(draft.outputPer1M)
-        : existingModel?.outputPer1M ?? null,
-      audioPerMinute: draftChangeFlags.audioPerMinute
-        ? parseNonNegativeFloat(draft.audioPerMinute)
-        : existingModel?.audioPerMinute ?? null,
-      rawMetadataJson: draftChangeFlags.supportsReasoning
-        ? mergeReasoningMetadata(
-            existingModel?.rawMetadataJson,
-            draft.supportsReasoning,
-            draft.reasoningEfforts,
-            draft.defaultReasoningEffort,
-          )
-        : existingModel?.rawMetadataJson ?? null,
-      isEnabled: existingModel?.isEnabled ?? true,
-    };
-  });
-}
 
 export type ModelSourceEditDialogProps = {
   open: boolean;
   busy: boolean;
   source: ModelSource | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (sourceId: string, payload: ModelSourceUpdateRequest) => Promise<void>;
+  onSubmit: (
+    sourceId: string,
+    payload: ModelSourceUpdateRequest,
+  ) => Promise<void>;
 };
 
 type ModelSourceEditFormProps = {
   source: ModelSource;
   busy: boolean;
-  onSubmit: (sourceId: string, payload: ModelSourceUpdateRequest) => Promise<void>;
+  onSubmit: (
+    sourceId: string,
+    payload: ModelSourceUpdateRequest,
+  ) => Promise<void>;
   onClose: () => void;
 };
 
-function ModelSourceEditForm({ source, busy, onSubmit, onClose }: ModelSourceEditFormProps) {
+function ModelSourceEditForm({
+  source,
+  busy,
+  onSubmit,
+  onClose,
+}: ModelSourceEditFormProps) {
   const { t } = useTranslation();
   const form = useForm<ModelSourceFormValues>({
     resolver: zodResolver(createModelSourceFormSchema(t)),
@@ -169,18 +65,24 @@ function ModelSourceEditForm({ source, busy, onSubmit, onClose }: ModelSourceEdi
       name: source.name,
       baseUrl: source.baseUrl,
       apiKey: "",
-      models: modelIdsToInput(source),
     },
   });
-  const [draft, updateDraft] = useReducer(modelSourceDraftReducer, source, draftFromSource);
+  const [draft, updateDraft] = useReducer(
+    modelSourceDraftReducer,
+    source,
+    draftFromSource,
+  );
+
+  const [rows, setRows] = useModelRows(source);
+  const [initialModels] = useState(() => modelRowsToInputs(rows));
 
   const handleSubmit = async (values: ModelSourceFormValues) => {
-    const initialDraft = draftFromSource(source);
-    const draftChangeFlags = getModelDraftChangeFlags(draft, initialDraft);
-    const sourceModelIds = source.models.map((model) => model.model);
-    const modelNames = splitModelIds(values.models);
-    const modelIdsChanged = !modelIdsMatch(modelNames, sourceModelIds);
-
+    if (!validateModelRows(rows)) {
+      form.setError("root.models", {
+        message: t("modelSources.modelEditor.validation"),
+      });
+      return;
+    }
     const payload: ModelSourceUpdateRequest = {
       name: values.name,
       baseUrl: values.baseUrl,
@@ -190,15 +92,9 @@ function ModelSourceEditForm({ source, busy, onSubmit, onClose }: ModelSourceEdi
       supportsEmbeddings: draft.supportsEmbeddings,
     };
 
-    if (modelIdsChanged || hasAnyModelDraftChange(draftChangeFlags)) {
-      const existingModelsByName = new Map(source.models.map((model) => [model.model, model]));
-      payload.models = buildModelInputs(
-        modelNames,
-        draft,
-        draftChangeFlags,
-        existingModelsByName,
-      );
-    }
+    const models = modelRowsToInputs(rows);
+    if (JSON.stringify(models) !== JSON.stringify(initialModels))
+      payload.models = models;
 
     // The stored key is never returned, so a blank field means "keep it";
     // only a typed value updates the credential.
@@ -216,7 +112,10 @@ function ModelSourceEditForm({ source, busy, onSubmit, onClose }: ModelSourceEdi
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} className="flex min-h-0 flex-1 flex-col">
+      <form
+        onSubmit={form.handleSubmit(handleSubmit)}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <div
           className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 pb-4"
           data-testid="model-source-edit-scroll-region"
@@ -228,10 +127,23 @@ function ModelSourceEditForm({ source, busy, onSubmit, onClose }: ModelSourceEdi
             apiKeyLabel={t("modelSources.fields.upstreamApiKey")}
             apiKeyPlaceholder={t("modelSources.editDialog.keepCurrentKey")}
           />
+          <ModelSourceModelEditor
+            rows={rows}
+            control={form.control}
+            onChange={(next) => {
+              setRows(next);
+              form.clearErrors("root.models");
+            }}
+          />
+          {form.formState.errors.root?.models ? (
+            <p role="alert" className="text-sm text-destructive">
+              {form.formState.errors.root?.models.message}
+            </p>
+          ) : null}
         </div>
         <DialogFooter className="shrink-0 border-t px-6 py-4">
           <Button type="submit" disabled={busy || form.formState.isSubmitting}>
-	            {t("common.actions.save")}
+            {t("common.actions.save")}
           </Button>
         </DialogFooter>
       </form>
@@ -251,8 +163,10 @@ export function ModelSourceEditDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-clip p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 px-6 pt-6 pr-12 pb-2">
-	          <DialogTitle>{t("modelSources.editDialog.title")}</DialogTitle>
-	          <DialogDescription>{t("modelSources.editDialog.description")}</DialogDescription>
+          <DialogTitle>{t("modelSources.editDialog.title")}</DialogTitle>
+          <DialogDescription>
+            {t("modelSources.editDialog.description")}
+          </DialogDescription>
         </DialogHeader>
 
         {source ? (
@@ -264,7 +178,9 @@ export function ModelSourceEditDialog({
             onClose={() => onOpenChange(false)}
           />
         ) : (
-          <p className="px-6 pb-6 text-sm text-muted-foreground">{t("modelSources.editDialog.selectSource")}</p>
+          <p className="px-6 pb-6 text-sm text-muted-foreground">
+            {t("modelSources.editDialog.selectSource")}
+          </p>
         )}
       </DialogContent>
     </Dialog>

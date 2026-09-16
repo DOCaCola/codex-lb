@@ -49,6 +49,136 @@ function createModelSource(overrides: Partial<ModelSource> = {}): ModelSource {
 }
 
 describe("ModelSourceEditDialog", () => {
+  it("edits a selected model independently and preserves opaque metadata", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const source = createModelSource();
+    const metadata =
+      '{"source_request_overrides":{"enable_thinking":true},"supported_reasoning_levels":[{"effort":"high","description":"Keep me"}],"supports_reasoning":true}';
+    source.models.push({
+      ...source.models[0],
+      id: 2,
+      model: "second",
+      displayName: "Second",
+      rawMetadataJson: metadata,
+    });
+    renderWithProviders(
+      <ModelSourceEditDialog
+        open
+        busy={false}
+        source={source}
+        onOpenChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText("Model to edit"), "2");
+    await user.clear(screen.getByLabelText("Display name"));
+    await user.type(screen.getByLabelText("Display name"), "Friendly model");
+    await user.clear(screen.getByLabelText("Input"));
+    await user.type(screen.getByLabelText("Input"), "0");
+    await user.clear(screen.getByLabelText("Output"));
+    await user.click(screen.getByRole("checkbox", { name: "Model enabled" }));
+    await user.selectOptions(screen.getByLabelText("Model to edit"), "1");
+    expect(screen.getByLabelText("Output")).toHaveValue("1.5");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    const [first, second] = onSubmit.mock.calls[0][1].models;
+    expect(first).toMatchObject({
+      model: source.models[0].model,
+      inputPer1M: 0.5,
+      outputPer1M: 1.5,
+    });
+    expect(second).toMatchObject({
+      model: "second",
+      displayName: "Friendly model",
+      inputPer1M: 0,
+      outputPer1M: null,
+      isEnabled: false,
+      rawMetadataJson: metadata,
+    });
+  });
+
+  it.each(["-1", "1garbage", "Infinity"])(
+    "rejects invalid price %s",
+    async (price) => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn();
+      renderWithProviders(
+        <ModelSourceEditDialog
+          open
+          busy={false}
+          source={createModelSource()}
+          onOpenChange={vi.fn()}
+          onSubmit={onSubmit}
+        />,
+      );
+      await user.clear(screen.getByLabelText("Output"));
+      await user.type(screen.getByLabelText("Output"), price);
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Check all models",
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects duplicate IDs and fractional limits, then saves a corrected added model", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const source = createModelSource();
+    renderWithProviders(
+      <ModelSourceEditDialog
+        open
+        busy={false}
+        source={source}
+        onOpenChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Add model" }));
+    await user.type(screen.getByLabelText("Model ID"), source.models[0].model);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText("Model ID"));
+    await user.type(screen.getByLabelText("Model ID"), "new-model");
+    await user.type(screen.getByLabelText("Context Window"), "1.5");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText("Context Window"));
+    await user.type(screen.getByLabelText("Context Window"), "256000");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][1].models[1]).toMatchObject({
+      model: "new-model",
+      contextWindow: 256000,
+      inputPer1M: null,
+    });
+  });
+
+  it("removes only the selected model and resets unsaved edits on reopen", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const source = createModelSource();
+    source.models.push({ ...source.models[0], id: 2, model: "second" });
+    const props = { busy: false, source, onOpenChange: vi.fn(), onSubmit };
+    const { rerender } = renderWithProviders(
+      <ModelSourceEditDialog open {...props} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Remove model" }));
+    expect(screen.getByLabelText("Model ID")).toHaveValue("second");
+    rerender(<ModelSourceEditDialog open={false} {...props} />);
+    rerender(<ModelSourceEditDialog open {...props} />);
+    expect(screen.getByLabelText("Model ID")).toHaveValue(
+      source.models[0].model,
+    );
+    await user.click(screen.getByRole("button", { name: "Remove model" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][1].models).toHaveLength(1);
+    expect(onSubmit.mock.calls[0][1].models[0].model).toBe("second");
+  });
   it("prefills existing fields including pricing and models", () => {
     renderWithProviders(
       <ModelSourceEditDialog
@@ -61,8 +191,12 @@ describe("ModelSourceEditDialog", () => {
     );
 
     expect(screen.getByLabelText("Name")).toHaveValue("vllm-local");
-    expect(screen.getByLabelText("Base URL")).toHaveValue("http://127.0.0.1:8000/v1");
-    expect(screen.getByDisplayValue("Qwen/Qwen3.6-27B-FP8")).toBeInTheDocument();
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "http://127.0.0.1:8000/v1",
+    );
+    expect(screen.getByLabelText("Model ID")).toHaveValue(
+      "Qwen/Qwen3.6-27B-FP8",
+    );
     expect(screen.getByDisplayValue("0.5")).toBeInTheDocument();
     expect(screen.getByDisplayValue("1.5")).toBeInTheDocument();
   });
@@ -184,7 +318,7 @@ describe("ModelSourceEditDialog", () => {
           model: "disabled-model",
           isEnabled: false,
           contextWindow: 4096,
-          outputPer1M: 2,
+          outputPer1M: 1.5,
           supportsVision: false,
         }),
       ]),
@@ -281,7 +415,9 @@ describe("ModelSourceEditDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("checkbox", { name: "Reasoning" })).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Reasoning" }),
+    ).not.toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: "Reasoning" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -289,7 +425,9 @@ describe("ModelSourceEditDialog", () => {
       expect(onSubmit).toHaveBeenCalledTimes(1);
     });
 
-    const rawMetadata = JSON.parse(onSubmit.mock.calls[0][1].models[0].rawMetadataJson);
+    const rawMetadata = JSON.parse(
+      onSubmit.mock.calls[0][1].models[0].rawMetadataJson,
+    );
     expect(rawMetadata).toEqual({
       custom_key: "kept",
       supports_reasoning: true,
@@ -324,9 +462,9 @@ describe("ModelSourceEditDialog", () => {
     expect(screen.getByLabelText("Supported reasoning efforts")).toHaveValue(
       "none, provider-specific, ultra",
     );
-    expect(screen.getByRole("combobox", { name: "Default reasoning effort" })).toHaveTextContent(
-      "provider-specific",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Default reasoning effort" }),
+    ).toHaveTextContent("provider-specific");
   });
 
   it("keeps arbitrary reasoning efforts and renormalizes a stale default", async () => {
@@ -349,7 +487,9 @@ describe("ModelSourceEditDialog", () => {
       />,
     );
 
-    const reasoningEfforts = screen.getByLabelText("Supported reasoning efforts");
+    const reasoningEfforts = screen.getByLabelText(
+      "Supported reasoning efforts",
+    );
     await user.clear(reasoningEfforts);
     await user.type(reasoningEfforts, "none, custom-tier");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -358,7 +498,9 @@ describe("ModelSourceEditDialog", () => {
       expect(onSubmit).toHaveBeenCalledTimes(1);
     });
 
-    const rawMetadata = JSON.parse(onSubmit.mock.calls[0][1].models[0].rawMetadataJson);
+    const rawMetadata = JSON.parse(
+      onSubmit.mock.calls[0][1].models[0].rawMetadataJson,
+    );
     expect(rawMetadata).toEqual({
       supports_reasoning: true,
       supported_reasoning_levels: ["none", "custom-tier"],
