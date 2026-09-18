@@ -32,6 +32,8 @@ Checks:
    the graph forks (different parents) or filename order no longer implies
    graph order (chained). The message names both revisions with their
    ``down_revision``s so the fork is visible without opening the files.
+   An explicit merge directly joining every independent colliding revision
+   downgrades that collision to a warning: published IDs must not be rewritten.
 3. A revision's id matches its filename stem and the shared revision-id format
    (error, whole history). Mirrors the runtime policy's
    ``alembic_revision_filename_mismatch`` / ``alembic_revision_id_format_invalid``
@@ -368,6 +370,17 @@ def check_timestamp_prefix_collisions(revisions: Sequence[Revision], ratchet_pre
         group = sorted(group, key=lambda item: item.revision)
         described = "; ".join(revision.describe() for revision in group)
         forked = not _group_is_chained(group, parents)
+        group_ids = {revision.revision for revision in group}
+        repair = next(
+            (revision for revision in revisions if group_ids.issubset(revision.down_revisions)),
+            None,
+        )
+        if forked and repair is not None:
+            report.warn(
+                f"alembic_timestamp_prefix_collision_repaired prefix={prefix}: {described}. "
+                f"Explicit merge {repair.revision} joins all colliding revisions; retain published IDs."
+            )
+            continue
         consequence = (
             "they sit on different lineages, so the graph forks and every job that migrates a database "
             "fails with MultipleHeads once both land"

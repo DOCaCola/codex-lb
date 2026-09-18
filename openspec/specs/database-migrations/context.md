@@ -69,6 +69,34 @@ downgrading only the merge restores both parent stamps while preserving both
 schemas and their data. This is not a rollback to a build that knows only one
 branch. See the [repair context](../../changes/merge-overflow-transport-migration-heads/context.md).
 
+## September SCIM and overflow-retirement merge
+
+The two published `20260914_000000` revisions share the OIDC-flow parent.
+`20260919_000000_merge_scim_overflow_heads` joins both without changing either
+published revision or running additional schema operations. The topology checker
+reports their timestamp collision as repaired only because an explicit merge
+directly includes every colliding revision. Partial repairs still fail.
+
+For example, an installation already at the SCIM revision applies the existing
+overflow-retirement migration before receiving the single merge stamp. SCIM
+tokens and unrelated settings survive this upgrade. Retired overflow pins and
+settings are removed by the existing retirement migration, not by the merge.
+
+Image-only rollback is not sufficient across this schema change. Before deployment,
+retain a database backup and inspect retired overflow data. If recovery requires
+the old build, stop all application writers and use the new build's Alembic
+configuration to downgrade to `20260913_000000_add_oidc_provider_flow` before
+starting the old image. Downgrading merely to either merge parent retains both
+parent schemas and stamps. A full downgrade restores empty overflow storage but
+removes SCIM tokens and the identity user-name column; it is not lossless after
+SCIM provisioning has begun. Restore the pre-upgrade backup instead when the old
+overflow data must be recovered, accounting for writes since that snapshot.
+
+SQLite regression coverage exercises upgrades from the common parent, either
+branch, and both branch orders, plus merge-only and full-schema downgrade followed
+by re-upgrade. PostgreSQL migration and SCIM coverage runs against an isolated
+disposable database before deployment.
+
 ## Example
 
 Branch A and B each create migration revisions in parallel. After merge, CI detects multiple heads and fails. The resolver adds a merge revision, reruns CI, and proceeds. During deployment, a DB still storing old `013_add_dashboard_settings_routing_strategy` in `alembic_version` is auto-remapped to `20260225_000000_add_dashboard_settings_routing_strategy` before upgrade.

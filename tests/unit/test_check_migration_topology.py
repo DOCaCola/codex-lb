@@ -74,7 +74,7 @@ def _warnings(reports: list) -> list[str]:
 def test_real_tree_has_a_single_head_and_no_violations(checker: ModuleType) -> None:
     reports, summary = checker.run_all(versions_dir=VERSIONS_DIR, base_ref="")
     assert _errors(reports) == []
-    assert _warnings(reports) == []
+    assert all(message.startswith("alembic_timestamp_prefix_collision_repaired") for message in _warnings(reports))
     assert "head: " in summary
 
 
@@ -151,6 +151,36 @@ def test_timestamp_prefix_collision_when_chained_reports_lost_ordering(checker: 
     assert "they are chained" in collisions[0]
     # Chaining keeps one head, so only the collision rule can see this.
     assert not any(message.startswith("alembic_head_count_invalid") for message in _errors(reports))
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_explicit_merge_must_join_entire_collision_group(checker: ModuleType, tmp_path: Path, partial: bool) -> None:
+    versions = tmp_path / "versions"
+    head = _linear_fixture(checker, versions)
+    branches = tuple(f"20260912_000000_branch_{index}" for index in range(3))
+    for branch in branches:
+        _write_revision(versions, branch, head)
+    _write_revision(versions, "20260913_000000_merge_branches", branches[:2] if partial else branches)
+    reports, _ = checker.run_all(versions_dir=versions, base_ref="")
+    if partial:
+        assert any(message.startswith("alembic_timestamp_prefix_collision") for message in _errors(reports))
+        assert any(message.startswith("alembic_head_count_invalid") for message in _errors(reports))
+    else:
+        assert _errors(reports) == []
+        assert len(_warnings(reports)) == 1
+        assert _warnings(reports)[0].startswith("alembic_timestamp_prefix_collision_repaired")
+
+
+def test_repaired_collision_does_not_hide_another_head(checker: ModuleType, tmp_path: Path) -> None:
+    versions = tmp_path / "versions"
+    head = _linear_fixture(checker, versions)
+    branches = ("20260912_000000_left", "20260912_000000_right")
+    for branch in branches:
+        _write_revision(versions, branch, head)
+    _write_revision(versions, "20260913_000000_merge_branches", branches)
+    _write_revision(versions, "20260914_000000_unmerged", head)
+    reports, _ = checker.run_all(versions_dir=versions, base_ref="")
+    assert any(message.startswith("alembic_head_count_invalid") for message in _errors(reports))
 
 
 def test_prefix_collision_before_the_ratchet_is_grandfathered(checker: ModuleType, tmp_path: Path) -> None:
