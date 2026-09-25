@@ -2827,6 +2827,13 @@ async def v1_images_generations(
             stream=bool(payload.stream),
         )
         return capability_transport_denial
+    effective_model = _effective_model_for_api_key(api_key, payload.model or DEFAULT_PUBLIC_IMAGE_MODEL)
+    if effective_model.startswith("openrouter/"):
+        from app.modules.openrouter.images import image_response
+
+        body = await request.json()
+        body["model"] = effective_model
+        return await image_response(request, body, api_key, operation="generations")
     return await _proxy_images_generation_request(
         request=request,
         payload=payload,
@@ -3021,6 +3028,22 @@ async def v1_images_edits(
                     started_at=started_at,
                 )
             mask_payload = (mask_data, mask.content_type)
+
+        image_form = dict(ordered_text_items(form))
+
+    effective_model = _effective_model_for_api_key(api_key, model or DEFAULT_PUBLIC_IMAGE_MODEL)
+    if effective_model.startswith("openrouter/"):
+        from app.modules.openrouter.images import image_response
+
+        image_form["model"] = effective_model
+        return await image_response(
+            request,
+            image_form,
+            api_key,
+            operation="edits",
+            images=images_payload,
+            has_mask=mask_payload is not None,
+        )
 
     raw_form: dict[str, object] = {
         "model": model,
@@ -4004,7 +4027,16 @@ async def _list_enabled_source_catalog_models(
     assigned_source_ids = _allowed_source_ids_for_api_key(api_key)
     if assigned_source_ids is not None:
         sources = [source for source in sources if source.id in assigned_source_ids]
-    return source_models_to_upstream_models(sources)
+    models = source_models_to_upstream_models(sources)
+    return [model for model in models if not require_responses or not _is_openrouter_image_only(model)]
+
+
+def _is_openrouter_image_only(model: UpstreamModel) -> bool:
+    return (
+        model.source_kind == "openrouter"
+        and "image" in model.raw
+        and "text" not in (_raw_string_list(model.raw, "output_modalities") or [])
+    )
 
 
 def _dump_v1_models_response(response: ModelListResponse) -> dict[str, JsonValue]:
@@ -4048,6 +4080,21 @@ def _canonical_model_slug(model: str) -> str:
 def _to_model_list_item(
     slug: str, model: UpstreamModel, *, created: int, context_window_overrides: Mapping[str, int]
 ) -> ModelListItem:
+    if _is_openrouter_image_only(model):
+        return ModelListItem.model_validate(
+            {
+                "id": slug,
+                "created": created,
+                "owned_by": "codex-lb",
+                "api_types": ["images"],
+                "capabilities": {
+                    "input_modalities": list(model.input_modalities),
+                    "output_modalities": ["image"],
+                    "supports_streaming": model.raw.get("supports_streaming", False),
+                },
+                "image": model.raw["image"],
+            }
+        )
     context_window = _resolved_context_window(model, context_window_overrides)
     return ModelListItem.model_validate(
         {
@@ -8930,6 +8977,10 @@ def _source_usage_cost_usd(source: ModelSource, model: str, usage: SourceUsage |
         return None
     if source.kind == "openrouter" and usage.reported_cost_usd is not None:
         return usage.reported_cost_usd
+    if source.kind == "openrouter" and any(
+        row.model == model and "image" in json.loads(row.raw_metadata_json or "{}") for row in source.models
+    ):
+        return None
     cost_usd = source_model_cost_usd(
         source,
         model,
@@ -8953,6 +9004,7 @@ async def _log_source_chat_completion(
     error_code: str | None = None,
     error_message: str | None = None,
     upstream_status_code: int | None = None,
+    preserve_unknown_cost: bool = False,
 ) -> None:
     conversation_id = _request_log_client_fields(request.headers)[2]
     try:
@@ -8960,6 +9012,7 @@ async def _log_source_chat_completion(
             await RequestLogsRepository(session).add_log(
                 account_id=None,
                 model_source_id=source.id,
+                preserve_unknown_cost=preserve_unknown_cost,
                 model_source_kind=source.kind,
                 api_key_id=api_key.id if api_key is not None else None,
                 request_id=ensure_request_id(),

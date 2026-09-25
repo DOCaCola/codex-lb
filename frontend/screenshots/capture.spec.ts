@@ -17,6 +17,7 @@ import {
   upstreamProxyAdmin,
   unauthenticatedSession,
 } from "./fixtures";
+import { createOpenRouterAccount } from "../src/features/openrouter/test-fixtures";
 import {
   createAccountSummary,
   createConversationDetails,
@@ -418,7 +419,7 @@ for (const width of [1440, 390]) {
           usage_daily: 1.25, usage_weekly: 4.50, usage_monthly: 7.75,
           free_model_daily_requests: {used: 12, limit: 1000, remaining: 988}},
         selections: [{model: "vendor/coder", contextWindow: 262144, maxOutputTokens: null, displayName: null}],
-        catalog: [{id: "vendor/coder", name: "Coder", context_length: 1000000,
+        catalog: [{id: "vendor/coder", name: "Coder", context_length: 1000000, image: null,
           pricing: {prompt: 0.0000005, input_cache_read: 0.00000005, completion: 0.000002},
           supported_parameters: ["tools", "reasoning"],
           architecture: {input_modalities: ["text", "image"], output_modalities: ["text"]},
@@ -450,6 +451,44 @@ for (const width of [1440, 390]) {
     await expect(page.getByTestId("dashboard-account-list").getByText("Research", {exact: true})).toBeVisible();
     await page.getByTestId("account-list-row").filter({has: page.getByText("Research", {exact: true})}).scrollIntoViewIfNeeded();
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-dashboard-list-${width}.png`)});
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`openrouter image picker — ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await applyTheme(page, "light");
+    await interceptApi(page);
+    const account = createOpenRouterAccount();
+    const id = "openai/gpt-image-2.5-sunburst";
+    account.state.selections = [{model: id, contextWindow: 262144, maxOutputTokens: null, displayName: null}];
+    account.state.catalog = [{
+      id, name: "OpenAI: GPT Image 2.5 Sunburst", context_length: null,
+      architecture: {input_modalities: ["text", "image"], output_modalities: ["image"]},
+      pricing: {prompt: null, completion: null, input_cache_read: null}, supported_parameters: [],
+      top_provider: {context_length: null, max_completion_tokens: null}, reasoning: null,
+      image: {supports_streaming: true, endpoint_details: [{provider_name: "OpenAI", pricing: [
+        {billable: "input_text", unit: "token", cost_usd: 0.000005, variant: null},
+        {billable: "input_image", unit: "token", cost_usd: 0.000008, variant: null},
+        {billable: "output_image", unit: "token", cost_usd: 0.00003, variant: null},
+      ]}]},
+    }];
+    await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
+    await page.goto(`${BASE_URL}/accounts?selected=${account.id}`);
+    await page.getByRole("button", {name: "Models (1)", exact: true}).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/Public Images API only/)).toBeVisible();
+    await expect(dialog.getByLabel(`Context cap for ${id}`)).toHaveCount(0);
+    const box = await dialog.boundingBox();
+    expect(box!.width).toBeLessThanOrEqual(width);
+    await page.screenshot({animations: "disabled", path: test.info().outputPath("openrouter-images.png")});
+    await dialog.getByRole("button", {name: "Capabilities", exact: true}).click();
+    await page.getByRole("menuitemcheckbox", {name: "Image generation", exact: true}).click();
+    await page.getByRole("menuitemcheckbox", {name: "Vision", exact: true}).click();
+    await expect(page.getByRole("menuitemcheckbox", {name: "Vision", exact: true})).toBeChecked();
+    await page.screenshot({animations: "disabled", path: test.info().outputPath("openrouter-capabilities.png")});
+    await page.keyboard.press("Escape");
+    await expect(dialog.getByText(/Public Images API only/)).toBeVisible();
   });
 }
 

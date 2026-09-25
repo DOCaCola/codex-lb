@@ -26,7 +26,17 @@ def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSour
         context_window=selection.context_window,
     )
     metadata: dict[str, object] = {"upstream_model": selection.model}
+    if model is not None and model.image is not None:
+        metadata["image"] = model.image.model_dump(mode="json")
+        metadata["output_modalities"] = model.architecture.output_modalities
+        if "text" not in model.architecture.output_modalities:
+            row.context_window = None
+            row.supports_streaming = model.image.supports_streaming
+            row.supports_vision = "image" in model.architecture.input_modalities
+            row.raw_metadata_json = json.dumps(metadata)
+            return row
     if model is not None:
+        assert model.context_length is not None
         metadata["supported_parameters"] = model.supported_parameters
         context_window = min(
             selection.context_window, model.context_length, model.top_provider.context_length or model.context_length

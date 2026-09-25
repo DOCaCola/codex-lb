@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -40,16 +41,66 @@ class TopProvider(BaseModel):
     max_completion_tokens: int | None = Field(default=None, gt=0)
 
 
+class ImageCapability(BaseModel):
+    type: Literal["enum", "range", "boolean"]
+    values: list[str] = Field(default_factory=list)
+    min: int | None = None
+    max: int | None = None
+
+
+class ImagePrice(BaseModel):
+    billable: str
+    unit: str
+    cost_usd: float = Field(ge=0, allow_inf_nan=False)
+    variant: str | None = None
+
+
+class ImageEndpoint(BaseModel):
+    provider_name: str
+    provider_slug: str
+    provider_tag: str | None = None
+    supported_parameters: dict[str, ImageCapability]
+    allowed_passthrough_parameters: list[str] = Field(default_factory=list)
+    supports_streaming: bool = False
+    pricing: list[ImagePrice] = Field(default_factory=list)
+
+
+class ImageEndpoints(BaseModel):
+    id: str
+    endpoints: list[ImageEndpoint]
+
+
+class ImageModel(BaseModel):
+    id: str
+    name: str
+    architecture: ModelArchitecture
+    supported_parameters: dict[str, ImageCapability]
+    supports_streaming: bool = False
+    # Only selected models need endpoint pricing/capability requests.
+    endpoint_details: list[ImageEndpoint] = Field(default_factory=list)
+
+
+class ImageCatalogResponse(BaseModel):
+    data: list[ImageModel]
+
+
 class CatalogModel(BaseModel):
     id: str = Field(min_length=1)
     name: str
-    context_length: int = Field(gt=0)
+    context_length: int | None = Field(default=None, gt=0)
     architecture: ModelArchitecture
     pricing: ModelPricing
     top_provider: TopProvider
     supported_parameters: list[str] = Field(default_factory=list)
     reasoning: ReasoningMetadata | None = None
     expiration_date: str | None = None
+    image: ImageModel | None = None
+
+    @model_validator(mode="after")
+    def require_text_context(self) -> CatalogModel:
+        if "text" in self.architecture.output_modalities and self.context_length is None:
+            raise ValueError("Text models require a context length")
+        return self
 
 
 class CatalogResponse(BaseModel):

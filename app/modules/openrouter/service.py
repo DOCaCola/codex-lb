@@ -107,6 +107,9 @@ class OpenRouterService:
             if set(ids) - known:
                 raise OpenRouterError("Select models from the synchronized account catalog")
             state.selections = payload.selections
+        if payload.selections is not None or payload.api_key is not None:
+            assert row.source.api_key_encrypted is not None
+            await self._image_endpoints(state, self.encryptor.decrypt(row.source.api_key_encrypted))
         await self._save(row, state, project=True)
         return self._response(row)
 
@@ -125,7 +128,14 @@ class OpenRouterService:
         if catalog:
             try:
                 result = await self.client.catalog(key)
-                state.catalog = [model for model in result.data if "text" in model.architecture.output_modalities]
+                next_state = state.model_copy(deep=True)
+                next_state.catalog = [
+                    model
+                    for model in result.data
+                    if model.image is not None or "text" in model.architecture.output_modalities
+                ]
+                await self._image_endpoints(next_state, key)
+                state.catalog = next_state.catalog
                 state.catalog_updated_at = utcnow()
                 state.catalog_error = None
                 catalog_changed = True
@@ -140,6 +150,12 @@ class OpenRouterService:
                 state.credits_error = str(exc)
         await self._save(row, state, project=catalog_changed)
         return self._response(row)
+
+    async def _image_endpoints(self, state: AccountState, key: str) -> None:
+        selected = {selection.model for selection in state.selections}
+        for model in state.catalog:
+            if model.image is not None and model.id in selected:
+                model.image.endpoint_details = (await self.client.image_endpoints(key, model.id)).endpoints
 
     async def _save(self, row: OpenRouterAccount, state: AccountState, *, project: bool) -> None:
         try:

@@ -15,6 +15,8 @@ def project_request(source: ModelSource, payload: dict[str, JsonValue], *, respo
     if model is None:
         raise ClientPayloadError("OpenRouter model is not configured", param="model", code="model_not_found")
     metadata = json.loads(model.raw_metadata_json or "{}")
+    if "image" in metadata and "text" not in metadata.get("output_modalities", []):
+        raise ClientPayloadError("Use /v1/images for this image-only model", param="model", code="unsupported_model")
     upstream_model = metadata["upstream_model"]
     projected = {**payload, "model": upstream_model}
     if "parallel_tool_calls" not in metadata.get("supported_parameters", []):

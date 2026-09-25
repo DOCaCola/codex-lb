@@ -11,7 +11,25 @@ export type Selection = z.infer<typeof SelectionSchema>;
 const CatalogSchema = z.object({
   id: z.string(),
   name: z.string(),
-  context_length: z.number(),
+  context_length: z.number().nullable(),
+  image: z
+    .object({
+      supports_streaming: z.boolean(),
+      endpoint_details: z.array(
+        z.object({
+          provider_name: z.string(),
+          pricing: z.array(
+            z.object({
+              billable: z.string(),
+              unit: z.string(),
+              cost_usd: z.number(),
+              variant: z.string().nullable(),
+            }),
+          ),
+        }),
+      ),
+    })
+    .nullable(),
   pricing: z.object({
     prompt: z.number().nullable(),
     completion: z.number().nullable(),

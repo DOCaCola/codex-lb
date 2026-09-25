@@ -26,6 +26,32 @@ Removed models retain their selection but stop routing; new models stay unselect
 
 Catalog prices are estimates in USD per million tokens. The provider's `usage.cost` takes precedence in request accounting. OpenRouter's dynamic-price sentinel is shown as unknown, not free. Requests default to price-first provider selection with required-parameter support.
 
+## Public image generation and editing
+
+The account model picker combines name/ID search with capability filters: text generation, image generation, vision (image input), tools, and reasoning. All selected capabilities must match. Filters do not change model selections; clear them to see hidden or unavailable selections again.
+
+The account model selector also synchronizes OpenRouter's `/images/models` catalog. Select an image model and save to load its endpoint capabilities and billable-unit prices. Image-only models appear in `/v1/models`, not in Codex's conversational model picker, and do not have context/output-token controls. Models that support both text and images retain their conversational capabilities.
+
+Public API clients can request an enabled image model explicitly:
+
+```json
+{
+  "model": "openrouter/openai/gpt-image-2.5-sunburst",
+  "prompt": "A watercolor illustration of a small observatory",
+  "quality": "high"
+}
+```
+
+Send this body to `POST /v1/images/generations`. For edits, use multipart `POST /v1/images/edits` with `model`, `prompt`, and one or more `image` or `image[]` uploads. PNG, JPEG and WebP uploads are forwarded as reference data URLs; the proxy does not fetch reference URLs. Both operations use OpenRouter's dedicated `/images` endpoint, not a Responses tool.
+
+Results use `data[].b64_json`; `response_format=url` is unsupported. `stream=true` supports one final image plus partial-image events when the selected endpoint supports streaming. Nonstream requests can request multiple images within the endpoint's advertised limit. Masks, `input_fidelity`, `partial_images` and other unsupported fields are rejected instead of discarded. `size` and `output_format` use OpenRouter's common image contract; model-specific parameters are checked against endpoint capabilities. `moderation`, when supported, is translated to the provider's passthrough options.
+
+Routing is price-first among matching endpoints and respects client-key model/source restrictions, paused accounts and cooldowns. Image POSTs are not automatically retried because they create non-idempotent paid work. Missing/incomplete images produce errors rather than successful empty results. Generation uses the account's request timeout (600 seconds by default) and a 100 MiB response/stream bound.
+
+Actual charges come from OpenRouter's completed `usage.cost`, not text-token price estimates. Missing cost remains unknown in request logs; usage-limited keys require complete usage/cost reporting. Partial previews alone do not count as completed billed work. Image-generation charges use the selected OpenRouter account's balance.
+
+**Codex-native image routes are unchanged:** Codex's fixed `gpt-image-2` request continues through the native ChatGPT image backend. There is no image-backend override or automatic substitution with Sunburst. Bare OpenAI image models on `/v1/images/*` retain the existing adapter.
+
 ## Monitoring
 
 Monitoring refreshes every minute for enabled accounts. The dashboard keeps these distinct:

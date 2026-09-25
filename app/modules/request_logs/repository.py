@@ -1036,6 +1036,7 @@ class RequestLogsRepository:
         model_source_id: str | None = None,
         model_source_kind: str | None = None,
         cost_usd: float | None = None,
+        preserve_unknown_cost: bool = False,
         bridge_stage: str | None = None,
         request_kind: str = RequestKind.NORMAL.value,
         connection_request_kind: str | None = None,
@@ -1123,7 +1124,7 @@ class RequestLogsRepository:
             )
             log.cost_usd = (
                 cost_usd
-                if cost_usd is not None
+                if cost_usd is not None or preserve_unknown_cost
                 else 0.0
                 if model_source_id is not None
                 else calculated_cost_from_log(typing_cast(RequestLogLike, log))

@@ -309,7 +309,7 @@ class V1ImagesGenerationsRequest(BaseModel):
     def _validate_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not is_supported_image_model(value):
+        if not value.startswith("openrouter/") and not is_supported_image_model(value):
             raise ValueError(f"Unsupported image model '{value}'. Use a 'gpt-image-*' model.")
         return value
 
@@ -345,7 +345,7 @@ class V1ImagesEditsForm(BaseModel):
     def _validate_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not is_supported_image_model(value):
+        if not value.startswith("openrouter/") and not is_supported_image_model(value):
             raise ValueError(f"Unsupported image model '{value}'. Use a 'gpt-image-*' model.")
         return value
 
