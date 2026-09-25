@@ -73,4 +73,3 @@ the workspace-local `claude-integration-design.tmp.md` linked from AGENTS.md.
 Portable upstream references are Sub2API, OpenCodex, OmniRoute and CLIProxyAPI in
 AGENTS.md. Their observed compatibility techniques are reference evidence, not
 dependencies or a guarantee that Anthropic accepts this gateway.
-
