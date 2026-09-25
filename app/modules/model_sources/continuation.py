@@ -22,7 +22,9 @@ from app.modules.proxy.replay_output import ReplayOutputCollector
 
 
 class SourceContinuation:
-    def __init__(self, request: Request, api_key: ApiKeyData | None, source_id: str) -> None:
+    def __init__(
+        self, request: Request, api_key: ApiKeyData | None, source_id: str, *, retain_incomplete: bool = False
+    ) -> None:
         _, _, conversation_id = _request_log_client_fields(request.headers)
         self.scope = ReplayScope(
             api_key.id if api_key else None,
@@ -31,6 +33,7 @@ class SourceContinuation:
         self.store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
         self.source_id = source_id
         self.payload: dict[str, JsonValue] = {}
+        self.retain_incomplete = retain_incomplete
 
     async def expand(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         result = deepcopy(payload)
@@ -57,7 +60,8 @@ class SourceContinuation:
     async def remember(self, response: dict[str, JsonValue], output: list[JsonValue] | None = None) -> None:
         response_id = response.get("id")
         items = output if output is not None else response.get("output")
-        if response.get("status") != "completed" or not isinstance(response_id, str) or not isinstance(items, list):
+        statuses = {"completed", "incomplete"} if self.retain_incomplete else {"completed"}
+        if response.get("status") not in statuses or not isinstance(response_id, str) or not isinstance(items, list):
             return
         await self.store.remember(self.scope, response_id, json.dumps(self.payload), items, self.source_id)
 
@@ -69,7 +73,9 @@ class SourceContinuation:
                 if event is not None:
                     if event.get("type") == "response.output_item.done":
                         output.retain(event)
-                    elif event.get("type") == "response.completed":
+                    elif event.get("type") == "response.completed" or (
+                        self.retain_incomplete and event.get("type") == "response.incomplete"
+                    ):
                         response = event.get("response")
                         if isinstance(response, dict):
                             items = output.finish(response.get("output"))

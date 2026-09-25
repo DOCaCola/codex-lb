@@ -16,6 +16,7 @@ from app.modules.claude.schemas import (
     ClaudeAccountResponse,
     ClaudeAccountsResponse,
     ClaudeImport,
+    ClaudeReconnect,
     ClaudeUpdate,
     OAuthComplete,
     OAuthStart,
@@ -68,7 +69,12 @@ async def start_oauth(
     principal: DashboardPrincipal = Depends(require_dashboard_write_access),
     service: ClaudeService = Depends(get_claude_service),
 ) -> OAuthStarted:
-    result = await service.start_oauth(payload)
+    try:
+        result = await service.start_oauth(payload)
+    except ModelSourceNotFoundError as exc:
+        raise DashboardNotFoundError(str(exc)) from exc
+    except ClaudeError as exc:
+        raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_oauth_started", "new")
     return result
 
@@ -141,6 +147,24 @@ async def refresh_account(
     except ClaudeError as exc:
         raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_account_refreshed", source_id)
+    return result
+
+
+@router.post("/{source_id}/reconnect", response_model=ClaudeAccountResponse)
+async def reconnect_account(
+    source_id: str,
+    payload: ClaudeReconnect,
+    request: Request,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+    service: ClaudeService = Depends(get_claude_service),
+) -> ClaudeAccountResponse:
+    try:
+        result = await service.reconnect(source_id, payload)
+    except ModelSourceNotFoundError as exc:
+        raise DashboardNotFoundError(str(exc)) from exc
+    except ClaudeError as exc:
+        raise DashboardBadRequestError(str(exc), code="claude_error") from exc
+    _audit(request, principal, "claude_account_reconnected", source_id)
     return result
 
 

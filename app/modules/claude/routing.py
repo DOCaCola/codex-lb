@@ -25,6 +25,8 @@ from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 
 
 class ClaudePoolUnavailable(ClaudeError):
+    status_code = 503
+
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code

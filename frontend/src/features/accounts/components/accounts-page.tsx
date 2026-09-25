@@ -33,6 +33,8 @@ import { usePermission } from "@/features/auth/hooks/use-auth";
 import { getErrorMessageOrNull } from "@/utils/errors";
 import { OpenRouterAccountControls } from "@/features/openrouter/account-controls";
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
+import { ClaudeAccountControls } from "@/features/claude/account-controls";
+import { useClaudeAccounts } from "@/features/claude/use-claude";
 
 const OauthDialog = lazy(() =>
   import("@/features/accounts/components/oauth-dialog").then((m) => ({
@@ -64,6 +66,11 @@ export function AccountsPage() {
   const { settingsQuery } = useSettings();
   const canWrite = usePermission("accounts:write");
   const openRouterQuery = useOpenRouterAccounts();
+  const claudeQuery = useClaudeAccounts();
+  const claudeAccounts = useMemo(
+    () => claudeQuery.data?.accounts ?? [],
+    [claudeQuery.data],
+  );
   const openRouterAccounts = useMemo(
     () => openRouterQuery.data?.accounts ?? [],
     [openRouterQuery.data],
@@ -117,12 +124,28 @@ export function AccountsPage() {
     if (
       selectedAccountId &&
       (accounts.some((account) => account.accountId === selectedAccountId) ||
+        claudeAccounts.some((account) => account.id === selectedAccountId) ||
         openRouterAccounts.some((account) => account.id === selectedAccountId))
     ) {
       return selectedAccountId;
     }
-    return sortedAccounts[0]?.accountId ?? openRouterAccounts[0]?.id ?? null;
-  }, [accounts, selectedAccountId, sortedAccounts, openRouterAccounts]);
+    return (
+      sortedAccounts[0]?.accountId ??
+      claudeAccounts[0]?.id ??
+      openRouterAccounts[0]?.id ??
+      null
+    );
+  }, [
+    accounts,
+    selectedAccountId,
+    sortedAccounts,
+    openRouterAccounts,
+    claudeAccounts,
+  ]);
+  const selectedClaudeAccount =
+    claudeAccounts.find(
+      (account) => account.id === resolvedSelectedAccountId,
+    ) ?? null;
   const selectedOpenRouterAccount =
     openRouterAccounts.find(
       (account) => account.id === resolvedSelectedAccountId,
@@ -174,265 +197,298 @@ export function AccountsPage() {
     getErrorMessageOrNull(testEndpointMutation.error);
 
   return (
-    <OpenRouterAccountControls
-      account={selectedOpenRouterAccount}
+    <ClaudeAccountControls
+      account={selectedClaudeAccount}
       onCreated={handleSelectAccount}
       readOnly={!canWrite}
     >
-      {({ onAdd, detail }) => (
-        <div className="animate-fade-in-up space-y-6">
-          {/* Page header */}
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {t("accounts.page.title")}
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("accounts.page.subtitle")}
-            </p>
-          </div>
-
-          {mutationError ? (
-            <AlertMessage variant="error">{mutationError}</AlertMessage>
-          ) : null}
-
-          {openRouterQuery.error && (
-            <AlertMessage variant="error">
-              {openRouterQuery.error.message}
-            </AlertMessage>
-          )}
-          {openRouterQuery.isLoading && (
-            <p className="text-sm text-muted-foreground">
-              Loading OpenRouter accounts…
-            </p>
-          )}
-
-          {!accountsQuery.data ? (
-            <AccountsSkeleton />
-          ) : (
-            <div
-              data-testid="accounts-layout"
-              className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]"
-            >
-              <div
-                data-testid="accounts-list-panel"
-                className="min-w-0 min-h-0 self-start"
-              >
-                <div
-                  data-testid="accounts-list-card"
-                  className="flex min-h-0 min-w-0 flex-col rounded-xl border bg-card p-3 sm:p-4"
-                >
-                  <AccountList
-                    accounts={accounts}
-                    openRouterAccounts={openRouterAccounts}
-                    onOpenRouter={onAdd}
-                    selectedAccountId={resolvedSelectedAccountId}
-                    onSelect={handleSelectAccount}
-                    sortMode={accountSortMode}
-                    onSortModeChange={setAccountSortMode}
-                    showResetCreditBadges={showResetCreditBadges}
-                    onOpenImport={() => importDialog.show()}
-                    onOpenOauth={() => {
-                      setOauthAccountId(null);
-                      oauthDialog.show();
-                    }}
-                    readOnly={!canWrite}
-                  />
-                </div>
+      {({ onAdd: onAddClaude, detail: claudeDetail }) => (
+        <OpenRouterAccountControls
+          account={selectedOpenRouterAccount}
+          onCreated={handleSelectAccount}
+          readOnly={!canWrite}
+        >
+          {({ onAdd, detail }) => (
+            <div className="animate-fade-in-up space-y-6">
+              {/* Page header */}
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  {t("accounts.page.title")}
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("accounts.page.subtitle")}
+                </p>
               </div>
 
-              {selectedOpenRouterAccount ? (
-                detail
-              ) : (
-                <AccountDetail
-                  account={selectedAccount}
-                  showAccountId={selectedAccount?.isEmailDuplicate === true}
-                  busy={mutationBusy}
-                  readOnly={!canWrite}
-                  onPause={(accountId) =>
-                    void pauseMutation.mutateAsync(accountId)
-                  }
-                  onResume={(accountId) =>
-                    void resumeMutation.mutateAsync(accountId)
-                  }
-                  onProbe={(accountId) =>
-                    void probeMutation.mutateAsync({ accountId })
-                  }
-                  onResetUsage={(accountId) => usageResetDialog.show(accountId)}
-                  onSetAlias={(accountId, alias) =>
-                    setAliasMutation.mutateAsync({ accountId, alias })
-                  }
-                  onDelete={(accountId) => deleteDialog.show(accountId)}
-                  onReauth={() => {
-                    setOauthAccountId(selectedAccount?.accountId ?? null);
-                    oauthDialog.show();
-                  }}
-                  onExportAuth={(accountId) => {
-                    void exportAuthMutation
-                      .mutateAsync(accountId)
-                      .then((result) => exportDialog.show(result))
-                      .catch(() => null);
-                  }}
-                  onResetCredit={(accountId) => {
-                    const account = accountsQuery.data?.find(
-                      (item) => item.accountId === accountId,
-                    );
-                    resetCreditDialog.show({
-                      accountId,
-                      availableResetCredits:
-                        account?.availableResetCredits ?? 0,
-                    });
-                  }}
-                  showResetCreditExpiryBadge={showResetCreditExpiryBadge}
-                  onLimitWarmupChange={(accountId, enabled) =>
-                    void limitWarmupMutation.mutateAsync({ accountId, enabled })
-                  }
-                  onRoutingPolicyChange={(accountId, routingPolicy) =>
-                    void routingPolicyMutation.mutateAsync({
-                      accountId,
-                      routingPolicy,
-                    })
-                  }
-                  onSecurityWorkAuthorizedChange={(accountId, enabled) =>
-                    void updateMutation.mutateAsync({
-                      accountId,
-                      securityWorkAuthorized: enabled,
-                    })
-                  }
-                  upstreamProxyAdmin={
-                    canReadUpstreamProxy
-                      ? (upstreamProxyQuery.data ?? null)
-                      : null
-                  }
-                  onProxyBindingSave={(accountId, payload) =>
-                    accountBindingMutation.mutateAsync({ accountId, payload })
-                  }
-                  onProxyEndpointTest={(endpointId) =>
-                    testEndpointMutation.mutateAsync(endpointId)
-                  }
-                  resetCredits={
-                    resetCreditsQuery.data?.rateLimitResetCredits ?? null
-                  }
-                  resetCreditsLoading={resetCreditsQuery.isFetching}
-                  resetCreditsUnavailable={!!resetCreditsQuery.error}
-                />
+              {mutationError ? (
+                <AlertMessage variant="error">{mutationError}</AlertMessage>
+              ) : null}
+
+              {openRouterQuery.error && (
+                <AlertMessage variant="error">
+                  {openRouterQuery.error.message}
+                </AlertMessage>
               )}
+              {claudeQuery.error && (
+                <AlertMessage variant="error">
+                  {claudeQuery.error.message}
+                </AlertMessage>
+              )}
+              {claudeQuery.isLoading && (
+                <p className="text-sm text-muted-foreground">
+                  Loading Claude accounts…
+                </p>
+              )}
+              {openRouterQuery.isLoading && (
+                <p className="text-sm text-muted-foreground">
+                  Loading OpenRouter accounts…
+                </p>
+              )}
+
+              {!accountsQuery.data ? (
+                <AccountsSkeleton />
+              ) : (
+                <div
+                  data-testid="accounts-layout"
+                  className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]"
+                >
+                  <div
+                    data-testid="accounts-list-panel"
+                    className="min-w-0 min-h-0 self-start"
+                  >
+                    <div
+                      data-testid="accounts-list-card"
+                      className="flex min-h-0 min-w-0 flex-col rounded-xl border bg-card p-3 sm:p-4"
+                    >
+                      <AccountList
+                        accounts={accounts}
+                        openRouterAccounts={openRouterAccounts}
+                        onOpenRouter={onAdd}
+                        claudeAccounts={claudeAccounts}
+                        onClaude={onAddClaude}
+                        selectedAccountId={resolvedSelectedAccountId}
+                        onSelect={handleSelectAccount}
+                        sortMode={accountSortMode}
+                        onSortModeChange={setAccountSortMode}
+                        showResetCreditBadges={showResetCreditBadges}
+                        onOpenImport={() => importDialog.show()}
+                        onOpenOauth={() => {
+                          setOauthAccountId(null);
+                          oauthDialog.show();
+                        }}
+                        readOnly={!canWrite}
+                      />
+                    </div>
+                  </div>
+
+                  {selectedClaudeAccount ? (
+                    claudeDetail
+                  ) : selectedOpenRouterAccount ? (
+                    detail
+                  ) : (
+                    <AccountDetail
+                      account={selectedAccount}
+                      showAccountId={selectedAccount?.isEmailDuplicate === true}
+                      busy={mutationBusy}
+                      readOnly={!canWrite}
+                      onPause={(accountId) =>
+                        void pauseMutation.mutateAsync(accountId)
+                      }
+                      onResume={(accountId) =>
+                        void resumeMutation.mutateAsync(accountId)
+                      }
+                      onProbe={(accountId) =>
+                        void probeMutation.mutateAsync({ accountId })
+                      }
+                      onResetUsage={(accountId) =>
+                        usageResetDialog.show(accountId)
+                      }
+                      onSetAlias={(accountId, alias) =>
+                        setAliasMutation.mutateAsync({ accountId, alias })
+                      }
+                      onDelete={(accountId) => deleteDialog.show(accountId)}
+                      onReauth={() => {
+                        setOauthAccountId(selectedAccount?.accountId ?? null);
+                        oauthDialog.show();
+                      }}
+                      onExportAuth={(accountId) => {
+                        void exportAuthMutation
+                          .mutateAsync(accountId)
+                          .then((result) => exportDialog.show(result))
+                          .catch(() => null);
+                      }}
+                      onResetCredit={(accountId) => {
+                        const account = accountsQuery.data?.find(
+                          (item) => item.accountId === accountId,
+                        );
+                        resetCreditDialog.show({
+                          accountId,
+                          availableResetCredits:
+                            account?.availableResetCredits ?? 0,
+                        });
+                      }}
+                      showResetCreditExpiryBadge={showResetCreditExpiryBadge}
+                      onLimitWarmupChange={(accountId, enabled) =>
+                        void limitWarmupMutation.mutateAsync({
+                          accountId,
+                          enabled,
+                        })
+                      }
+                      onRoutingPolicyChange={(accountId, routingPolicy) =>
+                        void routingPolicyMutation.mutateAsync({
+                          accountId,
+                          routingPolicy,
+                        })
+                      }
+                      onSecurityWorkAuthorizedChange={(accountId, enabled) =>
+                        void updateMutation.mutateAsync({
+                          accountId,
+                          securityWorkAuthorized: enabled,
+                        })
+                      }
+                      upstreamProxyAdmin={
+                        canReadUpstreamProxy
+                          ? (upstreamProxyQuery.data ?? null)
+                          : null
+                      }
+                      onProxyBindingSave={(accountId, payload) =>
+                        accountBindingMutation.mutateAsync({
+                          accountId,
+                          payload,
+                        })
+                      }
+                      onProxyEndpointTest={(endpointId) =>
+                        testEndpointMutation.mutateAsync(endpointId)
+                      }
+                      resetCredits={
+                        resetCreditsQuery.data?.rateLimitResetCredits ?? null
+                      }
+                      resetCreditsLoading={resetCreditsQuery.isFetching}
+                      resetCreditsUnavailable={!!resetCreditsQuery.error}
+                    />
+                  )}
+                </div>
+              )}
+
+              <ImportDialog
+                open={importDialog.open}
+                busy={importMutation.isPending}
+                error={getErrorMessageOrNull(importMutation.error)}
+                onOpenChange={importDialog.onOpenChange}
+                onImport={async (file) => {
+                  await importMutation.mutateAsync(file);
+                }}
+              />
+
+              <Suspense fallback={null}>
+                <OauthDialog
+                  open={oauthDialog.open}
+                  state={oauth.state}
+                  onOpenChange={(open) => {
+                    oauthDialog.onOpenChange(open);
+                    if (!open) {
+                      setOauthAccountId(null);
+                    }
+                  }}
+                  onStart={async (method) => {
+                    await oauth.start(method, oauthAccountId ?? undefined);
+                  }}
+                  onComplete={async () => {
+                    await accountsQuery.refetch();
+                  }}
+                  onManualCallback={async (callbackUrl) => {
+                    await oauth.manualCallback(callbackUrl);
+                  }}
+                  onReset={oauth.reset}
+                />
+              </Suspense>
+
+              <AuthExportDialog
+                open={exportDialog.open}
+                exportData={exportDialog.data}
+                onOpenChange={exportDialog.onOpenChange}
+              />
+
+              {resetCreditDialog.data ? (
+                <ResetCreditConfirmDialog
+                  open={resetCreditDialog.open}
+                  accountId={resetCreditDialog.data.accountId}
+                  summaryAvailableCount={
+                    resetCreditDialog.data.availableResetCredits
+                  }
+                  onOpenChange={resetCreditDialog.onOpenChange}
+                />
+              ) : null}
+
+              <ConfirmDialog
+                open={deleteDialog.open}
+                title={t("accounts.deleteDialog.title")}
+                description={t("accounts.deleteDialog.description")}
+                confirmLabel={t("common.actions.delete")}
+                cancelLabel={t("common.cancel")}
+                onOpenChange={(open) => {
+                  deleteDialog.onOpenChange(open);
+                  if (!open) setDeleteHistory(false);
+                }}
+                onConfirm={() => {
+                  if (!deleteDialog.data) {
+                    return;
+                  }
+                  void deleteMutation
+                    .mutateAsync({
+                      accountId: deleteDialog.data,
+                      deleteHistory,
+                    })
+                    .finally(() => {
+                      deleteDialog.hide();
+                      setDeleteHistory(false);
+                    });
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="delete-history"
+                    checked={deleteHistory}
+                    onCheckedChange={(checked) =>
+                      setDeleteHistory(checked === true)
+                    }
+                  />
+                  <label
+                    htmlFor="delete-history"
+                    className="text-sm text-muted-foreground cursor-pointer"
+                  >
+                    {t("accounts.deleteDialog.deleteHistory")}
+                  </label>
+                </div>
+              </ConfirmDialog>
+
+              <ConfirmDialog
+                open={usageResetDialog.open}
+                title={t("accounts.usageResetDialog.title")}
+                description={t("accounts.usageResetDialog.description")}
+                confirmLabel={t("common.actions.reset")}
+                cancelLabel={t("common.cancel")}
+                onOpenChange={usageResetDialog.onOpenChange}
+                onConfirm={() => {
+                  if (!usageResetDialog.data) {
+                    return;
+                  }
+                  void usageResetMutation
+                    .mutateAsync({ accountId: usageResetDialog.data })
+                    .finally(() => {
+                      usageResetDialog.hide();
+                    });
+                }}
+              />
+
+              <LoadingOverlay
+                visible={!!accountsQuery.data && mutationBusy}
+                label={t("accounts.page.updating")}
+              />
             </div>
           )}
-
-          <ImportDialog
-            open={importDialog.open}
-            busy={importMutation.isPending}
-            error={getErrorMessageOrNull(importMutation.error)}
-            onOpenChange={importDialog.onOpenChange}
-            onImport={async (file) => {
-              await importMutation.mutateAsync(file);
-            }}
-          />
-
-          <Suspense fallback={null}>
-            <OauthDialog
-              open={oauthDialog.open}
-              state={oauth.state}
-              onOpenChange={(open) => {
-                oauthDialog.onOpenChange(open);
-                if (!open) {
-                  setOauthAccountId(null);
-                }
-              }}
-              onStart={async (method) => {
-                await oauth.start(method, oauthAccountId ?? undefined);
-              }}
-              onComplete={async () => {
-                await accountsQuery.refetch();
-              }}
-              onManualCallback={async (callbackUrl) => {
-                await oauth.manualCallback(callbackUrl);
-              }}
-              onReset={oauth.reset}
-            />
-          </Suspense>
-
-          <AuthExportDialog
-            open={exportDialog.open}
-            exportData={exportDialog.data}
-            onOpenChange={exportDialog.onOpenChange}
-          />
-
-          {resetCreditDialog.data ? (
-            <ResetCreditConfirmDialog
-              open={resetCreditDialog.open}
-              accountId={resetCreditDialog.data.accountId}
-              summaryAvailableCount={
-                resetCreditDialog.data.availableResetCredits
-              }
-              onOpenChange={resetCreditDialog.onOpenChange}
-            />
-          ) : null}
-
-          <ConfirmDialog
-            open={deleteDialog.open}
-            title={t("accounts.deleteDialog.title")}
-            description={t("accounts.deleteDialog.description")}
-            confirmLabel={t("common.actions.delete")}
-            cancelLabel={t("common.cancel")}
-            onOpenChange={(open) => {
-              deleteDialog.onOpenChange(open);
-              if (!open) setDeleteHistory(false);
-            }}
-            onConfirm={() => {
-              if (!deleteDialog.data) {
-                return;
-              }
-              void deleteMutation
-                .mutateAsync({ accountId: deleteDialog.data, deleteHistory })
-                .finally(() => {
-                  deleteDialog.hide();
-                  setDeleteHistory(false);
-                });
-            }}
-          >
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="delete-history"
-                checked={deleteHistory}
-                onCheckedChange={(checked) =>
-                  setDeleteHistory(checked === true)
-                }
-              />
-              <label
-                htmlFor="delete-history"
-                className="text-sm text-muted-foreground cursor-pointer"
-              >
-                {t("accounts.deleteDialog.deleteHistory")}
-              </label>
-            </div>
-          </ConfirmDialog>
-
-          <ConfirmDialog
-            open={usageResetDialog.open}
-            title={t("accounts.usageResetDialog.title")}
-            description={t("accounts.usageResetDialog.description")}
-            confirmLabel={t("common.actions.reset")}
-            cancelLabel={t("common.cancel")}
-            onOpenChange={usageResetDialog.onOpenChange}
-            onConfirm={() => {
-              if (!usageResetDialog.data) {
-                return;
-              }
-              void usageResetMutation
-                .mutateAsync({ accountId: usageResetDialog.data })
-                .finally(() => {
-                  usageResetDialog.hide();
-                });
-            }}
-          />
-
-          <LoadingOverlay
-            visible={!!accountsQuery.data && mutationBusy}
-            label={t("accounts.page.updating")}
-          />
-        </div>
+        </OpenRouterAccountControls>
       )}
-    </OpenRouterAccountControls>
+    </ClaudeAccountControls>
   );
 }

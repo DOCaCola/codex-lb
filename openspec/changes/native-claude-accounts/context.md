@@ -1,74 +1,75 @@
-# Implementation checkpoint — 2026-09-25
+# Native Claude implementation notes
 
-This change remains in progress, not deployable Claude inference support.
+## Qualification
 
-## Implemented and locally verified
+This implementation is locally verified with synthetic credentials, mocked
+provider metadata and loopback HTTP/SSE servers. It is not a live Anthropic OAuth
+acceptance or subscription-billing certification. It does not authorize extra
+usage, conceal eligibility errors, execute Claude Code, or provide paid fallback.
 
-- Encrypted import/PKCE persistence, single-use and expiry boundaries, explicit
-  inference-scope validation and credential redaction.
-- A single additive Alembic head; fresh upgrade, schema-drift check, downgrade
-  to the OpenRouter parent, then re-upgrade on an isolated SQLite database.
-- Durable token refresh intent/generation, cross-session exclusion, successful
-  rotation/restart, definitive transient rejection/backoff/retry, and uncertain
-  consumption retention. Each grant must have one refresh consumer; importing a
-  Claude Code grant does not coordinate with the external CLI. Operators must
-  acknowledge this explicitly.
-- Shared CLI version discovery (24 hours), immutable snapshots, pin/rollback
-  via dashboard-authenticated `GET/PATCH /api/claude-accounts/version`, retained
-  version on discovery failures, separate checked/changed timestamps, conditional
-  requests and stale-feed downgrade prevention. A null pin resumes discovery.
-- Leader-gated metadata scheduler, immediate first tick, no Claude discovery when
-  there are no enabled healthy accounts, separate sessions per account and safe
-  failure isolation. Test lifespans stub the new scheduler builder.
-- A pure request-profile/projection boundary with independent CLI/SDK versions,
-  management/Messages/count-token headers, scoped session identity independent of
-  credentials, fresh request IDs and native newer-patch recognition. Recognition
-  is not an authentication boundary or a global profile-learning mechanism.
-- Modern instruction relocation and legacy user reminders preserve original block
-  text/cache markers and existing tool/signed-thinking turns. The original
-  logical request is never mutated. Unknown placement capabilities and server-tool
-  history requiring a layout rewrite fail explicitly. Ordinary tools named
-  `advisor` are not treated as server artifacts.
+## Enrollment and recovery
 
-## Still required before completion
+The shared Add account dialog offers OAuth PKCE or explicit credential-file upload.
+No server-local credential files are inspected. The operator acknowledges exclusive
+refresh ownership. Fresh enrollment verifies `/api/oauth/profile`; a hash of the
+authenticated account/organization tuple uniquely identifies the account without
+exposing profile identifiers in the dashboard. Expired imports remain unverified
+until durable refresh and profile verification succeed. Refresh intent is committed
+before sending a rotating grant. An uncertain result is not retried automatically.
 
-Follow-up after foundation commit: account responses now expose derived quota
-windows and per-selected-model blocking status. Monitoring becomes stale after
-five minutes or a refresh failure; an observed exhausted window remains blocking
-until its known reset. Passing reset changes freshness to unknown, not zero usage.
-Missing/null windows do not establish denied entitlement. Unknown provider windows
-remain in the original snapshot without an invented model association. Pagination,
-cursor/duplicate rejection, selection retention and the dashboard API contract
-are covered by local tests. The Claude-specific suite has 55 passing tests; this
-does not yet exercise inference pool selection, which remains pending below.
+Reconnect accepts OAuth or a current credential file for the same verified identity.
+It increments the credential generation and clears old refresh intent/backoff.
+Late refresh completions cannot overwrite it. An unverified account that cannot
+refresh must be removed and enrolled again rather than guessed to be the same user.
 
-The pool selector and dispatch preparer are now implemented and covered by
-two-account database tests: source/model scopes, worker-independent affinity,
-paused/auth/refresh/quota exclusions and mandatory continuation ownership.
-Preparation validates the request before rotating credentials, snapshots the
-profile once, replaces caller authorization, maps only the selected provider
-model, and rechecks account eligibility after a potentially slow token refresh.
-An operator pause during rotation prevents a prepared inference request. Headers
-and request bodies are excluded from the prepared request's diagnostic repr.
+## Transport and ownership
 
-The request profile is not yet connected to inference transport. Pool admission,
-Messages/count-token routing, Responses HTTP/WS adaptation, stream lifecycle,
-opaque-state continuation/compaction, authenticated identity/reauthentication,
-and unified frontend remain incomplete. Selected models must not be considered
-live inference support from the existence of account-management endpoints.
+Native `/v1/messages` and `/v1/messages/count_tokens` use Claude-owned authentication.
+Recognized Claude Code preserves native system layout and extension fields; native
+recognition is only a compatibility hint. Third-party Messages and Responses use
+the explicitly versioned OAuth identity/instruction profile. Caller authorization
+is replaced; allowlisted protocol metadata is retained and redirects are disabled.
 
-Only fixture and isolated database verification has been performed. Neither
-upstream OAuth acceptance nor included subscription billing has been tested.
-No production credentials, production configuration, deployment or live Claude
-requests were used. Version discovery updates an advertised version, not SDK
-code, executable software or a guarantee that the complete profile still works.
+Responses uses the shared admission/reservation/settlement owner over HTTP and
+downstream WebSocket; Anthropic upstream is HTTPS/SSE. Pings preserve liveness, EOF
+without a terminal event fails, and pause/max-token stops remain incomplete. Native
+streams retain Messages event names and bytes while a separate observer meters them.
+Usage includes uncached input, cache reads and cache creation; cache creation is
+included in total input and exposed separately in Responses usage details. Ledger
+costs use the existing model-source pricing semantics, not subscription charges;
+there is no separately priced cache-write ledger bucket in this change.
 
-## Profile evidence
+Portable text, images and function/free-form custom tool histories are projected.
+Tool namespaces use deterministic reversible names. Signed thinking stays in
+encrypted account/model/client/conversation-bound envelopes, never fabricated
+reasoning summaries. JSON-schema output and adaptive reasoning use explicit model
+policies; unknown model minors do not inherit capabilities optimistically. Grammar
+constrained tool decoding, files, built-in server tools in Responses, verbosity,
+automatic truncation and paid service tiers have explicit unsupported errors.
+Native Messages may carry native extensions without pretending they are Responses
+features. Switching models with signed state requires portable context.
 
-Behavior was independently implemented from the source references in AGENTS.md
-and the temporary research document, not copied wholesale. CLIProxyAPI's
-non-strict instruction preservation, model-specific placement and newer-patch
-recognition inform the boundary; Sub2API's stale-version and cache regressions
-inform discovery and preservation tests. Full profile parity is not claimed:
-private billing signatures, strict instruction deletion, broad text obfuscation
-and silent paid fallback are not implemented.
+Responses continuation uses the existing encrypted disk replay store (one-hour
+retention). Complete and incomplete Claude output is saved before terminal delivery.
+Compaction uses the selected Claude account for summary generation and the existing
+encrypted compaction envelope for portable summary restoration. Native Messages
+retains only a scope hash/account/expiry in the database, not conversation text;
+its sliding ownership TTL is one hour. Missing signed-history owners fail closed.
+
+## Monitoring and UI
+
+Accounts appear in shared dashboard cards/table, account selection, and Add account.
+Controls include pause/resume, refresh, reconnect, selected models, context/output
+caps and the global advertised-version pin. Privacy blur and read-only permissions
+apply. Missing quota windows show unknown; stale data is labeled, not reset to zero.
+Enabled accounts trigger leader-owned quota refresh every minute, catalog refresh
+every six hours, and stable version discovery at startup when stale/every 24 hours.
+Pinning affects advertised CLI version, not SDK/runtime baselines or profile revision.
+
+## References
+
+Research revisions, histories, competing approaches and caveats are recorded in
+the workspace-local `claude-integration-design.tmp.md` linked from AGENTS.md.
+Portable upstream references are Sub2API, OpenCodex, OmniRoute and CLIProxyAPI in
+AGENTS.md. Their observed compatibility techniques are reference evidence, not
+dependencies or a guarantee that Anthropic accepts this gateway.

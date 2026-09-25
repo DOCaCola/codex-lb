@@ -27,6 +27,9 @@ import { formatSlug } from "@/utils/formatters";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
 import { OpenRouterListItem } from "@/features/openrouter/account-display";
 import { openRouterStatus } from "@/features/openrouter/display-values";
+import type { ClaudeAccount } from "@/features/claude/api";
+import { ClaudeListItem } from "@/features/claude/account-display";
+import { claudeStatus } from "@/features/claude/display-values";
 
 const STATUS_FILTER_OPTIONS = [
   "all",
@@ -42,6 +45,8 @@ export type AccountListProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
   onOpenRouter?: () => void;
+  claudeAccounts?: ClaudeAccount[];
+  onClaude?: () => void;
   selectedAccountId: string | null;
   onSelect: (accountId: string) => void;
   onOpenImport: () => void;
@@ -56,6 +61,8 @@ export function AccountList({
   accounts,
   openRouterAccounts = [],
   onOpenRouter,
+  claudeAccounts = [],
+  onClaude,
   selectedAccountId,
   onSelect,
   onOpenImport,
@@ -110,6 +117,22 @@ export function AccountList({
       )
       .sort((a, b) => a.name.localeCompare(b.name));
     const result = [
+      ...claudeAccounts
+        .filter(
+          (account) =>
+            (statusFilter === "all" ||
+              claudeStatus(account) === statusFilter) &&
+            (!needle ||
+              `${account.name} ${account.id} claude anthropic`
+                .toLowerCase()
+                .includes(needle)),
+        )
+        .map((account) => ({
+          kind: "claude" as const,
+          id: account.id,
+          name: account.name,
+          account,
+        })),
       ...filtered.map((account) => ({
         kind: "codex" as const,
         id: account.accountId,
@@ -131,8 +154,16 @@ export function AccountList({
       );
     }
     return result;
-  }, [filtered, openRouterAccounts, search, statusFilter, activeSortMode]);
-  const totalCount = accounts.length + openRouterAccounts.length;
+  }, [
+    filtered,
+    openRouterAccounts,
+    claudeAccounts,
+    search,
+    statusFilter,
+    activeSortMode,
+  ]);
+  const totalCount =
+    accounts.length + openRouterAccounts.length + claudeAccounts.length;
 
   return (
     <div className="flex max-h-[calc(100dvh-15rem)] min-h-0 min-w-0 flex-1 flex-col space-y-3">
@@ -249,7 +280,14 @@ export function AccountList({
           </div>
         ) : (
           entries.map((entry) =>
-            entry.kind === "openrouter" ? (
+            entry.kind === "claude" ? (
+              <ClaudeListItem
+                key={entry.id}
+                account={entry.account}
+                selected={entry.id === selectedAccountId}
+                onSelect={onSelect}
+              />
+            ) : entry.kind === "openrouter" ? (
               <OpenRouterListItem
                 key={entry.id}
                 account={entry.account}
@@ -282,6 +320,7 @@ export function AccountList({
         onImport={onOpenImport}
         onAddAccount={onOpenOauth}
         onOpenRouter={onOpenRouter}
+        onClaude={onClaude}
       />
     </div>
   );

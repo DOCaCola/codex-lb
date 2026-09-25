@@ -69,6 +69,7 @@ class ModelSourceForwardingError(Exception):
         upstream_status_code: int | None = None,
         retry_after: str | None = None,
         timeout_phase: TimeoutPhase | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(str(payload))
         self.status_code = status_code
@@ -78,6 +79,7 @@ class ModelSourceForwardingError(Exception):
         self.retry_after = retry_after
         # Which bounded phase expired for ``model_source_timeout``/``model_source_idle_timeout``.
         self.timeout_phase = timeout_phase
+        self.upstream_headers = dict(upstream_headers or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +119,7 @@ class SourceResponsesCompletion:
     usage: SourceUsage | None
     timings: SourceTimings | None
     upstream_status_code: int
+    upstream_headers: Mapping[str, str] = field(default_factory=dict, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +173,7 @@ class SourceResponsesStream(_TransportOwnedStream):
     body: AsyncIterator[bytes]
     usage_holder: "SourceUsageHolder"
     upstream_status_code: int
+    upstream_headers: Mapping[str, str] = field(default_factory=dict, kw_only=True)
 
 
 @dataclass(slots=True)
@@ -726,6 +730,7 @@ async def _open_source_stream(
     clock: Clock = REAL_CLOCK,
     header_deadline_seconds: float | None = SOURCE_HEADER_DEADLINE_SECONDS,
     first_frame_deadline_seconds: float | None = SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
+    prepared_headers: Mapping[str, str] | None = None,
 ) -> tuple[AsyncExitStack, aiohttp.ClientResponse, bytes | None]:
     """Open the upstream request eagerly so errors surface before headers.
 
@@ -760,9 +765,12 @@ async def _open_source_stream(
                 response = await stack.enter_async_context(
                     session.post(
                         _source_url(source, path),
-                        headers=_source_headers(source, encryptor=encryptor, stream=True),
+                        headers=prepared_headers
+                        if prepared_headers is not None
+                        else _source_headers(source, encryptor=encryptor, stream=True),
                         json=payload,
                         timeout=_source_client_timeout(source),
+                        **({"allow_redirects": False} if prepared_headers is not None else {}),
                     )
                 )
         except aiohttp.ConnectionTimeoutError as exc:
@@ -875,6 +883,12 @@ def _upstream_status_error(
         payload=_redact_source_error_payload(error_payload, source, encryptor=encryptor),
         upstream_status_code=response.status,
         retry_after=_retry_after_header(response),
+        upstream_headers={
+            key: value
+            for key, value in response.headers.items()
+            if source.kind == "claude"
+            and (key.lower().startswith("anthropic-ratelimit-") or key.lower() == "request-id")
+        },
     )
 
 

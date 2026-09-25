@@ -15,6 +15,10 @@ vi.mock("@/features/openrouter/use-openrouter", () => ({
   useOpenRouterAccounts: () => ({ data: { accounts: openRouterMocks.accounts }, error: null, isLoading: false }),
   useOpenRouter: () => ({ create: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
 }));
+vi.mock("@/features/claude/use-claude", () => ({
+  useClaudeAccounts: () => ({ data: { accounts: [] }, error: null, isLoading: false }),
+  useClaude: () => ({ enroll: idleMutation(), reconnect: idleMutation(), start: idleMutation(), complete: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
+}));
 
 vi.mock("@/features/accounts/hooks/use-accounts", () => ({
   useAccounts: vi.fn(),

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.crypto import TokenEncryptor
 from app.modules.claude.client import ClaudeClient, TokenOutcomeUncertain, TokenRejected
 from app.modules.claude.credentials import ClaudeError, decrypt_credentials, encrypt_credentials
+from app.modules.claude.identity import bind_identity
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import Credentials
 
@@ -34,6 +35,7 @@ class ClaudeAuth:
             raise ClaudeError("Claude refresh is in progress or its outcome is uncertain")
         credentials = decrypt_credentials(row.credentials_encrypted, self.encryptor)
         if credentials.expires_at > now + timedelta(seconds=60):
+            await bind_identity(self.client, self.repository, source_id, credentials)
             return credentials
         if row.retry_at is not None and row.retry_at > now.replace(tzinfo=None):
             raise ClaudeError("Claude refresh is cooling down; retry later")
@@ -67,4 +69,5 @@ class ClaudeAuth:
             fingerprint=grant_fingerprint(updated),
         ):
             raise ClaudeError("Claude credentials changed during refresh; retry with the current account")
+        await bind_identity(self.client, self.repository, source_id, updated)
         return updated

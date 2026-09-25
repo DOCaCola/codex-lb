@@ -898,6 +898,8 @@ function listFilteredAutomationRuns(url: URL) {
 }
 
 export const handlers = [
+  http.get("/api/claude-accounts", () => HttpResponse.json({ accounts: [] })),
+  http.get("/api/openrouter-accounts", () => HttpResponse.json({ accounts: [] })),
   http.get("/health", () => {
     return HttpResponse.json({ status: "ok" });
   }),

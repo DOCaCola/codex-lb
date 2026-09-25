@@ -11,10 +11,14 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import partial
 from json import JSONDecodeError
-from typing import Any, Final, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, TypeVar, cast
 from uuid import uuid4
 
 import anyio
+
+if TYPE_CHECKING:
+    from app.modules.claude.dispatch import PreparedClaudeRequest
+    from app.modules.claude.inference import ClaudeAttempt
 from fastapi import (
     APIRouter,
     Body,
@@ -1780,6 +1784,92 @@ async def v1_models(
     if request.query_params.get("client_version"):
         return await _build_codex_models_response(api_key)
     return await _build_models_response(api_key)
+
+
+@v1_router.post("/messages")
+@v1_router.post("/messages/count_tokens")
+async def claude_messages(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    from app.modules.claude.credentials import ClaudeError
+    from app.modules.claude.dispatch import ClaudeDispatchPreparer
+    from app.modules.claude.repository import ClaudeRepository
+
+    count_tokens = request.url.path.rstrip("/").endswith("/count_tokens")
+    native_body = dict(payload)
+    model = native_body.get("model")
+    if not isinstance(model, str) or not model:
+        return JSONResponse(
+            {"type": "error", "error": {"type": "invalid_request_error", "message": "Claude model is required"}},
+            status_code=400,
+        )
+    model = model if model.startswith("anthropic/") else "anthropic/" + model
+    model = effective_model_for_api_key(api_key, model) or model
+    native_body["model"] = model
+    validate_model_access(api_key, model)
+    estimate = ResponsesRequest(
+        model=model, instructions="", input=json.dumps(native_body), stream=native_body.get("stream") is True
+    )
+    denial = await _required_capability_http_transport_denial(request, api_key, payload=estimate)
+    if denial is not None:
+        return denial
+    try:
+        conversation = request.headers.get("x-claude-code-session-id")
+        if not conversation:
+            metadata = native_body.get("metadata")
+            user_id = metadata.get("user_id") if isinstance(metadata, dict) else None
+            if isinstance(user_id, str):
+                try:
+                    identity = json.loads(user_id)
+                except ValueError:
+                    identity = None
+                if isinstance(identity, dict) and isinstance(identity.get("session_id"), str):
+                    conversation = identity["session_id"]
+        conversation = conversation or str(uuid4())
+        async with get_background_session() as session:
+            prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
+                native_body,
+                api_key,
+                conversation_id=conversation,
+                incoming_headers=request.headers,
+                endpoint="count_tokens" if count_tokens else "messages",
+                translated=False,
+            )
+            from app.db.session import detach_session_objects
+
+            detach_session_objects(session)
+        return await _dispatch_source_responses_response(
+            request,
+            estimate,
+            source=prepared.source,
+            api_key=api_key,
+            rate_limit_headers=await _rate_limit_headers_for_request(context, api_key),
+            pre_normalization_effort=None,
+            context=context,
+            native_request=prepared,
+            count_tokens=count_tokens,
+        )
+    except ClaudeError as exc:
+        return JSONResponse(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error" if exc.status_code == 400 else "api_error",
+                    "code": exc.code,
+                    "message": str(exc),
+                },
+            },
+            status_code=exc.status_code,
+        )
+    except ModelSourceForwardingError as exc:
+        return JSONResponse(
+            exc.payload,
+            status_code=exc.status_code,
+            headers=_source_error_response_headers({}, exc),
+        )
 
 
 @v1_router.get("/usage", response_model=V1UsageResponse)
@@ -4731,8 +4821,12 @@ async def _select_responses_model_source_with_continuity(
         raw_model=raw_model,
         require_streaming=require_streaming,
     )
-    if source_selection is None or payload.previous_response_id is None or source_selection[0].kind == "openrouter":
-        # An explicitly selected OpenRouter model cannot run on the previous
+    if (
+        source_selection is None
+        or payload.previous_response_id is None
+        or source_selection[0].kind in {"openrouter", "claude"}
+    ):
+        # An explicitly selected provider model cannot run on the previous
         # subscription account. Its stateless adapter must expand retained
         # history or request a complete resend, never preserve a native anchor.
         return source_selection, False
@@ -5114,7 +5208,7 @@ async def _source_synthetic_compaction_response(
     context: ProxyContext | None = None,
 ) -> Response:
     try:
-        if source.kind == "openrouter":
+        if source.kind in {"openrouter", "claude"}:
             expanded = await SourceContinuation(request, api_key, source.id).expand(payload.model_dump_for_forwarding())
             payload = payload.model_copy(
                 update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
@@ -5148,7 +5242,7 @@ async def _source_compaction_response(
     streaming: bool,
 ) -> Response:
     try:
-        if source.kind == "openrouter":
+        if source.kind in {"openrouter", "claude"}:
             expanded = await SourceContinuation(request, api_key, source.id).expand(dict(payload.to_payload()))
             payload = ResponsesCompactRequest.model_validate(expanded)
         source_request = build_source_compaction_request(payload)
@@ -5297,6 +5391,8 @@ async def _dispatch_source_responses_response(
     enforce_openai_sdk_contract: bool = True,
     native_codex_heartbeat: bool = False,
     context: ProxyContext | None = None,
+    native_request: PreparedClaudeRequest | None = None,
+    count_tokens: bool = False,
 ) -> Response:
     """Serve a Responses request from an OpenAI-compatible model source.
 
@@ -5317,20 +5413,51 @@ async def _dispatch_source_responses_response(
         source,
         pre_normalization_effort=pre_normalization_effort,
     )
-    continuation = SourceContinuation(request, api_key, source.id) if source.kind == "openrouter" else None
+    from app.modules.claude.credentials import ClaudeError
+    from app.modules.claude.inference import prepare_responses as prepare_claude_responses
+
+    claude_attempt = None
+    continuation = (
+        SourceContinuation(request, api_key, source.id, retain_incomplete=source.kind == "claude")
+        if source.kind in {"openrouter", "claude"}
+        else None
+    )
+    if native_request is not None:
+        continuation = None
     try:
         if continuation is not None:
             expanded = await continuation.expand(payload.model_dump_for_forwarding())
             payload = payload.model_copy(
                 update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
             )
-        source_payload = _shape_source_responses_payload(payload, source, api_key=api_key)
+        source_payload = (
+            _shape_source_responses_payload(payload, source, api_key=api_key)
+            if native_request is None
+            else cast(dict[str, JsonValue], native_request.body)
+        )
+        if native_request is not None:
+            from app.modules.claude.inference import ClaudeAttempt
+
+            claude_attempt = ClaudeAttempt(native_request, None)
+        elif source.kind == "claude":
+            assert continuation is not None
+            claude_attempt = await prepare_claude_responses(request, source_payload, api_key, continuation)
+            source = claude_attempt.prepared.source
         # Validate before acquiring usage or admission; forwarding owns projection.
         from app.modules.openrouter.protocol import project_request
 
         project_request(source, source_payload, responses=True)
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
+    except ClaudeError as exc:
+        return _logged_error_json_response(
+            request,
+            exc.status_code,
+            openai_error(
+                exc.code, str(exc), error_type="invalid_request_error" if exc.status_code == 400 else "server_error"
+            ),
+            headers=rate_limit_headers,
+        )
     claims = try_claim_source_admission(source)
     if claims is None:
         return _logged_error_json_response(
@@ -5371,19 +5498,35 @@ async def _dispatch_source_responses_response(
         raise
     try:
         if payload.stream:
-            await open_with_disconnect_watch(request, owner, _open_owned_source_stream(owner, source_payload))
+            await open_with_disconnect_watch(
+                request, owner, _open_owned_source_stream(owner, source_payload, claude_attempt=claude_attempt)
+            )
             stream = owner.stream
             if stream is None:
                 raise RuntimeError("model source open completed without assigning the stream")
-            public_body = _wrap_source_responses_public_stream(
-                stream.body,
-                enforce_openai_sdk_contract=enforce_openai_sdk_contract,
-                native_codex_heartbeat=native_codex_heartbeat,
-                preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
-            )
+            if native_request is not None:
+                from app.modules.claude.native import native_frames
+
+                public_body = native_frames(stream.body)
+            else:
+                public_body = _wrap_source_responses_public_stream(
+                    stream.body,
+                    enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+                    native_codex_heartbeat=native_codex_heartbeat,
+                    preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
+                )
             if continuation is not None:
                 public_body = continuation.stream(public_body)
-            body = settlement_stream(owner, public_body)
+            if native_request is not None:
+                from app.modules.claude.native import delivers_content, native_error_stream, terminal_kind
+
+                body = native_error_stream(
+                    settlement_stream(
+                        owner, public_body, terminal_classifier=terminal_kind, content_classifier=delivers_content
+                    )
+                )
+            else:
+                body = settlement_stream(owner, public_body)
             return SourceStreamingResponse(
                 body,
                 owner=owner,
@@ -5391,12 +5534,30 @@ async def _dispatch_source_responses_response(
                     "Cache-Control": "no-cache, no-transform",
                     "X-Accel-Buffering": "no",
                     **rate_limit_headers,
+                    **stream.upstream_headers,
                 },
             )
-        result = await open_with_disconnect_watch(request, owner, forward_source_responses(source, source_payload))
+        if native_request is not None:
+            from app.modules.claude.transport import forward_native
+
+            result = await open_with_disconnect_watch(
+                request, owner, forward_native(native_request, count_tokens=count_tokens)
+            )
+        elif claude_attempt is not None:
+            from app.modules.claude.inference import collect_response
+
+            await open_with_disconnect_watch(
+                request, owner, _open_owned_source_stream(owner, source_payload, claude_attempt=claude_attempt)
+            )
+            assert owner.stream is not None
+            result = await open_with_disconnect_watch(request, owner, collect_response(owner.stream))
+        else:
+            result = await open_with_disconnect_watch(request, owner, forward_source_responses(source, source_payload))
         if continuation is not None:
             await continuation.remember(result.payload)
-        return await _finish_non_stream_source_dispatch(request, owner, result, rate_limit_headers=rate_limit_headers)
+        return await _finish_non_stream_source_dispatch(
+            request, owner, result, rate_limit_headers={**rate_limit_headers, **result.upstream_headers}
+        )
     except ModelSourceForwardingError as exc:
         await owner.finish_with_forwarding_error(exc)
         if owner.settlement_failed:
@@ -5412,9 +5573,18 @@ async def _dispatch_source_responses_response(
         raise
 
 
-async def _open_owned_source_stream(owner: SourceDispatch, source_payload: dict[str, JsonValue]) -> None:
+async def _open_owned_source_stream(
+    owner: SourceDispatch, source_payload: dict[str, JsonValue], *, claude_attempt: ClaudeAttempt | None = None
+) -> None:
     """Open the source stream for ``owner``; assigning ``owner.stream`` is the coroutine's last statement."""
 
+    if claude_attempt is not None:
+        from app.modules.claude.transport import open_responses
+
+        owner.stream = await open_responses(
+            claude_attempt.prepared, claude_attempt.response, scheduler=owner.scheduler, clock=owner.clock
+        )
+        return
     stream = await stream_source_responses(
         owner.source,
         source_payload,
@@ -5465,14 +5635,15 @@ def _shape_source_responses_payload(
             }
         else:
             source_payload["reasoning"] = {"effort": source_reasoning_effort}
-    if source.kind != "openrouter":
+    if source.kind not in {"openrouter", "claude"}:
         strip_replayed_tool_call_namespaces_from_payload(source_payload)
     source_payload["stream"] = bool(payload.stream)
     _apply_source_response_request_overrides(source_payload, source_model_request_overrides(source, payload.model))
-    _drop_unsupported_source_response_tools(
-        source_payload,
-        supported_tool_types=source_model_supported_tool_types(source, payload.model),
-    )
+    if source.kind != "claude":
+        _drop_unsupported_source_response_tools(
+            source_payload,
+            supported_tool_types=source_model_supported_tool_types(source, payload.model),
+        )
     source_payload = strip_unstored_lookup_item_ids(source_payload)
     return source_payload
 
@@ -5532,6 +5703,7 @@ def _source_error_response_headers(
     """Merge the source's own ``Retry-After`` into the pre-open error headers (honest passthrough, I8)."""
 
     headers = dict(rate_limit_headers)
+    headers.update(exc.upstream_headers)
     if exc.retry_after:
         headers["Retry-After"] = exc.retry_after
     return headers

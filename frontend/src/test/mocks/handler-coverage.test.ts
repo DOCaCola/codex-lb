@@ -34,6 +34,8 @@ const EXPECTED_ENDPOINTS = [
 	"GET /api/conversations",
 	"GET /api/conversations/:conversationId",
 	// accounts
+	"GET /api/claude-accounts",
+	"GET /api/openrouter-accounts",
 	"GET /api/accounts",
 	"POST /api/accounts/import",
 	"PATCH /api/accounts/:accountId",

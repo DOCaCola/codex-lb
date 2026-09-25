@@ -5,7 +5,10 @@ import pytest
 from app.modules.claude.scheduler import ClaudeRefreshScheduler
 from app.modules.claude.service import ClaudeService
 from app.modules.claude.version import ClaudeVersionService
+from tests.integration import test_claude_accounts as account_fixtures
 from tests.integration.test_claude_accounts import import_body
+
+profile_stub = account_fixtures.profile_stub
 
 pytestmark = pytest.mark.integration
 

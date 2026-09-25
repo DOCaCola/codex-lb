@@ -1916,6 +1916,7 @@ class ClaudeAccount(Base):
     source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
     credentials_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     grant_fingerprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    identity_fingerprint: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     credential_status: Mapped[str] = mapped_column(String, nullable=False, default="ready", server_default="ready")
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
@@ -1928,12 +1929,24 @@ class ClaudeAccount(Base):
     __mapper_args__ = {"version_id_col": version}
 
 
+class ClaudeSessionOwner(Base):
+    __tablename__ = "claude_session_owners"
+
+    scope_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+
+
 class ClaudeOAuthFlow(Base):
     __tablename__ = "claude_oauth_flows"
 
     state_hash: Mapped[str] = mapped_column(String, primary_key=True)
     verifier_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("claude_accounts.source_id", ondelete="CASCADE"), nullable=True
+    )
+    generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

@@ -857,7 +857,13 @@ async def _aclose_best_effort(stream: object, *, scheduler: Scheduler) -> None:
         logger.debug("source stream layer close failed", exc_info=True)
 
 
-async def settlement_stream(owner: SourceDispatch, wrapped: AsyncIterator[str]) -> AsyncIterator[str]:
+async def settlement_stream(
+    owner: SourceDispatch,
+    wrapped: AsyncIterator[str],
+    *,
+    terminal_classifier: Callable[[str | None], str | None] = relayed_terminal_kind,
+    content_classifier: Callable[[str | None], bool] = relayed_frame_delivers_content,
+) -> AsyncIterator[str]:
     """Outermost body layer: settles/releases on the terminal outcome and calls ``owner.finish()`` in ``finally``.
 
     A disconnect surfaces as ``CancelledError`` (task cancellation) or
@@ -901,10 +907,10 @@ async def settlement_stream(owner: SourceDispatch, wrapped: AsyncIterator[str]) 
         async for chunk in wrapped:
             if _is_event_frame(chunk):
                 if relayed_kind not in _FAILURE_TERMINAL_KINDS:
-                    frame_kind = relayed_terminal_kind(chunk)
+                    frame_kind = terminal_classifier(chunk)
                     if frame_kind is not None:
                         relayed_kind = frame_kind
-                if not owner.content_delivered and relayed_frame_delivers_content(chunk):
+                if not owner.content_delivered and content_classifier(chunk):
                     owner.content_delivered = True
             yield chunk
         completed_normally = True

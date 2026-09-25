@@ -84,6 +84,7 @@ async function interceptApi(
     }
     if (p === "/api/accounts") return fulfill(route, { accounts: accountList });
     if (p === "/api/openrouter-accounts") return fulfill(route, { accounts: [] });
+    if (p === "/api/claude-accounts") return fulfill(route, { accounts: [] });
     const trendsMatch = p.match(/^\/api\/accounts\/([^/]+)\/trends$/);
     if (trendsMatch) {
       const trends = accountTrends[trendsMatch[1]];
@@ -402,6 +403,36 @@ for (const width of [1440, 390]) {
 test("settings — dark", async ({ page }) => {
   await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings", fullPage: true });
 });
+
+for (const width of [1440, 390]) {
+  test(`claude unified accounts — ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await applyTheme(page, "light");
+    await interceptApi(page);
+    const account = {
+      id: "src_claude_demo", name: "Research Claude", isEnabled: true, credentialStatus: "ready", expiresAt: "2026-09-26T12:00:00Z",
+      state: { selections: [{ model: "claude-opus-5", contextWindow: 200000, maxOutputTokens: 8192 }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5" }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
+      quota: { observedAt: null, models: [], windows: [
+        { name: "five_hour", utilization: 32, resetsAt: "2026-09-25T17:00:00Z", freshness: "fresh", exhausted: false },
+        { name: "seven_day", utilization: null, resetsAt: null, freshness: "unknown", exhausted: false },
+      ] },
+    };
+    await page.route("**/api/claude-accounts", route => fulfill(route, { accounts: [account] }));
+    await page.route("**/api/claude-accounts/version", route => fulfill(route, { effectiveVersion: "2.1.282", discoveredVersion: "2.1.282", pinnedVersion: null, lastCheckedAt: null, lastChangedAt: null, error: null }));
+    await page.goto(`${BASE_URL}/accounts?selected=src_claude_demo`);
+    await expect(page.getByRole("heading", { name: "Research Claude", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+    await page.screenshot({ animations: "disabled", fullPage: true, path: test.info().outputPath(`claude-accounts-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`claude-reconnect-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await page.goto(`${BASE_URL}/`);
+    await expect(page.getByTestId("claude-account-card")).toBeVisible();
+    await page.getByTestId("claude-account-card").screenshot({ animations: "disabled", path: test.info().outputPath(`claude-dashboard-${width}.png`) });
+  });
+}
 
 for (const width of [1440, 390]) {
   test(`openrouter accounts — ${width}`, async ({ page }) => {

@@ -1,4 +1,14 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Clock, ExternalLink, List, Play, RotateCcw, Zap } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Clock,
+  ExternalLink,
+  List,
+  Play,
+  RotateCcw,
+  Zap,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -19,9 +29,21 @@ import { useSmoothPercent } from "@/hooks/use-smooth-percent";
 import { cn } from "@/lib/utils";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
+import type { ClaudeAccount } from "@/features/claude/api";
+import { ClaudeName, ClaudeQuota } from "@/features/claude/account-display";
+import { claudeStatus } from "@/features/claude/display-values";
 import { OpenRouterName } from "@/features/openrouter/account-display";
-import { keyAllowance, money, openRouterBalance, openRouterStatus } from "@/features/openrouter/display-values";
-import { normalizeStatus, quotaBarColor, quotaBarTrack } from "@/utils/account-status";
+import {
+  keyAllowance,
+  money,
+  openRouterBalance,
+  openRouterStatus,
+} from "@/features/openrouter/display-values";
+import {
+  normalizeStatus,
+  quotaBarColor,
+  quotaBarTrack,
+} from "@/utils/account-status";
 import {
   formatDateTimeInline,
   formatPercentNullable,
@@ -32,18 +54,27 @@ import {
 
 const ACCOUNT_LIST_VISIBLE_ROWS = 8;
 const ACCOUNT_LIST_ROW_HEIGHT_REM = 4.5;
-const ACCOUNT_LIST_COLUMNS = "minmax(13rem,1.3fr) 7.75rem 5rem minmax(14rem,1.2fr) 7.5rem 7.5rem minmax(8rem,0.8fr) 8rem";
+const ACCOUNT_LIST_COLUMNS =
+  "minmax(13rem,1.3fr) 7.75rem 5rem minmax(14rem,1.2fr) 7.5rem 7.5rem minmax(8rem,0.8fr) 8rem";
 
 type AccountListProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
+  claudeAccounts?: ClaudeAccount[];
   readOnly?: boolean;
   sort?: AccountListSort;
   onSortChange?: (sort: AccountListSort) => void;
   onAction?: (account: AccountSummary, action: AccountAction) => void;
 };
 
-export type AccountListSortKey = "account" | "status" | "plan" | "quota" | "subscriptionCredits" | "purchasedCredits" | "warmup";
+export type AccountListSortKey =
+  | "account"
+  | "status"
+  | "plan"
+  | "quota"
+  | "subscriptionCredits"
+  | "purchasedCredits"
+  | "warmup";
 export type SortDirection = "asc" | "desc";
 export type AccountListSort = {
   key: AccountListSortKey;
@@ -74,7 +105,11 @@ function formatWarmupWindow(window: string): string {
   return window === "primary" || window === "primary_idle" ? "5h" : "weekly";
 }
 
-function quotaLabel(label: string, percent: number | null, resetAt: string | null | undefined) {
+function quotaLabel(
+  label: string,
+  percent: number | null,
+  resetAt: string | null | undefined,
+) {
   return {
     label,
     percent,
@@ -84,7 +119,9 @@ function quotaLabel(label: string, percent: number | null, resetAt: string | nul
 }
 
 function accountQuotaLabels(account: AccountSummary) {
-  const weeklyOnly = account.windowMinutesPrimary == null && account.windowMinutesSecondary != null;
+  const weeklyOnly =
+    account.windowMinutesPrimary == null &&
+    account.windowMinutesSecondary != null;
   const monthlyOnly =
     account.windowMinutesMonthly != null &&
     account.windowMinutesPrimary == null &&
@@ -92,23 +129,42 @@ function accountQuotaLabels(account: AccountSummary) {
 
   if (monthlyOnly) {
     return [
-      quotaLabel("Monthly", account.usage?.monthlyRemainingPercent ?? null, account.resetAtMonthly),
+      quotaLabel(
+        "Monthly",
+        account.usage?.monthlyRemainingPercent ?? null,
+        account.resetAtMonthly,
+      ),
     ];
   }
 
   if (weeklyOnly) {
     return [
-      quotaLabel("Weekly", account.usage?.secondaryRemainingPercent ?? null, account.resetAtSecondary),
+      quotaLabel(
+        "Weekly",
+        account.usage?.secondaryRemainingPercent ?? null,
+        account.resetAtSecondary,
+      ),
     ];
   }
 
   return [
-    quotaLabel("5h", account.usage?.primaryRemainingPercent ?? null, account.resetAtPrimary),
-    quotaLabel("Weekly", account.usage?.secondaryRemainingPercent ?? null, account.resetAtSecondary),
+    quotaLabel(
+      "5h",
+      account.usage?.primaryRemainingPercent ?? null,
+      account.resetAtPrimary,
+    ),
+    quotaLabel(
+      "Weekly",
+      account.usage?.secondaryRemainingPercent ?? null,
+      account.resetAtSecondary,
+    ),
   ];
 }
 
-function localizedQuotaLabel(label: string, t: ReturnType<typeof useTranslation>["t"]): string {
+function localizedQuotaLabel(
+  label: string,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
   switch (label) {
     case "Monthly":
       return t("dashboard.quotaLabels.monthly");
@@ -137,11 +193,19 @@ function accountQuotaSortValue(account: AccountSummary): number | null {
   return Math.min(...values);
 }
 
-function accountPurchasedCreditsSortValue(account: AccountSummary): number | null {
-  return account.creditsUnlimited ? Number.POSITIVE_INFINITY : (account.creditsBalance ?? null);
+function accountPurchasedCreditsSortValue(
+  account: AccountSummary,
+): number | null {
+  return account.creditsUnlimited
+    ? Number.POSITIVE_INFINITY
+    : (account.creditsBalance ?? null);
 }
 
-function compareNullableNumber(a: number | null, b: number | null, direction: SortDirection): number {
+function compareNullableNumber(
+  a: number | null,
+  b: number | null,
+  direction: SortDirection,
+): number {
   if (a === null || b === null) {
     if (a === b) {
       return 0;
@@ -157,11 +221,16 @@ function compareNullableNumber(a: number | null, b: number | null, direction: So
 
 function accountWarmupSortValue(account: AccountSummary): string {
   const enabledPrefix = account.limitWarmupEnabled ? "0" : "1";
-  const attemptedAt = account.limitWarmup?.completedAt ?? account.limitWarmup?.attemptedAt ?? "";
+  const attemptedAt =
+    account.limitWarmup?.completedAt ?? account.limitWarmup?.attemptedAt ?? "";
   return `${enabledPrefix}|${attemptedAt}|${account.accountId}`;
 }
 
-function compareAccountsBySort(a: AccountSummary, b: AccountSummary, sort: AccountListSort): number {
+function compareAccountsBySort(
+  a: AccountSummary,
+  b: AccountSummary,
+  sort: AccountListSort,
+): number {
   if (!sort) {
     return 0;
   }
@@ -172,22 +241,40 @@ function compareAccountsBySort(a: AccountSummary, b: AccountSummary, sort: Accou
       result = compareText(accountTitle(a), accountTitle(b));
       break;
     case "status":
-      result = compareText(normalizeStatus(a.status), normalizeStatus(b.status));
+      result = compareText(
+        normalizeStatus(a.status),
+        normalizeStatus(b.status),
+      );
       break;
     case "plan":
       result = compareText(formatSlug(a.planType), formatSlug(b.planType));
       break;
     case "quota":
-      result = compareNullableNumber(accountQuotaSortValue(a), accountQuotaSortValue(b), sort.direction);
+      result = compareNullableNumber(
+        accountQuotaSortValue(a),
+        accountQuotaSortValue(b),
+        sort.direction,
+      );
       break;
     case "subscriptionCredits":
-      result = compareNullableNumber(accountSubscriptionCredits(a), accountSubscriptionCredits(b), sort.direction);
+      result = compareNullableNumber(
+        accountSubscriptionCredits(a),
+        accountSubscriptionCredits(b),
+        sort.direction,
+      );
       break;
     case "purchasedCredits":
-      result = compareNullableNumber(accountPurchasedCreditsSortValue(a), accountPurchasedCreditsSortValue(b), sort.direction);
+      result = compareNullableNumber(
+        accountPurchasedCreditsSortValue(a),
+        accountPurchasedCreditsSortValue(b),
+        sort.direction,
+      );
       break;
     case "warmup":
-      result = compareText(accountWarmupSortValue(a), accountWarmupSortValue(b));
+      result = compareText(
+        accountWarmupSortValue(a),
+        accountWarmupSortValue(b),
+      );
       break;
   }
 
@@ -195,7 +282,11 @@ function compareAccountsBySort(a: AccountSummary, b: AccountSummary, sort: Accou
     result = compareText(accountTitle(a), accountTitle(b));
     return sort.direction === "asc" ? result : -result;
   }
-  if (sort.key === "quota" || sort.key === "subscriptionCredits" || sort.key === "purchasedCredits") {
+  if (
+    sort.key === "quota" ||
+    sort.key === "subscriptionCredits" ||
+    sort.key === "purchasedCredits"
+  ) {
     return result;
   }
   return sort.direction === "asc" ? result : -result;
@@ -214,11 +305,18 @@ function SortHeader({
 }) {
   const { t } = useTranslation();
   const active = activeSort?.key === sortKey;
-  const Icon = active ? (activeSort.direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+  const Icon = active
+    ? activeSort.direction === "asc"
+      ? ArrowUp
+      : ArrowDown
+    : ArrowUpDown;
   const sortLabel = active
     ? t("dashboard.accountList.sortedAria", {
         label,
-        direction: activeSort.direction === "asc" ? t("dashboard.accountList.ascending") : t("dashboard.accountList.descending"),
+        direction:
+          activeSort.direction === "asc"
+            ? t("dashboard.accountList.ascending")
+            : t("dashboard.accountList.descending"),
       })
     : label;
   return (
@@ -239,13 +337,23 @@ function SortHeader({
 
 function AccountQuotaCells({ account }: { account: AccountSummary }) {
   const { t } = useTranslation();
-  const primaryState = useSmoothPercent(account.usage?.primaryRemainingPercent ?? null);
-  const secondaryState = useSmoothPercent(account.usage?.secondaryRemainingPercent ?? null);
-  const monthlyState = useSmoothPercent(account.usage?.monthlyRemainingPercent ?? null);
-  const hasPrimaryWindow = account.windowMinutesPrimary != null || primaryState.everKnown;
-  const hasSecondaryWindow = account.windowMinutesSecondary != null || secondaryState.everKnown;
-  const hasMonthlyWindow = account.windowMinutesMonthly != null || monthlyState.everKnown;
-  const monthlyOnly = hasMonthlyWindow && !hasPrimaryWindow && !hasSecondaryWindow;
+  const primaryState = useSmoothPercent(
+    account.usage?.primaryRemainingPercent ?? null,
+  );
+  const secondaryState = useSmoothPercent(
+    account.usage?.secondaryRemainingPercent ?? null,
+  );
+  const monthlyState = useSmoothPercent(
+    account.usage?.monthlyRemainingPercent ?? null,
+  );
+  const hasPrimaryWindow =
+    account.windowMinutesPrimary != null || primaryState.everKnown;
+  const hasSecondaryWindow =
+    account.windowMinutesSecondary != null || secondaryState.everKnown;
+  const hasMonthlyWindow =
+    account.windowMinutesMonthly != null || monthlyState.everKnown;
+  const monthlyOnly =
+    hasMonthlyWindow && !hasPrimaryWindow && !hasSecondaryWindow;
   const weeklyOnly = !hasPrimaryWindow && hasSecondaryWindow;
   const quotas = monthlyOnly
     ? [quotaLabel("Monthly", monthlyState.percent, account.resetAtMonthly)]
@@ -253,14 +361,25 @@ function AccountQuotaCells({ account }: { account: AccountSummary }) {
       ? [quotaLabel("Weekly", secondaryState.percent, account.resetAtSecondary)]
       : [
           quotaLabel("5h", primaryState.percent, account.resetAtPrimary),
-          quotaLabel("Weekly", secondaryState.percent, account.resetAtSecondary),
+          quotaLabel(
+            "Weekly",
+            secondaryState.percent,
+            account.resetAtSecondary,
+          ),
         ];
   return (
     <div className="grid gap-1.5 text-xs">
       {quotas.map((quota) => (
-        <div key={quota.label} className="grid grid-cols-[2.75rem_minmax(3rem,auto)_minmax(2.75rem,0.45fr)_minmax(0,1fr)] items-center gap-2">
-          <span className="text-muted-foreground">{localizedQuotaLabel(quota.label, t)}</span>
-          <span className="font-medium tabular-nums text-foreground">{quota.percentLabel}</span>
+        <div
+          key={quota.label}
+          className="grid grid-cols-[2.75rem_minmax(3rem,auto)_minmax(2.75rem,0.45fr)_minmax(0,1fr)] items-center gap-2"
+        >
+          <span className="text-muted-foreground">
+            {localizedQuotaLabel(quota.label, t)}
+          </span>
+          <span className="font-medium tabular-nums text-foreground">
+            {quota.percentLabel}
+          </span>
           <QuotaMeter percent={quota.percent} />
           <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
             <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -276,12 +395,18 @@ function QuotaMeter({ percent }: { percent: number | null }) {
   const clamped = percent === null ? 0 : Math.max(0, Math.min(100, percent));
   return (
     <div
-      className={cn("h-1.5 overflow-hidden rounded-full", quotaBarTrack(clamped))}
+      className={cn(
+        "h-1.5 overflow-hidden rounded-full",
+        quotaBarTrack(clamped),
+      )}
       aria-hidden="true"
       data-testid="account-list-quota-meter"
     >
       <div
-        className={cn("h-full rounded-full transition-colors duration-500 ease-out", quotaBarColor(clamped))}
+        className={cn(
+          "h-full rounded-full transition-colors duration-500 ease-out",
+          quotaBarColor(clamped),
+        )}
         style={{ width: `${clamped}%` }}
       />
     </div>
@@ -291,58 +416,111 @@ function QuotaMeter({ percent }: { percent: number | null }) {
 export function AccountList({
   accounts,
   openRouterAccounts = [],
+  claudeAccounts = [],
   readOnly = false,
   sort: controlledSort,
   onSortChange,
   onAction,
 }: AccountListProps) {
   const { t } = useTranslation();
-  const dateDisplayFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
+  const dateDisplayFormat = useDateDisplayFormatStore(
+    (state) => state.dateDisplayFormat,
+  );
   const blurred = usePrivacyStore((s) => s.blurred);
-  const [uncontrolledSort, setUncontrolledSort] = useState<AccountListSort>(null);
+  const [uncontrolledSort, setUncontrolledSort] =
+    useState<AccountListSort>(null);
   const sort = controlledSort === undefined ? uncontrolledSort : controlledSort;
   const sortedAccounts = useMemo(() => {
     const entries = [
-      ...accounts.map(account => ({ kind: "codex" as const, id: account.accountId, account })),
-      ...openRouterAccounts.map(account => ({ kind: "openrouter" as const, id: account.id, account })),
+      ...accounts.map((account) => ({
+        kind: "codex" as const,
+        id: account.accountId,
+        account,
+      })),
+      ...claudeAccounts.map((account) => ({
+        kind: "claude" as const,
+        id: account.id,
+        account,
+      })),
+      ...openRouterAccounts.map((account) => ({
+        kind: "openrouter" as const,
+        id: account.id,
+        account,
+      })),
     ];
     if (!sort) {
       return entries;
     }
     return entries.sort((a, b) => {
-      if (a.kind === "codex" && b.kind === "codex") return compareAccountsBySort(a.account, b.account, sort);
-      if (!["account", "status", "plan"].includes(sort.key) && a.kind !== b.kind) return a.kind === "codex" ? -1 : 1;
+      if (a.kind === "codex" && b.kind === "codex")
+        return compareAccountsBySort(a.account, b.account, sort);
+      if (
+        !["account", "status", "plan"].includes(sort.key) &&
+        a.kind !== b.kind
+      )
+        return (
+          ["codex", "claude", "openrouter"].indexOf(a.kind) -
+          ["codex", "claude", "openrouter"].indexOf(b.kind)
+        );
       if (a.kind === "openrouter" && b.kind === "openrouter") {
         const value = (account: OpenRouterAccount): number | null => {
-          if (sort.key === "quota") return account.state.key?.limit_remaining ?? null;
-          if (sort.key === "purchasedCredits") return openRouterBalance(account);
-          if (sort.key === "warmup") return account.state.key?.usage_daily ?? null;
+          if (sort.key === "quota")
+            return account.state.key?.limit_remaining ?? null;
+          if (sort.key === "purchasedCredits")
+            return openRouterBalance(account);
+          if (sort.key === "warmup")
+            return account.state.key?.usage_daily ?? null;
           return null;
         };
-        const numeric = compareNullableNumber(value(a.account), value(b.account), sort.direction);
+        const numeric = compareNullableNumber(
+          value(a.account),
+          value(b.account),
+          sort.direction,
+        );
         if (numeric !== 0) return numeric;
       }
-      const name = (entry: typeof a) => entry.kind === "codex" ? accountTitle(entry.account) : entry.account.name;
+      const name = (entry: typeof a) =>
+        entry.kind === "codex"
+          ? accountTitle(entry.account)
+          : entry.account.name;
       const label = (entry: typeof a) => {
-        if (sort.key === "status") return entry.kind === "codex" ? normalizeStatus(entry.account.status) : openRouterStatus(entry.account);
-        if (sort.key === "plan") return entry.kind === "codex" ? formatSlug(entry.account.planType) : "OpenRouter";
+        if (sort.key === "status")
+          return entry.kind === "codex"
+            ? normalizeStatus(entry.account.status)
+            : entry.kind === "claude"
+              ? claudeStatus(entry.account)
+              : openRouterStatus(entry.account);
+        if (sort.key === "plan")
+          return entry.kind === "codex"
+            ? formatSlug(entry.account.planType)
+            : entry.kind === "claude"
+              ? "Claude"
+              : "OpenRouter";
         return name(entry);
       };
-      return (compareText(label(a), label(b)) || compareText(name(a), name(b))) * (sort.direction === "asc" ? 1 : -1);
+      return (
+        (compareText(label(a), label(b)) || compareText(name(a), name(b))) *
+        (sort.direction === "asc" ? 1 : -1)
+      );
     });
-  }, [accounts, openRouterAccounts, sort]);
+  }, [accounts, openRouterAccounts, claudeAccounts, sort]);
 
   const handleSort = (key: AccountListSortKey) => {
-    const nextSort: AccountListSort = sort?.key === key
-      ? { key, direction: sort.direction === "asc" ? "desc" : "asc" }
-      : { key, direction: "asc" };
+    const nextSort: AccountListSort =
+      sort?.key === key
+        ? { key, direction: sort.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: "asc" };
     if (controlledSort === undefined) {
       setUncontrolledSort(nextSort);
     }
     onSortChange?.(nextSort);
   };
 
-  if (accounts.length === 0 && openRouterAccounts.length === 0) {
+  if (
+    accounts.length === 0 &&
+    openRouterAccounts.length === 0 &&
+    claudeAccounts.length === 0
+  ) {
     return (
       <EmptyState
         icon={List}
@@ -364,28 +542,41 @@ export function AccountList({
     >
       <div
         className="min-w-[76rem] divide-y overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ maxHeight: `${ACCOUNT_LIST_VISIBLE_ROWS * ACCOUNT_LIST_ROW_HEIGHT_REM}rem` }}
+        style={{
+          maxHeight: `${ACCOUNT_LIST_VISIBLE_ROWS * ACCOUNT_LIST_ROW_HEIGHT_REM}rem`,
+        }}
       >
         <div
           className="sticky top-0 z-10 grid gap-3 border-b bg-card/95 px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-card/85"
           style={{ gridTemplateColumns: ACCOUNT_LIST_COLUMNS }}
         >
-	          {SORTABLE_HEADERS.map((header) => (
-	            <SortHeader
-	              key={header.key}
-	              label={openRouterAccounts.length && header.key === "quota" ? "Quota / allowance"
-                    : openRouterAccounts.length && header.key === "purchasedCredits" ? "Credits / USD"
-                    : openRouterAccounts.length && header.key === "warmup" ? "Warm-up / usage"
-                    : t(SORTABLE_HEADER_KEY[header.key], { defaultValue: header.label })}
-	              sortKey={header.key}
-	              activeSort={sort}
-	              onSort={handleSort}
-	            />
-	          ))}
-	          <span className="text-right">{t("apiKeys.table.actions")}</span>
+          {SORTABLE_HEADERS.map((header) => (
+            <SortHeader
+              key={header.key}
+              label={
+                openRouterAccounts.length && header.key === "quota"
+                  ? "Quota / allowance"
+                  : openRouterAccounts.length &&
+                      header.key === "purchasedCredits"
+                    ? "Credits / USD"
+                    : openRouterAccounts.length && header.key === "warmup"
+                      ? "Warm-up / usage"
+                      : t(SORTABLE_HEADER_KEY[header.key], {
+                          defaultValue: header.label,
+                        })
+              }
+              sortKey={header.key}
+              activeSort={sort}
+              onSort={handleSort}
+            />
+          ))}
+          <span className="text-right">{t("apiKeys.table.actions")}</span>
         </div>
         {sortedAccounts.map((entry, index) => {
-          if (entry.kind === "openrouter") return <OpenRouterRow key={entry.id} account={entry.account} />;
+          if (entry.kind === "openrouter")
+            return <OpenRouterRow key={entry.id} account={entry.account} />;
+          if (entry.kind === "claude")
+            return <ClaudeRow key={entry.id} account={entry.account} />;
           const account = entry.account;
           const status = normalizeStatus(account.status);
           const title = accountTitle(account);
@@ -395,60 +586,91 @@ export function AccountList({
               : null;
           const compactId = formatCompactAccountId(account.accountId);
           const showAccountId = account.isEmailDuplicate === true;
-	          const warmupDetail = account.limitWarmup
-	            ? `${formatSlug(account.limitWarmup.status)} | ${formatWarmupWindow(account.limitWarmup.window)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt, dateDisplayFormat)}`
-	            : t("accounts.listItem.noAttempts");
+          const warmupDetail = account.limitWarmup
+            ? `${formatSlug(account.limitWarmup.status)} | ${formatWarmupWindow(account.limitWarmup.window)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt, dateDisplayFormat)}`
+            : t("accounts.listItem.noAttempts");
           const availableResetCredits = account.availableResetCredits ?? 0;
           const hasResetCredits = availableResetCredits > 0;
-          const resetBadgeLabel = availableResetCredits > 99 ? "99+" : String(availableResetCredits);
+          const resetBadgeLabel =
+            availableResetCredits > 99 ? "99+" : String(availableResetCredits);
           const resetCreditDisabled =
-            readOnly || status === "paused" || status === "reauth" || status === "deactivated";
+            readOnly ||
+            status === "paused" ||
+            status === "reauth" ||
+            status === "deactivated";
           const resetCountdown = account.resetCreditNearestExpiresAt
             ? formatSingleUnitRemaining(account.resetCreditNearestExpiresAt)
             : null;
-	          const resetButtonTitle = resetCreditDisabled
-	            ? status === "paused"
-	              ? t("dashboard.accountList.resumeToRedeem")
-	              : status === "reauth" || status === "deactivated"
-	                ? t("dashboard.accountList.reauthToRedeem")
-	                : t("dashboard.accountList.resetCreditsUnavailable")
-	            : resetCountdown
-	              ? t("dashboard.accountList.resetWithCountdown", { count: availableResetCredits, time: resetCountdown.label })
-	              : t("accounts.actions.resetWithCount", { count: availableResetCredits });
+          const resetButtonTitle = resetCreditDisabled
+            ? status === "paused"
+              ? t("dashboard.accountList.resumeToRedeem")
+              : status === "reauth" || status === "deactivated"
+                ? t("dashboard.accountList.reauthToRedeem")
+                : t("dashboard.accountList.resetCreditsUnavailable")
+            : resetCountdown
+              ? t("dashboard.accountList.resetWithCountdown", {
+                  count: availableResetCredits,
+                  time: resetCountdown.label,
+                })
+              : t("accounts.actions.resetWithCount", {
+                  count: availableResetCredits,
+                });
           return (
             <div
               key={account.accountId}
               data-testid="account-list-row"
               className="grid min-h-[4.5rem] items-center gap-3 px-3 py-2 text-sm"
-              style={{ animationDelay: `${index * 50}ms`, gridTemplateColumns: ACCOUNT_LIST_COLUMNS }}
+              style={{
+                animationDelay: `${index * 50}ms`,
+                gridTemplateColumns: ACCOUNT_LIST_COLUMNS,
+              }}
             >
               <div className="min-w-0">
                 <p className="truncate font-medium leading-tight">
-                  <span className={blurred ? "privacy-blur" : undefined}>{title}</span>
+                  <span className={blurred ? "privacy-blur" : undefined}>
+                    {title}
+                  </span>
                 </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-	                  {emailSubtitle ? (
-	                    <span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span>
-	                  ) : (
-	                    t("dashboard.accountList.idShort", { id: compactId })
-	                  )}
-	                  {showAccountId && emailSubtitle ? ` | ${t("dashboard.accountList.idShort", { id: compactId })}` : ""}
-	                </p>
+                  {emailSubtitle ? (
+                    <span className={blurred ? "privacy-blur" : undefined}>
+                      {emailSubtitle}
+                    </span>
+                  ) : (
+                    t("dashboard.accountList.idShort", { id: compactId })
+                  )}
+                  {showAccountId && emailSubtitle
+                    ? ` | ${t("dashboard.accountList.idShort", { id: compactId })}`
+                    : ""}
+                </p>
               </div>
               <StatusBadge status={status} />
-              <span className="text-xs text-muted-foreground">{formatSlug(account.planType)}</span>
+              <span className="text-xs text-muted-foreground">
+                {formatSlug(account.planType)}
+              </span>
               <AccountQuotaCells account={account} />
-	              <span className="font-medium tabular-nums">
-	                {formatCreditValue(accountSubscriptionCredits(account))}
-	              </span>
-	              <span className="font-medium tabular-nums">
-	                {formatPurchasedCredits(account, t("common.states.unlimited"))}
-	              </span>
-	              <div className="min-w-0 text-xs">
-	                <p className={cn("font-medium", account.limitWarmupEnabled ? "text-primary" : "text-muted-foreground")}>
-	                  {account.limitWarmupEnabled ? t("common.states.on") : t("common.states.off")}
-	                </p>
-                <p className="truncate text-[11px] text-muted-foreground">{warmupDetail}</p>
+              <span className="font-medium tabular-nums">
+                {formatCreditValue(accountSubscriptionCredits(account))}
+              </span>
+              <span className="font-medium tabular-nums">
+                {formatPurchasedCredits(account, t("common.states.unlimited"))}
+              </span>
+              <div className="min-w-0 text-xs">
+                <p
+                  className={cn(
+                    "font-medium",
+                    account.limitWarmupEnabled
+                      ? "text-primary"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {account.limitWarmupEnabled
+                    ? t("common.states.on")
+                    : t("common.states.off")}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {warmupDetail}
+                </p>
               </div>
               <div className="flex flex-wrap justify-end gap-1">
                 <Button
@@ -456,8 +678,10 @@ export function AccountList({
                   size="sm"
                   variant="ghost"
                   className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground"
-	                  aria-label={t("dashboard.accountList.viewDetailsAria", { account: title })}
-	                  title={t("dashboard.requests.columns.details")}
+                  aria-label={t("dashboard.accountList.viewDetailsAria", {
+                    account: title,
+                  })}
+                  title={t("dashboard.requests.columns.details")}
                   onClick={() => onAction?.(account, "details")}
                 >
                   <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -468,7 +692,9 @@ export function AccountList({
                     size="sm"
                     variant="ghost"
                     className="relative h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground"
-	                    aria-label={t("dashboard.accountList.redeemResetAria", { account: title })}
+                    aria-label={t("dashboard.accountList.redeemResetAria", {
+                      account: title,
+                    })}
                     title={resetButtonTitle}
                     disabled={resetCreditDisabled}
                     onClick={() => onAction?.(account, "reset-credit")}
@@ -492,12 +718,16 @@ export function AccountList({
                       ? "text-primary hover:bg-primary/10 hover:text-primary"
                       : "text-muted-foreground hover:text-foreground",
                   )}
-	                  aria-label={
-	                    account.limitWarmupEnabled
-	                      ? t("dashboard.accountList.disableWarmupAria", { account: title })
-	                      : t("dashboard.accountList.enableWarmupAria", { account: title })
-	                  }
-	                  title={t("settings.routing.limitWarmup.label")}
+                  aria-label={
+                    account.limitWarmupEnabled
+                      ? t("dashboard.accountList.disableWarmupAria", {
+                          account: title,
+                        })
+                      : t("dashboard.accountList.enableWarmupAria", {
+                          account: title,
+                        })
+                  }
+                  title={t("settings.routing.limitWarmup.label")}
                   disabled={readOnly}
                   onClick={() => onAction?.(account, "warmup-toggle")}
                 >
@@ -509,8 +739,10 @@ export function AccountList({
                     size="sm"
                     variant="ghost"
                     className="h-7 w-7 rounded-md p-0 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
-	                    aria-label={t("dashboard.accountList.resumeAria", { account: title })}
-	                    title={t("common.actions.resume")}
+                    aria-label={t("dashboard.accountList.resumeAria", {
+                      account: title,
+                    })}
+                    title={t("common.actions.resume")}
                     disabled={readOnly}
                     onClick={() => onAction?.(account, "resume")}
                   >
@@ -523,8 +755,10 @@ export function AccountList({
                     size="sm"
                     variant="ghost"
                     className="h-7 w-7 rounded-md p-0 text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
-	                    aria-label={t("dashboard.accountList.reauthAria", { account: title })}
-	                    title={t("common.actions.reauthenticate")}
+                    aria-label={t("dashboard.accountList.reauthAria", {
+                      account: title,
+                    })}
+                    title={t("common.actions.reauthenticate")}
                     disabled={readOnly}
                     onClick={() => onAction?.(account, "reauth")}
                   >
@@ -536,6 +770,38 @@ export function AccountList({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function ClaudeRow({ account }: { account: ClaudeAccount }) {
+  return (
+    <div
+      data-testid="account-list-row"
+      className="grid min-h-[4.5rem] items-center gap-3 px-3 py-2 text-sm"
+      style={{ gridTemplateColumns: ACCOUNT_LIST_COLUMNS }}
+    >
+      <div className="min-w-0">
+        <p className="truncate font-medium">
+          <ClaudeName account={account} />
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {account.state.selections.length} models selected
+        </p>
+      </div>
+      <StatusBadge status={normalizeStatus(claudeStatus(account))} />
+      <span className="text-xs text-muted-foreground">Claude</span>
+      <ClaudeQuota account={account} />
+      <span className="text-xs text-muted-foreground">Not applicable</span>
+      <span className="text-xs text-muted-foreground">Not reported</span>
+      <span className="text-xs text-muted-foreground">
+        {account.credentialStatus}
+      </span>
+      <Button asChild size="sm" variant="ghost">
+        <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
+          Details
+        </Link>
+      </Button>
     </div>
   );
 }

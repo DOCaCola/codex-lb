@@ -20,6 +20,7 @@ from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.routing import select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL
+from app.modules.claude.session import NativeSessionOwnership, contains_account_bound_state
 from app.modules.claude.version import ClaudeVersionService
 
 
@@ -57,6 +58,17 @@ class ClaudeDispatchPreparer:
         if endpoint == "count_tokens" and "stream" in logical:
             raise ClaudeError("Claude count_tokens does not support streaming")
         session = self.repository.session
+        native_ownership = None
+        if not translated:
+            native_ownership = NativeSessionOwnership(
+                session,
+                client_scope=api_key.id if api_key else "anonymous",
+                conversation_id=conversation_id,
+                model=model,
+            )
+            retained_owner = await native_ownership.owner(required=contains_account_bound_state(logical))
+            if retained_owner is not None:
+                owner_source_id = retained_owner
         account = await select_account(
             session,
             model,
@@ -65,6 +77,26 @@ class ClaudeDispatchPreparer:
             owner_source_id=owner_source_id,
             require_streaming=logical.get("stream") is True,
         )
+        if endpoint == "messages":
+            limit = logical.get("max_tokens")
+            selected_model = next(row for row in account.source.models if row.model == model)
+            if (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or limit <= 0
+                or limit > (selected_model.max_output_tokens or 8192)
+            ):
+                raise ClaudeError("Claude max_tokens must be positive and within the configured model output limit")
+        if native_ownership is not None and endpoint == "messages":
+            claimed_owner = await native_ownership.claim(account.source_id)
+            account = await select_account(
+                session,
+                model,
+                api_key,
+                conversation_id=conversation_id,
+                owner_source_id=claimed_owner,
+                require_streaming=logical.get("stream") is True,
+            )
         identity = await ClaudeVersionService(session).snapshot()
         # Authorization and payload validation precede any token refresh.
         native = not translated and recognize_native(
@@ -82,9 +114,12 @@ class ClaudeDispatchPreparer:
         projected = project_request(body, profile, endpoint=endpoint)
         # Validate caller beta metadata before a potentially rotating grant is
         # touched; the actual token is inserted only after refresh succeeds.
-        headers = profile.headers(
-            "", endpoint=endpoint, incoming=incoming_headers, feature_betas=projected.feature_betas
-        )
+        feature_betas = list(projected.feature_betas)
+        if projected.body.get("thinking"):
+            feature_betas.append("interleaved-thinking-2025-05-14")
+        if projected.body.get("output_config"):
+            feature_betas.append("effort-2025-11-24")
+        headers = profile.headers("", endpoint=endpoint, incoming=incoming_headers, feature_betas=tuple(feature_betas))
         source_id = account.source_id
         credentials = await self.auth.credentials(source_id)
         # A pause or quota refresh may have committed while token

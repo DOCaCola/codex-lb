@@ -20,6 +20,9 @@ SCOPES = "user:profile user:inference user:sessions:claude_code user:mcp_servers
 class ClaudeError(ValueError):
     """Public diagnostic; never contains tokens or raw upstream auth bodies."""
 
+    code = "claude_invalid_request"
+    status_code = 400
+
 
 @dataclass(frozen=True)
 class PKCE:

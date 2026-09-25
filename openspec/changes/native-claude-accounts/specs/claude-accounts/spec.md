@@ -13,6 +13,18 @@ Operators SHALL enroll Claude accounts through expiring single-use PKCE authoriz
 - **WHEN** a credentials file has missing, invalid or second-based expiresAt
 - **THEN** enrollment fails explicitly without creating a usable account
 
+#### Scenario: Reconnect to a different account
+- **WHEN** replacement credentials authenticate a different account or organization
+- **THEN** reconnect fails without replacing credentials or retained ownership
+
+#### Scenario: Refresh races reconnect
+- **WHEN** a reconnect replaces credentials while an older refresh attempt remains in flight
+- **THEN** the old generation cannot overwrite the replacement credentials
+
+#### Scenario: Duplicate rotated grant
+- **WHEN** a different current grant authenticates an already enrolled account and organization
+- **THEN** enrollment rejects the duplicate using authenticated identity rather than the access token or display name
+
 ### Requirement: Refresh rotation ownership
 Refresh MUST use durable cross-worker ownership and generation checks. Explicit invalidation MUST require reauthentication; definitive transient rejections MUST permit a later retry after backoff. Uncertain consumption MUST NOT blindly replay the refresh token, and known expired access tokens MUST NOT be dispatched.
 
@@ -51,12 +63,24 @@ Authenticated `/v1/messages` and `/v1/messages/count_tokens` SHALL preserve supp
 - **WHEN** a client sends safeguards and corresponding beta metadata
 - **THEN** these reach the trusted Anthropic destination without flattening its system array
 
+#### Scenario: Native stream transport failure
+- **WHEN** the upstream Messages stream fails after downstream headers were sent
+- **THEN** the gateway settles the failed attempt and returns a native SSE error event, not a Responses envelope or successful message_stop
+
 ### Requirement: Codex protocol adaptation
 Claude SHALL support Responses over downstream HTTP and WebSocket while using HTTPS/SSE upstream. Translation MUST preserve portable text, tool/custom-tool/namespace, image, reasoning and cache-usage semantics, or reject unsupported semantics explicitly. Truncation and pause_turn MUST NOT become completed. Durable continuation MUST be persisted before terminal delivery and scoped to compatible account/model state; compaction MUST preserve useful context.
 
 #### Scenario: Pause turn
 - **WHEN** Anthropic stops with pause_turn
 - **THEN** the Responses client receives an incomplete result and no hidden automatic continuation
+
+#### Scenario: Unsupported constrained output
+- **WHEN** a Responses request asks for unsupported grammar-constrained tool decoding or a provider-specific control without a Claude equivalent
+- **THEN** the adapter returns an explicit unsupported-parameter error before dispatch rather than silently ignoring it
+
+#### Scenario: Native signed history outlives ownership retention
+- **WHEN** native account-bound history is submitted after its one-hour ownership retention expires
+- **THEN** it fails explicitly and requires portable context rather than selecting a different account
 
 ### Requirement: Advertised version following
 The service SHALL asynchronously follow the canonical stable Claude Code release at startup when stale and every 24 hours, sharing state across workers. It MUST preserve the last valid version on discovery failure, distinguish last checked from last changed, support manual pin/rollback, and use one immutable identity snapshot per request. It MUST NOT download executable updates or fabricate private billing fingerprints.

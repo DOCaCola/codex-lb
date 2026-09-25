@@ -17,13 +17,27 @@ from app.modules.claude.schemas import CatalogModel, Credentials, UsageSnapshot
 pytestmark = pytest.mark.integration
 
 
+def install_profile_stub(monkeypatch):
+    from app.modules.claude.schemas import AuthenticatedProfile
+
+    async def profile(_self, token, _version):
+        return AuthenticatedProfile.model_validate({"account": {"uuid": token}, "organization": {"uuid": "org-test"}})
+
+    monkeypatch.setattr(ClaudeClient, "profile", profile)
+
+
+@pytest.fixture(autouse=True)
+def profile_stub(monkeypatch):
+    install_profile_stub(monkeypatch)
+
+
 def import_body(*, expired=False, refresh="refresh-secret"):
     return {
         "name": "Claude test",
         "acknowledgeExclusiveRefresh": True,
         "credentials": {
             "claudeAiOauth": {
-                "accessToken": "access-secret",
+                "accessToken": "access-secret" if refresh == "refresh-secret" else f"access-{refresh}",
                 "refreshToken": refresh,
                 "expiresAt": int((datetime.now(UTC) + timedelta(hours=-1 if expired else 1)).timestamp() * 1000),
                 "scopes": ["user:inference", "user:profile"],
@@ -39,6 +53,7 @@ async def test_import_encryption_duplicate_and_pause(async_client):
     source_id = response.json()["id"]
     async with SessionLocal() as session:
         row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
         assert row.source.api_key_encrypted is None
         assert b"secret" not in row.credentials_encrypted
         assert (
@@ -49,6 +64,41 @@ async def test_import_encryption_duplicate_and_pause(async_client):
     assert duplicate.status_code == 400
     paused = await async_client.patch(f"/api/claude-accounts/{source_id}", json={"isEnabled": False})
     assert paused.json()["isEnabled"] is False
+
+
+async def test_rotated_grant_cannot_duplicate_authenticated_account(async_client):
+    first = await async_client.post("/api/claude-accounts/import", json=import_body())
+    assert first.status_code == 200
+    body = import_body()
+    body["credentials"]["claudeAiOauth"]["refreshToken"] = "other-grant"
+    duplicate = await async_client.post("/api/claude-accounts/import", json=body)
+    assert duplicate.status_code == 400
+    assert len((await async_client.get("/api/claude-accounts")).json()["accounts"]) == 1
+
+
+async def test_reconnect_preserves_identity_and_invalidates_old_refresh_generation(async_client):
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        row.credential_status = "uncertain"
+        row.refresh_intent = "old-intent"
+        await session.commit()
+    body = import_body()
+    body.pop("name")
+    body["credentials"]["claudeAiOauth"]["refreshToken"] = "new-grant"
+    response = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["credentialStatus"] == "ready"
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        assert row.generation == 2 and row.refresh_intent is None
+        assert not await ClaudeRepository(session).finish_refresh(source_id, 1, "old-intent", status="ready")
+    body["credentials"]["claudeAiOauth"]["accessToken"] = "other-account"
+    rejected = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
+    assert rejected.status_code == 400
+    assert "same authenticated Claude account" in rejected.text
 
 
 async def test_catalog_refresh_preserves_snapshot_on_failure(async_client, monkeypatch):
@@ -84,6 +134,7 @@ async def test_refresh_failure_survives_restart(async_client, failure, status):
             await auth.credentials(source_id)
     async with SessionLocal() as session:
         row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
         assert row.credential_status == status
         assert (row.refresh_intent is not None) == (status == "uncertain")
         with pytest.raises(ClaudeError):
@@ -92,7 +143,8 @@ async def test_refresh_failure_survives_restart(async_client, failure, status):
 
 
 async def test_oauth_flow_is_single_use(async_client, monkeypatch):
-    monkeypatch.setattr(ClaudeClient, "exchange", AsyncMock(side_effect=TokenOutcomeUncertain("uncertain")))
+    exchange = AsyncMock(side_effect=TokenOutcomeUncertain("uncertain"))
+    monkeypatch.setattr(ClaudeClient, "exchange", exchange)
     started = await async_client.post(
         "/api/claude-accounts/oauth/start",
         json={
@@ -106,7 +158,7 @@ async def test_oauth_flow_is_single_use(async_client, monkeypatch):
     second = await async_client.post("/api/claude-accounts/oauth/complete", json=body)
     assert first.status_code == second.status_code == 400
     assert "already been used" in second.text
-    assert ClaudeClient.exchange.await_count == 1
+    assert exchange.await_count == 1
 
 
 async def test_refresh_owned_across_workers_and_rotation_survives_restart(async_client):
@@ -145,6 +197,7 @@ async def test_refresh_owned_across_workers_and_rotation_survives_restart(async_
     assert provider.refresh.await_count == 1
     async with SessionLocal() as session:
         row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
         assert row.generation == 2
         assert row.refresh_intent is None
 
@@ -238,4 +291,5 @@ async def test_selected_catalog_and_quota_api_preserve_missing_entitlement(async
         from app.modules.model_sources.repository import ModelSourcesRepository
 
         source = await ModelSourcesRepository(session).get_by_id(source_id)
+        assert source is not None
         assert [(model.model, model.is_enabled) for model in source.models] == [("anthropic/claude-opus-5", False)]

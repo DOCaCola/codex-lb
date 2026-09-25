@@ -11,6 +11,19 @@ CLAUDE_KIND = "claude"
 CLAUDE_BASE_URL = "https://api.anthropic.com"
 
 
+class ProfileAccount(BaseModel):
+    uuid: str = Field(min_length=1)
+
+
+class ProfileOrganization(BaseModel):
+    uuid: str = Field(min_length=1)
+
+
+class AuthenticatedProfile(BaseModel):
+    account: ProfileAccount
+    organization: ProfileOrganization
+
+
 class Credentials(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
     access_token: SecretStr = Field(min_length=1)
@@ -175,6 +188,12 @@ class ClaudeAccountsResponse(DashboardModel):
 
 class OAuthStart(DashboardModel):
     name: str = Field(min_length=1, max_length=128)
+    acknowledge_exclusive_refresh: Literal[True]
+    source_id: str | None = None
+
+
+class ClaudeReconnect(DashboardModel):
+    credentials: CredentialFile = Field(repr=False)
     acknowledge_exclusive_refresh: Literal[True]
 
 

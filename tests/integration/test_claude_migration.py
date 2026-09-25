@@ -8,7 +8,7 @@ from app.db.migrate import _build_alembic_config, check_schema_drift, run_upgrad
 def test_claude_migration_single_head_roundtrip(tmp_path):
     url = f"sqlite:///{tmp_path / 'claude-migration.db'}"
     config = _build_alembic_config(url)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260925_010000_claude_accounts"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["20260925_030000_claude_identity"]
     run_upgrade(url, bootstrap_legacy=False)
     assert check_schema_drift(url) == ()
     engine = create_engine(url)

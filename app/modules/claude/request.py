@@ -6,18 +6,15 @@ boundary explicit prevents compatibility prefixes becoming conversation state.
 
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import JsonValue
 
+from app.modules.claude.capabilities import model_policy
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import CLI_IDENTITY, MID_SYSTEM_BETA, RequestProfile
-
-_MODERN = re.compile(r"^claude-(?:sonnet|opus)-5(?:-[0-9]+)?(?:-[0-9]{8})?$")
-_LEGACY = re.compile(r"^claude-(?:haiku-4-5|sonnet-4-[56]|opus-4-6)(?:-[0-9]{8})?$")
 
 
 @dataclass(frozen=True)
@@ -68,9 +65,10 @@ def project_request(
     model = body.get("model")
     if not isinstance(model, str):
         raise ClaudeError("Claude model is required")
-    modern = bool(_MODERN.fullmatch(model))
-    if not modern and not _LEGACY.fullmatch(model):
+    policy = model_policy(model)
+    if policy is None:
         raise ClaudeError("OAuth instruction placement is not qualified for this Claude model")
+    modern = policy.mid_system
 
     # Server tool artifacts may bind the entire layout, not merely their own
     # signature bytes. Ordinary client tools named 'advisor' are not artifacts.

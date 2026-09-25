@@ -16,6 +16,7 @@ export type AddAccountDialogProps = {
   onImport: () => void;
   onAddAccount: () => void;
   onOpenRouter?: () => void;
+  onClaude?: () => void;
 };
 
 export function AddAccountDialog({
@@ -24,6 +25,7 @@ export function AddAccountDialog({
   onImport,
   onAddAccount,
   onOpenRouter,
+  onClaude,
 }: AddAccountDialogProps) {
   const { t } = useTranslation();
   // Close the chooser first, then defer the action to the next frame. Opening a
@@ -45,6 +47,21 @@ export function AddAccountDialog({
         </DialogHeader>
 
         <div className="space-y-2">
+          {onClaude && (
+            <button
+              type="button"
+              onClick={() => handleSelect(onClaude)}
+              className="flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <KeyRound className="h-4 w-4" />
+              <span>
+                <span className="block text-sm font-medium">Claude</span>
+                <span className="block text-xs text-muted-foreground">
+                  Sign in with OAuth or import a Claude Code credential file.
+                </span>
+              </span>
+            </button>
+          )}
           {onOpenRouter && (
             <button
               type="button"

@@ -12,6 +12,7 @@ from app.modules.claude.credentials import CLIENT_ID, PKCE, TOKEN_URL, ClaudeErr
 from app.modules.claude.profile import management_headers
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
+    AuthenticatedProfile,
     CatalogModel,
     CatalogPage,
     Credentials,
@@ -133,3 +134,6 @@ class ClaudeClient:
 
     async def usage(self, token: str, version: str) -> UsageSnapshot:
         return await self._get("/api/oauth/usage", token, version, UsageSnapshot)
+
+    async def profile(self, token: str, version: str) -> AuthenticatedProfile:
+        return await self._get("/api/oauth/profile", token, version, AuthenticatedProfile)

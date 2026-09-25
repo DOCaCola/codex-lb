@@ -93,6 +93,7 @@ async def test_stale_feed_does_not_downgrade(async_client, monkeypatch):
         await service.refresh(now=datetime(2026, 9, 25))
         assert (await service.snapshot()).version == BASELINE_VERSION
         row = await session.get(ClaudeVersionState, 1)
+        assert row is not None
         assert row.last_changed_at is None
 
 

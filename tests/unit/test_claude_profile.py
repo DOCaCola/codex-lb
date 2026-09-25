@@ -11,20 +11,20 @@ from app.modules.claude.profile import (
     recognize_native,
 )
 from app.modules.claude.request import project_request
+from tests.claude_json_helpers import array, at
 
 pytestmark = pytest.mark.unit
 
 
-def profile(**overrides):
+def profile(
+    *, version="2.1.282", source_id="account-a", client_scope="key-a", conversation_id="conversation-a", native=False
+):
     return RequestProfile.create(
-        **{
-            "version": "2.1.282",
-            "source_id": "account-a",
-            "client_scope": "key-a",
-            "conversation_id": "conversation-a",
-            "native": False,
-            **overrides,
-        }
+        version=version,
+        source_id=source_id,
+        client_scope=client_scope,
+        conversation_id=conversation_id,
+        native=native,
     )
 
 
@@ -116,21 +116,21 @@ def test_modern_projection_preserves_instructions_and_tool_adjacency(endpoint):
     before = deepcopy(request)
     projected = project_request(request, profile(), endpoint=endpoint)
     assert request == before
-    assert projected.body["messages"][1] == {"role": "system", "content": request["system"]}
-    assert projected.body["messages"][2:] == request["messages"][1:]
+    assert at(projected.body, "messages", 1) == {"role": "system", "content": request["system"]}
+    assert array(projected.body["messages"])[2:] == request["messages"][1:]
     assert projected.feature_betas == (MID_SYSTEM_BETA,)
     assert project_request(request, profile(), endpoint=endpoint).body == projected.body
     if endpoint == "count_tokens":
         assert "system" not in projected.body
     else:
-        assert projected.body["system"][0]["text"] == CLI_IDENTITY
+        assert at(projected.body, "system", 0, "text") == CLI_IDENTITY
 
 
 def test_legacy_placement_preserves_block_cache_and_signed_turn():
     request = logical("claude-haiku-4-5-20251001")
     projected = project_request(request, profile(), endpoint="messages")
-    assert projected.body["messages"][0]["content"][1:-1] == request["system"]
-    assert projected.body["messages"][1:] == request["messages"]
+    assert array(at(projected.body, "messages", 0, "content"))[1:-1] == request["system"]
+    assert array(projected.body["messages"])[1:] == request["messages"]
     assert not projected.feature_betas
 
 

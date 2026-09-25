@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import JsonValue
 
 from app.db.models import ClaudeAccount
 from app.db.session import SessionLocal
@@ -10,6 +11,8 @@ from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.routing import ClaudePoolUnavailable, select_account
 from app.modules.claude.schemas import AccountState, CatalogModel, QuotaWindow, UsageSnapshot
+from tests.claude_json_helpers import array, at
+from tests.integration import test_claude_accounts as account_fixtures
 from tests.integration.test_claude_accounts import import_body
 
 pytestmark = pytest.mark.integration
@@ -35,6 +38,7 @@ def key(**overrides):
 
 @pytest.fixture
 async def pool(async_client, monkeypatch):
+    account_fixtures.install_profile_stub(monkeypatch)
     monkeypatch.setattr(
         ClaudeClient,
         "catalog",
@@ -105,6 +109,7 @@ async def test_bound_owner_not_replaced_when_paused(pool, async_client):
 async def test_unavailable_owner_cannot_cross_account(pool, condition):
     async with SessionLocal() as session:
         row = await session.get(ClaudeAccount, pool[0])
+        assert row is not None
         if condition == "reauth":
             row.credential_status = "reauth_required"
         elif condition == "uncertain":
@@ -153,7 +158,12 @@ async def test_prepare_uses_provider_credentials_and_preserves_logical_history(p
     from app.modules.claude.dispatch import ClaudeDispatchPreparer
     from app.modules.claude.repository import ClaudeRepository
 
-    logical = {"model": MODEL, "system": "Caller instructions", "messages": [{"role": "user", "content": "Hello"}]}
+    logical: dict[str, JsonValue] = {
+        "model": MODEL,
+        "max_tokens": 100,
+        "system": "Caller instructions",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
     async with SessionLocal() as session:
         prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
             logical,
@@ -165,15 +175,15 @@ async def test_prepare_uses_provider_credentials_and_preserves_logical_history(p
         )
         assert prepared.url == "https://api.anthropic.com/v1/messages?beta=true"
         assert prepared.body["model"] == "claude-opus-5"
-        assert prepared.headers["authorization"] == "Bearer access-secret"
-        assert prepared.body["messages"][1] == {
+        assert prepared.headers["authorization"] in {"Bearer access-account-a", "Bearer access-account-b"}
+        assert at(prepared.body, "messages", 1) == {
             "role": "system",
             "content": [{"type": "text", "text": "Caller instructions"}],
         }
         assert "access-secret" not in repr(prepared)
         assert "Caller instructions" not in repr(prepared)
     assert logical["model"] == MODEL
-    assert len(logical["messages"]) == 1
+    assert len(array(logical["messages"])) == 1
 
 
 async def test_prepare_rechecks_pause_after_credential_refresh(pool):
@@ -183,6 +193,7 @@ async def test_prepare_rechecks_pause_after_credential_refresh(pool):
 
     async with SessionLocal() as session:
         row = await session.get(ClaudeAccount, pool[0])
+        assert row is not None
         from app.core.crypto import TokenEncryptor
         from app.modules.claude.credentials import decrypt_credentials, encrypt_credentials
 
@@ -195,6 +206,7 @@ async def test_prepare_rechecks_pause_after_credential_refresh(pool):
     async def rotate(_credentials):
         async with SessionLocal() as session:
             row = await session.get(ClaudeAccount, pool[0])
+            assert row is not None
             row.source.is_enabled = False
             await session.commit()
         return Credentials(
@@ -209,7 +221,7 @@ async def test_prepare_rechecks_pause_after_credential_refresh(pool):
     async with SessionLocal() as session:
         with pytest.raises(ClaudePoolUnavailable):
             await ClaudeDispatchPreparer(ClaudeRepository(session), client).prepare(
-                {"model": MODEL, "messages": [{"role": "user", "content": "Hello"}]},
+                {"model": MODEL, "max_tokens": 100, "messages": [{"role": "user", "content": "Hello"}]},
                 key(),
                 conversation_id="thread",
                 incoming_headers={},
@@ -230,7 +242,7 @@ async def test_invalid_payload_rejected_before_token_refresh(pool):
         preparer.auth.credentials = AsyncMock()
         with pytest.raises(ClaudeError):
             await preparer.prepare(
-                {"model": MODEL, "messages": []},
+                {"model": MODEL, "max_tokens": 100, "messages": []},
                 key(),
                 conversation_id="thread",
                 incoming_headers={},
