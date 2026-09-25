@@ -19,6 +19,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import type { OpenRouterAccount, Selection } from "./api";
+import { modelSelectionKind, type ModelSelectionKind } from "./model-selection";
 
 type CatalogModel = OpenRouterAccount["state"]["catalog"][number];
 const capabilities = {
@@ -38,11 +39,13 @@ export function ModelPicker({
   onClose,
   onSave,
   busy,
+  kind = "models",
 }: {
   account: OpenRouterAccount;
   onClose: () => void;
   onSave: (selections: Selection[]) => Promise<void>;
   busy: boolean;
+  kind?: ModelSelectionKind;
 }) {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Capability[]>([]);
@@ -61,6 +64,7 @@ export function ModelPicker({
       ].filter((id) => {
         const model = catalog.get(id);
         return (
+          modelSelectionKind(model) === kind &&
           `${id} ${catalog.get(id)?.name ?? ""}`
             .toLowerCase()
             .includes(search.toLowerCase()) &&
@@ -69,8 +73,11 @@ export function ModelPicker({
           )
         );
       }),
-    [catalog, search, selected, filters],
+    [catalog, search, selected, filters, kind],
   );
+  const selectedCount = selected.filter(
+    (item) => modelSelectionKind(catalog.get(item.model)) === kind,
+  ).length;
   const valid = selected.every(
     (item) =>
       Number.isInteger(item.contextWindow) &&
@@ -87,10 +94,13 @@ export function ModelPicker({
     >
       <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Models · {account.name}</DialogTitle>
+          <DialogTitle>
+            {kind === "images" ? "Image models" : "Models"} · {account.name}
+          </DialogTitle>
           <DialogDescription>
-            Only selected models are available to clients. New models remain
-            disabled after synchronization.
+            {kind === "images"
+              ? "Select image generation and editing models for the public Images API. Conversational selections are preserved. Refresh the account if an image model is missing."
+              : "Only selected models are available to clients. Image selections are preserved. New models remain disabled after synchronization."}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap gap-2">
@@ -143,9 +153,7 @@ export function ModelPicker({
           )}
           {ids.map((id) => {
             const model = catalog.get(id);
-            const imageOnly =
-              !!model?.image &&
-              !model.architecture.output_modalities.includes("text");
+            const imageOnly = kind === "images";
             const selection = selected.find((item) => item.model === id);
             const price = (value: number | null | undefined) =>
               value == null ? "Unknown" : `$${(value * 1e6).toLocaleString()}`;
@@ -320,7 +328,7 @@ export function ModelPicker({
               }
             }}
           >
-            Save {selected.length} models
+            Save {selectedCount} {kind === "images" ? "image models" : "models"}
           </Button>
         </div>
       </DialogContent>

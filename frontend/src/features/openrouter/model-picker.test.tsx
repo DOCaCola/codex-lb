@@ -43,6 +43,56 @@ const account: OpenRouterAccount = {
 };
 
 describe("OpenRouter model selection", () => {
+  it.each(["models", "images"] as const)(
+    "preserves other selections when saving %s",
+    async (kind) => {
+      const user = userEvent.setup();
+      const mixed = structuredClone(account);
+      mixed.state.catalog.push({
+        ...mixed.state.catalog[0]!,
+        id: "openai/gpt-image-2.5-sunburst",
+        name: "Sunburst",
+        image: { supports_streaming: true, endpoint_details: [] },
+      });
+      mixed.state.selections = [
+        "vendor/test",
+        "openai/gpt-image-2.5-sunburst",
+        "vendor/retired",
+      ].map((model) => ({
+        model,
+        contextWindow: 123456,
+        maxOutputTokens: 4096,
+        displayName: "Custom name",
+      }));
+      const save = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ModelPicker
+          account={mixed}
+          kind={kind}
+          busy={false}
+          onClose={vi.fn()}
+          onSave={save}
+        />,
+      );
+      const edited = kind === "images" ? "Sunburst" : "Test model";
+      const other = kind === "images" ? "Test model" : "Sunburst";
+      expect(
+        screen.queryByRole("checkbox", { name: other }),
+      ).not.toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: edited }));
+      await user.click(
+        screen.getByRole("button", {
+          name: kind === "images" ? "Save 0 image models" : "Save 1 models",
+        }),
+      );
+      const removedId =
+        kind === "images" ? "openai/gpt-image-2.5-sunburst" : "vendor/test";
+      expect(save).toHaveBeenCalledWith(
+        mixed.state.selections.filter((item) => item.model !== removedId),
+      );
+    },
+  );
+
   it.each([
     "Text generation",
     "Image generation",
@@ -55,7 +105,10 @@ describe("OpenRouter model selection", () => {
     const model = filtered.state.catalog[0]!;
     model.architecture.input_modalities = ["text", "image"];
     model.supported_parameters = ["tools", "reasoning"];
-    model.image = { supports_streaming: true, endpoint_details: [] };
+    model.image =
+      capability === "Image generation"
+        ? { supports_streaming: true, endpoint_details: [] }
+        : null;
     filtered.state.catalog.push({
       ...model,
       id: "vendor/other",
@@ -70,6 +123,7 @@ describe("OpenRouter model selection", () => {
     render(
       <ModelPicker
         account={filtered}
+        kind={capability === "Image generation" ? "images" : "models"}
         busy={false}
         onClose={vi.fn()}
         onSave={vi.fn()}
@@ -113,6 +167,7 @@ describe("OpenRouter model selection", () => {
         busy={false}
         onClose={vi.fn()}
         onSave={save}
+        kind="images"
       />,
     );
     await user.click(screen.getByRole("button", { name: "Capabilities" }));
@@ -131,8 +186,12 @@ describe("OpenRouter model selection", () => {
     await user.click(
       screen.getByRole("menuitem", { name: "Clear capability filters" }),
     );
-    expect(screen.getByText("vendor/retired — Unavailable")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Save 2 models" }));
+    expect(
+      screen.queryByText("vendor/retired — Unavailable"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Save 1 image models" }),
+    );
     expect(save).toHaveBeenCalledWith(filtered.state.selections);
   });
   it("shows image prices without conversational context controls", async () => {
@@ -160,6 +219,7 @@ describe("OpenRouter model selection", () => {
     render(
       <ModelPicker
         account={images}
+        kind="images"
         busy={false}
         onClose={vi.fn()}
         onSave={vi.fn()}

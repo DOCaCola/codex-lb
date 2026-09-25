@@ -13,6 +13,7 @@ import {
 import { ModelPicker } from "./model-picker";
 import { useOpenRouter } from "./use-openrouter";
 import type { OpenRouterAccount } from "./api";
+import type { ModelSelectionKind } from "./model-selection";
 
 export function OpenRouterAccountControls({
   readOnly = false,
@@ -30,6 +31,7 @@ export function OpenRouterAccountControls({
     null,
   );
   const [models, setModels] = useState<OpenRouterAccount | null>(null);
+  const [modelKind, setModelKind] = useState<ModelSelectionKind>("models");
   const [deleting, setDeleting] = useState<OpenRouterAccount | null>(null);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -64,7 +66,14 @@ export function OpenRouterAccountControls({
             busy={busy}
             error={error?.message}
             onEdit={() => openEditor(account)}
-            onModels={() => setModels(account)}
+            onModels={() => {
+              setModelKind("models");
+              setModels(account);
+            }}
+            onImageModels={() => {
+              setModelKind("images");
+              setModels(account);
+            }}
             onRefresh={() => refresh.mutate(account.id)}
             onToggle={(isEnabled) =>
               update.mutate({ id: account.id, body: { isEnabled } })
@@ -77,6 +86,7 @@ export function OpenRouterAccountControls({
         <ModelPicker
           key={models.id}
           account={models}
+          kind={modelKind}
           busy={busy}
           onClose={() => setModels(null)}
           onSave={(selections) =>

@@ -1,4 +1,4 @@
-import { Layers, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { Image, Layers, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { useTranslation } from "react-i18next";
@@ -11,6 +11,7 @@ import {
   OpenRouterFreshness,
 } from "./account-display";
 import { openRouterStatus } from "./display-values";
+import { modelSelectionKind } from "./model-selection";
 
 export function OpenRouterAccountDetail({
   account,
@@ -19,6 +20,7 @@ export function OpenRouterAccountDetail({
   error,
   onEdit,
   onModels,
+  onImageModels,
   onRefresh,
   onToggle,
   onDelete,
@@ -29,11 +31,19 @@ export function OpenRouterAccountDetail({
   error?: string;
   onEdit: () => void;
   onModels: () => void;
+  onImageModels: () => void;
   onRefresh: () => void;
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
+  const catalog = new Map(
+    account.state.catalog.map((model) => [model.id, model]),
+  );
+  const imageCount = account.state.selections.filter(
+    (selection) =>
+      modelSelectionKind(catalog.get(selection.model)) === "images",
+  ).length;
   return (
     <div className="min-w-0 space-y-4" data-testid="openrouter-account-detail">
       <div className="rounded-xl border bg-card p-5">
@@ -60,7 +70,17 @@ export function OpenRouterAccountDetail({
             onClick={onModels}
           >
             <Layers className="h-3.5 w-3.5" />
-            Models ({account.state.selections.length})
+            Models ({account.state.selections.length - imageCount})
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={readOnly || busy}
+            onClick={onImageModels}
+          >
+            <Image className="h-3.5 w-3.5" />
+            Image models ({imageCount})
           </Button>
           <Button
             size="sm"

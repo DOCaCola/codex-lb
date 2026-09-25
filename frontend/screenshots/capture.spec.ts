@@ -526,7 +526,8 @@ for (const width of [1440, 390]) {
     }];
     await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
     await page.goto(`${BASE_URL}/accounts?selected=${account.id}`);
-    await page.getByRole("button", {name: "Models (1)", exact: true}).click();
+    await expect(page.getByRole("button", {name: "Models (0)", exact: true})).toBeVisible();
+    await page.getByRole("button", {name: "Image models (1)", exact: true}).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText(/Public Images API only/)).toBeVisible();
     await expect(dialog.getByLabel(`Context cap for ${id}`)).toHaveCount(0);

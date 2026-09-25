@@ -22,6 +22,7 @@ describe("Unified provider accounts", () => {
       busy: false,
       onEdit: vi.fn(),
       onModels: vi.fn(),
+      onImageModels: vi.fn(),
       onRefresh: vi.fn(),
       onDelete: vi.fn(),
       onToggle,
@@ -30,6 +31,10 @@ describe("Unified provider accounts", () => {
       <OpenRouterAccountDetail account={account} {...props} />,
     );
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Image models (0)" }),
+    );
+    expect(props.onImageModels).toHaveBeenCalledOnce();
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(onToggle).toHaveBeenLastCalledWith(false);
     view.rerender(
@@ -47,6 +52,15 @@ describe("Unified provider accounts", () => {
       <OpenRouterAccountDetail account={account} {...props} busy />,
     );
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Image models (0)" }),
+    ).toBeDisabled();
+    view.rerender(
+      <OpenRouterAccountDetail account={account} {...props} readOnly />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Image models (0)" }),
+    ).toBeDisabled();
   });
   it("sorts provider balances numerically in dashboard list view", async () => {
     const low = createOpenRouterAccount({ id: "low", name: "Zulu" });
