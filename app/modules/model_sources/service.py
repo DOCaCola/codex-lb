@@ -74,6 +74,9 @@ class ModelSourcesService:
         if row is None:
             raise ModelSourceNotFoundError(f"Model source not found: {source_id}")
 
+        if row.kind == "openrouter":
+            raise ModelSourceValidationError("Manage OpenRouter accounts through the Accounts dashboard")
+
         fields = payload.model_fields_set
         if "name" in fields and payload.name is not None:
             row.name = _normalize_name(payload.name)

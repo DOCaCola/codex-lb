@@ -24,7 +24,7 @@ def source_models_to_upstream_models(sources: list[ModelSource]) -> list[Upstrea
     for source in sources:
         if not source.is_enabled:
             continue
-        if source.kind != MODEL_SOURCE_KIND_OPENAI_COMPATIBLE:
+        if source.kind not in {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter"}:
             continue
         for source_model in source.models:
             if not source_model.is_enabled:
@@ -81,7 +81,7 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         supports_reasoning_summaries=reasoning_opted_in and raw.get("supports_reasoning_summaries") is True,
         support_verbosity=False,
         default_verbosity=None,
-        prefer_websockets=False,
+        prefer_websockets=source.kind == "openrouter",
         supports_parallel_tool_calls=source_model.supports_tools,
         supported_in_api=True,
         minimal_client_version=None,

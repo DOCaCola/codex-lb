@@ -35,6 +35,8 @@ async def select_responses_model_source(
     raw_model: str | None = None,
     require_streaming: bool = False,
     only_disabled: bool = False,
+    excluded_source_ids: set[str] | None = None,
+    advance_rotation: bool = True,
 ) -> tuple[ModelSource, str] | None:
     """Resolve ``model`` to a Responses-capable model source, if any.
 
@@ -54,19 +56,24 @@ async def select_responses_model_source(
         return None
     deduped_candidates = list(dict.fromkeys(candidates))
     registry_models = get_model_registry().get_models_with_fallback()
+    source_candidates = [
+        candidate
+        for candidate in deduped_candidates
+        if (exact_allowed_models is None or candidate in exact_allowed_models)
+        and (assigned_source_ids is not None or candidate not in registry_models)
+    ]
+    if not source_candidates:
+        return None
     async with get_background_session() as session:
         repository = ModelSourcesRepository(session)
-        for candidate in deduped_candidates:
-            if exact_allowed_models is not None and candidate not in exact_allowed_models:
-                continue
-            subscription_model = registry_models.get(candidate)
-            if assigned_source_ids is None and subscription_model is not None:
-                continue
+        for candidate in source_candidates:
             source = await repository.find_responses_source_for_model(
                 candidate,
                 allowed_source_ids=assigned_source_ids,
                 require_streaming=require_streaming,
                 only_disabled=only_disabled,
+                excluded_source_ids=excluded_source_ids,
+                advance_rotation=advance_rotation,
             )
             if source is not None:
                 break
@@ -84,6 +91,25 @@ def effective_model_for_api_key(api_key: ApiKeyData | None, requested_model: str
     if api_key is None or api_key.enforced_model is None:
         return requested_model
     return api_key.enforced_model
+
+
+async def has_responses_source_access(api_key: ApiKeyData | None) -> bool:
+    """Keep a downstream socket available when it can serve HTTP-backed sources."""
+    assigned = allowed_source_ids_for_api_key(api_key)
+    allowed_models = set(api_key.allowed_models) if api_key and api_key.allowed_models else None
+    async with get_background_session() as session:
+        for source in await ModelSourcesRepository(session).list_enabled_sources():
+            if not source.supports_responses or (assigned is not None and source.id not in assigned):
+                continue
+            if any(
+                row.is_enabled
+                and row.supports_streaming
+                and (allowed_models is None or row.model in allowed_models)
+                and (api_key is None or api_key.enforced_model is None or row.model == api_key.enforced_model)
+                for row in source.models
+            ):
+                return True
+    return False
 
 
 async def responses_model_is_source_owned(

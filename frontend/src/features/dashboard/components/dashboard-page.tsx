@@ -19,6 +19,7 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { useAccountMutations } from "@/features/accounts/hooks/use-accounts";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
+import { OpenRouterAccountsPanel } from "@/features/openrouter/accounts-panel";
 import { AccountList } from "@/features/dashboard/components/account-list";
 import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
 import { AccountViewModeToggle } from "@/features/dashboard/components/account-view-mode-toggle";
@@ -519,6 +520,8 @@ export function DashboardPage() {
               <AccountCards accounts={overview?.accounts ?? []} readOnly={!canWriteAccounts} onAction={handleAccountAction} />
             )}
           </section>
+
+          <OpenRouterAccountsPanel dashboard readOnly />
 
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">

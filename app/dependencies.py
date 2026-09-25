@@ -38,6 +38,7 @@ from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.service import ModelSourcesService
 from app.modules.oauth.service import OauthService
+from app.modules.openrouter.service import OpenRouterService
 from app.modules.proxy.capability_lineage_repository import CapabilityLineageRepository
 from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.service import ProxyService
@@ -380,6 +381,12 @@ def get_model_sources_context(
     repository = ModelSourcesRepository(session)
     service = ModelSourcesService(repository)
     return ModelSourcesContext(session=session, repository=repository, service=service)
+
+
+def get_openrouter_service(session: AsyncSession = Depends(get_session)) -> OpenRouterService:
+    from app.modules.openrouter.repository import OpenRouterRepository
+
+    return OpenRouterService(OpenRouterRepository(session))
 
 
 def get_request_logs_context(

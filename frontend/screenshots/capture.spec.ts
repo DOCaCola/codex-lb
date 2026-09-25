@@ -82,6 +82,7 @@ async function interceptApi(
       return fulfill(route, createConversationDetails({ conversationId: "conv_abc" }));
     }
     if (p === "/api/accounts") return fulfill(route, { accounts: accountList });
+    if (p === "/api/openrouter-accounts") return fulfill(route, { accounts: [] });
     const trendsMatch = p.match(/^\/api\/accounts\/([^/]+)\/trends$/);
     if (trendsMatch) {
       const trends = accountTrends[trendsMatch[1]];
@@ -400,6 +401,43 @@ for (const width of [1440, 390]) {
 test("settings — dark", async ({ page }) => {
   await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings", fullPage: true });
 });
+
+for (const width of [1440, 390]) {
+  test(`openrouter accounts — ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await applyTheme(page, "light");
+    await interceptApi(page);
+    const account = {
+      id: "src_openrouter_demo", name: "Research", isEnabled: true, hasManagementKey: true,
+      state: {
+        catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null,
+        key_updated_at: "2026-09-25T12:00:00Z", key_error: null,
+        credits_updated_at: "2026-09-25T12:00:00Z", credits_error: null,
+        credits: {total_credits: 100, total_usage: 24.50},
+        key: {limit: 50, limit_remaining: 42.25, limit_reset: "monthly", usage: 7.75,
+          usage_daily: 1.25, usage_weekly: 4.50, usage_monthly: 7.75,
+          free_model_daily_requests: {used: 12, limit: 1000, remaining: 988}},
+        selections: [{model: "vendor/coder", contextWindow: 262144, maxOutputTokens: null, displayName: null}],
+        catalog: [{id: "vendor/coder", name: "Coder", context_length: 1000000,
+          pricing: {prompt: 0.0000005, input_cache_read: 0.00000005, completion: 0.000002},
+          supported_parameters: ["tools", "reasoning"],
+          architecture: {input_modalities: ["text", "image"], output_modalities: ["text"]},
+          top_provider: {context_length: 1000000, max_completion_tokens: 64000},
+          reasoning: {mandatory: true, supported_efforts: ["low", "high", "max"], default_effort: "high"}}],
+      },
+    };
+    await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
+    await page.goto(`${BASE_URL}/accounts`);
+    await expect(page.getByRole("heading", {name: "OpenRouter accounts"})).toBeVisible();
+    await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-accounts-${width}.png`)});
+    await page.getByRole("button", {name: "Models", exact: true}).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Context cap for vendor/coder")).toHaveValue("262144");
+    const box = await dialog.boundingBox();
+    expect(box!.width).toBeLessThanOrEqual(width);
+    await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-models-${width}.png`)});
+  });
+}
 
 test("login", async ({ page }) => {
   await capture(page, {

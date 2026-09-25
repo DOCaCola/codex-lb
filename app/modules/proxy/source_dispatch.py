@@ -277,6 +277,8 @@ def source_usage_cost_usd(source: ModelSource, model: str, usage: SourceUsage | 
 
     if usage is None:
         return None
+    if source.kind == "openrouter" and usage.reported_cost_usd is not None:
+        return usage.reported_cost_usd
     cost_usd = source_model_cost_usd(
         source,
         model,
@@ -571,7 +573,7 @@ class SourceDispatch:
                     error_code=error_code,
                     error_message=error_message,
                     upstream_status_code=upstream_status_code,
-                    transport="http",
+                    transport="websocket" if self.request.scope.get("source_websocket") else "http",
                     upstream_transport="openai_compatible_http",
                     source=REQUEST_LOG_SOURCE,
                     requested_service_tier=self.requested_service_tier,

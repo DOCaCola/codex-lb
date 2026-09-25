@@ -1,8 +1,8 @@
-"""Tests for the WebSocket model-source guard.
+"""Unit tests for the native-upstream model-source guards.
 
-Model sources are only reachable from the HTTP request path, so the WebSocket
-transport must refuse them. Two guards cover the two ways a turn can reach an
-upstream:
+Ordinary source turns are now intercepted by the shared HTTP/SSE bridge.
+These tests isolate the remaining native transport guards (e.g. replay and
+connect races) from that separately integration-tested adapter:
 
 * the connect guard, which fails the connect with a service-level ``503`` that
   Codex clients transparently fall back from onto HTTP;
@@ -41,6 +41,11 @@ from tests.unit.test_proxy_utils import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolate_native_guards(monkeypatch):
+    monkeypatch.setattr(ws_mixin, "handle_source_frame", AsyncMock(return_value=False))
 
 
 def _api_key(*, enforced_model: str | None = None) -> ApiKeyData:
@@ -426,6 +431,8 @@ class _AliasSourceCatalog:
                 allowed_source_ids=None,  # noqa: ANN001
                 require_streaming: bool = False,
                 only_disabled: bool = False,
+                excluded_source_ids: set[str] | None = None,
+                advance_rotation: bool = True,
             ):  # noqa: ANN202
                 catalog.seen_candidates.append(candidate)
                 # ``only_disabled`` selects the complement of the routable

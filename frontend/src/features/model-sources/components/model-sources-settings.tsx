@@ -39,7 +39,7 @@ export function ModelSourcesSettings({
   const createDialog = useDialogState();
   const editDialog = useDialogState<ModelSource>();
   const deleteDialog = useDialogState<ModelSource>();
-  const sources = modelSourcesQuery.data?.sources ?? [];
+  const sources = (modelSourcesQuery.data?.sources ?? []).filter(source => source.kind !== "openrouter");
   const busy =
     disabled ||
     modelSourcesQuery.isFetching ||

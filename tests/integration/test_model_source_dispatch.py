@@ -1430,5 +1430,5 @@ def test_direct_routing_claims_only_inside_the_source_route_helper() -> None:
         and node.func.id in {"try_claim_source_admission", "SourceDispatch"}
     ]
     assert claim_sites, "the source route no longer claims through the bulkhead"
-    assert set(claim_sites) == {"_source_responses_response"}
+    assert set(claim_sites) == {"_dispatch_source_responses_response"}
     assert "context: ProxyContext | None = None" in inspect.getsource(proxy_api._source_responses_response)

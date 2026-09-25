@@ -28,6 +28,7 @@ import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import type { AccountAuthExportResponse } from "@/features/accounts/schemas";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import { getErrorMessageOrNull } from "@/utils/errors";
+import { OpenRouterAccountsPanel } from "@/features/openrouter/accounts-panel";
 
 const OauthDialog = lazy(() =>
   import("@/features/accounts/components/oauth-dialog").then((m) => ({
@@ -164,6 +165,8 @@ export function AccountsPage() {
       {mutationError ? (
         <AlertMessage variant="error">{mutationError}</AlertMessage>
       ) : null}
+
+      <OpenRouterAccountsPanel readOnly={!canWrite} />
 
       {!accountsQuery.data ? (
         <AccountsSkeleton />

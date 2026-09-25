@@ -229,6 +229,7 @@ from app.modules.model_sources.compaction import (
     build_source_compaction_request,
     extract_completed_source_compaction_summary,
 )
+from app.modules.model_sources.continuation import SourceContinuation
 from app.modules.model_sources.forwarding import (
     ModelSourceForwardingError,
     SourceResponsesCompletion,
@@ -1343,7 +1344,7 @@ async def responses_websocket(
     # comes back. Keep capability handshakes on the websocket and let the
     # ordinary capability path surface real upstream failures.
     if not capability_header_values:
-        transport_denial = await _websocket_upstream_transport_denial()
+        transport_denial = await _websocket_upstream_transport_denial(api_key)
         if transport_denial is not None:
             await websocket.send_denial_response(transport_denial)
             return
@@ -1735,7 +1736,7 @@ async def v1_responses_websocket(
     # comes back. Keep capability handshakes on the websocket and let the
     # ordinary capability path surface real upstream failures.
     if not capability_header_values:
-        transport_denial = await _websocket_upstream_transport_denial()
+        transport_denial = await _websocket_upstream_transport_denial(api_key)
         if transport_denial is not None:
             await websocket.send_denial_response(transport_denial)
             return
@@ -4677,7 +4678,10 @@ async def _select_responses_model_source_with_continuity(
         raw_model=raw_model,
         require_streaming=require_streaming,
     )
-    if source_selection is None or payload.previous_response_id is None:
+    if source_selection is None or payload.previous_response_id is None or source_selection[0].kind == "openrouter":
+        # An explicitly selected OpenRouter model cannot run on the previous
+        # subscription account. Its stateless adapter must expand retained
+        # history or request a complete resend, never preserve a native anchor.
         return source_selection, False
     owner_account_id = await context.service._resolve_websocket_previous_response_owner(
         previous_response_id=payload.previous_response_id,
@@ -5057,10 +5061,44 @@ async def _source_synthetic_compaction_response(
     context: ProxyContext | None = None,
 ) -> Response:
     try:
+        if source.kind == "openrouter":
+            expanded = await SourceContinuation(request, api_key, source.id).expand(payload.model_dump_for_forwarding())
+            payload = payload.model_copy(
+                update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
+            )
         compact_payload = build_terminal_compact_request(payload)
         if compact_payload is None:
             raise RuntimeError("source compaction requires a terminal compaction trigger")
-        source_request = build_source_compaction_request(compact_payload)
+    except ClientPayloadError as exc:
+        return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
+    return await _source_compaction_response(
+        request,
+        compact_payload,
+        source=source,
+        api_key=api_key,
+        rate_limit_headers=rate_limit_headers,
+        pre_normalization_effort=pre_normalization_effort,
+        context=context,
+        streaming=True,
+    )
+
+
+async def _source_compaction_response(
+    request: Request,
+    payload: ResponsesCompactRequest,
+    *,
+    source: ModelSource,
+    api_key: ApiKeyData | None,
+    rate_limit_headers: Mapping[str, str],
+    pre_normalization_effort: str | None,
+    context: ProxyContext | None,
+    streaming: bool,
+) -> Response:
+    try:
+        if source.kind == "openrouter":
+            expanded = await SourceContinuation(request, api_key, source.id).expand(dict(payload.to_payload()))
+            payload = ResponsesCompactRequest.model_validate(expanded)
+        source_request = build_source_compaction_request(payload)
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     source_response = await _source_responses_response(
@@ -5101,6 +5139,16 @@ async def _source_synthetic_compaction_response(
         "status": "completed",
         "encrypted_content": encode_codex_lb_compaction_summary(summary),
     }
+    if not streaming:
+        return JSONResponse(
+            content={
+                "id": response_id,
+                "object": "response.compaction",
+                "output": [compact_item],
+                "usage": source_payload.get("usage"),
+            },
+            headers=rate_limit_headers,
+        )
     stream = _synthetic_compaction_response_stream(
         compact_item,
         response_id=response_id,
@@ -5118,6 +5166,74 @@ async def _source_synthetic_compaction_response(
 
 
 async def _source_responses_response(
+    request: Request,
+    payload: ResponsesRequest,
+    *,
+    source: ModelSource,
+    api_key: ApiKeyData | None,
+    rate_limit_headers: Mapping[str, str],
+    pre_normalization_effort: str | None,
+    enforce_openai_sdk_contract: bool = True,
+    native_codex_heartbeat: bool = False,
+    context: ProxyContext | None = None,
+) -> Response:
+    from app.modules.openrouter.routing import cooldown_remaining, record_failure
+
+    attempted: set[str] = set()
+    while True:
+        attempted.add(source.id)
+        remaining = await cooldown_remaining(source.id, payload.model) if source.kind == "openrouter" else 0
+        if remaining:
+            error = ModelSourceForwardingError(
+                status_code=429,
+                payload=cast(
+                    dict[str, JsonValue],
+                    openai_error("rate_limit_exceeded", "OpenRouter account is cooling down; retry later."),
+                ),
+                retry_after=str(remaining),
+            )
+        else:
+            try:
+                return await _dispatch_source_responses_response(
+                    request,
+                    payload,
+                    source=source,
+                    api_key=api_key,
+                    rate_limit_headers=rate_limit_headers,
+                    pre_normalization_effort=pre_normalization_effort,
+                    enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+                    native_codex_heartbeat=native_codex_heartbeat,
+                    context=context,
+                )
+            except ModelSourceForwardingError as exc:
+                error = exc
+                # Only explicit provider rejections permit another account.
+                # Network failures may have already caused paid generation.
+                if source.kind != "openrouter" or exc.upstream_status_code not in (401, 402, 429):
+                    return _logged_error_json_response(
+                        request,
+                        exc.status_code,
+                        exc.payload,
+                        headers=_source_error_response_headers(rate_limit_headers, exc),
+                    )
+                await record_failure(source.id, payload.model, exc.upstream_status_code, exc.retry_after)
+        selected = await select_responses_model_source(
+            payload.model,
+            api_key,
+            require_streaming=bool(payload.stream),
+            excluded_source_ids=attempted,
+        )
+        if selected is None or selected[0].kind != "openrouter":
+            return _logged_error_json_response(
+                request,
+                error.status_code,
+                error.payload,
+                headers=_source_error_response_headers(rate_limit_headers, error),
+            )
+        source = selected[0]
+
+
+async def _dispatch_source_responses_response(
     request: Request,
     payload: ResponsesRequest,
     *,
@@ -5148,8 +5264,18 @@ async def _source_responses_response(
         source,
         pre_normalization_effort=pre_normalization_effort,
     )
+    continuation = SourceContinuation(request, api_key, source.id) if source.kind == "openrouter" else None
     try:
+        if continuation is not None:
+            expanded = await continuation.expand(payload.model_dump_for_forwarding())
+            payload = payload.model_copy(
+                update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
+            )
         source_payload = _shape_source_responses_payload(payload, source, api_key=api_key)
+        # Validate before acquiring usage or admission; forwarding owns projection.
+        from app.modules.openrouter.protocol import project_request
+
+        project_request(source, source_payload, responses=True)
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     claims = try_claim_source_admission(source)
@@ -5196,15 +5322,15 @@ async def _source_responses_response(
             stream = owner.stream
             if stream is None:
                 raise RuntimeError("model source open completed without assigning the stream")
-            body = settlement_stream(
-                owner,
-                _wrap_source_responses_public_stream(
-                    stream.body,
-                    enforce_openai_sdk_contract=enforce_openai_sdk_contract,
-                    native_codex_heartbeat=native_codex_heartbeat,
-                    preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
-                ),
+            public_body = _wrap_source_responses_public_stream(
+                stream.body,
+                enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+                native_codex_heartbeat=native_codex_heartbeat,
+                preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
             )
+            if continuation is not None:
+                public_body = continuation.stream(public_body)
+            body = settlement_stream(owner, public_body)
             return SourceStreamingResponse(
                 body,
                 owner=owner,
@@ -5215,15 +5341,16 @@ async def _source_responses_response(
                 },
             )
         result = await open_with_disconnect_watch(request, owner, forward_source_responses(source, source_payload))
+        if continuation is not None:
+            await continuation.remember(result.payload)
         return await _finish_non_stream_source_dispatch(request, owner, result, rate_limit_headers=rate_limit_headers)
     except ModelSourceForwardingError as exc:
         await owner.finish_with_forwarding_error(exc)
-        return _logged_error_json_response(
-            request,
-            exc.status_code,
-            exc.payload,
-            headers=_source_error_response_headers(rate_limit_headers, exc),
-        )
+        if owner.settlement_failed:
+            return _logged_error_json_response(
+                request, 502, _source_usage_settlement_failed_error(), headers=rate_limit_headers
+            )
+        raise
     except ClientDisconnectedDuringOpen as exc:
         await owner.abandon(ABANDON_SOURCE_STALL if exc.stall else ABANDON_CLIENT_DISCONNECTED_DURING_OPEN)
         return Response()
@@ -5285,7 +5412,8 @@ def _shape_source_responses_payload(
             }
         else:
             source_payload["reasoning"] = {"effort": source_reasoning_effort}
-    strip_replayed_tool_call_namespaces_from_payload(source_payload)
+    if source.kind != "openrouter":
+        strip_replayed_tool_call_namespaces_from_payload(source_payload)
     source_payload["stream"] = bool(payload.stream)
     _apply_source_response_request_overrides(source_payload, source_model_request_overrides(source, payload.model))
     _drop_unsupported_source_response_tools(
@@ -6946,7 +7074,7 @@ async def responses_compact(
     _raw_trigger_validation: None = Depends(_capture_raw_compaction_trigger_error),
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
-) -> JSONResponse:
+) -> Response:
     capability_transport_denial = await _required_capability_http_transport_denial(request, api_key, payload=payload)
     if capability_transport_denial is not None:
         return capability_transport_denial
@@ -6973,7 +7101,7 @@ async def v1_responses_compact(
     payload: V1ResponsesCompactRequest = Body(...),
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
-) -> JSONResponse:
+) -> Response:
     capability_transport_denial = await _required_capability_http_transport_denial(request, api_key, payload=payload)
     if capability_transport_denial is not None:
         return capability_transport_denial
@@ -7004,19 +7132,40 @@ async def _compact_responses(
     codex_session_affinity: bool = False,
     openai_cache_affinity: bool = False,
     prohibit_fast_mode: bool = False,
-) -> JSONResponse:
-    # The replaced effort is discarded: this path is subscription-only, so the
-    # rewrite that works around the backend hang must stick.
-    service_tier_was_enforced = apply_api_key_enforcement(
+) -> Response:
+    enforcement = apply_api_key_enforcement(
         payload,
         api_key,
         prohibit_fast_mode=prohibit_fast_mode,
-    ).service_tier_was_enforced
+    )
     apply_enforced_service_tier_model_fallback(
         payload,
-        service_tier_was_enforced=service_tier_was_enforced,
+        service_tier_was_enforced=enforcement.service_tier_was_enforced,
     )
     validate_model_access(api_key, payload.model)
+    source_selection = await select_responses_model_source(payload.model, api_key)
+    if source_selection is not None:
+        return await _source_compaction_response(
+            request,
+            payload,
+            source=source_selection[0],
+            api_key=api_key,
+            rate_limit_headers={},
+            pre_normalization_effort=enforcement.pre_normalization_reasoning_effort,
+            context=context,
+            streaming=False,
+        )
+    disabled = await select_responses_model_source(payload.model, api_key, only_disabled=True)
+    if disabled is not None:
+        return _logged_error_json_response(
+            request,
+            503,
+            openai_error(
+                "model_source_disabled",
+                "The model source is disabled.",
+                error_type="server_error",
+            ),
+        )
     try:
         request_usage_budget = estimate_api_key_request_usage(payload)
     except ClientPayloadError as exc:
@@ -8558,7 +8707,7 @@ async def _validate_internal_bridge_api_key(
     return api_key, None
 
 
-async def _websocket_upstream_transport_denial() -> JSONResponse | None:
+async def _websocket_upstream_transport_denial(api_key: ApiKeyData | None = None) -> JSONResponse | None:
     # Codex clients only activate their HTTP transport fallback when the
     # websocket handshake itself is rejected with HTTP 426 (UPGRADE_REQUIRED),
     # so a recent upstream websocket connect transport failure — or an
@@ -8573,6 +8722,10 @@ async def _websocket_upstream_transport_denial() -> JSONResponse | None:
         dashboard_settings = await get_settings_cache().get()
         if configured_upstream_stream_transport(dashboard_settings) != "http":
             return None
+    from app.modules.model_sources.selection import has_responses_source_access
+
+    if await has_responses_source_access(api_key):
+        return None
     return JSONResponse(
         status_code=426,
         content=openai_error(
@@ -8770,6 +8923,8 @@ async def _settle_source_reservation(
 def _source_usage_cost_usd(source: ModelSource, model: str, usage: SourceUsage | None) -> float | None:
     if usage is None:
         return None
+    if source.kind == "openrouter" and usage.reported_cost_usd is not None:
+        return usage.reported_cost_usd
     cost_usd = source_model_cost_usd(
         source,
         model,

@@ -1910,6 +1910,25 @@ class ModelSource(Base):
     )
 
 
+class OpenRouterCooldown(Base):
+    __tablename__ = "openrouter_cooldowns"
+
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
+    model: Mapped[str] = mapped_column(String, primary_key=True)
+    until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class OpenRouterAccount(Base):
+    __tablename__ = "openrouter_accounts"
+
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
+    management_key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    state_json: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    source: Mapped[ModelSource] = relationship(lazy="selectin")
+    __mapper_args__ = {"version_id_col": version}
+
+
 class ModelSourceModel(Base):
     __tablename__ = "model_source_models"
     __table_args__ = (UniqueConstraint("source_id", "model", name="uq_model_source_models_source_model"),)

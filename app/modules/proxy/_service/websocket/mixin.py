@@ -114,6 +114,7 @@ from app.modules.model_sources.selection import (
     effective_model_for_api_key,
     responses_model_is_source_owned,
 )
+from app.modules.model_sources.websocket import SourceWebSocketReceiver, handle_source_frame
 from app.modules.model_sources.websocket_fallback import (
     SourceWebSocketFallbackRegistry,
     source_websocket_fallback_identities,
@@ -1478,6 +1479,7 @@ class _WebSocketMixin:
         capability_header_values: tuple[str, ...] | None = None,
     ) -> None:
         proxy = cast(_WebSocketServiceProtocol, self)
+        source_receiver = SourceWebSocketReceiver(websocket)
         clock = clock_for(proxy)
         filtered_headers = filter_inbound_websocket_headers(dict(headers))
         useragent, useragent_group, conversation_id = _request_log_client_fields(headers)
@@ -1733,7 +1735,7 @@ class _WebSocketMixin:
                     message: Any | None = None
                     try:
                         message = await scheduler_for(proxy).wait_for(
-                            websocket.receive(),
+                            source_receiver.receive(),
                             timeout=min(
                                 downstream_idle_timeout_seconds, _facade()._DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS
                             ),
@@ -1762,7 +1764,9 @@ class _WebSocketMixin:
                                 idle_timeout_seconds=downstream_idle_timeout_seconds,
                             ):
                                 try:
-                                    message = await scheduler_for(proxy).wait_for(websocket.receive(), timeout=0.05)
+                                    message = await scheduler_for(proxy).wait_for(
+                                        source_receiver.receive(), timeout=0.05
+                                    )
                                 except asyncio.TimeoutError:
                                     try:
                                         await websocket.close(
@@ -1821,6 +1825,18 @@ class _WebSocketMixin:
                                             )
                                         )
                                     )
+                                continue
+                            if await handle_source_frame(
+                                websocket,
+                                source_receiver,
+                                payload,
+                                service=cast(Any, proxy),
+                                api_key=api_key,
+                                send_lock=client_send_lock,
+                                native_turn_pending=bool(pending_requests),
+                                native_codex=codex_session_affinity,
+                            ):
+                                downstream_activity.mark()
                                 continue
                             try:
                                 prepared_request = await proxy._prepare_websocket_response_create_request(

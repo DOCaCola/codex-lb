@@ -108,6 +108,8 @@ from app.modules.fleet import api as fleet_api
 from app.modules.health import api as health_api
 from app.modules.model_sources import api as model_sources_api
 from app.modules.oauth import api as oauth_api
+from app.modules.openrouter import api as openrouter_api
+from app.modules.openrouter.scheduler import OpenRouterRefreshScheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy.cap_partitioning import refresh_cap_partition
 from app.modules.proxy.durable_bridge_coordinator import DurableBridgeSessionCoordinator
@@ -686,6 +688,7 @@ async def lifespan(app: FastAPI):
     api_key_limit_reset_scheduler = build_api_key_limit_reset_scheduler()
     api_key_last_used_flush_scheduler = build_api_key_last_used_flush_scheduler()
     model_scheduler = build_model_refresh_scheduler()
+    openrouter_scheduler = OpenRouterRefreshScheduler()
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
     quota_planner_scheduler = build_quota_planner_scheduler()
     auth_guardian_scheduler = build_auth_guardian_scheduler()
@@ -704,6 +707,7 @@ async def lifespan(app: FastAPI):
     await api_key_limit_reset_scheduler.start()
     await api_key_last_used_flush_scheduler.start()
     await model_scheduler.start()
+    await openrouter_scheduler.start()
     await sticky_session_cleanup_scheduler.start()
     await quota_planner_scheduler.start()
     await auth_guardian_scheduler.start()
@@ -924,6 +928,7 @@ async def lifespan(app: FastAPI):
         await sticky_session_cleanup_scheduler.stop()
         await metadata_scheduler.stop()
         await model_scheduler.stop()
+        await openrouter_scheduler.stop()
         # Stop the invalidation poller only after the model scheduler: a final
         # leader tick may still bump through the installed poller.
         await cache_poller.stop()
@@ -1068,6 +1073,7 @@ def create_app() -> FastAPI:
     app.include_router(automations_api.router)
     app.include_router(api_keys_api.router)
     app.include_router(model_sources_api.router)
+    app.include_router(openrouter_api.router)
     app.include_router(health_api.router)
 
     static_dir = Path(__file__).parent / "static"

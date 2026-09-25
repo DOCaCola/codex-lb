@@ -463,3 +463,4 @@ describe("AccountsPage", () => {
     expect(screen.queryByRole("alertdialog", { name: "Reset usage" })).not.toBeInTheDocument();
   });
 });
+vi.mock("@/features/openrouter/accounts-panel", () => ({ OpenRouterAccountsPanel: () => null }));

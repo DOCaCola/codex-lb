@@ -85,6 +85,7 @@ class SourceUsage:
     input_tokens: int
     output_tokens: int
     cached_input_tokens: int = 0
+    reported_cost_usd: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +298,9 @@ async def forward_chat_completion(
     *,
     encryptor: TokenEncryptor | None = None,
 ) -> SourceChatCompletion:
+    from app.modules.openrouter.protocol import project_request
+
+    payload = project_request(source, payload, responses=False)
     stack = AsyncExitStack()
     try:
         session = await stack.enter_async_context(lease_model_source_session())
@@ -340,6 +344,9 @@ async def stream_chat_completion(
     scheduler: Scheduler = REAL_SCHEDULER,
     clock: Clock = REAL_CLOCK,
 ) -> SourceChatStream:
+    from app.modules.openrouter.protocol import project_request
+
+    payload = project_request(source, payload, responses=False)
     usage_holder = SourceUsageHolder()
     usage_parser = SourceStreamUsageParser(usage_holder, response_shape="chat")
     # Chat completions keep the source's own 401/403 envelope (recode is a
@@ -388,6 +395,9 @@ async def forward_responses(
     encryptor: TokenEncryptor | None = None,
     recode_credential_failures: bool = True,
 ) -> SourceResponsesCompletion:
+    from app.modules.openrouter.protocol import project_request
+
+    payload = project_request(source, payload, responses=True)
     try:
         async with lease_model_source_session() as session:
             # Non-stream generations legitimately spend minutes before the
@@ -508,6 +518,9 @@ async def stream_responses(
     scheduler: Scheduler = REAL_SCHEDULER,
     clock: Clock = REAL_CLOCK,
 ) -> SourceResponsesStream:
+    from app.modules.openrouter.protocol import project_request
+
+    payload = project_request(source, payload, responses=True)
     usage_holder = SourceUsageHolder()
     usage_parser = SourceStreamUsageParser(usage_holder, response_shape="responses")
     stack, response, first_chunk = await _open_source_stream(
@@ -994,6 +1007,8 @@ def _source_headers(
     }
     if content_type is not None:
         headers["Content-Type"] = content_type
+    if source.kind == "openrouter":
+        headers["X-Title"] = "codex-lb"
     if source.api_key_encrypted is not None:
         secret = _source_api_key_secret(source, encryptor=encryptor)
         headers["Authorization"] = f"Bearer {secret}"
@@ -1229,6 +1244,17 @@ def _timings_from_metrics(metrics: Mapping[str, JsonValue]) -> SourceTimings | N
     )
 
 
+def _reported_cost(usage: Mapping[str, JsonValue]) -> float | None:
+    import math
+
+    cost = usage.get("cost")
+    return (
+        float(cost)
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost) and cost >= 0
+        else None
+    )
+
+
 def _usage_from_mapping(usage: Mapping[str, JsonValue]) -> SourceUsage | None:
     prompt_tokens = usage.get("prompt_tokens")
     completion_tokens = usage.get("completion_tokens")
@@ -1247,6 +1273,7 @@ def _usage_from_mapping(usage: Mapping[str, JsonValue]) -> SourceUsage | None:
         input_tokens=prompt_tokens,
         output_tokens=completion_tokens,
         cached_input_tokens=max(0, min(cached_tokens, prompt_tokens)),
+        reported_cost_usd=_reported_cost(usage),
     )
 
 
@@ -1268,6 +1295,7 @@ def _usage_from_responses_mapping(usage: Mapping[str, JsonValue]) -> SourceUsage
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cached_input_tokens=max(0, min(cached_tokens, input_tokens)),
+        reported_cost_usd=_reported_cost(usage),
     )
 
 

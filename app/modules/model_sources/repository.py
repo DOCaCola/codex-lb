@@ -59,7 +59,7 @@ class ModelSourcesRepository:
             select(ModelSource)
             .options(selectinload(ModelSource.models))
             .join(ModelSourceModel, ModelSourceModel.source_id == ModelSource.id)
-            .where(ModelSource.kind == "openai_compatible")
+            .where(ModelSource.kind.in_(("openai_compatible", "openrouter")))
             .where(ModelSource.supports_chat_completions.is_(True))
             .where(ModelSourceModel.model == model)
             .where(_enablement_filter(only_disabled))
@@ -82,17 +82,18 @@ class ModelSourcesRepository:
         allowed_source_ids: set[str] | None = None,
         require_streaming: bool = False,
         only_disabled: bool = False,
+        excluded_source_ids: set[str] | None = None,
+        advance_rotation: bool = True,
     ) -> ModelSource | None:
         stmt = (
             select(ModelSource)
             .options(selectinload(ModelSource.models))
             .join(ModelSourceModel, ModelSourceModel.source_id == ModelSource.id)
-            .where(ModelSource.kind == "openai_compatible")
+            .where(ModelSource.kind.in_(("openai_compatible", "openrouter")))
             .where(ModelSource.supports_responses.is_(True))
             .where(ModelSourceModel.model == model)
             .where(_enablement_filter(only_disabled))
             .order_by(ModelSource.name, ModelSource.id)
-            .limit(1)
         )
         if require_streaming:
             stmt = stmt.where(ModelSourceModel.supports_streaming.is_(True))
@@ -101,7 +102,14 @@ class ModelSourcesRepository:
                 return None
             stmt = stmt.where(ModelSource.id.in_(allowed_source_ids))
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        from app.modules.openrouter.routing import select_available
+
+        sources = list(result.scalars().unique())
+        if only_disabled:
+            return sources[0] if sources else None
+        return await select_available(
+            self._session, sources, model, excluded=excluded_source_ids, advance_rotation=advance_rotation
+        )
 
     async def find_audio_transcriptions_source_for_model(
         self,
