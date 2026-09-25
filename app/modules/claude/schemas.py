@@ -96,6 +96,13 @@ class QuotaWindow(BaseModel):
     utilization: float = Field(ge=0, allow_inf_nan=False)
     resets_at: datetime | None = None
 
+    @field_validator("resets_at")
+    @classmethod
+    def aware_reset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Quota reset must include a timezone")
+        return value.astimezone(UTC) if value is not None else None
+
 
 class UsageSnapshot(BaseModel):
     # Preserve newer provider windows for display without guessing model ownership.
@@ -114,6 +121,30 @@ class AccountState(BaseModel):
     usage: UsageSnapshot | None = None
     usage_updated_at: datetime | None = None
     usage_error: str | None = None
+
+
+WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]
+
+
+class WindowStatus(DashboardModel):
+    name: WindowName
+    utilization: float | None
+    resets_at: datetime | None
+    freshness: Literal["fresh", "stale", "unknown"]
+    exhausted: bool
+
+
+class ModelQuota(DashboardModel):
+    model: str
+    blocked: bool
+    blocking_windows: list[WindowName] = Field(default_factory=list)
+    retry_at: datetime | None = None
+
+
+class QuotaStatus(DashboardModel):
+    observed_at: datetime | None
+    windows: list[WindowStatus]
+    models: list[ModelQuota]
 
 
 class ClaudeImport(DashboardModel):
@@ -135,6 +166,7 @@ class ClaudeAccountResponse(DashboardModel):
     credential_status: str
     expires_at: datetime
     state: AccountState
+    quota: QuotaStatus
 
 
 class ClaudeAccountsResponse(DashboardModel):

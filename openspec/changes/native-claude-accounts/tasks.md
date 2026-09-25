@@ -8,7 +8,7 @@
 
 ## 2. Discovery and identity
 
-- [ ] 2.1 Implement paginated catalog, selections and scoped quota monitoring; verify atomic-refresh and entitlement fixtures.
+- [x] 2.1 Implement paginated catalog, selections and scoped quota monitoring; verify atomic-refresh and entitlement fixtures.
 - [x] 2.2 Implement shared daily version following and pin/rollback; verify unchanged checks, stale feed and immutable snapshots.
 
 ## 3. Inference

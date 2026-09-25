@@ -32,7 +32,26 @@ This change remains in progress, not deployable Claude inference support.
 
 ## Still required before completion
 
-The request profile is not yet connected to inference transport. Pool selection,
+Follow-up after foundation commit: account responses now expose derived quota
+windows and per-selected-model blocking status. Monitoring becomes stale after
+five minutes or a refresh failure; an observed exhausted window remains blocking
+until its known reset. Passing reset changes freshness to unknown, not zero usage.
+Missing/null windows do not establish denied entitlement. Unknown provider windows
+remain in the original snapshot without an invented model association. Pagination,
+cursor/duplicate rejection, selection retention and the dashboard API contract
+are covered by local tests. The Claude-specific suite has 55 passing tests; this
+does not yet exercise inference pool selection, which remains pending below.
+
+The pool selector and dispatch preparer are now implemented and covered by
+two-account database tests: source/model scopes, worker-independent affinity,
+paused/auth/refresh/quota exclusions and mandatory continuation ownership.
+Preparation validates the request before rotating credentials, snapshots the
+profile once, replaces caller authorization, maps only the selected provider
+model, and rechecks account eligibility after a potentially slow token refresh.
+An operator pause during rotation prevents a prepared inference request. Headers
+and request bodies are excluded from the prepared request's diagnostic repr.
+
+The request profile is not yet connected to inference transport. Pool admission,
 Messages/count-token routing, Responses HTTP/WS adaptation, stream lifecycle,
 opaque-state continuation/compaction, authenticated identity/reauthentication,
 and unified frontend remain incomplete. Selected models must not be considered

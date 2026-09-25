@@ -15,6 +15,7 @@ from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ModelSource, ModelSour
 from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
+from app.modules.claude.quota import quota_status
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
@@ -175,6 +176,7 @@ class ClaudeService:
     @staticmethod
     def _response(row: ClaudeAccount) -> ClaudeAccountResponse:
         status = row.credential_status
+        state = AccountState.model_validate_json(row.state_json)
         if row.refresh_intent and row.refresh_started_at and row.refresh_started_at < utcnow() - timedelta(minutes=1):
             status = "uncertain"
         return ClaudeAccountResponse(
@@ -183,7 +185,8 @@ class ClaudeService:
             is_enabled=row.source.is_enabled,
             credential_status=status,
             expires_at=row.expires_at.replace(tzinfo=UTC),
-            state=AccountState.model_validate_json(row.state_json),
+            state=state,
+            quota=quota_status(state, now=datetime.now(UTC)),
         )
 
 

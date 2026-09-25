@@ -204,3 +204,38 @@ async def test_expired_oauth_flow_never_exchanges(async_client, monkeypatch):
     )
     assert response.status_code == 400
     exchange.assert_not_awaited()
+
+
+async def test_selected_catalog_and_quota_api_preserve_missing_entitlement(async_client, monkeypatch):
+    from app.modules.claude.schemas import QuotaWindow
+
+    catalog = AsyncMock(return_value=[CatalogModel(id="claude-opus-5", display_name="Opus")])
+    monkeypatch.setattr(ClaudeClient, "catalog", catalog)
+    monkeypatch.setattr(
+        ClaudeClient,
+        "usage",
+        AsyncMock(
+            return_value=UsageSnapshot(
+                seven_day_opus=QuotaWindow(utilization=100, resets_at=datetime.now(UTC) + timedelta(hours=2)),
+            )
+        ),
+    )
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    await async_client.post(f"/api/claude-accounts/{source_id}/refresh")
+    response = await async_client.patch(
+        f"/api/claude-accounts/{source_id}", json={"selections": [{"model": "claude-opus-5"}]}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["quota"]["models"][0]["blockingWindows"] == ["seven_day_opus"]
+    invalid = await async_client.patch(
+        f"/api/claude-accounts/{source_id}", json={"selections": [{"model": "invented"}]}
+    )
+    assert invalid.status_code == 400
+    catalog.return_value = [CatalogModel(id="claude-sonnet-5", display_name="Sonnet")]
+    response = await async_client.post(f"/api/claude-accounts/{source_id}/refresh")
+    assert response.json()["state"]["selections"][0]["model"] == "claude-opus-5"
+    async with SessionLocal() as session:
+        from app.modules.model_sources.repository import ModelSourcesRepository
+
+        source = await ModelSourcesRepository(session).get_by_id(source_id)
+        assert [(model.model, model.is_enabled) for model in source.models] == [("anthropic/claude-opus-5", False)]

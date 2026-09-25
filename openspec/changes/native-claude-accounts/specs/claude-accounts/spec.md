@@ -27,6 +27,23 @@ Only explicitly selected available models on enabled, credential-healthy and cli
 - **WHEN** an account has an exhausted model-specific window
 - **THEN** that account is ineligible for that model without disabling unrelated models
 
+#### Scenario: Unavailable continuation owner
+- **WHEN** account-bound continuation names a paused, unauthorized, refreshing or quota-exhausted owner
+- **THEN** selection returns an explicit owner-unavailable error without choosing another account
+
+#### Scenario: Worker-independent affinity
+- **WHEN** the same client scope, conversation, model and eligible pool are evaluated by separate workers
+- **THEN** account selection agrees regardless of database row order
+
+#### Scenario: Missing quota and entitlement information
+- **WHEN** quota monitoring omits a window or returns null
+- **THEN** the dashboard represents it as unknown, not zero usage or a denied model entitlement
+
+#### Scenario: Stale exhausted quota
+- **WHEN** an exhausted window has a future reset but monitoring has become stale
+- **THEN** its known exhaustion continues to block applicable models until reset or a newer observation
+- **AND** passing its reset changes the observation to unknown rather than fabricating zero usage
+
 ### Requirement: Native Messages fidelity
 Authenticated `/v1/messages` and `/v1/messages/count_tokens` SHALL preserve supported recognized native body fields, system block order, cache markers, tool identifiers, beta/version metadata, SSE pings, upstream error status and rate-limit information. Caller credentials and hop-by-hop headers MUST NOT reach upstream. Native recognition MUST NOT grant authentication or change global version state. Third-party Messages SHALL use the same explicit OAuth compatibility policy as translated Responses. Unsupported billing semantics MUST fail explicitly rather than silently change spending policy.
 
