@@ -3890,6 +3890,8 @@ async def _build_codex_models_response_body(
             _to_codex_model_entry(model, visibility="hide", context_window_overrides=context_window_overrides)
         )
         seen_slugs.add(slug)
+    source_entries_start = len(entries)
+    source_priority_start = max((entry.priority for entry in entries), default=-1) + 1
     for model in visible_source_models:
         if model.slug in seen_slugs:
             continue
@@ -3927,6 +3929,9 @@ async def _build_codex_models_response_body(
                     context_window_overrides=context_window_overrides,
                 )
             )
+    # Codex sorts by priority, not response order. Keep native priorities intact.
+    for priority, entry in enumerate(entries[source_entries_start:], start=source_priority_start):
+        entry.priority = priority
     return JSONResponse(content=CodexModelsResponse(models=entries, data=data).model_dump(mode="json"))
 
 

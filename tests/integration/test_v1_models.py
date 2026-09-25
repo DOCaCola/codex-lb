@@ -91,6 +91,46 @@ def _make_upstream_model(
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native_priorities", [[], [2, 5000]])
+@pytest.mark.parametrize("source_kind", ["openrouter", "openai_compatible"])
+async def test_codex_picker_orders_native_models_before_external_models(
+    async_client, monkeypatch, native_priorities, source_kind
+):
+    registry = get_model_registry()
+    native = {
+        slug: replace(_make_upstream_model(slug), priority=priority)
+        for slug, priority in zip(["gpt-6-astra", "gpt-6-sol"], native_priorities)
+    }
+    sources = [
+        replace(
+            _make_upstream_model(slug, raw={"visibility": "list", "supports_streaming": True}),
+            source_kind=source_kind,
+            source_id="test-source",
+        )
+        for slug in ["openrouter/z-ai/glm-5.3-flash", "external-second"]
+    ]
+
+    async def list_sources(*args, **kwargs):
+        return sources
+
+    monkeypatch.setattr(registry, "get_models_with_fallback", lambda: native)
+    monkeypatch.setattr(registry, "get_models_for_metadata", lambda: {})
+    monkeypatch.setattr(proxy_api, "_list_enabled_source_catalog_models", list_sources)
+
+    response = await async_client.get("/backend-api/codex/models")
+    assert response.status_code == 200
+    entries = response.json()["models"]
+    assert [entry["slug"] for entry in sorted(entries, key=lambda entry: entry["priority"])] == [
+        *native,
+        *(model.slug for model in sources),
+    ]
+    assert [entry["priority"] for entry in entries[: len(native)]] == native_priorities
+    start = max(native_priorities, default=-1) + 1
+    assert [entry["priority"] for entry in entries[len(native) :]] == [start, start + 1]
+    assert [model.priority for model in sources] == [0, 0]
+
+
 async def _populate_test_registry() -> None:
     registry = get_model_registry()
     models = [
