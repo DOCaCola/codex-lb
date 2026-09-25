@@ -10,7 +10,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize(
     "efforts, expected",
-    [(None, ["max", "xhigh", "high", "medium", "low", "minimal"]), ([], []), (["high", "none"], ["high"])],
+    [(None, ["minimal", "low", "medium", "high", "xhigh", "max"]), ([], []), (["high", "none"], ["high"])],
 )
 def test_mandatory_reasoning_never_advertises_none(efforts, expected):
     model = CatalogModel.model_validate(

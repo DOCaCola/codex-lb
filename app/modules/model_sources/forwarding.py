@@ -866,7 +866,10 @@ def _upstream_status_error(
     error_payload: dict[str, JsonValue],
 ) -> ModelSourceForwardingError:
     """Honest passthrough of a source 4xx/5xx: status, redacted envelope and ``Retry-After``."""
+    if source.kind == "openrouter":
+        from app.modules.openrouter.protocol import normalize_error
 
+        error_payload = normalize_error(error_payload, response.status)
     return ModelSourceForwardingError(
         status_code=response.status,
         payload=_redact_source_error_payload(error_payload, source, encryptor=encryptor),

@@ -57,6 +57,84 @@ def provider(monkeypatch):
     return catalog
 
 
+@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
+@pytest.mark.parametrize("parallel", [True, False])
+async def test_websocket_parameter_rejection_is_terminal(async_client, provider, path, parallel):
+    calls = []
+
+    async def upstream(request):
+        body = await request.json()
+        calls.append(body)
+        assert "parallel_tool_calls" not in body
+        assert body["provider"] == {"sort": "price", "require_parameters": True}
+        return web.json_response({"error": {"code": 404, "message": "No endpoints found"}}, status=404)
+
+    async with stub_source_upstreams() as start:
+        url = await start(upstream)
+        created = await async_client.post("/api/openrouter-accounts", json={"name": "WS", "apiKey": "secret-test"})
+        account_id = created.json()["id"]
+        await async_client.patch(
+            f"/api/openrouter-accounts/{account_id}", json={"selections": [{"model": "vendor/test"}]}
+        )
+        async with SessionLocal() as session:
+            source = await session.get(ModelSource, account_id)
+            source.base_url = url
+            await session.commit()
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "scheme": "ws",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"user-agent", b"codex_cli_rs/0.157.0")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "subprotocols": [],
+        }
+        task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
+        try:
+            await incoming.put({"type": "websocket.connect"})
+            assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
+            # Two rejected turns prove the bridge finishes each turn without wedging the connection.
+            for _ in range(2):
+                await incoming.put(
+                    {
+                        "type": "websocket.receive",
+                        "text": json.dumps(
+                            {
+                                "type": "response.create",
+                                "model": "openrouter/vendor/test",
+                                "input": "Hello",
+                                "parallel_tool_calls": parallel,
+                            }
+                        ),
+                    }
+                )
+                message = await asyncio.wait_for(outgoing.get(), 5)
+                assert message["type"] == "websocket.send"
+                event = json.loads(message["text"])
+                assert event["type"] == "error"
+                assert event["status"] == (404 if parallel else 400)
+                # Mirrors Codex's WrappedWebsocketError string field contract.
+                assert event["error"]["code"] == ("404" if parallel else "unsupported_parameter")
+                assert isinstance(event["error"]["message"], str)
+                assert event["error"]["type"] == "invalid_request_error"
+                if parallel:
+                    assert event["error"]["message"] == "No endpoints found"
+            assert len(calls) == (2 if parallel else 0)
+        finally:
+            await incoming.put({"type": "websocket.disconnect", "code": 1000})
+            try:
+                await asyncio.wait_for(task, 5)
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_account_lifecycle_selection_and_disappearance(async_client, provider):
     created = await async_client.post("/api/openrouter-accounts", json={"name": "Native", "apiKey": "secret-test"})
     assert created.status_code == 200, created.text

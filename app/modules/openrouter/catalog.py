@@ -5,6 +5,8 @@ import json
 from app.db.models import ModelSourceModel
 from app.modules.openrouter.schemas import AccountState, CatalogModel, ModelSelection
 
+_EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+
 
 def project_models(state: AccountState) -> list[ModelSourceModel]:
     catalog = {model.id: model for model in state.catalog}
@@ -25,6 +27,7 @@ def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSour
     )
     metadata: dict[str, object] = {"upstream_model": selection.model}
     if model is not None:
+        metadata["supported_parameters"] = model.supported_parameters
         context_window = min(
             selection.context_window, model.context_length, model.top_provider.context_length or model.context_length
         )
@@ -51,9 +54,10 @@ def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSour
                     if reasoning.supported_efforts is not None
                     else ["max", "xhigh", "high", "medium", "low", "minimal", "none"]
                 )
-                metadata["supported_reasoning_levels"] = [
-                    effort for effort in efforts if not (reasoning.mandatory and effort == "none")
-                ]
+                metadata["supported_reasoning_levels"] = sorted(
+                    [effort for effort in efforts if not (reasoning.mandatory and effort == "none")],
+                    key=lambda effort: _EFFORT_ORDER.index(effort) if effort in _EFFORT_ORDER else len(_EFFORT_ORDER),
+                )
             if reasoning.default_effort is not None:
                 metadata["default_reasoning_level"] = reasoning.default_effort
     row.raw_metadata_json = json.dumps(metadata)

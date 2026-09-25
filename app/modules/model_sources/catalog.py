@@ -59,6 +59,11 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
 
     input_modalities = ("text", "image") if source_model.supports_vision else ("text",)
     display_name = source_model.display_name or source_model.model
+    supported_parameters = raw.get("supported_parameters")
+    supports_parallel_tools = source_model.supports_tools and (
+        source.kind != "openrouter"
+        or (is_json_list(supported_parameters) and "parallel_tool_calls" in supported_parameters)
+    )
     # The dashboard's single Reasoning switch is the master gate: it is the
     # only reasoning control an operator has in the UI, so a model with it off
     # must not advertise efforts it will never be allowed to use. Keeping the
@@ -82,7 +87,7 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         support_verbosity=False,
         default_verbosity=None,
         prefer_websockets=source.kind == "openrouter",
-        supports_parallel_tool_calls=source_model.supports_tools,
+        supports_parallel_tool_calls=supports_parallel_tools,
         supported_in_api=True,
         minimal_client_version=None,
         priority=0,
