@@ -19,7 +19,7 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { useAccountMutations } from "@/features/accounts/hooks/use-accounts";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
-import { OpenRouterAccountsPanel } from "@/features/openrouter/accounts-panel";
+import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
 import { AccountList } from "@/features/dashboard/components/account-list";
 import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
 import { AccountViewModeToggle } from "@/features/dashboard/components/account-view-mode-toggle";
@@ -86,6 +86,8 @@ export function DashboardPage() {
   // coarse `write` alias: conversations and archives need `conversations:read`,
   // account actions `accounts:write`, the API-key filter `api_keys:read`.
   const canWriteAccounts = usePermission("accounts:write");
+  const openRouterQuery = useOpenRouterAccounts();
+  const openRouterAccounts = openRouterQuery.data?.accounts ?? [];
   const canReadApiKeys = usePermission("api_keys:read");
   const initialized = useAuthStore((state) => state.initialized);
   const hasConversationsRead = usePermission("conversations:read");
@@ -503,7 +505,7 @@ export function DashboardPage() {
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <h2 className="text-[13px] font-medium uppercase tracking-wider text-muted-foreground">{t("accounts.page.title")}</h2>
-                <AccountSummaryLine accounts={overview?.accounts ?? []} />
+                <AccountSummaryLine accounts={overview?.accounts ?? []} openRouterAccounts={openRouterAccounts} />
               </div>
               <div className="h-px min-w-8 flex-1 bg-border" />
               <AccountViewModeToggle value={accountViewMode} onChange={setAccountViewMode} />
@@ -511,17 +513,18 @@ export function DashboardPage() {
             {accountViewMode === "list" ? (
               <AccountList
                 accounts={overview?.accounts ?? []}
+                openRouterAccounts={openRouterAccounts}
                 readOnly={!canWriteAccounts}
                 sort={accountListSort}
                 onSortChange={setAccountListSort}
                 onAction={handleAccountAction}
               />
             ) : (
-              <AccountCards accounts={overview?.accounts ?? []} readOnly={!canWriteAccounts} onAction={handleAccountAction} />
+              <AccountCards accounts={overview?.accounts ?? []} openRouterAccounts={openRouterAccounts} readOnly={!canWriteAccounts} onAction={handleAccountAction} />
             )}
+            {openRouterQuery.isLoading && <p className="text-sm text-muted-foreground">Loading OpenRouter accounts…</p>}
+            {openRouterQuery.error && <p role="alert" className="text-sm text-destructive">{openRouterQuery.error.message}</p>}
           </section>
-
-          <OpenRouterAccountsPanel dashboard readOnly />
 
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">

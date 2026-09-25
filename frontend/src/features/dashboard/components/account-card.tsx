@@ -6,6 +6,7 @@ import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { useSmoothPercent } from "@/hooks/use-smooth-percent";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
+import { AccountCardSurface } from "@/components/account-surfaces";
 import {
   accountSubscriptionCredits,
   formatCreditValue,
@@ -140,7 +141,7 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
       : t("dashboard.accounts.resetWithCount", { count: availableResetCredits });
 
   return (
-    <div className="card-hover rounded-xl border bg-card p-4">
+    <AccountCardSurface>
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -280,6 +281,6 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
           </Button>
         )}
       </div>
-    </div>
+    </AccountCardSurface>
   );
 }

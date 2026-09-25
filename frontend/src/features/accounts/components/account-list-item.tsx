@@ -2,6 +2,7 @@ import { Flame, Shield, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
+import { AccountSelectionSurface } from "@/components/account-surfaces";
 import { cn } from "@/lib/utils";
 import { isEmailLabel } from "@/components/blur-email";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -90,17 +91,13 @@ export function AccountListItem({
   const statusEligibilityHint = status === "active" ? t("accounts.listItem.statusActiveHint") : undefined;
 
   return (
-    <button
-      type="button"
+    <AccountSelectionSurface
+      selected={selected}
       // Native title on the focusable row doubles as the accessible
       // description, so keyboard and screen-reader users get the
       // status-vs-eligibility hint without hovering the badge.
       title={statusEligibilityHint}
       onClick={() => onSelect(account.accountId)}
-      className={cn(
-        "relative min-w-0 w-full rounded-lg px-3 py-2.5 text-left transition-colors",
-        selected ? "bg-primary/8 ring-1 ring-primary/25" : "hover:bg-muted/50",
-      )}
     >
       {showResetCreditBadge && availableResetCredits > 0 ? (
         <span className="absolute -top-1 -right-1 grid h-5 min-w-[1.25rem] place-items-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
@@ -165,7 +162,7 @@ export function AccountListItem({
         <span className="shrink-0">{warmupLabel}</span>
         <span className="min-w-0 truncate">{warmupMeta}</span>
       </div>
-    </button>
+    </AccountSelectionSurface>
   );
 }
 

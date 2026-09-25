@@ -24,11 +24,24 @@ import {
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { cn } from "@/lib/utils";
 import { formatSlug } from "@/utils/formatters";
+import type { OpenRouterAccount } from "@/features/openrouter/api";
+import { OpenRouterListItem } from "@/features/openrouter/account-display";
+import { openRouterStatus } from "@/features/openrouter/display-values";
 
-const STATUS_FILTER_OPTIONS = ["all", "active", "paused", "rate_limited", "quota_exceeded", "reauth_required", "deactivated"];
+const STATUS_FILTER_OPTIONS = [
+  "all",
+  "active",
+  "paused",
+  "rate_limited",
+  "quota_exceeded",
+  "reauth_required",
+  "deactivated",
+];
 
 export type AccountListProps = {
   accounts: AccountSummary[];
+  openRouterAccounts?: OpenRouterAccount[];
+  onOpenRouter?: () => void;
   selectedAccountId: string | null;
   onSelect: (accountId: string) => void;
   onOpenImport: () => void;
@@ -41,6 +54,8 @@ export type AccountListProps = {
 
 export function AccountList({
   accounts,
+  openRouterAccounts = [],
+  onOpenRouter,
   selectedAccountId,
   onSelect,
   onOpenImport,
@@ -60,7 +75,11 @@ export function AccountList({
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return sortAccountsForDisplay(accounts, quotaDisplay, activeSortMode).filter((account) => {
+    return sortAccountsForDisplay(
+      accounts,
+      quotaDisplay,
+      activeSortMode,
+    ).filter((account) => {
       if (statusFilter !== "all" && account.status !== statusFilter) {
         return false;
       }
@@ -77,11 +96,52 @@ export function AccountList({
     });
   }, [accounts, quotaDisplay, search, statusFilter, activeSortMode]);
 
+  const entries = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const providerAccounts = openRouterAccounts
+      .filter(
+        (account) =>
+          (statusFilter === "all" ||
+            openRouterStatus(account) === statusFilter) &&
+          (!needle ||
+            `${account.name} ${account.id} openrouter`
+              .toLowerCase()
+              .includes(needle)),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const result = [
+      ...filtered.map((account) => ({
+        kind: "codex" as const,
+        id: account.accountId,
+        name: account.displayName || account.email,
+        account,
+      })),
+      ...providerAccounts.map((account) => ({
+        kind: "openrouter" as const,
+        id: account.id,
+        name: account.name,
+        account,
+      })),
+    ];
+    if (activeSortMode === "name_asc" || activeSortMode === "name_desc") {
+      result.sort(
+        (a, b) =>
+          (activeSortMode === "name_desc" ? -1 : 1) *
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      );
+    }
+    return result;
+  }, [filtered, openRouterAccounts, search, statusFilter, activeSortMode]);
+  const totalCount = accounts.length + openRouterAccounts.length;
+
   return (
     <div className="flex max-h-[calc(100dvh-15rem)] min-h-0 min-w-0 flex-1 flex-col space-y-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div className="relative min-w-0 sm:col-span-2">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" aria-hidden />
+          <Search
+            className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60"
+            aria-hidden
+          />
           <Input
             placeholder={t("accounts.list.searchPlaceholder")}
             value={search}
@@ -100,14 +160,20 @@ export function AccountList({
           <SelectContent>
             {STATUS_FILTER_OPTIONS.map((option) => (
               <SelectItem key={option} value={option}>
-                {option === "all" ? t("accounts.list.allStatuses") : t(`accounts.statusFilters.${option}`, { defaultValue: formatSlug(option) })}
+                {option === "all"
+                  ? t("accounts.list.allStatuses")
+                  : t(`accounts.statusFilters.${option}`, {
+                      defaultValue: formatSlug(option),
+                    })}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Select
           value={activeSortMode}
-          onValueChange={(nextMode) => onSortModeChange?.(nextMode as AccountSortMode)}
+          onValueChange={(nextMode) =>
+            onSortModeChange?.(nextMode as AccountSortMode)
+          }
         >
           <SelectTrigger
             size="sm"
@@ -119,14 +185,21 @@ export function AccountList({
           <SelectContent>
             {ACCOUNT_SORT_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value}>
-                {t(`accounts.sort.${option.value}`, { defaultValue: option.label })}
+                {t(`accounts.sort.${option.value}`, {
+                  defaultValue: option.label,
+                })}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      <div className={cn("flex flex-wrap items-center gap-3", readOnly ? "justify-end" : "justify-between")}>
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-3",
+          readOnly ? "justify-end" : "justify-between",
+        )}
+      >
         {readOnly ? null : (
           <Button
             type="button"
@@ -136,7 +209,11 @@ export function AccountList({
             onClick={() => setHelpOpen((current) => !current)}
           >
             {t("accounts.list.needHelp")}
-            {helpOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {helpOpen ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
           </Button>
         )}
         <Button
@@ -157,26 +234,39 @@ export function AccountList({
         className="flex-1 min-h-0 space-y-1 overflow-y-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         data-testid="account-list-scroll-region"
       >
-        {filtered.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-6 text-center">
             <p className="text-sm font-medium text-muted-foreground">
-              {accounts.length === 0 ? t("accounts.list.emptyTitle") : t("accounts.list.noMatches")}
+              {totalCount === 0
+                ? t("accounts.list.emptyTitle")
+                : t("accounts.list.noMatches")}
             </p>
             <p className="text-xs text-muted-foreground/70">
-              {accounts.length === 0 ? t("accounts.list.emptyDescription") : t("accounts.list.adjustFilters")}
+              {totalCount === 0
+                ? t("accounts.list.emptyDescription")
+                : t("accounts.list.adjustFilters")}
             </p>
           </div>
         ) : (
-          filtered.map((account) => (
-            <AccountListItem
-              key={account.accountId}
-              account={account}
-              selected={account.accountId === selectedAccountId}
-              showAccountId={account.isEmailDuplicate === true}
-              showResetCreditBadge={showResetCreditBadges}
-              onSelect={onSelect}
-            />
-          ))
+          entries.map((entry) =>
+            entry.kind === "openrouter" ? (
+              <OpenRouterListItem
+                key={entry.id}
+                account={entry.account}
+                selected={entry.id === selectedAccountId}
+                onSelect={onSelect}
+              />
+            ) : (
+              <AccountListItem
+                key={entry.id}
+                account={entry.account}
+                selected={entry.id === selectedAccountId}
+                showAccountId={entry.account.isEmailDuplicate === true}
+                showResetCreditBadge={showResetCreditBadges}
+                onSelect={onSelect}
+              />
+            ),
+          )
         )}
       </div>
 
@@ -191,6 +281,7 @@ export function AccountList({
         onOpenChange={setChooserOpen}
         onImport={onOpenImport}
         onAddAccount={onOpenOauth}
+        onOpenRouter={onOpenRouter}
       />
     </div>
   );

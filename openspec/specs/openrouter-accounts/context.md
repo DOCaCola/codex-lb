@@ -9,3 +9,9 @@ OpenRouter's Responses API rejects stored continuation. Existing private replay 
 For example, selecting `z-ai/glm-5.3-flash` publishes `openrouter/z-ai/glm-5.3-flash` with a default 262144-token cap. The upstream receives `z-ai/glm-5.3-flash`, price-first provider selection and `store:false` over HTTPS while Codex receives events on its existing WebSocket.
 
 Operator setup and monitoring details: [native OpenRouter accounts](../../../docs/openrouter-accounts.md).
+
+## Unified account presentation
+
+The dashboard uses one card/list collection for native and OpenRouter accounts; Accounts uses one search/filter list and a shared detail column. The add-account chooser includes OpenRouter. Provider-specific controls stay in the selected account's details, not a separate top-level provider section.
+
+For example, select **Add account → OpenRouter**, save an inference key, and choose **Models** in the resulting detail view. Dashboard **Details** links retain the source ID in the selected query parameter. Dollar balances never contribute to Codex quota aggregates. Name sorting includes both providers, while native-only quota/reset sorts place OpenRouter accounts last.

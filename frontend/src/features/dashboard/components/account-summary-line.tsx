@@ -2,15 +2,17 @@ import { useTranslation } from "react-i18next";
 
 import type { AccountSummary } from "@/features/dashboard/schemas";
 import { normalizeStatus } from "@/utils/account-status";
+import type { OpenRouterAccount } from "@/features/openrouter/api";
 
 type AccountSummaryLineProps = {
   accounts: AccountSummary[];
+  openRouterAccounts?: OpenRouterAccount[];
 };
 
-export function AccountSummaryLine({ accounts }: AccountSummaryLineProps) {
+export function AccountSummaryLine({ accounts, openRouterAccounts = [] }: AccountSummaryLineProps) {
   const { t } = useTranslation();
-  const registeredCount = accounts.length;
-  const activeCount = accounts.filter((account) => normalizeStatus(account.status) === "active").length;
+  const registeredCount = accounts.length + openRouterAccounts.length;
+  const activeCount = accounts.filter((account) => normalizeStatus(account.status) === "active").length + openRouterAccounts.filter(account => account.isEnabled).length;
   const unavailableCount = registeredCount - activeCount;
 
   return (

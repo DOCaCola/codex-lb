@@ -427,15 +427,29 @@ for (const width of [1440, 390]) {
       },
     };
     await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
-    await page.goto(`${BASE_URL}/accounts`);
-    await expect(page.getByRole("heading", {name: "OpenRouter accounts"})).toBeVisible();
+    await page.goto(`${BASE_URL}/accounts?selected=src_openrouter_demo`);
+    await expect(page.getByTestId("openrouter-account-detail")).toBeVisible();
+    await page.getByTestId("account-list-scroll-region").getByRole("button", { name: /Research/ }).scrollIntoViewIfNeeded();
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-accounts-${width}.png`)});
-    await page.getByRole("button", {name: "Models", exact: true}).click();
+    if (width < 640) {
+      await page.getByTestId("openrouter-account-detail").scrollIntoViewIfNeeded();
+      await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-account-detail-${width}.png`)});
+    }
+    await page.getByRole("button", {name: "Models (1)", exact: true}).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByLabel("Context cap for vendor/coder")).toHaveValue("262144");
     const box = await dialog.boundingBox();
     expect(box!.width).toBeLessThanOrEqual(width);
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-models-${width}.png`)});
+    await page.keyboard.press("Escape");
+    await page.goto(`${BASE_URL}/`);
+    await expect(page.getByTestId("openrouter-account-card")).toBeVisible();
+    await page.getByTestId("openrouter-account-card").scrollIntoViewIfNeeded();
+    await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-dashboard-${width}.png`)});
+    await page.getByRole("radio", {name: "View accounts as list"}).click();
+    await expect(page.getByTestId("dashboard-account-list").getByText("Research", {exact: true})).toBeVisible();
+    await page.getByTestId("account-list-row").filter({has: page.getByText("Research", {exact: true})}).scrollIntoViewIfNeeded();
+    await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-dashboard-list-${width}.png`)});
   });
 }
 

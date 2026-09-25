@@ -6,6 +6,8 @@ import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { AccountCard, type AccountCardProps } from "@/features/dashboard/components/account-card";
 import type { AccountSummary } from "@/features/dashboard/schemas";
+import type { OpenRouterAccount } from "@/features/openrouter/api";
+import { OpenRouterAccountCard } from "@/features/openrouter/account-display";
 
 const ACCOUNT_CARD_VISIBLE_ROWS = 2;
 // Account cards can grow when the optional email row is rendered.
@@ -14,14 +16,15 @@ const ACCOUNT_CARD_ROW_GAP_REM = 1;
 
 export type AccountCardsProps = {
   accounts: AccountSummary[];
+  openRouterAccounts?: OpenRouterAccount[];
   readOnly?: boolean;
   onAction?: AccountCardProps["onAction"];
 };
 
-export function AccountCards({ accounts, readOnly = false, onAction }: AccountCardsProps) {
+export function AccountCards({ accounts, openRouterAccounts = [], readOnly = false, onAction }: AccountCardsProps) {
   const { t } = useTranslation();
 
-  if (accounts.length === 0) {
+  if (accounts.length === 0 && openRouterAccounts.length === 0) {
     return (
       <EmptyState
         icon={Users}
@@ -54,6 +57,7 @@ export function AccountCards({ accounts, readOnly = false, onAction }: AccountCa
           />
         </div>
       ))}
+      {openRouterAccounts.map(account => <OpenRouterAccountCard key={account.id} account={account} />)}
     </div>
   );
 }

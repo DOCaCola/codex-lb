@@ -1,8 +1,6 @@
 import {
   Activity,
   Download,
-  Pause,
-  Play,
   RefreshCw,
   RotateCcw,
   Route,
@@ -13,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { AccountPauseButton } from "@/components/account-pause-button";
 import {
   Select,
   SelectContent,
@@ -140,30 +139,11 @@ export function AccountActions({
       </label>
 
       <div className="flex flex-wrap gap-2">
-        {canResume ? (
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-            onClick={() => onResume(account.accountId)}
-            disabled={busy || readOnly}
-          >
-            <Play className="h-3.5 w-3.5" />
-            {t("common.actions.resume")}
-          </Button>
-        ) : showOperatorRecoveryAction ? null : (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            onClick={() => onPause(account.accountId)}
-            disabled={busy || readOnly}
-          >
-            <Pause className="h-3.5 w-3.5" />
-            {t("common.actions.pause")}
-          </Button>
-        )}
+        {(canResume || !showOperatorRecoveryAction) && <AccountPauseButton
+          paused={canResume}
+          disabled={busy || readOnly}
+          onClick={() => canResume ? onResume(account.accountId) : onPause(account.accountId)}
+        />}
 
         {showOperatorRecoveryAction ? (
           <Button

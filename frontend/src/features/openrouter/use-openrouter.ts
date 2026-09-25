@@ -8,13 +8,17 @@ import {
   type AccountUpdate,
 } from "./api";
 
-export function useOpenRouter() {
-  const client = useQueryClient();
-  const query = useQuery({
+export function useOpenRouterAccounts() {
+  return useQuery({
     queryKey: ["openrouter-accounts"],
     queryFn: listAccounts,
     refetchInterval: 60000,
   });
+}
+
+export function useOpenRouter() {
+  const client = useQueryClient();
+  const query = useOpenRouterAccounts();
   const invalidate = async () => {
     await Promise.all(
       ["openrouter-accounts", "model-sources", "models"].map((key) =>

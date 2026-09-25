@@ -5,14 +5,18 @@ Transport contract: [model-source routing](../openspec/specs/model-source-routin
 
 ## Setup
 
-1. Open **Accounts → Add OpenRouter account**. Enter a name and an inference API key.
+1. Open **Accounts → Add account → OpenRouter**. Enter a name and an inference API key.
 2. Optionally enter a separate management API key for account-credit monitoring. It is not used for inference.
-3. Open **Models**, select the models to expose, and save. New accounts expose no models until explicitly selected.
+3. Select the account in the shared Accounts list, open **Models**, select the models to expose, and save. New accounts expose no models until explicitly selected.
 4. Clients use `openrouter/<upstream-model-id>`. Source-restricted client keys must include the new account's source assignment.
 
 Credentials are encrypted with the deployment's existing encryption key. Keep that key and the database together when moving the installation. Credentials never appear in account API responses.
 
+Use **Pause** and **Resume** in the selected account's action bar to disable or enable its routes, matching native account controls. **Delete** retains its confirmation dialog.
+
 No LiteLLM configuration is needed. Existing generic sources are not automatically deleted or imported. During a deliberate cutover, disable the old source before enabling duplicate model IDs on native accounts. Native ChatGPT accounts remain separate.
+
+OpenRouter accounts appear alongside Codex accounts in the dashboard's existing card and list views, and in the same searchable Accounts list. **Details** opens the selected provider account in the shared detail column. Name sorting and status filtering apply across providers; native quota/reset sorts put accounts without those metrics last. Dollar balances and key allowances remain separate from Codex subscription quota totals.
 
 ## Models and cost
 

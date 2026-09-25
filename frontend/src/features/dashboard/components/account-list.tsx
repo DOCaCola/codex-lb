@@ -18,6 +18,9 @@ import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useSmoothPercent } from "@/hooks/use-smooth-percent";
 import { cn } from "@/lib/utils";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
+import type { OpenRouterAccount } from "@/features/openrouter/api";
+import { OpenRouterName } from "@/features/openrouter/account-display";
+import { keyAllowance, money, openRouterBalance, openRouterStatus } from "@/features/openrouter/display-values";
 import { normalizeStatus, quotaBarColor, quotaBarTrack } from "@/utils/account-status";
 import {
   formatDateTimeInline,
@@ -33,6 +36,7 @@ const ACCOUNT_LIST_COLUMNS = "minmax(13rem,1.3fr) 7.75rem 5rem minmax(14rem,1.2f
 
 type AccountListProps = {
   accounts: AccountSummary[];
+  openRouterAccounts?: OpenRouterAccount[];
   readOnly?: boolean;
   sort?: AccountListSort;
   onSortChange?: (sort: AccountListSort) => void;
@@ -286,6 +290,7 @@ function QuotaMeter({ percent }: { percent: number | null }) {
 
 export function AccountList({
   accounts,
+  openRouterAccounts = [],
   readOnly = false,
   sort: controlledSort,
   onSortChange,
@@ -297,14 +302,35 @@ export function AccountList({
   const [uncontrolledSort, setUncontrolledSort] = useState<AccountListSort>(null);
   const sort = controlledSort === undefined ? uncontrolledSort : controlledSort;
   const sortedAccounts = useMemo(() => {
+    const entries = [
+      ...accounts.map(account => ({ kind: "codex" as const, id: account.accountId, account })),
+      ...openRouterAccounts.map(account => ({ kind: "openrouter" as const, id: account.id, account })),
+    ];
     if (!sort) {
-      return accounts;
+      return entries;
     }
-    return accounts
-      .map((account, index) => ({ account, index }))
-      .sort((a, b) => compareAccountsBySort(a.account, b.account, sort) || a.index - b.index)
-      .map((entry) => entry.account);
-  }, [accounts, sort]);
+    return entries.sort((a, b) => {
+      if (a.kind === "codex" && b.kind === "codex") return compareAccountsBySort(a.account, b.account, sort);
+      if (!["account", "status", "plan"].includes(sort.key) && a.kind !== b.kind) return a.kind === "codex" ? -1 : 1;
+      if (a.kind === "openrouter" && b.kind === "openrouter") {
+        const value = (account: OpenRouterAccount): number | null => {
+          if (sort.key === "quota") return account.state.key?.limit_remaining ?? null;
+          if (sort.key === "purchasedCredits") return openRouterBalance(account);
+          if (sort.key === "warmup") return account.state.key?.usage_daily ?? null;
+          return null;
+        };
+        const numeric = compareNullableNumber(value(a.account), value(b.account), sort.direction);
+        if (numeric !== 0) return numeric;
+      }
+      const name = (entry: typeof a) => entry.kind === "codex" ? accountTitle(entry.account) : entry.account.name;
+      const label = (entry: typeof a) => {
+        if (sort.key === "status") return entry.kind === "codex" ? normalizeStatus(entry.account.status) : openRouterStatus(entry.account);
+        if (sort.key === "plan") return entry.kind === "codex" ? formatSlug(entry.account.planType) : "OpenRouter";
+        return name(entry);
+      };
+      return (compareText(label(a), label(b)) || compareText(name(a), name(b))) * (sort.direction === "asc" ? 1 : -1);
+    });
+  }, [accounts, openRouterAccounts, sort]);
 
   const handleSort = (key: AccountListSortKey) => {
     const nextSort: AccountListSort = sort?.key === key
@@ -316,7 +342,7 @@ export function AccountList({
     onSortChange?.(nextSort);
   };
 
-  if (accounts.length === 0) {
+  if (accounts.length === 0 && openRouterAccounts.length === 0) {
     return (
       <EmptyState
         icon={List}
@@ -347,7 +373,10 @@ export function AccountList({
 	          {SORTABLE_HEADERS.map((header) => (
 	            <SortHeader
 	              key={header.key}
-	              label={t(SORTABLE_HEADER_KEY[header.key], { defaultValue: header.label })}
+	              label={openRouterAccounts.length && header.key === "quota" ? "Quota / allowance"
+                    : openRouterAccounts.length && header.key === "purchasedCredits" ? "Credits / USD"
+                    : openRouterAccounts.length && header.key === "warmup" ? "Warm-up / usage"
+                    : t(SORTABLE_HEADER_KEY[header.key], { defaultValue: header.label })}
 	              sortKey={header.key}
 	              activeSort={sort}
 	              onSort={handleSort}
@@ -355,7 +384,9 @@ export function AccountList({
 	          ))}
 	          <span className="text-right">{t("apiKeys.table.actions")}</span>
         </div>
-        {sortedAccounts.map((account, index) => {
+        {sortedAccounts.map((entry, index) => {
+          if (entry.kind === "openrouter") return <OpenRouterRow key={entry.id} account={entry.account} />;
+          const account = entry.account;
           const status = normalizeStatus(account.status);
           const title = accountTitle(account);
           const emailSubtitle =
@@ -504,6 +535,68 @@ export function AccountList({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function OpenRouterRow({ account }: { account: OpenRouterAccount }) {
+  const state = account.state;
+  return (
+    <div
+      data-testid="account-list-row"
+      className="grid min-h-[4.5rem] items-center gap-3 px-3 py-2 text-sm"
+      style={{ gridTemplateColumns: ACCOUNT_LIST_COLUMNS }}
+    >
+      <div className="min-w-0">
+        <p className="truncate font-medium leading-tight">
+          <OpenRouterName account={account} />
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {state.selections.length} models selected
+        </p>
+      </div>
+      <StatusBadge status={openRouterStatus(account)} />
+      <span className="text-xs text-muted-foreground">OpenRouter</span>
+      <div className="text-xs">
+        <p className="text-muted-foreground">Key allowance left</p>
+        <span className="font-medium tabular-nums">
+          {keyAllowance(account)}
+          {state.key && state.key_error ? " · stale" : ""}
+        </span>
+      </div>
+      <span className="text-xs text-muted-foreground">Not applicable</span>
+      <div className="text-xs">
+        <p className="text-muted-foreground">Account balance</p>
+        <span className="font-medium tabular-nums">
+          {money(openRouterBalance(account))}
+          {state.credits && state.credits_error ? " · stale" : ""}
+        </span>
+      </div>
+      <div className="text-xs">
+        <p className="text-muted-foreground">Used today</p>
+        <span className="font-medium tabular-nums">
+          {money(state.key?.usage_daily)}
+          {state.key && state.key_error ? " · stale" : ""}
+        </span>
+        {(state.key_error || state.credits_error || state.catalog_error) && (
+          <p className="text-amber-600">Monitoring needs attention</p>
+        )}
+      </div>
+      <div className="flex justify-end">
+        <Button
+          asChild
+          size="sm"
+          variant="ghost"
+          className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground"
+        >
+          <Link
+            to={`/accounts?selected=${encodeURIComponent(account.id)}`}
+            aria-label={`View details for ${account.name}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
+        </Button>
       </div>
     </div>
   );

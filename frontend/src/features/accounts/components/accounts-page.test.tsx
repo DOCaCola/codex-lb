@@ -8,6 +8,13 @@ import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { ADMIN_PERMISSIONS, createUpstreamProxyAdmin } from "@/test/mocks/factories";
 import type { AccountSummary } from "@/features/accounts/schemas";
+import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
+
+const openRouterMocks = vi.hoisted(() => ({ accounts: [] as import("@/features/openrouter/api").OpenRouterAccount[] }));
+vi.mock("@/features/openrouter/use-openrouter", () => ({
+  useOpenRouterAccounts: () => ({ data: { accounts: openRouterMocks.accounts }, error: null, isLoading: false }),
+  useOpenRouter: () => ({ create: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
+}));
 
 vi.mock("@/features/accounts/hooks/use-accounts", () => ({
   useAccounts: vi.fn(),
@@ -109,7 +116,49 @@ function account(overrides: Partial<AccountSummary>): AccountSummary {
 }
 
 describe("AccountsPage", () => {
+  it("selects OpenRouter in the shared account list from the URL", async () => {
+    openRouterMocks.accounts = [createOpenRouterAccount()];
+    mockAccountsQuery([account({ displayName: "Codex account" })]);
+    render(<MemoryRouter initialEntries={["/accounts?selected=src_research"]}><AccountsPage /></MemoryRouter>);
+    const list = screen.getByTestId("account-list-scroll-region");
+    expect(within(list).getByText("Research")).toBeVisible();
+    expect(within(list).getByText("Codex account")).toBeVisible();
+    expect(screen.getByTestId("openrouter-account-detail")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "OpenRouter accounts" })).not.toBeInTheDocument();
+    await userEvent.click(within(list).getByRole("button", { name: /Codex account/ }));
+    expect(screen.queryByTestId("openrouter-account-detail")).not.toBeInTheDocument();
+  });
+
+  it("shows OpenRouter details when there are no Codex accounts", () => {
+    openRouterMocks.accounts = [createOpenRouterAccount()];
+    mockAccountsQuery([]);
+    render(<MemoryRouter><AccountsPage /></MemoryRouter>);
+    expect(screen.getByTestId("openrouter-account-detail")).toBeVisible();
+    expect(screen.queryByText("No accounts yet")).not.toBeInTheDocument();
+  });
+
+  it("adds OpenRouter through the existing account chooser", async () => {
+    mockAccountsQuery([]);
+    render(<MemoryRouter><AccountsPage /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "Add OpenRouter account" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add account" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /OpenRouter/ }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Add OpenRouter account" })).toBeVisible());
+    expect(screen.getByLabelText("Inference API key")).toHaveAttribute("type", "password");
+  });
+
+  it("disables OpenRouter mutations for read-only users", () => {
+    useAuthStore.setState({ role: "guest", permissions: ["read"], canWrite: false, initialized: true });
+    openRouterMocks.accounts = [createOpenRouterAccount()];
+    mockAccountsQuery([]);
+    render(<MemoryRouter><AccountsPage /></MemoryRouter>);
+    for (const name of ["Edit", "Delete", "Refresh", "Models (0)"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
   beforeEach(() => {
+    openRouterMocks.accounts = [];
     // The auth store starts least-privilege; these cases exercise admin actions.
     useAuthStore.setState({
       initialized: true,
@@ -463,4 +512,3 @@ describe("AccountsPage", () => {
     expect(screen.queryByRole("alertdialog", { name: "Reset usage" })).not.toBeInTheDocument();
   });
 });
-vi.mock("@/features/openrouter/accounts-panel", () => ({ OpenRouterAccountsPanel: () => null }));
