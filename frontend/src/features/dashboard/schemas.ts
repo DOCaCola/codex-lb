@@ -211,6 +211,7 @@ export const RequestLogSchema = z.object({
   model: z.string(),
   source: z.string().nullable().optional().default(null),
   modelSourceId: z.string().nullable().optional(),
+  modelSourceName: z.string().nullable().optional(),
   modelSourceKind: z.string().nullable().optional(),
   transport: z.string().nullable().optional().default(null),
   upstreamTransport: z.string().nullable().optional(),
@@ -272,6 +273,7 @@ const RequestLogApiKeyOptionSchema = z.object({
 
 export const RequestLogFilterOptionsSchema = z.object({
   accountIds: z.array(z.string()),
+  accountLabels: z.record(z.string(), z.string()).optional(),
   modelOptions: z.array(RequestLogModelOptionSchema),
   apiKeys: z.array(RequestLogApiKeyOptionSchema),
   statuses: z.array(z.string()),

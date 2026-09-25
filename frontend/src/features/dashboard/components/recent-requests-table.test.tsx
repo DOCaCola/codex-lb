@@ -1590,6 +1590,38 @@ describe("RecentRequestsTable account cell", () => {
     useAuthStore.setState({ role: "admin", permissions: ["read", "write"], canWrite: true });
   });
 
+  it.each(["openrouter", "claude", "openai_compatible"])("attributes %s rows and details to the provider", (kind) => {
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[{
+      ...LAYOUT_REQUEST, accountId: null, modelSourceId: "src-provider", modelSourceKind: kind, modelSourceName: "Provider account",
+    }]} />);
+    expect(screen.getByText("Provider account")).toBeInTheDocument();
+    expect(screen.queryByText("Unassigned")).not.toBeInTheDocument();
+    const dialog = openRequestDetails();
+    expect(within(dialog).getByText("Provider account")).toBeInTheDocument();
+  });
+
+  it("retains deleted provider identity", () => {
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[{
+      ...LAYOUT_REQUEST, accountId: null, modelSourceId: "src-deleted", modelSourceName: null,
+    }]} />);
+    expect(screen.getByText("src-deleted")).toBeInTheDocument();
+    expect(screen.queryByText("Unassigned")).not.toBeInTheDocument();
+  });
+
+  it("protects provider labels in privacy mode", () => {
+    usePrivacyStore.setState({ blurred: true });
+    try {
+      render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[{
+        ...LAYOUT_REQUEST, accountId: null, modelSourceId: "src-private", modelSourceName: "private@example.com",
+      }]} />);
+      expect(screen.getByText("private@example.com")).toHaveClass("privacy-blur");
+      const dialog = openRequestDetails();
+      expect(within(dialog).getByText("private@example.com").closest(".privacy-blur")).not.toBeNull();
+    } finally {
+      usePrivacyStore.setState({ blurred: false });
+    }
+  });
+
   it("keeps the privacy blur on email account labels", () => {
     usePrivacyStore.setState({ blurred: true });
     try {

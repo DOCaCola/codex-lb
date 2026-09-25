@@ -188,6 +188,71 @@ async def test_request_logs_api_returns_upstream_proxy_route_metadata(async_clie
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openrouter", "claude", "openai_compatible"])
+async def test_provider_log_names_filters_and_privacy(async_client, db_setup, app_instance, kind):
+    async with SessionLocal() as session:
+        session.add(_make_account("shared-id", "native@example.com"))
+        provider = ModelSource(
+            id="shared-id", name="Provider private label", kind=kind, base_url="https://example.invalid"
+        )
+        session.add(provider)
+        await session.commit()
+        repo = RequestLogsRepository(session)
+        for request_id, account_id, source_id in [("provider", None, "shared-id"), ("native", "shared-id", None)]:
+            await repo.add_log(
+                account_id=account_id,
+                model_source_id=source_id,
+                model_source_kind=kind if source_id else None,
+                request_id=request_id,
+                model="test-model",
+                status="error",
+                error_code="429",
+                input_tokens=None,
+                output_tokens=None,
+                latency_ms=None,
+            )
+    selected = await async_client.get("/api/request-logs", params={"accountId": "source:shared-id"})
+    assert selected.status_code == 200
+    assert selected.json()["total"] == 1
+    row = selected.json()["requests"][0]
+    assert row["requestId"] == "provider"
+    assert row["accountId"] is None
+    assert row["modelSourceName"] == "Provider private label"
+    native = await async_client.get("/api/request-logs", params={"accountId": "shared-id"})
+    assert [row["requestId"] for row in native.json()["requests"]] == ["native"]
+    mixed = await async_client.get(
+        "/api/request-logs", params=[("accountId", "shared-id"), ("accountId", "source:shared-id")]
+    )
+    assert mixed.json()["total"] == 2
+    for params in ({}, {"model": "test-model"}):
+        options = (await async_client.get("/api/request-logs/options", params=params)).json()
+        assert set(options["accountIds"]) == {"shared-id", "source:shared-id"}
+        assert options["accountLabels"] == {"source:shared-id": "Provider private label"}
+    search = await async_client.get("/api/request-logs", params={"search": "Provider private label"})
+    assert search.json()["total"] == 1
+    app_instance.dependency_overrides[validate_dashboard_session] = guest_principal
+    try:
+        hidden = await async_client.get("/api/request-logs", params={"accountId": "source:shared-id"})
+        assert hidden.json()["requests"][0]["modelSourceName"] is None
+        options = await async_client.get("/api/request-logs/options")
+        assert options.json()["accountLabels"] == {}
+        search = await async_client.get("/api/request-logs", params={"search": "Provider private label"})
+        assert search.json()["total"] == 0
+    finally:
+        app_instance.dependency_overrides.pop(validate_dashboard_session, None)
+    async with SessionLocal() as session:
+        provider = await session.get(ModelSource, "shared-id")
+        assert provider is not None
+        await session.delete(provider)
+        await session.commit()
+    deleted = await async_client.get("/api/request-logs", params={"accountId": "source:shared-id"})
+    assert deleted.json()["requests"][0]["modelSourceId"] == "shared-id"
+    assert deleted.json()["requests"][0]["modelSourceName"] is None
+    options = (await async_client.get("/api/request-logs/options")).json()
+    assert "source:shared-id" in options["accountIds"]
+
+
+@pytest.mark.asyncio
 async def test_request_logs_api_returns_model_source_metadata(async_client, db_setup):
     del db_setup
     async with SessionLocal() as session:

@@ -155,6 +155,7 @@ async def list_request_log_filter_options(
     )
     return RequestLogFilterOptionsResponse(
         account_ids=options.account_ids,
+        account_labels=options.account_labels if principal.has(Permission.ACCOUNTS_WRITE) else {},
         model_options=[
             RequestLogModelOption(model=option.model, reasoning_effort=option.reasoning_effort)
             for option in options.model_options

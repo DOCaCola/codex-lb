@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.modules.request_logs.mappers import (
@@ -52,6 +52,7 @@ class RequestLogFilterOptions:
     model_options: list[RequestLogModelOption]
     api_keys: list[RequestLogApiKeyOption]
     statuses: list[str]
+    account_labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,10 +144,17 @@ class RequestLogsService:
             )
         api_key_ids = [log.api_key_id for log in logs if log.api_key_id] if include_api_key_identity else []
         api_key_name_by_id = await self._repo.get_api_key_names_by_ids(api_key_ids) if api_key_ids else {}
+        source_ids = list({log.model_source_id for log in logs if log.model_source_id})
+        source_names = (
+            await self._repo.get_model_source_names_by_ids(source_ids)
+            if include_account_identity and source_ids
+            else {}
+        )
         requests = [
             to_request_log_entry(
                 log,
                 api_key_name=api_key_name_by_id.get(log.api_key_id or ""),
+                model_source_name=source_names.get(log.model_source_id or ""),
                 include_sensitive_metadata=include_sensitive_metadata,
                 include_api_key_identity=include_api_key_identity,
             )
@@ -196,8 +204,11 @@ class RequestLogsService:
             for key_id in option_api_key_ids
         ]
         option_api_keys.sort(key=lambda option: (option.name.lower(), (option.key_prefix or "").lower(), option.id))
+        source_ids = [value.removeprefix("source:") for value in option_account_ids if value.startswith("source:")]
+        source_names = await self._repo.get_model_source_names_by_ids(source_ids) if source_ids else {}
         return RequestLogFilterOptions(
             account_ids=option_account_ids,
+            account_labels={f"source:{key}": name for key, name in source_names.items()},
             model_options=[
                 RequestLogModelOption(model=model, reasoning_effort=reasoning_effort)
                 for model, reasoning_effort in option_model_options

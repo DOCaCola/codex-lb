@@ -33,6 +33,7 @@ from app.db.models import (
     Account,
     AccountUsageRollupState,
     ApiKey,
+    ModelSource,
     RequestDemandQuarterRollup,
     RequestKind,
     RequestLog,
@@ -1318,7 +1319,12 @@ class RequestLogsRepository:
             return RequestLogsResult(logs=logs, total=total, aggregated_cost_usd=aggregated_cost_usd)
 
         demand_params: _DemandCountParams | None = None
-        if search is None and not error_codes_in and not error_codes_excluding:
+        if (
+            search is None
+            and not error_codes_in
+            and not error_codes_excluding
+            and not any(value.startswith("source:") for value in account_ids or [])
+        ):
             demand_params = _DemandCountParams(
                 since=since,
                 until=until,
@@ -1526,6 +1532,15 @@ class RequestLogsRepository:
             exclude_soft_deleted=True,
         )
 
+        source_ids = list(
+            await self._session.scalars(
+                select(RequestLog.model_source_id)
+                .where(*filters.conditions, RequestLog.model_source_id.is_not(None))
+                .distinct()
+                .order_by(RequestLog.model_source_id)
+            )
+        )
+        source_options = [f"source:{value}" for value in source_ids]
         unfiltered = not any((since, until, account_ids, api_key_ids, model_options, models, reasoning_efforts))
         if unfiltered:
             # PostgreSQL has no loose index scan: with no user filters each
@@ -1533,7 +1548,8 @@ class RequestLogsRepository:
             # filter-panel load. Emulate the skip scan instead — one indexed
             # probe per distinct value.
             return (
-                [value for value in await self._distinct_skip_scan(RequestLog.account_id, filters.conditions) if value],
+                [value for value in await self._distinct_skip_scan(RequestLog.account_id, filters.conditions) if value]
+                + source_options,
                 await self._pair_facet_skip_scan(RequestLog.model, RequestLog.reasoning_effort, filters.conditions),
                 [
                     value
@@ -1568,11 +1584,17 @@ class RequestLogsRepository:
         api_key_rows = await self._session.execute(api_key_stmt)
         status_rows = await self._session.execute(status_stmt)
 
-        account_ids = [row[0] for row in account_rows.all() if row[0]]
+        account_ids = [row[0] for row in account_rows.all() if row[0]] + source_options
         model_options = [(row[0], row[1]) for row in model_rows.all() if row[0]]
         api_key_ids = [row[0] for row in api_key_rows.all() if row[0]]
         status_values = [(row[0], row[1]) for row in status_rows.all() if row[0]]
         return account_ids, model_options, api_key_ids, status_values
+
+    async def get_model_source_names_by_ids(self, source_ids: list[str]) -> dict[str, str]:
+        rows = await self._session.execute(
+            select(ModelSource.id, ModelSource.name).where(ModelSource.id.in_(source_ids))
+        )
+        return {row.id: row.name for row in rows}
 
     async def _distinct_skip_scan(
         self,
@@ -1678,7 +1700,17 @@ class RequestLogsRepository:
         if conversation_id is not None:
             conditions.append(RequestLog.conversation_id == conversation_id)
         if account_ids:
-            conditions.append(RequestLog.account_id.in_(account_ids))
+            conditions.append(
+                or_(
+                    and_(
+                        RequestLog.model_source_id.is_(None),
+                        RequestLog.account_id.in_([value for value in account_ids if not value.startswith("source:")]),
+                    ),
+                    RequestLog.model_source_id.in_(
+                        [value.removeprefix("source:") for value in account_ids if value.startswith("source:")]
+                    ),
+                )
+            )
         if api_key_ids:
             conditions.append(RequestLog.api_key_id.in_(api_key_ids))
         if model_options:
@@ -1722,6 +1754,7 @@ class RequestLogsRepository:
             search_pattern = f"%{search}%"
             search_conditions = [
                 RequestLog.account_id.ilike(search_pattern),
+                RequestLog.model_source_id.ilike(search_pattern),
                 RequestLog.request_id.ilike(search_pattern),
                 RequestLog.model.ilike(search_pattern),
                 RequestLog.reasoning_effort.ilike(search_pattern),
@@ -1747,6 +1780,7 @@ class RequestLogsRepository:
                 # Account emails are redacted for principals without account
                 # write access; matching on them would be a membership oracle.
                 search_conditions.append(Account.email.ilike(search_pattern))
+                search_conditions.append(ModelSource.name.ilike(search_pattern))
             conditions.append(or_(*search_conditions))
             return _RequestLogFilters(conditions=conditions, needs_related_search_joins=True)
         return _RequestLogFilters(conditions=conditions, needs_related_search_joins=False)
@@ -1754,9 +1788,13 @@ class RequestLogsRepository:
     def _apply_related_search_joins(self, stmt, include_related_search_joins: bool):
         if not include_related_search_joins:
             return stmt
-        return stmt.outerjoin(Account, Account.id == RequestLog.account_id).outerjoin(
-            ApiKey,
-            ApiKey.id == RequestLog.api_key_id,
+        return (
+            stmt.outerjoin(ModelSource, ModelSource.id == RequestLog.model_source_id)
+            .outerjoin(Account, Account.id == RequestLog.account_id)
+            .outerjoin(
+                ApiKey,
+                ApiKey.id == RequestLog.api_key_id,
+            )
         )
 
 

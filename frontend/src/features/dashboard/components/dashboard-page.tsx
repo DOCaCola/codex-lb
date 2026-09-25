@@ -309,14 +309,15 @@ export function DashboardPage() {
       entries.set(account.accountId, { label: raw, isEmail });
     }
     return (optionsQuery.data?.accountIds ?? []).map((accountId) => {
+      const providerName = optionsQuery.data?.accountLabels?.[accountId];
       const entry = entries.get(accountId);
       return {
         value: accountId,
-        label: entry?.label ?? accountId,
-        isEmail: entry?.isEmail ?? false,
+        label: providerName ?? entry?.label ?? accountId,
+        isEmail: providerName ? true : entry?.isEmail ?? false,
       };
     });
-  }, [optionsQuery.data?.accountIds, overview?.accounts]);
+  }, [optionsQuery.data?.accountIds, optionsQuery.data?.accountLabels, overview?.accounts]);
 
   const apiKeyOptions = useMemo(
     () =>

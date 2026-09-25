@@ -32,6 +32,7 @@ class RequestLogEntry(DashboardModel):
     source: str | None = None
     model_source_id: str | None = None
     model_source_kind: str | None = None
+    model_source_name: str | None = None
     useragent: str | None = None
     useragent_group: str | None = None
     client_ip: str | None = None
@@ -93,6 +94,7 @@ class RequestLogApiKeyOption(DashboardModel):
 
 class RequestLogFilterOptionsResponse(DashboardModel):
     account_ids: list[str] = Field(default_factory=list)
+    account_labels: dict[str, str] = Field(default_factory=dict)
     model_options: list[RequestLogModelOption] = Field(default_factory=list)
     api_keys: list[RequestLogApiKeyOption] = Field(default_factory=list)
     statuses: list[str] = Field(default_factory=list)

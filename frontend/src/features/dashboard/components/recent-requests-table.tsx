@@ -365,6 +365,15 @@ export function RecentRequestsTable({
     return ids;
   }, [accounts]);
 
+  const requestAccountLabel = (request: RequestLog) => request.modelSourceId
+    ? request.modelSourceName || request.modelSourceId
+    : request.accountId
+      ? accountLabelMap.get(request.accountId) ?? request.accountId
+      : t("dashboard.requests.unassigned");
+  const privateAccountLabel = (request: RequestLog) => request.modelSourceId
+    ? !!request.modelSourceName
+    : !!(request.accountId && emailLabelIds.has(request.accountId));
+
   if (requests.length === 0) {
     const emptyFromExistingLogs = filtersApplied || total > 0;
     return (
@@ -411,8 +420,8 @@ export function RecentRequestsTable({
           <TableBody>
             {requests.map((request) => {
               const time = formatDateTimeLines(request.requestedAt, dateDisplayFormat);
-              const accountLabel = request.accountId ? (accountLabelMap.get(request.accountId) ?? request.accountId) : t("dashboard.requests.unassigned");
-              const isEmailLabel = !!(request.accountId && emailLabelIds.has(request.accountId));
+              const accountLabel = requestAccountLabel(request);
+              const isEmailLabel = privateAccountLabel(request);
               const errorPreview = request.errorMessage || request.errorCode || "-";
               const hasError = !!(request.errorCode || request.errorMessage);
               const visibleServiceTier = request.actualServiceTier ?? request.serviceTier;
@@ -595,6 +604,9 @@ export function RecentRequestsTable({
                 compactCopy
               />
               <div className="grid gap-3 sm:grid-cols-3">
+                {selectedRequest ? <div className={blurred && privateAccountLabel(selectedRequest) ? "privacy-blur" : undefined}>
+                  <RequestDetailField label={t("dashboard.requests.columns.account")} value={requestAccountLabel(selectedRequest)} />
+                </div> : null}
                 <RequestDetailField label={t("dashboard.requests.columns.status")} value={selectedRequest ? t(`dashboard.requestStatus.${selectedRequest.status}`, { defaultValue: REQUEST_STATUS_LABELS[selectedRequest.status] ?? selectedRequest.status }) : "—"} />
                 <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, selectedRequest.actualServiceTier ?? selectedRequest.serviceTier) : "—"} mono />
                 <RequestDetailField label={t("dashboard.requestDetails.requestKind")} value={selectedRequest ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ?? selectedRequest.requestKind) : "—"} />

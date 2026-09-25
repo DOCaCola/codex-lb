@@ -37,6 +37,7 @@ def to_request_log_entry(
     log: RequestLog,
     *,
     api_key_name: str | None = None,
+    model_source_name: str | None = None,
     include_sensitive_metadata: bool,
     include_api_key_identity: bool = True,
 ) -> RequestLogEntry:
@@ -60,6 +61,7 @@ def to_request_log_entry(
         source=log.source,
         model_source_id=log.model_source_id,
         model_source_kind=log.model_source_kind,
+        model_source_name=model_source_name,
         useragent=log.useragent if include_sensitive_metadata else None,
         useragent_group=log.useragent_group,
         client_ip=log.client_ip if include_sensitive_metadata else None,

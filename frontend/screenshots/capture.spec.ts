@@ -400,6 +400,26 @@ for (const width of [1440, 390]) {
   });
 }
 
+test("provider request attribution", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await applyTheme(page, "light");
+  await interceptApi(page);
+  const request = { ...requestLogs[0], accountId: null, modelSourceId: "src-demo", modelSourceKind: "openrouter", modelSourceName: "OpenRouter personal", model: "openrouter/qwen/qwen3.8-27b:free", status: "error", errorCode: "429", errorMessage: "Provider returned error" };
+  await page.route("**/api/request-logs?*", route => fulfill(route, createRequestLogsResponse([request], 1, false)));
+  await page.route("**/api/request-logs/options*", route => fulfill(route, { ...filterOptions, accountIds: ["source:src-demo"], accountLabels: { "source:src-demo": "OpenRouter personal" } }));
+  await page.goto(`${BASE_URL}/`);
+  await expect(page.getByRole("cell", { name: "OpenRouter personal", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "View Details" }).click();
+  await expect(page.getByRole("dialog").getByText("OpenRouter personal", { exact: true })).toBeVisible();
+  await page.getByRole("dialog").screenshot({ animations: "disabled", path: test.info().outputPath("provider-request-details.png") });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await expect(page.getByRole("menuitemcheckbox", { name: "OpenRouter personal" })).toBeVisible();
+  const filtered = page.waitForRequest(request => new URL(request.url()).pathname === "/api/request-logs" && new URL(request.url()).searchParams.get("accountId") === "source:src-demo");
+  await page.getByRole("menuitemcheckbox", { name: "OpenRouter personal" }).click();
+  await filtered;
+});
+
 test("settings — dark", async ({ page }) => {
   await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings", fullPage: true });
 });
