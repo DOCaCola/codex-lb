@@ -3844,12 +3844,13 @@ async def _build_codex_models_response_body(
         visible_source_models.append(source_model)
     visible_source_models.sort(
         key=lambda model: (
+            0 if model.source_kind == "claude" else 1,
             _effective_source_codex_visibility(
                 model,
                 visibility_allowed_models=visibility_allowed_models,
                 exact_source_allowed_models=exact_source_allowed_models,
             )
-            != "list"
+            != "list",
         )
     )
     source_model_slugs = {

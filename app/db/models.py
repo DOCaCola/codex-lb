@@ -1910,6 +1910,46 @@ class ModelSource(Base):
     )
 
 
+class ClaudeAccount(Base):
+    __tablename__ = "claude_accounts"
+
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
+    credentials_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    grant_fingerprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    credential_status: Mapped[str] = mapped_column(String, nullable=False, default="ready", server_default="ready")
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    refresh_intent: Mapped[str | None] = mapped_column(String, nullable=True)
+    refresh_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    state_json: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    source: Mapped[ModelSource] = relationship(lazy="selectin")
+    __mapper_args__ = {"version_id_col": version}
+
+
+class ClaudeOAuthFlow(Base):
+    __tablename__ = "claude_oauth_flows"
+
+    state_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    verifier_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ClaudeVersionState(Base):
+    __tablename__ = "claude_version_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    discovered_version: Mapped[str] = mapped_column(String, nullable=False)
+    pinned_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    etag: Mapped[str | None] = mapped_column(String, nullable=True)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class OpenRouterCooldown(Base):
     __tablename__ = "openrouter_cooldowns"
 

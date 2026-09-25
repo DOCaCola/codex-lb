@@ -1,5 +1,33 @@
 # AGENTS
 
+## Third-party implementation references
+
+For provider/authentication/protocol work, consult these projects as implementation
+and regression-evidence sources, not dependencies or authoritative specifications:
+
+| Project | Repository | Useful reference areas |
+| --- | --- | --- |
+| Sub2API | https://github.com/Wei-Shaw/sub2api | Claude OAuth account pooling, Messages forwarding, runtime CLI-version synchronization, cache preservation |
+| OpenCodex | https://github.com/lidge-jun/opencodex | Codex Responses adaptation, continuation/replay, OAuth refresh-outcome handling |
+| OmniRoute | https://github.com/diegosouzapw/OmniRoute | Explicit credential import, account management, provider compatibility reports |
+| CLIProxyAPI | https://github.com/router-for-me/CLIProxyAPI | Multi-account selection/affinity, Claude client-profile handling, protocol translation, refresh backoff |
+
+- Prefer recent third-party live reproductions and before/after observations, then
+  merged fixes with matching current source/tests, over unverified assumptions from
+  official documentation. Keep official protocol and support/authorization guidance
+  separate; document conflicts rather than assuming either establishes runtime behavior.
+- Record inspected revisions and report dates. Distinguish open proposals, merged
+  fixes, old closed reports, source inspection, and independently verified behavior.
+- Do not copy a project's whole implementation or infer reliability from issue counts.
+  Check current defects and license obligations before adapting source code.
+- Distinguish genuine Claude Code traffic from third-party clients speaking Messages:
+  identical API format does not establish identical OAuth eligibility or billing.
+- Local investigation (temporary, outside this repository):
+  [Claude integration design](../../claude-integration-design.tmp.md).
+  It is research, not approved OpenSpec or authority to implement/deploy. The file is
+  workspace-local and may not exist in another checkout; repository URLs above remain
+  the portable source references.
+
 ## Environment
 
 - Python: `>=3.13` via `uv` (`uv sync --frozen`; interpreter at `.venv/bin/python`)

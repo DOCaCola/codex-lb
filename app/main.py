@@ -97,6 +97,8 @@ from app.modules.auth_providers import api as auth_providers_api
 from app.modules.automations import api as automations_api
 from app.modules.automations.scheduler import build_automations_scheduler
 from app.modules.cache_isolation_probe import api as cache_isolation_probe_api
+from app.modules.claude import api as claude_api
+from app.modules.claude.scheduler import build_claude_refresh_scheduler
 from app.modules.conversation_archive import api as conversation_archive_api
 from app.modules.dashboard import api as dashboard_api
 from app.modules.dashboard_auth import api as dashboard_auth_api
@@ -689,6 +691,7 @@ async def lifespan(app: FastAPI):
     api_key_last_used_flush_scheduler = build_api_key_last_used_flush_scheduler()
     model_scheduler = build_model_refresh_scheduler()
     openrouter_scheduler = OpenRouterRefreshScheduler()
+    claude_scheduler = build_claude_refresh_scheduler()
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
     quota_planner_scheduler = build_quota_planner_scheduler()
     auth_guardian_scheduler = build_auth_guardian_scheduler()
@@ -708,6 +711,7 @@ async def lifespan(app: FastAPI):
     await api_key_last_used_flush_scheduler.start()
     await model_scheduler.start()
     await openrouter_scheduler.start()
+    await claude_scheduler.start()
     await sticky_session_cleanup_scheduler.start()
     await quota_planner_scheduler.start()
     await auth_guardian_scheduler.start()
@@ -929,6 +933,7 @@ async def lifespan(app: FastAPI):
         await metadata_scheduler.stop()
         await model_scheduler.stop()
         await openrouter_scheduler.stop()
+        await claude_scheduler.stop()
         # Stop the invalidation poller only after the model scheduler: a final
         # leader tick may still bump through the installed poller.
         await cache_poller.stop()
@@ -1074,6 +1079,7 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_api.router)
     app.include_router(model_sources_api.router)
     app.include_router(openrouter_api.router)
+    app.include_router(claude_api.router)
     app.include_router(health_api.router)
 
     static_dir = Path(__file__).parent / "static"

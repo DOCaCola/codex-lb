@@ -76,6 +76,8 @@ class ModelSourcesService:
 
         if row.kind == "openrouter":
             raise ModelSourceValidationError("Manage OpenRouter accounts through the Accounts dashboard")
+        if row.kind == "claude":
+            raise ModelSourceValidationError("Manage Claude accounts through the Accounts dashboard")
 
         fields = payload.model_fields_set
         if "name" in fields and payload.name is not None:

@@ -20,6 +20,7 @@ from app.modules.auth_providers.repository import AuthProvidersRepository
 from app.modules.auth_providers.service import AuthProvidersService
 from app.modules.automations.repository import AutomationsRepository
 from app.modules.automations.service import AutomationsService
+from app.modules.claude.service import ClaudeService
 from app.modules.dashboard.repository import DashboardRepository
 from app.modules.dashboard.service import DashboardService
 from app.modules.dashboard_auth.repository import DashboardAuthRepository
@@ -381,6 +382,12 @@ def get_model_sources_context(
     repository = ModelSourcesRepository(session)
     service = ModelSourcesService(repository)
     return ModelSourcesContext(session=session, repository=repository, service=service)
+
+
+def get_claude_service(session: AsyncSession = Depends(get_session)) -> ClaudeService:
+    from app.modules.claude.repository import ClaudeRepository
+
+    return ClaudeService(ClaudeRepository(session))
 
 
 def get_openrouter_service(session: AsyncSession = Depends(get_session)) -> OpenRouterService:
