@@ -1339,6 +1339,11 @@ export const handlers = [
     return HttpResponse.json(state.settings);
   }),
 
+  http.get("/api/settings/quota-reset-webhook", () => HttpResponse.json({
+    enabled: false, kinds: ["scheduled", "unexpected"], urlConfigured: false,
+    signingSecretConfigured: false, pending: 0, lastDelivery: null,
+  })),
+
   http.get("/api/settings/telemetry", ({ request }) => {
     // include_preview=true is the on-demand path: the envelope is attached
     // regardless of consent state.

@@ -45,6 +45,7 @@ from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.service import ProxyService
 from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.quota_planner.repository import QuotaPlannerRepository
+from app.modules.quota_webhook.service import QuotaWebhookService
 from app.modules.reports.cache import ReportsCaches
 from app.modules.reports.repository import ReportsRepository
 from app.modules.reports.service import ReportsService
@@ -474,3 +475,7 @@ def get_automations_context(
 
 async def get_reports_caches(request: Request) -> ReportsCaches:
     return request.app.state.reports_caches
+
+
+def get_quota_webhook_service(session: AsyncSession = Depends(get_session)) -> QuotaWebhookService:
+    return QuotaWebhookService(session)

@@ -232,6 +232,14 @@ async def consume_rate_limit_reset_credit(
         operation="usage limit reset consume",
     )
 
+    # Cover dashboard, client and automatic redemption through the same
+    # boundary. An ambiguous consume outcome must not look like a surprise reset.
+    from app.db.session import get_background_session
+    from app.modules.quota_webhook.repository import redemption_intent
+
+    async with get_background_session() as notification_session:
+        await redemption_intent(notification_session, account_id)
+
     try:
         if route is not None:
             return await _consume_rate_limit_reset_via_codex(

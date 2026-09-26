@@ -129,6 +129,8 @@ from app.modules.proxy.ring_membership import (
 )
 from app.modules.quota_planner import api as quota_planner_api
 from app.modules.quota_planner.scheduler import build_quota_planner_scheduler
+from app.modules.quota_webhook import api as quota_webhook_api
+from app.modules.quota_webhook.scheduler import build_quota_webhook_scheduler
 from app.modules.rate_limit_reset_credits import api as rate_limit_reset_credits_api
 from app.modules.reports import api as reports_api
 from app.modules.reports.cache import ReportsCaches
@@ -692,6 +694,7 @@ async def lifespan(app: FastAPI):
     model_scheduler = build_model_refresh_scheduler()
     openrouter_scheduler = OpenRouterRefreshScheduler()
     claude_scheduler = build_claude_refresh_scheduler()
+    quota_webhook_worker = build_quota_webhook_scheduler()
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
     quota_planner_scheduler = build_quota_planner_scheduler()
     auth_guardian_scheduler = build_auth_guardian_scheduler()
@@ -712,6 +715,7 @@ async def lifespan(app: FastAPI):
     await model_scheduler.start()
     await openrouter_scheduler.start()
     await claude_scheduler.start()
+    await quota_webhook_worker.start()
     await sticky_session_cleanup_scheduler.start()
     await quota_planner_scheduler.start()
     await auth_guardian_scheduler.start()
@@ -934,6 +938,7 @@ async def lifespan(app: FastAPI):
         await model_scheduler.stop()
         await openrouter_scheduler.stop()
         await claude_scheduler.stop()
+        await quota_webhook_worker.stop()
         # Stop the invalidation poller only after the model scheduler: a final
         # leader tick may still bump through the installed poller.
         await cache_poller.stop()
@@ -1080,6 +1085,7 @@ def create_app() -> FastAPI:
     app.include_router(model_sources_api.router)
     app.include_router(openrouter_api.router)
     app.include_router(claude_api.router)
+    app.include_router(quota_webhook_api.router)
     app.include_router(health_api.router)
 
     static_dir = Path(__file__).parent / "static"

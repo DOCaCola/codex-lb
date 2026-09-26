@@ -45,6 +45,8 @@ async function installMobileContainmentFixtures(page: Page, accounts = [
     "/api/request-logs": createRequestLogsResponse([createRequestLogEntry({ accountId: "acc_primary", requestId: "req_mobile_containment" })], 1, false),
     "/api/settings/telemetry": createTelemetryConsent({ state: "enabled", source: "persisted", active: true }),
     "/api/settings": createDashboardSettings(),
+    "/api/settings/quota-reset-webhook": { enabled: false, kinds: ["scheduled", "unexpected"],
+      urlConfigured: false, signingSecretConfigured: false, pending: 0, lastDelivery: null },
     "/api/accounts": { accounts },
   };
 
@@ -70,6 +72,23 @@ async function acceptTelemetryConsent(page: Page, consentDialog: Locator): Promi
   await consentDialog.getByRole("button", { name: "Keep enabled" }).click();
   expect((await consentDecision).ok()).toBe(true);
   await expect(consentDialog).toBeHidden();
+}
+
+for (const width of [390, 1440]) {
+  test(`quota webhook settings containment ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await installMobileContainmentFixtures(page);
+    await page.goto("/settings");
+    await acceptTelemetryConsentIfShown(page);
+    const card = page.getByRole("region", { name: "Quota reset webhook" });
+    await card.scrollIntoViewIfNeeded();
+    await expect(card).toBeVisible();
+    await expect(card.getByRole("switch", { name: "Enable notifications" })).toBeEnabled();
+    await expect(card.getByRole("button", { name: "Test delivery" })).toBeDisabled();
+    await expect(card.getByLabel("HTTPS webhook URL")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await card.screenshot({ path: testInfo.outputPath(`quota-webhook-${width}.png`) });
+  });
 }
 
 async function acceptTelemetryConsentIfShown(page: Page): Promise<void> {

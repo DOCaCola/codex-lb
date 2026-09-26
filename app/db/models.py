@@ -1910,6 +1910,47 @@ class ModelSource(Base):
     )
 
 
+class QuotaWebhookConfig(Base):
+    __tablename__ = "quota_webhook_config"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    kinds: Mapped[str] = mapped_column(Text, nullable=False, default='["scheduled","unexpected"]')
+    url_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class QuotaWebhookBaseline(Base):
+    __tablename__ = "quota_webhook_baselines"
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    window: Mapped[str] = mapped_column(String, primary_key=True)
+    identity: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class QuotaWebhookDelivery(Base):
+    __tablename__ = "quota_webhook_deliveries"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    next_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    lease_id: Mapped[str | None] = mapped_column(String)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime)
+    last_http_status: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(String)
+
+
+class QuotaWebhookRedemption(Base):
+    __tablename__ = "quota_webhook_redemptions"
+    upstream_account_id: Mapped[str] = mapped_column(String, primary_key=True)
+    suppress_until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class ClaudeAccount(Base):
     __tablename__ = "claude_accounts"
 

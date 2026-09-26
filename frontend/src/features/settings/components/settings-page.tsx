@@ -29,6 +29,7 @@ import { RoutingSettings } from "@/features/settings/components/routing-settings
 import { UpstreamTimeoutSettings } from "@/features/settings/components/upstream-timeout-settings";
 import { SettingsSkeleton } from "@/features/settings/components/settings-skeleton";
 import { TelemetrySettings } from "@/features/settings/components/telemetry-settings";
+import { QuotaResetWebhookSettings } from "@/features/settings/components/quota-reset-webhook-settings";
 import { UpstreamProxySettings } from "@/features/settings/components/upstream-proxy-settings";
 import { CacheIsolationProbeSection } from "@/features/cache-probe/components/cache-isolation-probe-section";
 import { StickySessionsSection } from "@/features/sticky-sessions/components/sticky-sessions-section";
@@ -208,6 +209,7 @@ export function SettingsPage() {
             ) : null}
 
             <TelemetrySettings disabled={controlsDisabled} />
+            <QuotaResetWebhookSettings disabled={controlsDisabled || !canWriteSecurity} />
 
             <AdvancedSettingsGroup
               key={expandAdvanced ? `open:${advancedScrollToId ?? ""}` : "closed"}

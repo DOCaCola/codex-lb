@@ -625,14 +625,36 @@ class UsageRepository:
         recorded_at: datetime | None = None,
     ) -> list[UsageHistory]:
         """Persist one account's standard usage windows atomically."""
-        if not windows:
-            return []
+        recorded_at = recorded_at or utcnow()
         entries = _account_snapshot_entries(account_id, windows, recorded_at=recorded_at)
         try:
             async with sqlite_writer_section():
+                from datetime import UTC
+
+                from app.modules.quota_webhook.repository import observe
+                from app.modules.quota_webhook.schemas import Observation
+
+                webhook_enabled = await observe(
+                    self._session,
+                    account_id,
+                    [
+                        (
+                            entry.window or "primary",
+                            Observation(
+                                used_percent=entry.used_percent,
+                                reset_at=entry.reset_at,
+                                window_minutes=entry.window_minutes,
+                                observed_at=entry.recorded_at.replace(tzinfo=UTC),
+                            ),
+                        )
+                        for entry in entries
+                    ],
+                    observed_at=recorded_at,
+                )
                 # Telemetry write: this transaction only appends usage-history
-                # rows, so its commit may skip the synchronous WAL flush.
-                await relax_commit_durability(self._session)
+                # rows unless the notification outbox is active.
+                if not webhook_enabled:
+                    await relax_commit_durability(self._session)
                 self._session.add_all(entries)
                 await self._session.commit()
         except BaseException:
