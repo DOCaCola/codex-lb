@@ -41,6 +41,9 @@ timestamps (for example older than five minutes). Do not parse and reserialize t
 JSON before verification. `X-Webhook-Id` matches `event_id`; retries retain the
 same event ID/body but receive a fresh timestamp/signature.
 
-URLs and secrets are encrypted at rest and never returned by the settings API.
+URLs and secrets are encrypted at rest and omitted from ordinary settings responses.
+Authorized administrators can use **Reveal saved URL** to retrieve the destination
+on demand; **Hide saved URL** discards the displayed value. This read is audited and
+not cached. The signing secret is never revealed.
 Notifications contain no account email, authentication tokens or conversation data.
 Only administrators with `security:write` can change settings or enqueue tests.

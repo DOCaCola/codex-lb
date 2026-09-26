@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from app.core.audit.service import AuditActor, AuditService
 from app.core.auth.dashboard_access import DashboardPrincipal, Permission
@@ -10,7 +10,7 @@ from app.core.auth.dependencies import (
 )
 from app.core.exceptions import DashboardBadRequestError
 from app.dependencies import get_quota_webhook_service
-from app.modules.quota_webhook.schemas import QueuedTest, WebhookStatus, WebhookUpdate
+from app.modules.quota_webhook.schemas import QueuedTest, SavedDestination, WebhookStatus, WebhookUpdate
 from app.modules.quota_webhook.service import QuotaWebhookService
 
 router = APIRouter(
@@ -26,6 +26,18 @@ router = APIRouter(
 @router.get("", response_model=WebhookStatus)
 async def status(service: QuotaWebhookService = Depends(get_quota_webhook_service)) -> WebhookStatus:
     return await service.status()
+
+
+@router.get("/destination", response_model=SavedDestination)
+async def saved_destination(
+    response: Response,
+    principal: DashboardPrincipal = Depends(require_dashboard_permission(Permission.SECURITY_WRITE)),
+    service: QuotaWebhookService = Depends(get_quota_webhook_service),
+) -> SavedDestination:
+    response.headers["Cache-Control"] = "no-store"
+    url = await service.saved_destination()
+    AuditService.log_async("quota_webhook_destination_revealed", actor=AuditActor.from_principal(principal))
+    return SavedDestination(url=url)
 
 
 @router.put(

@@ -46,6 +46,10 @@ class QueuedTest(DashboardModel):
     event_id: str
 
 
+class SavedDestination(DashboardModel):
+    url: str | None = Field(repr=False)
+
+
 def detect_reset(before: Observation, after: Observation) -> ResetKind | None:
     """Observation-based evidence, never an assertion of the provider's cause."""
     if after.observed_at <= before.observed_at or before.window_minutes != after.window_minutes:

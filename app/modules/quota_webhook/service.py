@@ -4,6 +4,7 @@ from datetime import UTC
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.crypto import TokenEncryptor
 from app.db.models import QuotaWebhookConfig, QuotaWebhookDelivery
 from app.modules.quota_webhook.repository import configure, enqueue, lock_config, now_utc
 from app.modules.quota_webhook.schemas import DeliveryStatus, QueuedTest, WebhookStatus, WebhookUpdate
@@ -13,6 +14,12 @@ from app.modules.quota_webhook.transport import validate_url
 class QuotaWebhookService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def saved_destination(self) -> str | None:
+        config = await self.session.get(QuotaWebhookConfig, 1)
+        if config is None or config.url_encrypted is None:
+            return None
+        return TokenEncryptor().decrypt(config.url_encrypted)
 
     async def status(self) -> WebhookStatus:
         config = await self.session.get(QuotaWebhookConfig, 1)

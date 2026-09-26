@@ -69,6 +69,20 @@ async def test_settings_mask_secrets_and_test_delivery(async_client, configured)
     assert row.id == response.json()["eventId"]
 
 
+async def test_reveal_saved_destination_is_explicit_and_not_cached(async_client, configured):
+    response = await async_client.get(PATH + "/destination")
+    assert response.status_code == 200
+    assert response.json() == {"url": "https://example.com/secret-path"}
+    assert response.headers["cache-control"] == "no-store"
+    assert "secret-path" not in (await async_client.get(PATH)).text
+
+
+async def test_reveal_absent_destination(async_client):
+    response = await async_client.get(PATH + "/destination")
+    assert response.status_code == 200
+    assert response.json() == {"url": None}
+
+
 async def test_reset_dedup_and_second_same_deadline(configured):
     start = configured
     reset = int((start + timedelta(days=3)).replace(tzinfo=UTC).timestamp())
@@ -153,6 +167,7 @@ async def test_write_and_test_require_security_permission(app_instance, async_cl
     response = await async_client.put(PATH, json={"enabled": False, "kinds": ["scheduled"]})
     assert response.status_code == 403
     assert (await async_client.post(PATH + "/test")).status_code == 403
+    assert (await async_client.get(PATH + "/destination")).status_code == 403
 
 
 async def test_scheduled_boundary_and_event_filter(async_client, configured):
