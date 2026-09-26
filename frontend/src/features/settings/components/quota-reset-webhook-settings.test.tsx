@@ -1,115 +1,115 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { QuotaResetWebhookSettings } from "./quota-reset-webhook-settings";
 import { renderWithProviders } from "@/test/utils";
 import { server } from "@/test/mocks/server";
 
 const path = "/api/settings/quota-reset-webhook";
+const savedUrl = "https://example.com/saved-token";
 const configured = { enabled: true, kinds: ["scheduled", "unexpected"], urlConfigured: true,
   signingSecretConfigured: true, pending: 0, lastDelivery: null };
 
+async function loadedInput() {
+  const input = screen.getByLabelText("HTTPS webhook URL");
+  await waitFor(() => expect(input).toHaveValue(savedUrl));
+  return input;
+}
+
 describe("Quota reset webhook settings", () => {
-  it("reveals the saved destination only on demand without editing it", async () => {
-    const user = userEvent.setup();
-    let reads = 0;
+  beforeEach(() => {
     server.use(http.get(path, () => HttpResponse.json(configured)),
-      http.get(`${path}/destination`, () => {
-        reads += 1;
-        return HttpResponse.json({ url: "https://example.com/saved-secret" });
-      }));
-    renderWithProviders(<QuotaResetWebhookSettings />);
-    await screen.findAllByPlaceholderText("Configured — leave blank to keep");
-    expect(reads).toBe(0);
-    expect(screen.queryByLabelText("Saved webhook URL")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Reveal saved URL" }));
-    expect(await screen.findByLabelText("Saved webhook URL")).toHaveValue("https://example.com/saved-secret");
-    expect(screen.getByLabelText("HTTPS webhook URL")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Hide saved URL" }));
-    expect(screen.queryByLabelText("Saved webhook URL")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Reveal saved URL" }));
-    await screen.findByLabelText("Saved webhook URL");
-    expect(reads).toBe(2);
+      http.get(`${path}/destination`, () => HttpResponse.json({ url: savedUrl })));
   });
 
-  it("reports reveal failures without displaying a destination", async () => {
-    server.use(http.get(path, () => HttpResponse.json(configured)),
-      http.get(`${path}/destination`, () => HttpResponse.json({ error: { code: "permission_denied", message: "Denied" } }, { status: 403 })));
+  it("loads the saved URL masked and toggles visibility without editing", async () => {
     renderWithProviders(<QuotaResetWebhookSettings />);
-    await userEvent.click(await screen.findByRole("button", { name: "Reveal saved URL" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to reveal the saved URL");
-    expect(screen.queryByLabelText("Saved webhook URL")).not.toBeInTheDocument();
-  });
-  it("reveals only the URL draft and restores masking after saving", async () => {
-    const user = userEvent.setup();
-    let saved: unknown;
-    server.use(http.get(path, () => HttpResponse.json(configured)), http.put(path, async ({ request }) => {
-      saved = await request.json(); return HttpResponse.json(configured);
-    }));
-    renderWithProviders(<QuotaResetWebhookSettings />);
-    await screen.findAllByPlaceholderText("Configured — leave blank to keep");
-    const input = screen.getByLabelText("HTTPS webhook URL");
-    expect(input).toHaveValue("");
+    const input = await loadedInput();
     expect(input).toHaveAttribute("type", "password");
-    await user.type(input, "https://example.com/private-token");
-    await user.click(screen.getByRole("button", { name: "Show webhook URL" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show webhook URL" }));
     expect(input).toHaveAttribute("type", "text");
-    expect(input).toHaveValue("https://example.com/private-token");
-    expect(saved).toBeUndefined();
-    expect(screen.getByLabelText("Optional signing secret (16+ characters)")).toHaveAttribute("type", "password");
-    await user.click(screen.getByRole("button", { name: "Hide webhook URL" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Hide webhook URL" }));
     expect(input).toHaveAttribute("type", "password");
-    await user.click(screen.getByRole("button", { name: "Show webhook URL" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(input).toHaveValue(""));
-    expect(input).toHaveAttribute("type", "password");
-    expect(saved).toMatchObject({ url: "https://example.com/private-token" });
+    expect(screen.queryByText("Remove destination (disables delivery)")).not.toBeInTheDocument();
   });
 
-  it("saves destination and filters without requiring an existing secret again", async () => {
-    const user = userEvent.setup();
+  it("clears the saved URL and disables delivery on save", async () => {
     let saved: unknown;
-    server.use(http.get(path, () => HttpResponse.json(configured)), http.put(path, async ({ request }) => {
-      saved = await request.json(); return HttpResponse.json(configured);
-    }));
-    renderWithProviders(<QuotaResetWebhookSettings />);
-    await screen.findAllByPlaceholderText("Configured — leave blank to keep");
-    await user.click(screen.getByLabelText("Scheduled resets"));
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(saved).toEqual({ enabled: true, kinds: ["unexpected"], clearUrl: false, clearSigningSecret: false }));
-  });
-
-  it("removing a destination disables delivery and sends no masked placeholder", async () => {
-    const user = userEvent.setup(); let saved: unknown;
-    server.use(http.get(path, () => HttpResponse.json(configured)), http.put(path, async ({ request }) => {
+    server.use(http.put(path, async ({ request }) => {
       saved = await request.json(); return HttpResponse.json({ ...configured, enabled: false, urlConfigured: false });
     }));
     renderWithProviders(<QuotaResetWebhookSettings />);
-    await screen.findAllByPlaceholderText("Configured — leave blank to keep");
-    await user.click(screen.getByLabelText("Remove destination (disables delivery)"));
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.clear(await loadedInput());
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saved).toMatchObject({ enabled: false, clearUrl: true }));
     expect(saved).not.toHaveProperty("url");
   });
 
-  it("queues a test and displays delivery status", async () => {
-    server.use(http.get(path, () => HttpResponse.json(configured)),
-      http.post(`${path}/test`, () => HttpResponse.json({ eventId: "test-event" })));
+  it("saves URL replacements and restores masking", async () => {
+    let saved: unknown;
+    server.use(http.put(path, async ({ request }) => {
+      saved = await request.json(); return HttpResponse.json(configured);
+    }));
     renderWithProviders(<QuotaResetWebhookSettings />);
-    await screen.findAllByPlaceholderText("Configured — leave blank to keep");
-    await userEvent.click(screen.getByRole("button", { name: "Test delivery" }));
-    expect(await screen.findByText("Test queued; delivery status updates automatically.")).toBeInTheDocument();
+    const input = await loadedInput();
+    await userEvent.clear(input);
+    await userEvent.type(input, "https://example.com/new");
+    await userEvent.click(screen.getByRole("button", { name: "Show webhook URL" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saved).toMatchObject({ url: "https://example.com/new", clearUrl: false }));
+    await waitFor(() => expect(input).toHaveAttribute("type", "password"));
+    expect(input).toHaveValue("https://example.com/new");
   });
 
-  it("disables all mutation controls for read-only users", async () => {
-    server.use(http.get(path, () => HttpResponse.json(configured)));
-    renderWithProviders(<QuotaResetWebhookSettings disabled />);
-    await screen.findAllByPlaceholderText("Configured — leave blank to keep");
+  it("removes an existing signing secret through a saveable button", async () => {
+    let saved: unknown;
+    server.use(http.put(path, async ({ request }) => {
+      saved = await request.json(); return HttpResponse.json({ ...configured, signingSecretConfigured: false });
+    }));
+    renderWithProviders(<QuotaResetWebhookSettings />);
+    await loadedInput();
+    await userEvent.click(screen.getByRole("button", { name: "Remove signing secret" }));
+    expect(screen.getByRole("button", { name: "Undo signing secret removal" })).toBeInTheDocument();
+    expect(saved).toBeUndefined();
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saved).toMatchObject({ clearSigningSecret: true }));
+    expect(saved).not.toHaveProperty("url");
+    expect(saved).not.toHaveProperty("signingSecret");
+  });
+
+  it("does not offer removal when no signing secret exists", async () => {
+    server.use(http.get(path, () => HttpResponse.json({ ...configured, signingSecretConfigured: false })));
+    renderWithProviders(<QuotaResetWebhookSettings />);
+    await loadedInput();
+    expect(screen.queryByRole("button", { name: "Remove signing secret" })).not.toBeInTheDocument();
+  });
+
+  it("blocks saves when destination loading fails", async () => {
+    server.use(http.get(`${path}/destination`, () => HttpResponse.json({ error: { code: "permission_required", message: "Denied" } }, { status: 403 })));
+    renderWithProviders(<QuotaResetWebhookSettings />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Test delivery" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry loading URL" })).toBeInTheDocument();
+  });
+
+  it("explains authentication failures instead of blaming the URL", async () => {
+    server.use(http.put(path, () => HttpResponse.json({ error: { code: "step_up_unavailable", message: "Unavailable" } }, { status: 403 })));
+    renderWithProviders(<QuotaResetWebhookSettings />);
+    await loadedInput();
+    await userEvent.click(screen.getByLabelText("Scheduled resets"));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Identity verification is unavailable");
+  });
+
+  it("does not load URLs for read-only users", async () => {
+    let reads = 0;
+    server.use(http.get(`${path}/destination`, () => { reads += 1; return HttpResponse.json({ url: savedUrl }); }));
+    renderWithProviders(<QuotaResetWebhookSettings disabled />);
+    await screen.findByPlaceholderText("Configured — leave blank to keep");
+    expect(reads).toBe(0);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(screen.getByLabelText("HTTPS webhook URL")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reveal saved URL" })).toBeDisabled();
   });
 });

@@ -42,8 +42,11 @@ JSON before verification. `X-Webhook-Id` matches `event_id`; retries retain the
 same event ID/body but receive a fresh timestamp/signature.
 
 URLs and secrets are encrypted at rest and omitted from ordinary settings responses.
-Authorized administrators can use **Reveal saved URL** to retrieve the destination
-on demand; **Hide saved URL** discards the displayed value. This read is audited and
-not cached. The signing secret is never revealed.
+Authorized operators load the saved destination into the masked URL input.
+The eye button shows or hides it. Clearing the input and saving removes the
+destination and disables delivery. Loading is audited and not cached.
+The signing secret is never revealed; its removal button appears only when a
+secret exists, and removal takes effect when saving.
 Notifications contain no account email, authentication tokens or conversation data.
-Only administrators with `security:write` can change settings or enqueue tests.
+Operators need `ops:write` to change settings, enqueue tests or reveal the URL.
+These notification operations do not require security-setting identity step-up.

@@ -158,16 +158,37 @@ async def test_invalid_url_and_empty_filter_rejected(async_client):
     assert response.status_code == 422
 
 
-async def test_write_and_test_require_security_permission(app_instance, async_client, monkeypatch):
+async def test_write_and_test_require_ops_permission(app_instance, async_client, monkeypatch):
     from app.core.auth.dashboard_access import Permission
     from tests.integration.test_dashboard_permission_gates import _principal_without, _use_principal
 
-    _use_principal(app_instance, monkeypatch, _principal_without(Permission.SECURITY_WRITE))
+    _use_principal(app_instance, monkeypatch, _principal_without(Permission.SECURITY_WRITE, Permission.OPS_WRITE))
     assert (await async_client.get(PATH)).status_code == 200
     response = await async_client.put(PATH, json={"enabled": False, "kinds": ["scheduled"]})
     assert response.status_code == 403
     assert (await async_client.post(PATH + "/test")).status_code == 403
     assert (await async_client.get(PATH + "/destination")).status_code == 403
+
+
+async def test_ops_only_user_can_save_without_step_up(app_instance, async_client, monkeypatch):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    import app.core.auth.dependencies as auth
+    from app.core.auth.dashboard_access import Permission
+    from tests.integration.test_dashboard_permission_gates import _principal_without, _use_principal
+
+    principal = replace(_principal_without(Permission.SECURITY_WRITE), user_id="operator-without-factor")
+    _use_principal(app_instance, monkeypatch, principal)
+    step_up = AsyncMock(side_effect=AssertionError("Operational settings must not require step-up"))
+    monkeypatch.setattr(auth, "ensure_step_up", step_up)
+    response = await async_client.put(
+        PATH, json={"enabled": True, "kinds": ["scheduled"], "url": "https://example.com/webhook"}
+    )
+    assert response.status_code == 200, response.text
+    assert (await async_client.post(PATH + "/test")).status_code == 200
+    assert (await async_client.get(PATH + "/destination")).status_code == 200
+    step_up.assert_not_called()
 
 
 async def test_scheduled_boundary_and_event_filter(async_client, configured):

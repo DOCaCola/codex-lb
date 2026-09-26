@@ -1343,6 +1343,7 @@ export const handlers = [
     enabled: false, kinds: ["scheduled", "unexpected"], urlConfigured: false,
     signingSecretConfigured: false, pending: 0, lastDelivery: null,
   })),
+  http.get("/api/settings/quota-reset-webhook/destination", () => HttpResponse.json({ url: null })),
 
   http.get("/api/settings/telemetry", ({ request }) => {
     // include_preview=true is the on-demand path: the envelope is attached

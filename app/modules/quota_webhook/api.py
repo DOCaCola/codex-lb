@@ -31,7 +31,7 @@ async def status(service: QuotaWebhookService = Depends(get_quota_webhook_servic
 @router.get("/destination", response_model=SavedDestination)
 async def saved_destination(
     response: Response,
-    principal: DashboardPrincipal = Depends(require_dashboard_permission(Permission.SECURITY_WRITE)),
+    principal: DashboardPrincipal = Depends(require_dashboard_permission(Permission.OPS_WRITE)),
     service: QuotaWebhookService = Depends(get_quota_webhook_service),
 ) -> SavedDestination:
     response.headers["Cache-Control"] = "no-store"
@@ -41,7 +41,7 @@ async def saved_destination(
 
 
 @router.put(
-    "", response_model=WebhookStatus, dependencies=[Depends(require_dashboard_permission(Permission.SECURITY_WRITE))]
+    "", response_model=WebhookStatus, dependencies=[Depends(require_dashboard_permission(Permission.OPS_WRITE))]
 )
 async def update(
     payload: WebhookUpdate,
@@ -60,7 +60,7 @@ async def update(
 
 
 @router.post(
-    "/test", response_model=QueuedTest, dependencies=[Depends(require_dashboard_permission(Permission.SECURITY_WRITE))]
+    "/test", response_model=QueuedTest, dependencies=[Depends(require_dashboard_permission(Permission.OPS_WRITE))]
 )
 async def test(
     request: Request,

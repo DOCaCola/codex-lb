@@ -42,24 +42,36 @@ authorized dashboard administrators SHALL configure or test delivery.
 - **THEN** delivery is rejected without contacting that address
 
 ### Requirement: Destination draft visibility
-The URL editor SHALL mask input by default and offer an accessible show/hide control
-for the local draft only. Saving SHALL clear the draft and restore masking without
-retrieving the stored destination.
+The URL editor SHALL load the saved URL for authorized operators, mask input by
+default and offer an accessible show/hide control. Saving SHALL restore masking.
+Clearing the URL and saving SHALL remove the destination and disable delivery.
+There SHALL NOT be separate URL change or deletion actions.
 
 #### Scenario: Inspect a destination before saving
 - **WHEN** an operator toggles draft visibility
 - **THEN** the entered URL is revealed or masked without changing its value or saving
 
 ### Requirement: Explicit saved destination disclosure
-Authorized administrators SHALL be able to explicitly reveal the saved URL through
-a permission-checked, non-cacheable read. Ordinary settings responses MUST remain
-masked and the signing secret MUST NOT be disclosed. Hiding or leaving the editor
-SHALL discard the revealed value without changing saved configuration.
+Authorized operators SHALL load the saved URL through a permission-checked,
+non-cacheable read. Ordinary settings responses MUST remain masked and the signing
+secret MUST NOT be disclosed. Leaving the editor SHALL discard the local value.
+Failure to load the URL MUST block saves to prevent accidental deletion.
+The signing secret removal control SHALL be a button shown only when a secret
+exists, and removal SHALL take effect upon Save.
 
 #### Scenario: Reveal saved destination
 - **WHEN** an authorized administrator requests the saved destination
 - **THEN** only the URL is returned with Cache-Control no-store and the action is audited without its value
 
 #### Scenario: Unauthorized disclosure
-- **WHEN** a dashboard user without security-write permission requests the saved destination
+- **WHEN** a dashboard user without ops-write permission requests the saved destination
 - **THEN** access is denied
+
+### Requirement: Operational authorization
+Webhook configuration, testing and destination disclosure SHALL require ops-write
+permission, not security-write or security step-up. Authentication and authorization
+failures SHALL be distinguished from invalid webhook settings in the dashboard.
+
+#### Scenario: Operator without a step-up factor
+- **WHEN** an authenticated operator with ops-write permission saves valid webhook settings
+- **THEN** the save succeeds without requiring a local password or two-factor setup

@@ -209,7 +209,7 @@ export function SettingsPage() {
             ) : null}
 
             <TelemetrySettings disabled={controlsDisabled} />
-            <QuotaResetWebhookSettings disabled={controlsDisabled || !canWriteSecurity} />
+            <QuotaResetWebhookSettings disabled={controlsDisabled || !canWriteOps} />
 
             <AdvancedSettingsGroup
               key={expandAdvanced ? `open:${advancedScrollToId ?? ""}` : "closed"}

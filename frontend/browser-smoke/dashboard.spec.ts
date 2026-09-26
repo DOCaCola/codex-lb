@@ -47,6 +47,7 @@ async function installMobileContainmentFixtures(page: Page, accounts = [
     "/api/settings": createDashboardSettings(),
     "/api/settings/quota-reset-webhook": { enabled: false, kinds: ["scheduled", "unexpected"],
       urlConfigured: false, signingSecretConfigured: false, pending: 0, lastDelivery: null },
+    "/api/settings/quota-reset-webhook/destination": { url: null },
     "/api/accounts": { accounts },
   };
 
