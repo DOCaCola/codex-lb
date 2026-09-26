@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 import pytest
@@ -11,6 +12,7 @@ from app.modules.claude.profile import (
     recognize_native,
 )
 from app.modules.claude.request import project_request
+from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 from tests.claude_json_helpers import array, at
 
 pytestmark = pytest.mark.unit
@@ -68,6 +70,8 @@ def test_endpoint_header_profiles():
     assert "token-counting-2024-11-01" in count["anthropic-beta"]
     assert "claude-code-20250219" not in count["anthropic-beta"]
     assert "claude-code-20250219" in messages["anthropic-beta"]
+    assert messages["x-stainless-timeout"] == "600"
+    assert "x-stainless-timeout" not in count
     with pytest.raises(ClaudeError, match="beta"):
         profile().headers("token", endpoint="messages", incoming={"anthropic-beta": "bad\r\nheader"})
 
@@ -146,3 +150,89 @@ def test_unknown_model_and_server_artifacts_reject_unsafe_relocation():
     request["messages"][1]["content"][1]["type"] = "server_tool_use"
     with pytest.raises(ClaudeError, match="server-tool"):
         project_request(request, profile(), endpoint="messages")
+
+
+def test_native_hints_and_negotiation_are_not_synthesized():
+    incoming = {
+        "x-client-request-id": "caller-request",
+        "x-stainless-retry-count": "2",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-async": "async",
+        "x-claude-code-agent-id": "agent",
+        "x-claude-code-parent-agent-id": "parent",
+        "x-claude-code-compaction": "true",
+        "x-claude-code-context-compacted": "true",
+        "x-claude-code-request-class": "helper",
+        "x-claude-code-agent-type": "subagent",
+        "x-claude-code-prev-tool-durations": "12",
+        "anthropic-beta": " future-feature-2026-09-26, oauth-2025-04-20 ",
+        "Cookie": "secret",
+        "X-Anthropic-Additional-Protection": "unreviewed",
+        "Accept-Encoding": "unsupported",
+        "X-Claude-Remote-Session-Id": "remote",
+    }
+    snapshot = profile(native=True)
+    output = snapshot.headers("token", endpoint="messages", incoming=incoming)
+    for name, value in incoming.items():
+        if name.startswith("x-"):
+            assert output[name] == value
+    assert snapshot.request_id != output["x-client-request-id"]
+    assert output["anthropic-beta"] == "future-feature-2026-09-26,oauth-2025-04-20"
+    assert (
+        not {"cookie", "accept-encoding", "x-anthropic-additional-protection", "x-claude-remote-session-id"}
+        & output.keys()
+    )
+    synthesized = profile().headers("token", endpoint="messages", incoming=incoming, stream=True)
+    assert synthesized["x-stainless-retry-count"] == "0"
+    assert synthesized["x-stainless-helper-method"] == "stream"
+    assert "x-claude-code-agent-id" not in synthesized
+
+
+def test_session_projection_scopes_parent_and_leaves_other_fields():
+    parent = "c51daabc-b9d3-41c2-859b-7d9c321f20e5"
+    child = "bf31a05a-97cd-4b4d-aebd-b70898a26ead"
+    body = {
+        "metadata": {
+            "user_id": json.dumps(
+                {
+                    "device_id": "device",
+                    "account_uuid": "account",
+                    "session_id": child,
+                    "parent_session_id": parent,
+                    "extra": "preserved",
+                }
+            ),
+            "other": "retained",
+        }
+    }
+    original = deepcopy(body)
+    snapshot = profile(conversation_id=child)
+    assert project_session(body, snapshot, source_id="account-a", client_scope="key-a")
+    identity = session_metadata(body)
+    assert identity["session_id"] == snapshot.session_id
+    assert identity["parent_session_id"] == profile(conversation_id=parent).session_id
+    assert identity["account_uuid"] == "account" and identity["extra"] == "preserved"
+    assert body["metadata"]["other"] == "retained"
+    assert original != body
+
+
+@pytest.mark.parametrize("raw", ["opaque", "[]", "{}", '{"session_id":"bad","device_id":"d"}', 12])
+def test_unsupported_session_metadata_is_explicit(raw):
+    with pytest.raises(ClaudeError, match="session metadata"):
+        session_metadata({"metadata": {"user_id": raw}})
+
+
+def test_helper_recognition_is_bounded_and_count_tokens_is_separate():
+    session = "bf31a05a-97cd-4b4d-aebd-b70898a26ead"
+    body = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "probe"}],
+        "metadata": {"user_id": json.dumps({"session_id": session, "device_id": "d"})},
+    }
+    headers = {"x-claude-code-session-id": session}
+    assert has_helper_identity(body, headers, count_tokens=False)
+    assert not has_helper_identity(body, {}, count_tokens=False)
+    body["max_tokens"] = 100
+    assert not has_helper_identity(body, headers, count_tokens=False)
+    assert has_helper_identity({}, {}, count_tokens=True)

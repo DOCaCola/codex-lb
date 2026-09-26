@@ -39,6 +39,18 @@ resend portable context. Do not move signed thinking across accounts or models.
 
 ## Supported boundaries
 
+Native Claude feature negotiation and reviewed SDK/helper/agent headers are
+preserved. Session headers and structured JSON `metadata.user_id` session fields
+are projected together into the selected account/client scope; logical history
+is unchanged. Conflicting session identifiers, malformed metadata and opaque or
+legacy concatenated user IDs fail explicitly. Omit optional user metadata or
+use the current structured Claude Code format. Do not forward your upstream
+credentials as client metadata; codex-lb selects stored credentials separately.
+
+Native request IDs remain available for correlation. Token-counting and supported
+Haiku probe/title helpers have separate compatibility handling. These policies
+are specified in [Claude accounts](../openspec/specs/claude-accounts/spec.md).
+
 Responses supports text, HTTPS/base64 images, function tools, unconstrained custom
 tools, namespaces, adaptive reasoning on explicitly supported models and JSON-schema
 output. Unsupported grammar-constrained decoding, uploaded files, Responses built-in

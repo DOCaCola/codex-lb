@@ -14,7 +14,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.modules.claude.credentials import ClaudeError
 
-PROFILE_REVISION = "claude-oauth-v1"
+PROFILE_REVISION = "claude-oauth-v2"
 CLI_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 OAUTH_BETA = "oauth-2025-04-20"
 CLI_BETA = "claude-code-20250219"
@@ -35,6 +35,17 @@ _NATIVE_HEADERS = frozenset(
         "x-stainless-os",
         "x-stainless-arch",
         "x-stainless-timeout",
+        "x-stainless-helper-method",
+        "x-stainless-async",
+        "x-stainless-retry-count",
+        "x-client-request-id",
+        "x-claude-code-agent-id",
+        "x-claude-code-parent-agent-id",
+        "x-claude-code-request-class",
+        "x-claude-code-agent-type",
+        "x-claude-code-prev-tool-durations",
+        "x-claude-code-compaction",
+        "x-claude-code-context-compacted",
     }
 )
 
@@ -60,7 +71,7 @@ def recognize_native(headers: Mapping[str, str], *, version: str, has_identity: 
     return (
         (int(match[1]), int(match[2])) == (major, minor)
         and int(match[3]) >= patch
-        and OAUTH_BETA in values.get("anthropic-beta", "").split(",")
+        and OAUTH_BETA in _betas(values.get("anthropic-beta", ""))
         and values.get("x-stainless-lang") == "js"
     )
 
@@ -70,6 +81,12 @@ def _betas(value: str) -> list[str]:
     if len(result) > 32 or any(not _BETA.fullmatch(item) for item in result):
         raise ClaudeError("Invalid Anthropic beta metadata")
     return result
+
+
+def session_identity(source_id: str, client_scope: str, conversation_id: str) -> str:
+    components = (source_id, client_scope, conversation_id)
+    seed = "codex-lb:claude:" + "".join(f"{len(value)}:{value}" for value in components)
+    return str(uuid5(NAMESPACE_URL, seed))
 
 
 @dataclass(frozen=True)
@@ -86,9 +103,7 @@ class RequestProfile:
     ) -> RequestProfile:
         # Length-prefix the components so account/scope/conversation boundaries
         # cannot collide. Tokens do not participate in this durable identity.
-        components = (source_id, client_scope, conversation_id)
-        seed = "codex-lb:claude:" + "".join(f"{len(value)}:{value}" for value in components)
-        return cls(version, str(uuid5(NAMESPACE_URL, seed)), str(uuid4()), native)
+        return cls(version, session_identity(source_id, client_scope, conversation_id), str(uuid4()), native)
 
     def headers(
         self,
@@ -97,6 +112,7 @@ class RequestProfile:
         endpoint: Literal["messages", "count_tokens"],
         incoming: Mapping[str, str],
         feature_betas: tuple[str, ...] = (),
+        stream: bool = False,
     ) -> dict[str, str]:
         result = {key.lower(): value for key, value in management_headers(token, self.version).items()}
         values = {key.lower(): value for key, value in incoming.items()}
@@ -113,21 +129,25 @@ class RequestProfile:
                     "x-stainless-arch": "x64",
                 }
             )
-        betas = [OAUTH_BETA]
         if endpoint == "messages":
+            result.setdefault("x-stainless-timeout", "600")
+            if stream and not self.native:
+                result["x-stainless-helper-method"] = "stream"
+        result.setdefault("x-client-request-id", self.request_id)
+        result.setdefault("x-stainless-retry-count", "0")
+        betas = _betas(values.get("anthropic-beta", ""))
+        betas.append(OAUTH_BETA)
+        if endpoint == "messages" and not self.native:
             betas.append(CLI_BETA)
-        else:
+        elif endpoint == "count_tokens":
             betas.append("token-counting-2024-11-01")
         # Caller feature negotiation survives; arbitrary caller headers do not.
-        betas.extend(_betas(values.get("anthropic-beta", "")))
         betas.extend(_betas(",".join(feature_betas)))
         result.update(
             {
                 "anthropic-beta": ",".join(dict.fromkeys(betas)),
                 "content-type": "application/json",
-                "x-client-request-id": self.request_id,
                 "x-claude-code-session-id": self.session_id,
-                "x-stainless-retry-count": "0",
             }
         )
         return result

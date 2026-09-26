@@ -200,7 +200,6 @@ async def test_native_count_tokens_forwards_json_and_headers_without_generation_
     from unittest.mock import AsyncMock
 
     from app.modules.claude import transport
-    from app.modules.claude.profile import CLI_IDENTITY
 
     captured = []
 
@@ -221,7 +220,7 @@ async def test_native_count_tokens_forwards_json_and_headers_without_generation_
         headers=native_headers(),
         json={
             "model": "claude-opus-5",
-            "system": CLI_IDENTITY,
+            "system": "Count these original instructions",
             "messages": [{"role": "user", "content": "Count"}],
         },
     )
@@ -230,6 +229,200 @@ async def test_native_count_tokens_forwards_json_and_headers_without_generation_
     assert captured[0][0].endswith("/v1/messages/count_tokens?beta=true")
     assert captured[0][1]["allow_redirects"] is False
     assert response.headers["request-id"] == "native-count"
+    assert captured[0][1]["json"]["system"] == "Count these original instructions"
+    assert "x-stainless-timeout" not in captured[0][1]["headers"]
+
+
+async def test_native_wire_identity_and_features_survive_route(async_client, pool, monkeypatch):
+    from copy import deepcopy
+
+    from app.modules.claude.profile import CLI_IDENTITY
+
+    captured, _ = install_upstream(monkeypatch)
+    session_id = "bf31a05a-97cd-4b4d-aebd-b70898a26ead"
+    headers = native_headers() | {
+        "x-claude-code-session-id": session_id,
+        "x-client-request-id": "native-request",
+        "x-stainless-retry-count": "3",
+        "x-claude-code-agent-id": "agent",
+        "x-claude-code-compaction": "true",
+        "anthropic-beta": " oauth-2025-04-20, future-feature-2026-09-26 ",
+    }
+    body = {
+        "model": "claude-opus-5",
+        "system": CLI_IDENTITY,
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 100,
+        "stream": True,
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
+        "metadata": {"user_id": json.dumps({"device_id": "device", "session_id": session_id})},
+    }
+    original = deepcopy(body)
+    for _ in range(2):
+        response = await async_client.post("/v1/messages", headers=headers, json=body)
+        assert response.status_code == 200, response.text
+    assert body == original
+    first, second = captured
+    assert first[0] == second[0]
+    wire_body, wire_headers = first[2], first[3]
+    wire_session = json.loads(wire_body["metadata"]["user_id"])["session_id"]
+    assert wire_session == wire_headers["x-claude-code-session-id"] != session_id
+    assert wire_session == second[3]["x-claude-code-session-id"]
+    assert wire_headers["x-client-request-id"] == "native-request"
+    assert wire_headers["x-stainless-retry-count"] == "3"
+    assert wire_headers["x-claude-code-agent-id"] == "agent"
+    assert wire_headers["x-claude-code-compaction"] == "true"
+    assert set(wire_headers["anthropic-beta"].split(",")) == {"oauth-2025-04-20", "future-feature-2026-09-26"}
+    assert wire_body["thinking"] == body["thinking"]
+    assert wire_body["output_config"] == body["output_config"]
+
+
+@pytest.mark.parametrize(
+    "user_id",
+    [
+        "opaque",
+        '{"device_id":"d","session_id":"invalid"}',
+        '{"device_id":"d","session_id":"bf31a05a-97cd-4b4d-aebd-b70898a26ead"}',
+    ],
+)
+async def test_invalid_native_identity_fails_before_refresh(async_client, pool, monkeypatch, user_id):
+    from unittest.mock import AsyncMock
+
+    from app.modules.claude.auth import ClaudeAuth
+
+    refresh = AsyncMock()
+    monkeypatch.setattr(ClaudeAuth, "credentials", refresh)
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/messages",
+        headers=native_headers(),
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 100,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "metadata": {"user_id": user_id},
+        },
+    )
+    assert response.status_code == 400, response.text
+    refresh.assert_not_awaited()
+    assert not captured
+
+
+@pytest.mark.parametrize("title", [False, True])
+async def test_native_helper_route_does_not_relocate_or_enable_features(async_client, pool, monkeypatch, title):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from app.modules.claude import transport
+    from app.modules.claude.client import ClaudeClient
+    from app.modules.claude.schemas import CatalogModel
+
+    model = "claude-haiku-4-5-20251001"
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[CatalogModel(id=model, display_name="Haiku")]))
+    refreshed = await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")
+    assert refreshed.status_code == 200
+    selected = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "selections": [{"model": model, "max_output_tokens": 32768}],
+        },
+    )
+    assert selected.status_code == 200
+    captured, _ = install_upstream(monkeypatch)
+
+    @asynccontextmanager
+    async def post(url, **kwargs):
+        captured.append((pool[0], url, kwargs["json"], kwargs["headers"]))
+        yield SimpleNamespace(
+            status=200,
+            headers={},
+            json=AsyncMock(
+                return_value={
+                    "id": "msg_probe",
+                    "content": [{"type": "text", "text": "OK"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }
+            ),
+        )
+
+    @asynccontextmanager
+    async def lease():
+        yield SimpleNamespace(post=post)
+
+    monkeypatch.setattr(transport, "lease_model_source_session", lease)
+    session_id = "bf31a05a-97cd-4b4d-aebd-b70898a26ead"
+    body = {
+        "model": model,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "probe"}],
+        "metadata": {"user_id": json.dumps({"device_id": "device", "session_id": session_id})},
+    }
+    if title:
+        body.update(
+            {
+                "system": [{"type": "text", "text": "Generate a short session title."}],
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "Name this task"}]}],
+                "max_tokens": 32000,
+                "stream": True,
+                "temperature": 1,
+                "tools": [],
+                "thinking": {"type": "disabled"},
+                "output_config": {
+                    "format": {
+                        "type": "json_schema",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"title": {"type": "string"}},
+                            "required": ["title"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+            }
+        )
+    response = await async_client.post(
+        "/v1/messages",
+        json=body,
+        headers=native_headers()
+        | {
+            "x-claude-code-session-id": session_id,
+            "x-client-request-id": "helper-request",
+            "anthropic-beta": "oauth-2025-04-20,structured-outputs-2025-12-15",
+        },
+    )
+    assert response.status_code == 200, response.text
+    wire_body, wire_headers = captured[0][2], captured[0][3]
+    assert wire_body.get("system") == body.get("system")
+    assert wire_body["messages"] == body["messages"]
+    assert wire_body.get("thinking") == body.get("thinking")
+    assert wire_body.get("output_config") == body.get("output_config")
+    assert wire_headers["anthropic-beta"] == "oauth-2025-04-20,structured-outputs-2025-12-15"
+    assert wire_headers["x-client-request-id"] == "helper-request"
+
+
+async def test_translated_disabled_thinking_does_not_enable_thinking_beta(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 100,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "thinking": {"type": "disabled"},
+            "output_config": {"format": {"type": "json_schema", "schema": {"type": "object"}}},
+        },
+    )
+    assert response.status_code == 200, response.text
+    headers = captured[0][3]
+    betas = headers["anthropic-beta"].split(",")
+    assert "interleaved-thinking-2025-05-14" not in betas
+    assert "effort-2025-11-24" not in betas
+    assert "structured-outputs-2025-12-15" in betas
+    assert headers["x-stainless-helper-method"] == "stream"
 
 
 async def test_claude_continuation_replayed_from_persisted_response(async_client, pool, monkeypatch):

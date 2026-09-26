@@ -22,6 +22,7 @@ from app.modules.claude.routing import select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL
 from app.modules.claude.session import NativeSessionOwnership, contains_account_bound_state
 from app.modules.claude.version import ClaudeVersionService
+from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,11 @@ class ClaudeDispatchPreparer:
             raise ClaudeError("Claude stream must be a boolean")
         if endpoint == "count_tokens" and "stream" in logical:
             raise ClaudeError("Claude count_tokens does not support streaming")
+        metadata_identity = session_metadata(logical)
+        client_headers = {key.lower(): value for key, value in incoming_headers.items()}
+        client_session = client_headers.get("x-claude-code-session-id")
+        if metadata_identity is not None and client_session and client_session != metadata_identity["session_id"]:
+            raise ClaudeError("Claude session header and metadata disagree")
         session = self.repository.session
         native_ownership = None
         if not translated:
@@ -100,7 +106,10 @@ class ClaudeDispatchPreparer:
         identity = await ClaudeVersionService(session).snapshot()
         # Authorization and payload validation precede any token refresh.
         native = not translated and recognize_native(
-            incoming_headers, version=identity.version, has_identity=has_native_identity(logical)
+            incoming_headers,
+            version=identity.version,
+            has_identity=has_native_identity(logical)
+            or has_helper_identity(logical, incoming_headers, count_tokens=endpoint == "count_tokens"),
         )
         profile = RequestProfile.create(
             version=identity.version,
@@ -112,14 +121,31 @@ class ClaudeDispatchPreparer:
         body = deepcopy(logical)
         body["model"] = model.removeprefix("anthropic/")
         projected = project_request(body, profile, endpoint=endpoint)
+        transformations = projected.transformations
+        if project_session(
+            projected.body, profile, source_id=account.source_id, client_scope=api_key.id if api_key else "anonymous"
+        ):
+            transformations += ("session_identity",)
         # Validate caller beta metadata before a potentially rotating grant is
         # touched; the actual token is inserted only after refresh succeeds.
         feature_betas = list(projected.feature_betas)
-        if projected.body.get("thinking"):
-            feature_betas.append("interleaved-thinking-2025-05-14")
-        if projected.body.get("output_config"):
-            feature_betas.append("effort-2025-11-24")
-        headers = profile.headers("", endpoint=endpoint, incoming=incoming_headers, feature_betas=tuple(feature_betas))
+        if not native:
+            thinking = projected.body.get("thinking")
+            if isinstance(thinking, dict) and thinking.get("type") in {"enabled", "adaptive"}:
+                feature_betas.append("interleaved-thinking-2025-05-14")
+            output = projected.body.get("output_config")
+            if isinstance(output, dict):
+                if "effort" in output:
+                    feature_betas.append("effort-2025-11-24")
+                if "format" in output:
+                    feature_betas.append("structured-outputs-2025-12-15")
+        headers = profile.headers(
+            "",
+            endpoint=endpoint,
+            incoming=incoming_headers,
+            feature_betas=tuple(feature_betas),
+            stream=projected.body.get("stream") is True,
+        )
         source_id = account.source_id
         credentials = await self.auth.credentials(source_id)
         # A pause or quota refresh may have committed while token
@@ -141,5 +167,5 @@ class ClaudeDispatchPreparer:
             profile=profile,
             headers=headers,
             body=projected.body,
-            transformations=projected.transformations,
+            transformations=transformations,
         )

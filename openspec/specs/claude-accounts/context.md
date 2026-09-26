@@ -68,6 +68,35 @@ Pinning affects advertised CLI version, not SDK/runtime baselines or profile rev
 
 ## References
 
+### Wire policy revision 2
+
+Native feature betas are retained (including future syntactically valid tokens);
+thinking/output_config no longer activate additional native betas. Translated
+requests add only the implemented feature betas: enabled/adaptive thinking,
+explicit effort, structured output, or relocated mid-conversation instructions.
+
+The gateway scopes the session header and structured JSON metadata.user_id
+session_id together by selected source, client key scope and conversation. Parent
+session IDs use the same mapping. Other metadata fields, including account_uuid,
+are not rewritten or invented. The stored logical input is never modified. For
+example, a caller's session S maps to one upstream UUID on source A/key K, but a
+different UUID on source B or key L. Token refresh does not change this mapping.
+Malformed/opaque user_id formats or conflicting header/body sessions fail before
+credential refresh; legacy concatenated user IDs are not silently converted.
+
+Native request IDs and SDK retry counts survive; the internal request ID remains
+an independent attempt identifier. Reviewed helper/async, agent lineage and
+request-class/compaction headers are preserved only for recognized native traffic.
+Remote environment/protection headers are not broadly forwarded. Compression
+remains owned by the HTTP client, not copied from the caller.
+
+Count-token recognition does not require the main system identity. The supported
+Haiku 4.5 probe/title shapes additionally require structured session/header
+agreement and native software signals; unknown helper shapes are not optimistically
+recognized. Messages defaults to a 600-second advertised SDK timeout; count_tokens
+does not synthesize it. This header is client metadata, not the gateway's actual
+upstream timeout setting.
+
 Research revisions, histories, competing approaches and caveats are recorded in
 the workspace-local `claude-integration-design.tmp.md` linked from AGENTS.md.
 Portable upstream references are Sub2API, OpenCodex, OmniRoute and CLIProxyAPI in
