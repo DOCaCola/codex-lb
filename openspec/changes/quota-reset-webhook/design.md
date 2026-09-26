@@ -23,8 +23,8 @@ events; an already in-flight HTTP request cannot be recalled. Retries retain ID
 and payload, at most four attempts within fifteen minutes. Seven-day retention
 and a 1000-pending cap bound storage; overflow is visible in sanitized logs.
 
-Only HTTPS public destinations. Resolve/check every connection using an aiohttp
-resolver, block non-global addresses and redirects, retain hostname TLS checking.
+Allow HTTP and HTTPS destinations with normal DNS resolution, including private
+and loopback addresses. Do not follow redirects; retain HTTPS certificate checking.
 No environment proxy, auth headers or cookies. URL and optional HMAC secret encrypted
 at rest and never returned. HMAC covers timestamp + dot + exact JSON bytes; receivers
 deduplicate event IDs and apply a timestamp replay window.

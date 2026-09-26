@@ -32,14 +32,15 @@ Disabled or changed destinations MUST cancel pending old-generation events.
 - **THEN** retry preserves the event ID and body within a finite attempt/time budget
 
 ### Requirement: Secure operator configuration
-Settings SHALL offer one optional HTTPS destination, event-kind filters, optional
+Settings SHALL offer one optional HTTP or HTTPS destination, event-kind filters, optional
 HMAC signing, test delivery and status. Secrets MUST be encrypted and masked.
-Non-public destinations and redirects MUST be blocked at connection time. Only
+Private and loopback destinations SHALL be allowed without DNS address filtering.
+Redirects MUST NOT be followed. Only
 authorized dashboard administrators SHALL configure or test delivery.
 
 #### Scenario: Private DNS resolution
 - **WHEN** a configured hostname resolves to a private address during delivery
-- **THEN** delivery is rejected without contacting that address
+- **THEN** delivery uses normal DNS resolution and may connect to that address
 
 ### Requirement: Destination draft visibility
 The URL editor SHALL load the saved URL for authorized operators, mask input by

@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import socket
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,8 +9,7 @@ import pytest
 from app.modules.quota_webhook.repository import ClaimedDelivery
 from app.modules.quota_webhook.schemas import Observation, detect_reset
 from app.modules.quota_webhook.transport import (
-    BlockedDestination,
-    PublicResolver,
+    InvalidDestination,
     deliver,
     retry_seconds,
     signed_headers,
@@ -53,40 +51,57 @@ def test_detector(before, after, expected):
 @pytest.mark.parametrize(
     "url",
     [
-        "http://example.com",
-        "https://127.0.0.1",
-        "https://[::1]",
-        "https://10.0.0.1",
-        "https://169.254.169.254",
-        "https://224.0.0.1",
+        "ftp://example.com",
+        "file:///etc/hosts",
+        "http://",
+        "http://example.com:99999",
         "https://user:pass@example.com",
         "https://example.com/#secret",
     ],
 )
 def test_destination_restrictions(url):
-    with pytest.raises(BlockedDestination):
+    with pytest.raises(InvalidDestination):
         validate_url(url)
 
 
-async def test_dns_blocks_private_rebinding(monkeypatch):
-    monkeypatch.setattr(
-        aiohttp.resolver.ThreadedResolver,
-        "resolve",
-        AsyncMock(
-            return_value=[
-                {
-                    "hostname": "example.com",
-                    "host": "10.0.0.1",
-                    "port": 443,
-                    "family": socket.AF_INET,
-                    "proto": 0,
-                    "flags": 0,
-                }
-            ]
-        ),
-    )
-    with pytest.raises(BlockedDestination):
-        await PublicResolver().resolve("example.com", 443)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.com",
+        "http://10.9.8.19/hook",
+        "https://127.0.0.1/hook",
+        "http://[::1]/hook",
+        "http://homeautomation.localdomain.name/hook",
+    ],
+)
+def test_internal_and_http_destinations_allowed(url):
+    validate_url(url)
+
+
+async def test_deliver_to_local_http_receiver():
+    from aiohttp import web
+
+    requests = []
+
+    async def receive(request):
+        requests.append((request.method, await request.json(), request.headers["X-Webhook-Id"]))
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_post("/hook", receive)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        port = runner.addresses[0][1]
+        result = await deliver(
+            ClaimedDelivery("local-event", "lease", 1, f"http://localhost:{port}/hook", None, '{"type":"quota.test"}')
+        )
+        assert result.status == 204 and result.error is None
+        assert requests == [("POST", {"type": "quota.test"}, "local-event")]
+    finally:
+        await runner.cleanup()
 
 
 def test_signing_exact_body_and_retry_budget():
@@ -115,14 +130,11 @@ async def test_sender_response_policy_and_isolation(monkeypatch, status, retryab
     context.__aenter__ = AsyncMock(return_value=client)
     context.__aexit__ = AsyncMock(return_value=False)
     factory = MagicMock(return_value=context)
-    connector = MagicMock()
     monkeypatch.setattr(aiohttp, "ClientSession", factory)
-    monkeypatch.setattr(aiohttp, "TCPConnector", connector)
     result = await deliver(ClaimedDelivery("event", "lease", 1, "https://example.com", None, "{}"))
     assert result.status == status and result.retryable is retryable
     assert result.error == (None if status == 204 else "http_error")
     assert factory.call_args.kwargs["trust_env"] is False
     assert isinstance(factory.call_args.kwargs["cookie_jar"], aiohttp.DummyCookieJar)
-    assert isinstance(connector.call_args.kwargs["resolver"], PublicResolver)
     assert client.post.call_args.kwargs["allow_redirects"] is False
     response.read.assert_not_called()

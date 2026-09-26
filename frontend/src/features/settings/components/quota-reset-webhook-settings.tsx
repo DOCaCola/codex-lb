@@ -74,19 +74,19 @@ export function QuotaResetWebhookSettings({ disabled = false }: { disabled?: boo
         : error instanceof ApiError && error.status === 403
           ? t("settings.quotaWebhook.permission", "You do not have permission to manage webhook settings.")
           : error instanceof ApiError && (error.status === 400 || error.status === 422)
-            ? t("settings.quotaWebhook.invalid", "Invalid webhook settings. Check the HTTPS URL, secret length and event selection.")
+            ? t("settings.quotaWebhook.invalid", "Invalid webhook settings. Check the HTTP or HTTPS URL, secret length and event selection.")
             : t("settings.quotaWebhook.failed", "Unable to complete the webhook request. Try again.");
   return <section className="rounded-xl border bg-card p-5 space-y-4" aria-label={t("settings.quotaWebhook.title", "Quota reset webhook")}>
     <div className="flex items-center gap-2.5">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Webhook className="h-4 w-4 text-primary" aria-hidden="true" /></div>
       <div><h3 className="text-sm font-semibold">{t("settings.quotaWebhook.title", "Quota reset webhook")}</h3>
-        <p className="text-xs text-muted-foreground">{t("settings.quotaWebhook.description", "Receive JSON notifications via HTTPS POST when OpenAI account quotas reset. Delivery may retry with the same event ID.")}</p></div>
+        <p className="text-xs text-muted-foreground">{t("settings.quotaWebhook.description", "Receive JSON notifications via HTTP POST when OpenAI account quotas reset. Delivery may retry with the same event ID.")}</p></div>
     </div>
     <label className="flex items-center justify-between gap-3 text-sm">{t("settings.quotaWebhook.enabled", "Enable notifications")}
       <Switch aria-label={t("settings.quotaWebhook.enabled", "Enable notifications")} checked={enabled} disabled={busy || clearUrl}
         onCheckedChange={(value) => setDraft({ enabled: value, kinds })} /></label>
     <div className="space-y-1">
-      <label htmlFor={urlInputId} className="text-sm">{t("settings.quotaWebhook.url", "HTTPS webhook URL")}</label>
+      <label htmlFor={urlInputId} className="text-sm">{t("settings.quotaWebhook.url", "Webhook URL")}</label>
       <div className="relative">
       <Input id={urlInputId} type={showUrl ? "text" : "password"} autoComplete="off" value={url} disabled={busy}
         className="pr-10" spellCheck={false}
@@ -115,7 +115,7 @@ export function QuotaResetWebhookSettings({ disabled = false }: { disabled?: boo
         kinds: event.target.checked ? [...kinds, kind] : kinds.filter((item) => item !== kind) })} />
       {kind === "scheduled" ? t("settings.quotaWebhook.scheduled", "Scheduled resets") : t("settings.quotaWebhook.unexpected", "Unexpected resets")}
     </label>)}</div>
-    <p className="text-xs text-muted-foreground">{t("settings.quotaWebhook.security", "Public HTTPS destinations only. Saving clears detection baselines and cancels queued events. First observations do not notify.")}</p>
+    <p className="text-xs text-muted-foreground">{t("settings.quotaWebhook.security", "HTTP and HTTPS destinations supported, including internal addresses. HTTP is unencrypted. Saving clears detection baselines and cancels queued events. First observations do not notify.")}</p>
     {failed && <p role="alert" className="text-sm text-destructive">{errorMessage}</p>}
     {query.isError && <Button variant="outline" onClick={() => void query.refetch()}>{t("common.retry", "Retry")}</Button>}
     {destinationError && <Button variant="outline" onClick={() => setLoadAttempt((value) => value + 1)}>{t("settings.quotaWebhook.retryUrl", "Retry loading URL")}</Button>}

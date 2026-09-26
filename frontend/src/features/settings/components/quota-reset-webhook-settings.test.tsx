@@ -12,7 +12,7 @@ const configured = { enabled: true, kinds: ["scheduled", "unexpected"], urlConfi
   signingSecretConfigured: true, pending: 0, lastDelivery: null };
 
 async function loadedInput() {
-  const input = screen.getByLabelText("HTTPS webhook URL");
+  const input = screen.getByLabelText("Webhook URL");
   await waitFor(() => expect(input).toHaveValue(savedUrl));
   return input;
 }
@@ -110,6 +110,6 @@ describe("Quota reset webhook settings", () => {
     await screen.findByPlaceholderText("Configured — leave blank to keep");
     expect(reads).toBe(0);
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByLabelText("HTTPS webhook URL")).toBeDisabled();
+    expect(screen.getByLabelText("Webhook URL")).toBeDisabled();
   });
 });

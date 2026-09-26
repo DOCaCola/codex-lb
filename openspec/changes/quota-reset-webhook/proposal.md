@@ -5,7 +5,7 @@ OpenAI quota recovery. Polling dashboards misses short-lived reset opportunities
 
 ## What Changes
 
-Add one disabled-by-default HTTPS webhook in Settings. Detect resets from
+Add one disabled-by-default HTTP/HTTPS webhook in Settings. Detect resets from
 authoritative usage refreshes, persist transitions atomically, and send one signed
 JSON event per account/window through a bounded background delivery worker.
 

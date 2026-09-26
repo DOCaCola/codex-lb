@@ -151,11 +151,19 @@ async def test_redemption_clears_baseline(configured):
 
 
 async def test_invalid_url_and_empty_filter_rejected(async_client):
-    for url in ["http://example.com", "https://127.0.0.1"]:
+    for url in ["ftp://example.com", "https://user:pass@example.com"]:
         response = await async_client.put(PATH, json={"enabled": True, "kinds": ["scheduled"], "url": url})
         assert response.status_code == 400
     response = await async_client.put(PATH, json={"enabled": True, "kinds": []})
     assert response.status_code == 422
+
+
+async def test_internal_http_url_can_be_saved(async_client):
+    response = await async_client.put(
+        PATH, json={"enabled": True, "kinds": ["scheduled"], "url": "http://10.9.8.19/webhook"}
+    )
+    assert response.status_code == 200
+    assert (await async_client.get(PATH + "/destination")).json() == {"url": "http://10.9.8.19/webhook"}
 
 
 async def test_write_and_test_require_ops_permission(app_instance, async_client, monkeypatch):

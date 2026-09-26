@@ -43,8 +43,9 @@ Pending work is capped at 1000 events; overflow logs a sanitized warning. Delive
 records expire after seven days. Configuration changes cancel queued/claimed
 old-generation events; an HTTP request already in flight cannot be recalled.
 
-Destinations must be public HTTPS, without URL credentials or fragments. Actual DNS
-results are checked for private/reserved/multicast addresses. Redirects, proxy
+Destinations may use HTTP or HTTPS, without URL credentials or fragments. Private
+and loopback addresses are allowed with normal DNS resolution. HTTP is unencrypted;
+operators are trusted to choose reachable destinations. Redirects, proxy
 environment variables and cookies are disabled; TLS verification remains enabled.
 Receiver bodies and sensitive URLs are never read into diagnostic logs.
 
