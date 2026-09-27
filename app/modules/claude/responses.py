@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, JsonValue
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import ToolIdentity
+from app.modules.claude.search import url_citations
 
 
 class Usage(BaseModel):
@@ -38,12 +39,14 @@ class ResponsesProjection:
     scope: OpaqueScope
     tools: dict[str, ToolIdentity]
     opaque: ClaudeOpaqueState
+    search_enabled: bool = False
     response_id: str = ""
     created_at: int = field(default_factory=lambda: int(time.time()))
     sequence: int = 0
     blocks: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     outputs: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     partial_json: dict[int, str] = field(default_factory=dict)
+    search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
     usage: Usage = field(default_factory=Usage)
     stop_reason: str | None = None
     started: bool = False
@@ -79,8 +82,44 @@ class ResponsesProjection:
                 "type": "message",
                 "role": "assistant",
                 "status": "completed" if final else "in_progress",
-                "content": [{"type": "output_text", "text": block.get("text", ""), "annotations": []}],
+                "content": [
+                    {"type": "output_text", "text": block.get("text", ""), "annotations": url_citations(block)}
+                ],
             }
+        if kind == "server_tool_use":
+            if not self.search_enabled or block.get("name") != "web_search" or not isinstance(block.get("id"), str):
+                raise ClaudeError("Claude returned an undeclared server tool")
+            arguments = block.get("input", {})
+            if not isinstance(arguments, dict) or (final and not isinstance(arguments.get("query"), str)):
+                raise ClaudeError("Invalid Claude search query")
+            return {
+                "id": item_id,
+                "type": "web_search_call",
+                "status": "searching" if final else "in_progress",
+                "action": {"type": "search", "query": arguments.get("query", "")},
+            }
+        if kind == "web_search_tool_result":
+            call_id = block.get("tool_use_id")
+            if not isinstance(call_id, str) or call_id not in self.search_calls:
+                raise ClaudeError("Claude search result has no matching server call")
+            content = block.get("content")
+            if not isinstance(content, list):
+                raise ClaudeError("Claude web search failed")
+            for result in content:
+                if not isinstance(result, dict) or result.get("type") != "web_search_result":
+                    raise ClaudeError("Unsupported Claude web search result")
+            result_item: dict[str, JsonValue] = {"id": item_id, "type": "reasoning", "summary": []}
+            if final:
+                call_index, call = self.search_calls[call_id]
+                result_item["encrypted_content"] = self.opaque.encode(
+                    self.scope,
+                    {
+                        "type": "web_search",
+                        "item_id": self.outputs[call_index]["id"],
+                        "blocks": [call, block],
+                    },
+                )
+            return result_item
         if kind in ("thinking", "redacted_thinking"):
             result: dict[str, JsonValue] = {"id": item_id, "type": "reasoning", "summary": []}
             if final:
@@ -146,7 +185,7 @@ class ResponsesProjection:
             self.usage = Usage.model_validate({**self.usage.model_dump(), **update})
             return []
         if kind == "message_stop":
-            if self.blocks or self.stop_reason is None:
+            if self.blocks or self.search_calls or self.stop_reason is None:
                 raise ClaudeError("Claude stopped before closing its content and stop reason")
             if self.stop_reason not in ("end_turn", "stop_sequence", "tool_use", "max_tokens", "pause_turn", "refusal"):
                 raise ClaudeError("Unknown Claude stop reason")
@@ -164,6 +203,10 @@ class ResponsesProjection:
             item = self._item(index, block, final=False)
             self.outputs[index] = item
             events = [self.event("response.output_item.added", output_index=index, item=deepcopy(item))]
+            if block.get("type") == "server_tool_use":
+                events.append(
+                    self.event("response.web_search_call.in_progress", item_id=item["id"], output_index=index)
+                )
             if block.get("type") == "text":
                 events.append(
                     self.event(
@@ -183,13 +226,29 @@ class ResponsesProjection:
             if not isinstance(delta, dict):
                 raise ClaudeError("Invalid Claude content delta")
             delta_type = delta.get("type")
-            if delta_type == "input_json_delta" and block.get("type") == "tool_use":
+            if delta_type == "citations_delta" and block.get("type") == "text":
+                citations = block.setdefault("citations", [])
+                if not isinstance(citations, list):
+                    raise ClaudeError("Invalid Claude citations")
+                citations.append(delta.get("citation"))
+                annotation = url_citations(block)[-1]
+                return [
+                    self.event(
+                        "response.output_text.annotation.added",
+                        item_id=self.outputs[index]["id"],
+                        output_index=index,
+                        content_index=0,
+                        annotation_index=len(citations) - 1,
+                        annotation=annotation,
+                    )
+                ]
+            if delta_type == "input_json_delta" and block.get("type") in ("tool_use", "server_tool_use"):
                 piece = delta.get("partial_json")
                 if not isinstance(piece, str):
                     raise ClaudeError("Invalid Claude tool JSON delta")
                 self.partial_json[index] = self.partial_json.get(index, "") + piece
                 item = self.outputs[index]
-                if item["type"] == "custom_tool_call":
+                if item["type"] in ("custom_tool_call", "web_search_call"):
                     return []  # JSON escapes must be decoded before emitting free-form input.
                 return [
                     self.event(
@@ -226,8 +285,29 @@ class ResponsesProjection:
         item = self._item(index, self.blocks.pop(index), final=True)
         self.outputs[index] = item
         events = []
+        if block.get("type") == "server_tool_use":
+            call_id = block["id"]
+            assert isinstance(call_id, str)
+            if call_id in self.search_calls:
+                raise ClaudeError("Duplicate Claude server call")
+            self.search_calls[call_id] = (index, deepcopy(block))
+            return [self.event("response.web_search_call.searching", item_id=item["id"], output_index=index)]
+        if block.get("type") == "web_search_tool_result":
+            call_id = block["tool_use_id"]
+            assert isinstance(call_id, str)
+            call_index, _ = self.search_calls.pop(call_id)
+            search_item = self.outputs[call_index]
+            search_item["status"] = "completed"
+            events.extend(
+                [
+                    self.event(
+                        "response.web_search_call.completed", item_id=search_item["id"], output_index=call_index
+                    ),
+                    self.event("response.output_item.done", output_index=call_index, item=deepcopy(search_item)),
+                ]
+            )
         if item["type"] == "message":
-            part = {"type": "output_text", "text": block.get("text", ""), "annotations": []}
+            part = {"type": "output_text", "text": block.get("text", ""), "annotations": url_citations(block)}
             events.extend(
                 [
                     self.event(

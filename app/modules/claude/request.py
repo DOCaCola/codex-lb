@@ -46,7 +46,11 @@ def has_native_identity(body: dict[str, JsonValue]) -> bool:
 
 
 def project_request(
-    logical: dict[str, JsonValue], profile: RequestProfile, *, endpoint: Literal["messages", "count_tokens"]
+    logical: dict[str, JsonValue],
+    profile: RequestProfile,
+    *,
+    endpoint: Literal["messages", "count_tokens"],
+    translated: bool = False,
 ) -> RequestProjection:
     body = deepcopy(logical)
     if profile.native:
@@ -75,14 +79,18 @@ def project_request(
     for message in messages:
         assert isinstance(message, dict)
         content = message.get("content")
-        if isinstance(content, list) and any(
-            isinstance(block, dict)
-            and (
-                block.get("type") == "server_tool_use"
-                or str(block.get("type", "")).endswith("_tool_result")
-                and block.get("type") != "tool_result"
+        if (
+            not translated
+            and isinstance(content, list)
+            and any(
+                isinstance(block, dict)
+                and (
+                    block.get("type") == "server_tool_use"
+                    or str(block.get("type", "")).endswith("_tool_result")
+                    and block.get("type") != "tool_result"
+                )
+                for block in content
             )
-            for block in content
         ):
             raise ClaudeError("OAuth instruction relocation cannot alter server-tool history")
 

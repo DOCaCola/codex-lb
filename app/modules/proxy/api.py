@@ -5644,7 +5644,10 @@ def _shape_source_responses_payload(
             source_payload,
             supported_tool_types=source_model_supported_tool_types(source, payload.model),
         )
-    source_payload = strip_unstored_lookup_item_ids(source_payload)
+    if source.kind != "claude":
+        # Claude item IDs link local authenticated search replay, not OpenAI
+        # store lookups. Its adapter never forwards these IDs to Anthropic.
+        source_payload = strip_unstored_lookup_item_ids(source_payload)
     return source_payload
 
 

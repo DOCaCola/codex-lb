@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from uuid import UUID
@@ -41,15 +42,21 @@ def session_metadata(body: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
     return identity
 
 
-def project_session(body: dict[str, JsonValue], profile: RequestProfile, *, source_id: str, client_scope: str) -> bool:
+def project_session(
+    body: dict[str, JsonValue], profile: RequestProfile, *, source_id: str, client_scope: str, synthesize: bool = False
+) -> bool:
     identity = session_metadata(body)
     if identity is None:
-        return False
+        if not synthesize:
+            return False
+        # A local installation identity, not a fabricated provider account UUID.
+        device = hashlib.sha256(json.dumps(["claude-device-v1", source_id, client_scope]).encode()).hexdigest()
+        identity = {"device_id": device, "account_uuid": "", "session_id": profile.session_id}
     identity["session_id"] = profile.session_id
     parent = identity.get("parent_session_id")
     if isinstance(parent, str):
         identity["parent_session_id"] = session_identity(source_id, client_scope, parent)
-    metadata = body["metadata"]
+    metadata = body.setdefault("metadata", {})
     assert isinstance(metadata, dict)
     metadata["user_id"] = json.dumps(identity, separators=(",", ":"))
     return True

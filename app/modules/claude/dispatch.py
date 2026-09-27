@@ -13,6 +13,7 @@ from app.core.crypto import TokenEncryptor
 from app.db.models import ModelSource
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.auth import ClaudeAuth
+from app.modules.claude.caching import cache_translated
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import RequestProfile, recognize_native
@@ -120,12 +121,19 @@ class ClaudeDispatchPreparer:
         )
         body = deepcopy(logical)
         body["model"] = model.removeprefix("anthropic/")
-        projected = project_request(body, profile, endpoint=endpoint)
+        projected = project_request(body, profile, endpoint=endpoint, translated=translated)
         transformations = projected.transformations
         if project_session(
-            projected.body, profile, source_id=account.source_id, client_scope=api_key.id if api_key else "anonymous"
+            projected.body,
+            profile,
+            source_id=account.source_id,
+            client_scope=api_key.id if api_key else "anonymous",
+            synthesize=translated,
         ):
             transformations += ("session_identity",)
+        if translated:
+            cache_translated(projected.body)
+            transformations += ("translated_cache_boundaries",)
         # Validate caller beta metadata before a potentially rotating grant is
         # touched; the actual token is inserted only after refresh succeeds.
         feature_betas = list(projected.feature_betas)

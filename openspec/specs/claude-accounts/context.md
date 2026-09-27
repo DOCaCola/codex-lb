@@ -44,7 +44,7 @@ Tool namespaces use deterministic reversible names. Signed thinking stays in
 encrypted account/model/client/conversation-bound envelopes, never fabricated
 reasoning summaries. JSON-schema output and adaptive reasoning use explicit model
 policies; unknown model minors do not inherit capabilities optimistically. Grammar
-constrained tool decoding, files, built-in server tools in Responses, verbosity,
+constrained tool decoding, files, built-in server tools other than web search, verbosity,
 automatic truncation and paid service tiers have explicit unsupported errors.
 Native Messages may carry native extensions without pretending they are Responses
 features. Switching models with signed state requires portable context.
@@ -102,3 +102,41 @@ the workspace-local `claude-integration-design.tmp.md` linked from AGENTS.md.
 Portable upstream references are Sub2API, OpenCodex, OmniRoute and CLIProxyAPI in
 AGENTS.md. Their observed compatibility techniques are reference evidence, not
 dependencies or a guarantee that Anthropic accepts this gateway.
+
+### Translated wire policy revision 3
+
+Responses `web_search` and `web_search_preview` map to Anthropic
+`web_search_20250305`. As explicitly selected from CLIProxyAPI's policy,
+`external_web_access: false` omits that declaration and continues the request:
+it provides neither cached search nor permission for live search. Other tools
+remain available. Live search accepts allowed-domain filters, approximate location
+and positive `max_uses`; unsupported options (including `search_context_size`)
+and forced hosted-search choices fail explicitly before dispatch.
+
+Search lifecycle and URL citations are projected into Responses. Exact upstream
+server call/result blocks travel in authenticated `reasoning.encrypted_content`
+alongside the public `web_search_call`; clients must retain both. The carrier
+uses the existing account/model/client/conversation binding and durable replay
+store. Missing or altered state, incompatible scope and unavailable owners fail
+explicitly; no encrypted result is fabricated from citations. Search errors or
+unfinished server calls cannot be reported as successful completion.
+
+Translated requests stamp default five-minute ephemeral cache boundaries on the
+last system block (or last tool if there is no system block), plus the last two
+cacheable user-turn tails. Native cache markers and signed server blocks remain
+untouched. These are eligibility hints, not a guarantee of cache hits.
+
+Synthesized metadata carries a stable local source/client device hash and the
+same scoped session UUID as the header. `account_uuid` is empty: the stored
+provider identity fingerprint cannot recover the actual UUID. Runtime OS and
+architecture are advertised consistently. The observed browser-access header is
+included; the unobserved stream-helper header is not synthesized (recognized
+native caller values remain preserved). SDK/runtime versions remain reviewed
+constants, separate from dynamically discovered Claude Code version.
+
+CLIProxyAPI revision `ef9e712` was inspected on 2026-09-27 as a structural
+reference, not copied source. The isolated bundled Codex app-server 0.157.1
+completed cached-search text/tool/follow-up and live-search/citation/follow-up
+tests against a synthetic Anthropic recorder. The latter verified exact encrypted
+search result replay. This remains mock compatibility evidence, not live OAuth
+acceptance or billing qualification.

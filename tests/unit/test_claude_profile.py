@@ -184,7 +184,7 @@ def test_native_hints_and_negotiation_are_not_synthesized():
     )
     synthesized = profile().headers("token", endpoint="messages", incoming=incoming, stream=True)
     assert synthesized["x-stainless-retry-count"] == "0"
-    assert synthesized["x-stainless-helper-method"] == "stream"
+    assert "x-stainless-helper-method" not in synthesized
     assert "x-claude-code-agent-id" not in synthesized
 
 

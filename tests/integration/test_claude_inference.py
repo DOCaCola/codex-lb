@@ -14,7 +14,7 @@ pool = routing_fixtures.pool
 pytestmark = pytest.mark.integration
 
 
-def install_upstream(monkeypatch, *, stop="end_turn", truncate=False):
+def install_upstream(monkeypatch, *, stop="end_turn", truncate=False, content=None):
     from app.modules.claude import transport
 
     captured, closed = [], []
@@ -30,6 +30,15 @@ def install_upstream(monkeypatch, *, stop="end_turn", truncate=False):
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello from Claude"}},
             {"type": "content_block_stop", "index": 0},
         ]
+        if content is not None:
+            events = events[:2]
+            for index, block in enumerate(content):
+                events.extend(
+                    [
+                        {"type": "content_block_start", "index": index, "content_block": block},
+                        {"type": "content_block_stop", "index": index},
+                    ]
+                )
         if not truncate:
             events.extend(
                 [
@@ -422,7 +431,7 @@ async def test_translated_disabled_thinking_does_not_enable_thinking_beta(async_
     assert "interleaved-thinking-2025-05-14" not in betas
     assert "effort-2025-11-24" not in betas
     assert "structured-outputs-2025-12-15" in betas
-    assert headers["x-stainless-helper-method"] == "stream"
+    assert "x-stainless-helper-method" not in headers
 
 
 async def test_claude_continuation_replayed_from_persisted_response(async_client, pool, monkeypatch):
@@ -448,8 +457,11 @@ async def test_claude_continuation_replayed_from_persisted_response(async_client
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
-async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path):
-    captured, closed = install_upstream(monkeypatch)
+@pytest.mark.parametrize("search", [None, False, True])
+async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search):
+    from tests.unit.test_claude_search import search_content
+
+    captured, closed = install_upstream(monkeypatch, content=search_content() if search else None)
     incoming, outgoing = asyncio.Queue(), asyncio.Queue()
     scope = {
         "type": "websocket",
@@ -471,6 +483,8 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
         previous = None
         for turn in range(2):
             payload = {"type": "response.create", "model": MODEL, "input": "Hello" if turn == 0 else "Continue"}
+            if search is not None:
+                payload["tools"] = [{"type": "web_search", "external_web_access": search}]
             if previous:
                 payload["previous_response_id"] = previous
             await incoming.put({"type": "websocket.receive", "text": json.dumps(payload)})
@@ -484,6 +498,10 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
                     break
         assert len(captured) == 2
         assert len(captured[1][2]["messages"]) == 3
+        if search:
+            assert captured[1][2]["messages"][1]["content"][:2] == search_content()[:2]
+        elif search is False:
+            assert "tools" not in captured[0][2]
     finally:
         await incoming.put({"type": "websocket.disconnect", "code": 1000})
         try:

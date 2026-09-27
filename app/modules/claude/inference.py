@@ -86,6 +86,7 @@ async def prepare_responses(
             OpaqueScope(prepared.source.id, model, client_scope, conversation_id),
             projection.tools,
             opaque,
+            search_enabled=projection.search_enabled,
         ),
     )
 

@@ -6,6 +6,7 @@ source authorization before using this module. No caller credentials are forward
 
 from __future__ import annotations
 
+import platform
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.modules.claude.credentials import ClaudeError
 
-PROFILE_REVISION = "claude-oauth-v2"
+PROFILE_REVISION = "claude-oauth-v3"
 CLI_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 OAUTH_BETA = "oauth-2025-04-20"
 CLI_BETA = "claude-code-20250219"
@@ -28,6 +29,7 @@ _NATIVE_HEADERS = frozenset(
         "user-agent",
         "x-app",
         "anthropic-version",
+        "anthropic-dangerous-direct-browser-access",
         "x-stainless-lang",
         "x-stainless-package-version",
         "x-stainless-runtime",
@@ -125,14 +127,15 @@ class RequestProfile:
                     "x-stainless-package-version": SDK_VERSION,
                     "x-stainless-runtime": "node",
                     "x-stainless-runtime-version": RUNTIME_VERSION,
-                    "x-stainless-os": "Linux",
-                    "x-stainless-arch": "x64",
+                    "x-stainless-os": {"Darwin": "MacOS"}.get(platform.system(), platform.system()),
+                    "x-stainless-arch": {"aarch64": "arm64", "x86_64": "x64", "AMD64": "x64"}.get(
+                        platform.machine(), platform.machine()
+                    ),
+                    "anthropic-dangerous-direct-browser-access": "true",
                 }
             )
         if endpoint == "messages":
             result.setdefault("x-stainless-timeout", "600")
-            if stream and not self.native:
-                result["x-stainless-helper-method"] = "stream"
         result.setdefault("x-client-request-id", self.request_id)
         result.setdefault("x-stainless-retry-count", "0")
         betas = _betas(values.get("anthropic-beta", ""))

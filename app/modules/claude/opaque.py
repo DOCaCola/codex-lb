@@ -1,4 +1,4 @@
-"""Authenticated, account/model/client-bound Claude signed-thinking envelopes."""
+"""Authenticated, account/model/client-bound Claude reasoning and search state."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ class ClaudeOpaqueState:
         self.encryptor = encryptor
 
     def encode(self, scope: OpaqueScope, block: dict[str, JsonValue]) -> str:
-        if block.get("type") not in ("thinking", "redacted_thinking"):
-            raise ValueError("Only native Claude thinking blocks belong in opaque reasoning")
+        if block.get("type") not in ("thinking", "redacted_thinking", "web_search"):
+            raise ValueError("Only native Claude thinking or search state belongs in opaque reasoning")
         envelope = SignedBlock(
             source_id=scope.source_id,
             model=scope.model,
@@ -54,6 +54,6 @@ class ClaudeOpaqueState:
             raise ClientPayloadError("Invalid Claude reasoning state", param="input") from exc
         if (envelope.model, envelope.client_scope, envelope.conversation_id) != (model, client_scope, conversation_id):
             raise ClientPayloadError("Claude reasoning state belongs to another model or conversation", param="input")
-        if envelope.block.get("type") not in ("thinking", "redacted_thinking"):
+        if envelope.block.get("type") not in ("thinking", "redacted_thinking", "web_search"):
             raise ClientPayloadError("Invalid Claude reasoning block", param="input")
         return envelope

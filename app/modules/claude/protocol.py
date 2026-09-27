@@ -13,6 +13,7 @@ from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.capabilities import model_policy
+from app.modules.claude.search import search_replay, search_tool
 
 
 def invalid(message: str, param: str = "input") -> ClientPayloadError:
@@ -35,6 +36,7 @@ class ToolIdentity:
 class MessagesProjection:
     body: dict[str, JsonValue]
     tools: dict[str, ToolIdentity]
+    search_enabled: bool = False
 
 
 def _content(value: JsonValue) -> list[JsonValue]:
@@ -101,6 +103,15 @@ def project_responses(
         if not isinstance(tool, dict):
             raise invalid("Invalid Claude tool declaration", "tools")
         kind = tool.get("type")
+        if kind in ("web_search", "web_search_preview"):
+            if namespace is not None:
+                raise invalid("Hosted search cannot be namespaced", "tools")
+            declaration = search_tool(tool)
+            if declaration is not None:
+                if any(isinstance(t, dict) and t.get("name") == "web_search" for t in declarations):
+                    raise invalid("Duplicate web search declaration", "tools")
+                declarations.append(declaration)
+            return
         name = tool.get("name")
         if not isinstance(name, str) or not name:
             raise invalid("Tool name is required", "tools")
@@ -162,6 +173,7 @@ def project_responses(
         raise invalid("Responses input must be text or an array")
     pending: set[str] = set()
     seen_calls: set[str] = set()
+    search_items: set[str] = set()
     for item in items:
         if not isinstance(item, dict):
             raise invalid("Invalid Responses input item")
@@ -213,12 +225,25 @@ def project_responses(
                 raise invalid("No matching Claude tool call for this output")
             append("user", [{"type": "tool_result", "tool_use_id": call_id, "content": _content(item.get("output"))}])
             pending.remove(call_id)
+        elif kind == "web_search_call":
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or item_id in search_items:
+                raise invalid("Invalid Claude search history")
+            search_items.add(item_id)
         elif kind == "reasoning":
             encrypted = item.get("encrypted_content")
             if encrypted:
                 if not isinstance(encrypted, str) or restore_reasoning is None:
                     raise invalid("Claude signed reasoning must be restored by its account-bound continuation")
-                append("assistant", [restore_reasoning(encrypted)])
+                restored = restore_reasoning(encrypted)
+                if restored.get("type") == "web_search":
+                    item_id, blocks = search_replay(restored)
+                    if item_id not in search_items:
+                        raise invalid("Claude search state has no matching search item")
+                    search_items.remove(item_id)
+                    append("assistant", blocks)
+                else:
+                    append("assistant", [restored])
                 continue
             # Portable summaries are explicit text, not invented signed thinking.
             summary = item.get("summary", [])
@@ -230,6 +255,8 @@ def project_responses(
                 append("assistant", [{"type": "text", "text": block["text"]}])
         else:
             raise invalid(f"Unsupported Claude Responses item: {kind}")
+    if search_items:
+        raise invalid("Claude search history requires its account-bound opaque state; resend portable context")
     if pending:
         raise invalid("Claude tool calls require their outputs before continuing")
     if not messages:
@@ -252,6 +279,8 @@ def project_responses(
         if declarations:
             body["tool_choice"] = {"type": "any" if choice == "required" else choice}
     elif isinstance(choice, dict):
+        if choice.get("type") in ("web_search", "web_search_preview"):
+            raise invalid("Forced hosted search is not supported for Claude", "tool_choice")
         identity = next(
             (
                 identity
@@ -300,4 +329,6 @@ def project_responses(
     for field in ("temperature", "top_p"):
         if field in payload:
             body[field] = payload[field]
-    return MessagesProjection(body, tools)
+    return MessagesProjection(
+        body, tools, any(isinstance(t, dict) and t.get("type") == "web_search_20250305" for t in declarations)
+    )
