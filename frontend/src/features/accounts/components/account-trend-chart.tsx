@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Area,
@@ -16,45 +16,23 @@ import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import type { UsageTrendPoint } from "@/features/accounts/schemas";
 import { formatChartDateTime } from "@/utils/formatters";
 
-type MergedPoint = {
-  t: string;
-  primary: number;
-  secondary: number;
-  secondaryScheduled?: number;
+export type AccountChartSeries = {
+  key: string;
+  label: string;
+  points: { t: string; v: number | null }[];
+  dashed?: boolean;
+  colorIndex?: number;
 };
 
-function mergePoints(
-  primary: UsageTrendPoint[],
-  secondary: UsageTrendPoint[],
-  secondaryScheduled: UsageTrendPoint[],
-): MergedPoint[] {
-  const secondaryMap = new Map(secondary.map((p) => [p.t, p.v]));
-  const primaryMap = new Map(primary.map((p) => [p.t, p.v]));
-  const secondaryScheduledMap = new Map(secondaryScheduled.map((p) => [p.t, p.v]));
-
-  if (primary.length === 0 && secondary.length === 0 && secondaryScheduled.length === 0) {
-    return [];
-  }
-
-  const basePoints = primary.length > 0 ? primary : secondary.length > 0 ? secondary : secondaryScheduled;
-
-  return basePoints.map((p) => ({
-    t: p.t,
-    primary: primaryMap.get(p.t) ?? 0,
-    secondary: secondaryMap.get(p.t) ?? 0,
-    secondaryScheduled: secondaryScheduledMap.get(p.t),
-  }));
+function mergeSeries(series: AccountChartSeries[]) {
+  const times = [...new Set(series.flatMap((s) => s.points.map((p) => p.t)))].sort();
+  const maps = series.map((s) => new Map(s.points.map((p) => [p.t, p.v])));
+  return times.map((t) => Object.assign({ t }, ...series.map((s, i) => ({ [s.key]: maps[i].get(t) ?? null }))));
 }
 
 function formatXTick(isoStr: string): string {
   return isoStr.slice(5, 10);
 }
-
-const SERIES_META: Record<string, { label: string }> = {
-  primary: { label: "Primary" },
-  secondary: { label: "Secondary" },
-  secondaryScheduled: { label: "Weekly plan" },
-};
 
 type ChartTooltipPayloadEntry = {
   dataKey?: string | number;
@@ -66,25 +44,26 @@ type ChartTooltipProps = {
   active?: boolean;
   payload?: ChartTooltipPayloadEntry[];
   label?: string;
+  series: AccountChartSeries[];
+  percentage: boolean;
 };
 
-function CustomTooltip({ active, payload, label }: ChartTooltipProps) {
-  const { t } = useTranslation();
+function CustomTooltip({ active, payload, label, series, percentage }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   const heading = formatChartDateTime(label as string);
   return (
     <div className="rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-md">
       <p className="mb-1 text-[11px] text-muted-foreground">{heading}</p>
       {payload.map((entry: ChartTooltipPayloadEntry) => {
-        const meta = SERIES_META[entry.dataKey as string];
+        const meta = series.find((item) => item.key === entry.dataKey);
         return (
           <div key={entry.dataKey} className="flex items-center gap-2 text-xs">
             <span
               className="inline-block h-2 w-2 rounded-full"
               style={{ backgroundColor: entry.color }}
             />
-            <span className="text-muted-foreground">{meta ? t(`accounts.trend.series.${entry.dataKey}`, { defaultValue: meta.label }) : ""}</span>
-            <span className="ml-auto tabular-nums font-medium">{entry.value?.toFixed(1)}%</span>
+            <span className="text-muted-foreground">{meta?.label}</span>
+            <span className="ml-auto tabular-nums font-medium">{percentage ? `${entry.value?.toFixed(1)}%` : entry.value?.toLocaleString()}</span>
           </div>
         );
       })}
@@ -108,14 +87,22 @@ export function AccountTrendChart({
   secondaryScheduled = EMPTY_TREND_POINTS,
 }: AccountTrendChartProps) {
   const { t } = useTranslation();
+  return <AccountSeriesChart series={[
+    { key: "primary", label: t("accounts.trend.series.primary", "Primary"), points: primary, colorIndex: 0 },
+    { key: "secondary", label: t("accounts.trend.series.secondary", "Secondary"), points: secondary, colorIndex: 1 },
+    { key: "secondaryScheduled", label: t("accounts.trend.series.secondaryScheduled", "Weekly plan"), points: secondaryScheduled, dashed: true, colorIndex: 1 },
+  ]} />;
+}
+
+export function AccountSeriesChart({ series, percentage = true }: {
+  series: AccountChartSeries[];
+  percentage?: boolean;
+}) {
+  const { t } = useTranslation();
   const chartColors = useChartColors();
   const reducedMotion = useReducedMotion();
-  const c1 = chartColors[0];
-  const c2 = chartColors[1];
-  const data = useMemo(
-    () => mergePoints(primary, secondary, secondaryScheduled),
-    [primary, secondary, secondaryScheduled],
-  );
+  const id = useId().replaceAll(":", "");
+  const data = useMemo(() => mergeSeries(series), [series]);
 
   if (data.length === 0) {
     return (
@@ -129,14 +116,10 @@ export function AccountTrendChart({
     <ResponsiveContainer width="100%" height={200}>
       <AreaChart data={data} margin={CHART_MARGIN}>
         <defs>
-          <linearGradient id="trend-primary" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={c1} stopOpacity={0.12} />
-            <stop offset="100%" stopColor={c1} stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id="trend-secondary" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={c2} stopOpacity={0.12} />
-            <stop offset="100%" stopColor={c2} stopOpacity={0} />
-          </linearGradient>
+          {series.map((s, i) => <linearGradient key={s.key} id={`${id}-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={chartColors[(s.colorIndex ?? i) % chartColors.length]} stopOpacity={0.12} />
+            <stop offset="100%" stopColor={chartColors[(s.colorIndex ?? i) % chartColors.length]} stopOpacity={0} />
+          </linearGradient>)}
         </defs>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.06} />
         <XAxis
@@ -149,60 +132,30 @@ export function AccountTrendChart({
           dy={4}
         />
         <YAxis
-          domain={[0, 100]}
-          ticks={[0, 25, 50, 75, 100]}
-          tickFormatter={(v: number) => `${v}%`}
+          domain={percentage ? [0, 100] : [0, "auto"]}
+          ticks={percentage ? [0, 25, 50, 75, 100] : undefined}
+          allowDecimals={percentage}
+          tickFormatter={(v: number) => percentage ? `${v}%` : v.toLocaleString()}
           tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
           tickLine={false}
           axisLine={false}
           width={38}
         />
         <Tooltip
-          content={<CustomTooltip />}
+          content={<CustomTooltip series={series} percentage={percentage} />}
           cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
         />
-        {primary.length > 0 && (
-          <Area
-            type="monotone"
-            dataKey="primary"
-            stroke={c1}
-            strokeWidth={1.5}
-            fill="url(#trend-primary)"
-            dot={false}
+        {series.filter((s) => s.points.length > 0).map((s, i) => s.dashed ? (
+          <Line key={s.key} type="linear" dataKey={s.key}
+            stroke={chartColors[(s.colorIndex ?? i) % chartColors.length]} strokeWidth={1.25} strokeDasharray="5 5"
+            dot={false} connectNulls={false} isAnimationActive={!reducedMotion} animationDuration={500} />
+        ) : (
+          <Area key={s.key} type="monotone" dataKey={s.key}
+            stroke={chartColors[(s.colorIndex ?? i) % chartColors.length]} strokeWidth={1.5}
+            fill={`url(#${id}-${s.key})`} dot={s.points.filter((p) => p.v !== null).length === 1 ? { r: 3 } : false}
             activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
-            isAnimationActive={!reducedMotion}
-            animationDuration={500}
-          />
-        )}
-        {secondary.length > 0 && (
-          <Area
-            type="monotone"
-            dataKey="secondary"
-            stroke={c2}
-            strokeWidth={1.5}
-            fill="url(#trend-secondary)"
-            dot={false}
-            activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
-            isAnimationActive={!reducedMotion}
-            animationDuration={500}
-            animationBegin={100}
-          />
-        )}
-        {secondaryScheduled.length > 0 && (
-          <Line
-            type="linear"
-            dataKey="secondaryScheduled"
-            stroke={c2}
-            strokeWidth={1.25}
-            strokeDasharray="5 5"
-            dot={false}
-            activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
-            connectNulls={false}
-            isAnimationActive={!reducedMotion}
-            animationDuration={500}
-            animationBegin={150}
-          />
-        )}
+            connectNulls={false} isAnimationActive={!reducedMotion} animationDuration={500} />
+        ))}
       </AreaChart>
     </ResponsiveContainer>
   );

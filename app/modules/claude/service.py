@@ -213,6 +213,7 @@ class ClaudeService:
             state.usage = await self.client.usage(token, identity.version)
             state.usage_updated_at = datetime.now(UTC)
             state.usage_error = None
+            await self.repository.record_quota(source_id, state.usage, state.usage_updated_at)
         except ClaudeError as exc:
             state.usage_error = str(exc)
         await self._save(row, state, project=changed)

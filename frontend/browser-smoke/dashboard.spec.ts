@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { AuthSessionSchema } from "../src/features/auth/schemas";
 import { DashboardProjectionsSchema } from "../src/features/dashboard/schemas";
+import { createOpenRouterAccount } from "../src/features/openrouter/test-fixtures";
 import {
   createAccountSummary,
   createDashboardAuthSession,
@@ -76,6 +77,39 @@ async function acceptTelemetryConsent(page: Page, consentDialog: Locator): Promi
 }
 
 for (const width of [390, 1440]) {
+  for (const provider of ["openrouter", "claude"] as const) {
+    test(`provider account trends ${provider} ${width}`, async ({ page }, testInfo) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.setViewportSize({ width, height: 1000 });
+      await installMobileContainmentFixtures(page, []);
+      const account = provider === "openrouter" ? createOpenRouterAccount({ id: "provider-test" }) : {
+        id: "provider-test", name: "Claude test", isEnabled: true, credentialStatus: "ready",
+        expiresAt: "2027-01-01T00:00:00Z",
+        state: { selections: [], catalog: [], catalog_updated_at: null, catalog_error: null,
+          usage_updated_at: null, usage_error: null },
+        quota: { observedAt: null, models: [], windows: [] },
+      };
+      await page.route(`**/api/${provider}-accounts`, (route) => route.fulfill({ json: { accounts: [account] } }));
+      const series = (provider === "claude" ? ["5-hour", "Weekly"] : ["Requests"]).map((label, j) => ({
+        key: `series${j}`, label, points: Array.from({ length: 168 }, (_, i) => ({
+          t: new Date(Date.UTC(2026, 8, 19) + i * 3600000).toISOString(),
+          v: provider === "claude" ? 100 - ((i + j * 15) % 100) : i % 12,
+        })),
+      }));
+      await page.route(`**/api/${provider}-accounts/provider-test/trends`, (route) => route.fulfill({ json: { series } }));
+      await page.goto("/accounts?selected=provider-test");
+      await acceptTelemetryConsentIfShown(page);
+      const chart = page.getByRole("region", { name: provider === "claude" ? "Claude quota history" : "OpenRouter activity" });
+      await expect(chart).toBeVisible();
+      await expect(chart.locator(".recharts-surface")).toBeVisible();
+      await expect(chart.locator(".recharts-area-curve").first()).toBeVisible();
+      await chart.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      const box = await chart.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+      await chart.screenshot({ path: testInfo.outputPath(`${provider}-${width}.png`) });
+    });
+  }
   test(`quota webhook settings containment ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     await installMobileContainmentFixtures(page);

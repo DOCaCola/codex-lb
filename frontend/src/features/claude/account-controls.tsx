@@ -11,6 +11,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { ClaudeName, ClaudeQuota } from "./account-display";
+import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { useClaude } from "./use-claude";
 import type { ClaudeAccount, ClaudeSelection, OAuthStarted } from "./api";
 import { ClaudeVersionControls } from "./version-controls";
@@ -273,6 +274,7 @@ export function ClaudeAccountControls({
         {new Date(account.expiresAt).toLocaleString()}.
       </p>
       <ClaudeQuota account={account} detailed />
+      <ProviderAccountTrends provider="claude" accountId={account.id} />
       <p className="text-xs text-muted-foreground">
         Quota observations are provider-reported. Recorded API-equivalent costs
         are not subscription charges. OAuth acceptance and included-plan billing

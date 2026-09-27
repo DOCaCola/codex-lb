@@ -12,6 +12,7 @@ from app.core.auth.dependencies import (
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
 from app.dependencies import get_openrouter_service
 from app.modules.model_sources.service import ModelSourceNotFoundError
+from app.modules.model_sources.trends import ProviderTrends, read_trends
 from app.modules.openrouter.client import OpenRouterError
 from app.modules.openrouter.schemas import (
     OpenRouterAccountResponse,
@@ -55,6 +56,15 @@ async def create_account(
         raise DashboardBadRequestError(str(exc), code="openrouter_error") from exc
     _audit(request, principal, "openrouter_account_created", result.id)
     return result
+
+
+@router.get("/{source_id}/trends", response_model=ProviderTrends)
+async def account_trends(
+    source_id: str, service: OpenRouterService = Depends(get_openrouter_service)
+) -> ProviderTrends:
+    if await service.repository.get(source_id) is None:
+        raise DashboardNotFoundError("OpenRouter account not found")
+    return await read_trends(service.repository.session, source_id, quota=False)
 
 
 @router.patch("/{source_id}", response_model=OpenRouterAccountResponse)

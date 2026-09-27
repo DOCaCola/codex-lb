@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ClaudeAccount, ClaudeOAuthFlow
+from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudeQuotaHistory
+from app.modules.claude.schemas import UsageSnapshot
 from app.modules.model_sources.repository import ModelSourcesRepository
 
 
@@ -19,6 +20,27 @@ class ClaudeRepository:
 
     async def list_accounts(self) -> list[ClaudeAccount]:
         return list((await self.session.scalars(select(ClaudeAccount))).unique())
+
+    async def record_quota(self, source_id: str, usage: UsageSnapshot, observed_at: datetime) -> None:
+        observed_at = observed_at.astimezone(UTC).replace(tzinfo=None)
+        for name, window in (
+            ("five_hour", usage.five_hour),
+            ("seven_day", usage.seven_day),
+            ("seven_day_opus", usage.seven_day_opus),
+            ("seven_day_sonnet", usage.seven_day_sonnet),
+        ):
+            if window is not None:
+                self.session.add(
+                    ClaudeQuotaHistory(
+                        source_id=source_id, observed_at=observed_at, window=name, used_percent=window.utilization
+                    )
+                )
+        await self.session.execute(
+            delete(ClaudeQuotaHistory).where(
+                ClaudeQuotaHistory.source_id == source_id,
+                ClaudeQuotaHistory.observed_at < observed_at - timedelta(days=30),
+            )
+        )
 
     async def consume_flow(self, state_hash: str, now: datetime) -> ClaudeOAuthFlow | None:
         row = await self.session.scalar(

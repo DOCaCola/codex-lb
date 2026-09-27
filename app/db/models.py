@@ -1970,6 +1970,17 @@ class ClaudeAccount(Base):
     __mapper_args__ = {"version_id_col": version}
 
 
+class ClaudeQuotaHistory(Base):
+    __tablename__ = "claude_quota_history"
+
+    source_id: Mapped[str] = mapped_column(
+        String, ForeignKey("claude_accounts.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    window: Mapped[str] = mapped_column(String, primary_key=True)
+    used_percent: Mapped[float] = mapped_column(Float, nullable=False)
+
+
 class ClaudeSessionOwner(Base):
     __tablename__ = "claude_session_owners"
 

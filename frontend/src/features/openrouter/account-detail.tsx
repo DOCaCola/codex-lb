@@ -1,4 +1,5 @@
 import { Image, Layers, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { useTranslation } from "react-i18next";
@@ -125,6 +126,7 @@ export function OpenRouterAccountDetail({
           <OpenRouterFreshness account={account} />
         </div>
       </section>
+      <ProviderAccountTrends provider="openrouter" accountId={account.id} />
     </div>
   );
 }

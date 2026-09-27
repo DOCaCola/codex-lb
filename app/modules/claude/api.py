@@ -25,6 +25,7 @@ from app.modules.claude.schemas import (
 from app.modules.claude.service import ClaudeService
 from app.modules.claude.version import ClaudeVersionService, VersionPin, VersionStatus
 from app.modules.model_sources.service import ModelSourceNotFoundError
+from app.modules.model_sources.trends import ProviderTrends, read_trends
 
 router = APIRouter(
     prefix="/api/claude-accounts",
@@ -60,6 +61,13 @@ async def import_account(
         raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_account_imported", result.id)
     return result
+
+
+@router.get("/{source_id}/trends", response_model=ProviderTrends)
+async def account_trends(source_id: str, service: ClaudeService = Depends(get_claude_service)) -> ProviderTrends:
+    if await service.repository.get(source_id) is None:
+        raise DashboardNotFoundError("Claude account not found")
+    return await read_trends(service.repository.session, source_id, quota=True)
 
 
 @router.post("/oauth/start", response_model=OAuthStarted)

@@ -11,6 +11,10 @@ import { AccountSummaryLine } from "@/features/dashboard/components/account-summ
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { OpenRouterAccountDetail } from "./account-detail";
 
+vi.mock("@/features/accounts/components/provider-account-trends", () => ({
+  ProviderAccountTrends: () => <div>Account trends</div>,
+}));
+
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 
 describe("Unified provider accounts", () => {
