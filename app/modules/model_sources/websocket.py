@@ -16,6 +16,7 @@ from starlette.responses import StreamingResponse
 from starlette.types import Message
 from starlette.websockets import WebSocket
 
+from app.core.clients.proxy import _safe_retry_after_header
 from app.core.exceptions import AppError
 from app.core.openai.v1_requests import V1ResponsesRequest
 from app.core.types import JsonValue
@@ -170,7 +171,11 @@ async def handle_source_frame(
                         await result.body_iterator.aclose()
             elif result.status_code >= 400:
                 error = json.loads(bytes(result.body))
-                await send({"type": "error", "status": result.status_code, **error})
+                event = {"type": "error", "status": result.status_code, **error}
+                retry_after = _safe_retry_after_header(result.headers)
+                if retry_after is not None:
+                    event["headers"] = {"retry-after": retry_after}
+                await send(event)
             else:
                 await send({"type": "response.completed", "response": json.loads(bytes(result.body))})
         except ValidationError:

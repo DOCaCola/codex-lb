@@ -36,3 +36,12 @@ Rows use stable UI keys independent of editable model IDs. Duplicate/empty IDs,
 invalid prices and nonintegral token limits prevent submission. Unchanged raw
 metadata is preserved verbatim, and reasoning edits merge only the existing
 reasoning keys. Cancelled drafts are discarded on reopening the dialog.
+
+## Source WebSocket error metadata
+
+The bridge forwards only a validated Retry-After header in error event headers,
+using the existing bounded delta-seconds/HTTP-date parser. It does not forward
+cookies or credentials. For example, source429 plus Retry-After12 remains429
+with headers={"retry-after":"12"} over WS. No successful completion is synthesized.
+OpenCodex's safe error-envelope forwarding is the reference; client retry policy
+is separate from the gateway's obligation to preserve the signal.

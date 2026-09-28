@@ -23,6 +23,14 @@ class ClaudeError(ValueError):
     code = "claude_invalid_request"
     status_code = 400
 
+    @property
+    def response_headers(self) -> dict[str, str]:
+        return {}
+
+    @property
+    def error_type(self) -> str:
+        return "invalid_request_error" if self.status_code == 400 else "server_error"
+
 
 @dataclass(frozen=True)
 class PKCE:

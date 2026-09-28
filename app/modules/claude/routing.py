@@ -8,6 +8,8 @@ credentials and acquire source admission before sending any bytes upstream.
 from __future__ import annotations
 
 import hashlib
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -20,6 +22,7 @@ from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourc
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.quota import model_quota, quota_status
+from app.modules.claude.quota_evidence import read_evidence
 from app.modules.claude.schemas import AccountState
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 
@@ -27,19 +30,33 @@ from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 class ClaudePoolUnavailable(ClaudeError):
     status_code = 503
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, status_code: int = 503, retry_at: datetime | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.status_code = status_code
+        self.retry_at = retry_at
+
+    @property
+    def response_headers(self) -> dict[str, str]:
+        if self.retry_at is None:
+            return {}
+        return {"Retry-After": str(max(1, math.ceil((self.retry_at - datetime.now(UTC)).total_seconds())))}
+
+    @property
+    def error_type(self) -> str:
+        return "rate_limit_error" if self.status_code == 429 else super().error_type
 
 
 @dataclass(frozen=True)
 class Eligibility:
     eligible: bool
-    reason: Literal["ready", "paused", "credentials", "refreshing", "refresh_backoff", "model", "quota"]
+    reason: Literal["ready", "paused", "credentials", "refreshing", "refresh_backoff", "model", "quota", "cooldown"]
     retry_at: datetime | None = None
 
 
-def eligibility(account: ClaudeAccount, model: str, *, now: datetime) -> Eligibility:
+def eligibility(
+    account: ClaudeAccount, model: str, *, now: datetime, cooldowns: Sequence[ClaudeCooldown] = ()
+) -> Eligibility:
     source = account.source
     if not source.is_enabled:
         return Eligibility(False, "paused")
@@ -47,14 +64,26 @@ def eligibility(account: ClaudeAccount, model: str, *, now: datetime) -> Eligibi
         return Eligibility(False, "credentials")
     if account.refresh_intent is not None:
         return Eligibility(False, "refreshing")
-    if account.retry_at is not None and account.retry_at.replace(tzinfo=UTC) > now:
-        return Eligibility(False, "refresh_backoff", account.retry_at.replace(tzinfo=UTC))
     if not source.supports_responses or not any(row.model == model and row.is_enabled for row in source.models):
         return Eligibility(False, "model")
     state = AccountState.model_validate_json(account.state_json)
     quota = model_quota(model, quota_status(state, now=now).windows)
-    if quota.blocked:
-        return Eligibility(False, "quota", quota.retry_at)
+    restrictions = [item for row in cooldowns for item in read_evidence(row).restrictions if item.until > now]
+    deadlines = [item.until for item in restrictions]
+    if quota.retry_at is not None:
+        deadlines.append(quota.retry_at)
+    refresh_at = account.retry_at.replace(tzinfo=UTC) if account.retry_at is not None else None
+    if refresh_at is not None and refresh_at > now:
+        deadlines.append(refresh_at)
+    retry_at = max(deadlines) if deadlines else None
+    if quota.blocked and quota.retry_at is None:
+        retry_at = None
+    if refresh_at is not None and refresh_at > now:
+        return Eligibility(False, "refresh_backoff", retry_at)
+    if any(item.window not in {"five_hour", "seven_day", "seven_day_overage_included"} for item in restrictions):
+        return Eligibility(False, "cooldown", retry_at)
+    if quota.blocked or restrictions:
+        return Eligibility(False, "quota", retry_at)
     # Expiry alone is not permanent ineligibility: dispatch owns the durable
     # refresh claim. It must never send the expired token itself.
     return Eligibility(True, "ready")
@@ -98,28 +127,45 @@ async def select_account(
     if require_streaming:
         statement = statement.where(ModelSourceModel.supports_streaming.is_(True))
     accounts = list((await session.scalars(statement)).unique())
-    cooled = set(
+    cooldowns = list(
         await session.scalars(
-            select(ClaudeCooldown.source_id).where(
-                ClaudeCooldown.model.in_(("*", model)), ClaudeCooldown.until > now.replace(tzinfo=None)
+            select(ClaudeCooldown).where(
+                ClaudeCooldown.source_id.in_([account.source_id for account in accounts]),
+                ClaudeCooldown.model.in_(("*", model)),
+                ClaudeCooldown.until > now.replace(tzinfo=None),
             )
         )
     )
-    eligible = [
-        account
+    candidates = [
+        (
+            account,
+            eligibility(
+                account, model, now=now, cooldowns=[row for row in cooldowns if row.source_id == account.source_id]
+            ),
+        )
         for account in accounts
         if account.source_id not in excluded_source_ids
-        and account.source_id not in cooled
-        and eligibility(account, model, now=now).eligible
     ]
+    eligible = [account for account, diagnostic in candidates if diagnostic.eligible]
     if not eligible:
+        retry_at = min(
+            (diagnostic.retry_at for _, diagnostic in candidates if diagnostic.retry_at is not None), default=None
+        )
         if owner_source_id is not None:
             raise ClaudePoolUnavailable(
                 "previous_response_owner_unavailable",
                 "Claude continuation owner is unavailable; account-bound state cannot move to another account",
+                retry_at=retry_at,
+            )
+        if candidates and all(diagnostic.reason == "quota" for _, diagnostic in candidates):
+            raise ClaudePoolUnavailable(
+                "claude_pool_rate_limited",
+                "All authorized Claude accounts for this model are rate limited",
+                status_code=429,
+                retry_at=retry_at,
             )
         raise ClaudePoolUnavailable(
-            "claude_pool_unavailable", "No authorized Claude account is available for this model"
+            "claude_pool_unavailable", "No authorized Claude account is available for this model", retry_at=retry_at
         )
     scope = api_key.id if api_key else "anonymous"
     if preferred_source_id is not None:

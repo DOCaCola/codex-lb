@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, Mock
 
 import anyio
 import pytest
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.websockets import WebSocket
 
 from app.db.models import ModelSource
@@ -14,6 +15,39 @@ from app.modules.proxy import api
 from app.modules.proxy.service import ProxyService
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("hint,expected", [("12", "12"), ("garbage", None)])
+async def test_error_preserves_only_valid_retry_header(monkeypatch, native, hint, expected):
+    incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+    await incoming.put({"type": "websocket.connect"})
+    websocket = WebSocket({"type": "websocket", "path": "/v1/responses", "headers": []}, incoming.get, outgoing.put)
+    await websocket.accept()
+    await outgoing.get()
+    source = Mock(spec=ModelSource)
+    monkeypatch.setattr(bridge, "select_responses_model_source", AsyncMock(return_value=(source, "test")))
+    response = JSONResponse(
+        {"error": {"code": "limited", "message": "wait"}},
+        status_code=429,
+        headers={"Retry-After": hint, "Set-Cookie": "private", "Authorization": "private"},
+    )
+    monkeypatch.setattr(api, "responses" if native else "v1_responses", AsyncMock(return_value=response))
+    service = Mock(spec=ProxyService)
+    service._refresh_websocket_api_key_policy = AsyncMock(return_value=None)
+    await bridge.handle_source_frame(
+        websocket,
+        bridge.SourceWebSocketReceiver(websocket),
+        {"type": "response.create", "model": "test", "input": "Hi"},
+        service=service,
+        api_key=None,
+        send_lock=anyio.Lock(),
+        native_turn_pending=False,
+        native_codex=native,
+    )
+    event = json.loads((await outgoing.get())["text"])
+    assert event["status"] == 429 and event["error"]["code"] == "limited"
+    assert event.get("headers", {}) == ({"retry-after": expected} if expected else {})
 
 
 @pytest.mark.parametrize("external_cancel", [False, True])

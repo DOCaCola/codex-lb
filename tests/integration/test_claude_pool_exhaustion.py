@@ -1,0 +1,105 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from app.db.models import ClaudeAccount
+from app.db.session import SessionLocal
+from app.modules.claude.failover import Refusal, record_refusals
+from app.modules.claude.routing import ClaudePoolUnavailable
+from app.modules.claude.schemas import AccountState, QuotaWindow, UsageSnapshot
+from tests.integration.test_claude_routing import MODEL, choose, key
+from tests.integration.test_claude_routing import pool as pool
+
+pytestmark = pytest.mark.integration
+
+
+async def exhaust(source, deadline):
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source)
+        state = AccountState.model_validate_json(row.state_json)
+        state.usage = UsageSnapshot(five_hour=QuotaWindow(utilization=100, resets_at=deadline))
+        state.usage_updated_at = datetime.now(UTC)
+        state.usage_requested_at = state.usage_updated_at
+        row.state_json = state.model_dump_json()
+        await session.commit()
+
+
+async def test_latest_per_account_earliest_across_pool_and_owner(pool):
+    now = datetime.now(UTC)
+    await exhaust(pool[0], now + timedelta(hours=2))
+    await exhaust(pool[1], now + timedelta(hours=3))
+    await record_refusals(
+        pool[0],
+        MODEL,
+        (Refusal("model", now + timedelta(hours=5), "reset", "seven_day_overage_included"),),
+        requested_at=now,
+    )
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(now=now)
+    assert caught.value.status_code == 429
+    assert caught.value.retry_at == now + timedelta(hours=3)
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(owner_source_id=pool[0], now=now)
+    assert caught.value.code == "previous_response_owner_unavailable"
+    assert caught.value.retry_at == now + timedelta(hours=5)
+    scoped = key(source_assignment_scope_enabled=True, assigned_source_ids=[pool[0]])
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(api_key=scoped, now=now)
+    assert caught.value.retry_at == now + timedelta(hours=5)
+
+
+async def test_unknown_deadline_and_mixed_states(pool):
+    await exhaust(pool[0], None)
+    await exhaust(pool[1], None)
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose()
+    assert caught.value.status_code == 429
+    assert caught.value.response_headers == {}
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, pool[1])
+        row.credential_status = "reauth_required"
+        await session.commit()
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose()
+    assert caught.value.status_code == 503
+    assert caught.value.response_headers == {}
+
+
+async def test_backoff_does_not_hide_later_quota_and_paused_deadlines_are_ignored(pool, async_client):
+    now = datetime.now(UTC)
+    await exhaust(pool[0], now + timedelta(hours=4))
+    await exhaust(pool[1], now + timedelta(hours=1))
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, pool[0])
+        row.retry_at = (now + timedelta(minutes=5)).replace(tzinfo=None)
+        await session.commit()
+    await async_client.patch(f"/api/claude-accounts/{pool[1]}", json={"isEnabled": False})
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(now=now)
+    assert caught.value.status_code == 503
+    assert caught.value.retry_at == now + timedelta(hours=4)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/messages",
+        "/v1/messages/count_tokens",
+        "/v1/responses",
+        "/backend-api/codex/responses",
+    ],
+)
+async def test_pool_error_at_http_boundary(async_client, pool, path):
+    now = datetime.now(UTC)
+    for source in pool:
+        await exhaust(source, now + timedelta(minutes=5))
+    body = {"model": MODEL}
+    if "/messages" in path:
+        body.update(messages=[{"role": "user", "content": "Hello"}], max_tokens=100)
+    else:
+        body.update(input="Hello")
+    response = await async_client.post(path, json=body)
+    assert response.status_code == 429, response.text
+    assert response.json()["error"]["code"] == "claude_pool_rate_limited"
+    assert response.json()["error"]["type"] == "rate_limit_error"
+    assert 290 <= int(response.headers["retry-after"]) <= 300

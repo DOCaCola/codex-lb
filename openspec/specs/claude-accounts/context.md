@@ -282,3 +282,18 @@ PR13074 implements a different program, while PR14728 was still an open proposal
 No reference source was copied. Local mocked protocol, migration, concurrency and
 dashboard tests do not establish live OAuth redemption or billing acceptance;
 PostgreSQL runtime qualification remains outstanding.
+
+### Pool exhaustion and retry hints
+
+Quota-only exhaustion returns429 with rate_limit_error, while mixed/unknown
+unavailability retains503. Paused, model-disabled and credential-invalid accounts
+cannot contribute a recovery estimate. Account recovery includes all quota and
+cooldown barriers; unknown quota deadlines suppress that account's estimate.
+For example, shared reset2h plus model cooldown5h cannot advertise2h; an eligible
+sibling resetting3h gives the pool a known3h estimate. Hard owners never borrow
+a sibling's deadline. Explicit upstream failures after dispatch remain unchanged.
+
+This adapts CLIProxyAPI's typed cooldown distinction and OpenCodex's earliest
+cooldown hint without copying their source or unscoped account scans.
+The source WS bridge preserves Retry-After, but older Codex clients may still
+treat429 as terminal. Header delivery alone does not guarantee automatic resume.

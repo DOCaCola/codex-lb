@@ -1849,12 +1849,13 @@ async def claude_messages(
             {
                 "type": "error",
                 "error": {
-                    "type": "invalid_request_error" if exc.status_code == 400 else "api_error",
+                    "type": "api_error" if exc.error_type == "server_error" else exc.error_type,
                     "code": exc.code,
                     "message": str(exc),
                 },
             },
             status_code=exc.status_code,
+            headers=exc.response_headers,
         )
     except ModelSourceForwardingError as exc:
         return JSONResponse(
@@ -5588,10 +5589,8 @@ async def _dispatch_source_responses_attempt(
         return _logged_error_json_response(
             request,
             exc.status_code,
-            openai_error(
-                exc.code, str(exc), error_type="invalid_request_error" if exc.status_code == 400 else "server_error"
-            ),
-            headers=rate_limit_headers,
+            openai_error(exc.code, str(exc), error_type=exc.error_type),
+            headers={**rate_limit_headers, **exc.response_headers},
         )
     claims = try_claim_source_admission(source)
     if claims is None:
