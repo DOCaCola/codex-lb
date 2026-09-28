@@ -160,3 +160,20 @@ marker is scoped and expires with session retention; it is not conversation stor
 Translated Responses envelopes and their ownership checks remain unchanged.
 Reference evidence: OmniRoute PR #7906, OpenCodex native versus translated replay,
 CLIProxyAPI parent affinity. These are source/mock checks, not live OAuth acceptance.
+
+## Overload recovery
+
+Explicit 529 and structured 503 overloaded_error refusals allow one same-account
+retry within the shared four-send budget. This borrows bounded-wait policy lessons
+from OpenCodex, early SSE classification from Sub2API, and the distinction between
+model capacity and provider health from OmniRoute; it does not copy their broader
+rotation or cooldown policies. For example, a ping followed by overloaded_error
+can recover without publishing the failed attempt's response ID. An empty text
+block followed by that same error cannot: generation has already started.
+
+Startup inspection is bounded to 32 events, 64KiB, and the existing first-frame
+deadline. It delays metadata delivery until generation or a terminal event;
+malformed or unknown events end recovery eligibility. Retry waiting owns no
+admission/reservation and observes client disconnects. Long Retry-After hints
+return unchanged instead of exceeding the ten-second recovery window. These
+paths are locally tested, not qualified against live OAuth traffic.

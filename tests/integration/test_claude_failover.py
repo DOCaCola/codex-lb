@@ -104,7 +104,7 @@ async def test_cooldown_scope_monotonic_and_persistent(pool):
 
 
 @pytest.mark.parametrize("count_tokens", [False, True])
-@pytest.mark.parametrize("status", [401, 429])
+@pytest.mark.parametrize("status", [401, 429, 529])
 async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch, count_tokens, status):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
@@ -135,7 +135,9 @@ async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch
         )
         try:
             yield SimpleNamespace(
-                status=status if failed else 200, headers={"Retry-After": "120"}, json=AsyncMock(return_value=data)
+                status=status if failed else 200,
+                headers={"Retry-After": "0" if status == 529 else "120"},
+                json=AsyncMock(return_value=data),
             )
         finally:
             closed.append(True)
@@ -151,10 +153,11 @@ async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch
     response = await async_client.post("/v1/messages/count_tokens" if count_tokens else "/v1/messages", json=body)
     assert response.status_code == 200, response.text
     assert len(sent) == len(closed) == 2
-    assert sent[0] != sent[1]
+    assert (sent[0] == sent[1]) == (status == 529)
 
 
-async def test_signature_and_account_recovery_share_budget(async_client, pool, monkeypatch):
+@pytest.mark.parametrize("status", [429, 529])
+async def test_signature_and_account_recovery_share_budget(async_client, pool, monkeypatch, status):
     from app.modules.claude import transport
     from tests.integration.test_claude_accounts import import_body
 
@@ -169,8 +172,8 @@ async def test_signature_and_account_recovery_share_budget(async_client, pool, m
         sent.append(source.id)
         signature = len(sent) % 2 == 1
         raise ModelSourceForwardingError(
-            status_code=400 if signature else 429,
-            upstream_status_code=400 if signature else 429,
+            status_code=400 if signature else status,
+            upstream_status_code=400 if signature else status,
             payload={"error": {"message": "Invalid signature in thinking block" if signature else "limited"}},
         )
 
@@ -193,9 +196,10 @@ async def test_signature_and_account_recovery_share_budget(async_client, pool, m
             ],
         },
     )
-    assert response.status_code == 429, response.text
+    assert response.status_code == status, response.text
     assert len(sent) == 4
-    assert sent[0] == sent[1] and sent[2] == sent[3] and sent[0] != sent[2]
+    assert sent[0] == sent[1] and sent[2] == sent[3]
+    assert (sent[0] == sent[2]) == (status == 529)
 
 
 async def test_disconnect_between_attempts_stops_recovery(async_client, pool, monkeypatch):
@@ -287,6 +291,8 @@ async def test_late_stream_error_never_rotates(async_client, pool, monkeypatch):
     async def late_error(*args):
         async for event in events(*args):
             yield event
+            if "content_block_start" not in event:
+                continue
             raise ModelSourceForwardingError(
                 status_code=429, upstream_status_code=429, payload={"error": {"message": "late refusal"}}
             )

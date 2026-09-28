@@ -5393,8 +5393,12 @@ async def _dispatch_source_responses_response(
         record_refusal,
         recover_authentication,
     )
+    from app.modules.claude.overload import is_overload, retry_delay, wait_for_retry
 
     recovery = FailoverState() if source.kind == "claude" else None
+    recovery_clock = clock_for(context.service) if context is not None else REAL_CLOCK
+    recovery_scheduler = scheduler_for(context.service) if context is not None else REAL_SCHEDULER
+    overload_deadline = recovery_clock.monotonic() + min(10.0, float(source.timeout_seconds or 10))
     while True:
         if recovery is not None and recovery.last_error is not None and await request.is_disconnected():
             return Response()
@@ -5417,6 +5421,23 @@ async def _dispatch_source_responses_response(
         except ModelSourceForwardingError as exc:
             if recovery is None or recovery.stream_opened or recovery.budget.remaining == remaining:
                 raise
+            if is_overload(exc):
+                if recovery.overload_retried or recovery.budget.remaining == 0:
+                    raise
+                delay = retry_delay(
+                    exc, now=recovery_clock.now(), available=overload_deadline - recovery_clock.monotonic()
+                )
+                if delay is None:
+                    raise
+                recovery.overload_retried = True
+                recovery.last_error = exc
+                recovery.retry_source_id = recovery.source_id
+                logger.info("claude_overload_retry source_id=%s delay_ms=%d", recovery.source_id, int(delay * 1000))
+                if not await wait_for_retry(request, delay, clock=recovery_clock, scheduler=recovery_scheduler):
+                    return Response()
+                if recovery_clock.monotonic() >= overload_deadline:
+                    raise
+                continue
             if is_authentication_failure(exc):
                 recovery.last_error = exc
                 if await request.is_disconnected():

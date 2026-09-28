@@ -701,7 +701,7 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("search", [None, False, True])
-@pytest.mark.parametrize("failover", [False, 429, 401])
+@pytest.mark.parametrize("failover", [False, 429, 401, 529])
 async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search, failover):
     from tests.unit.test_claude_search import search_content
 
@@ -725,7 +725,7 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
                 raise ModelSourceForwardingError(
                     status_code=failover, upstream_status_code=failover, payload={"error": {"message": "refused"}}
                 )
-            assert (source.id == refused[0]) == (failover == 401)
+            assert (source.id == refused[0]) == (failover in {401, 529})
             return await original(source, *args, **kwargs)
 
         monkeypatch.setattr(transport, "_open_source_stream", send)
@@ -861,6 +861,8 @@ async def test_real_sse_transport_disconnect_releases_upstream(async_client, poo
             await response.write(
                 b'event: message_start\ndata: {"type":"message_start",'
                 b'"message":{"id":"msg_live","usage":{"input_tokens":4}}}\n\n'
+                b'event: content_block_start\ndata: {"type":"content_block_start",'
+                b'"index":0,"content_block":{"type":"text","text":""}}\n\n'
             )
             await asyncio.Event().wait()
         finally:

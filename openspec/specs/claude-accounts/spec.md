@@ -265,3 +265,20 @@ Prepared attempts SHALL capture the generation with the credentials actually use
 #### Scenario: Uncertain exchange
 - **WHEN** refresh may have consumed the rotating grant
 - **THEN** the durable uncertain or active intent remains protected from replay
+
+### Requirement: Bounded Claude overload recovery
+Explicit upstream 529 or 503 overloaded_error MAY be retried once on the same account before generation. The retry SHALL consume the shared four-send budget and fit a ten-second recovery window from dispatch entry. Valid Retry-After SHALL be a minimum wait; absent hints SHALL use 250–500ms jitter. Waiting SHALL be cancellable and own no admission or reservation. Repreparation SHALL enforce current authorization and history ownership. Overload MUST NOT trigger credential refresh, account rotation or account/provider health penalties.
+
+The gateway SHALL inspect SSE startup within 32 events, 64KiB and its first-frame deadline. Only comments/pings and empty message_start metadata without positive output usage MAY precede a recoverable overloaded_error. Such error SHALL surface as 529 before any public stream event. Content blocks, other generation events or positive output usage SHALL prohibit overload replay. Prelude-limit violations, generic 503, connection failures and timeouts MUST NOT acquire overload retries. Exhaustion SHALL preserve the refusal and retry hint; partial generation SHALL retain normal failure/usage handling.
+
+#### Scenario: Early SSE refusal
+- **WHEN** HTTP 200 contains pings followed by overloaded_error before generation
+- **THEN** the failed attempt closes and may retry on the same account without publishing its events
+
+#### Scenario: Output already started
+- **WHEN** overload follows a content block or positive output usage
+- **THEN** the gateway does not replay the generation
+
+#### Scenario: Wait exceeds recovery window
+- **WHEN** Retry-After cannot fit the remaining recovery window
+- **THEN** the original refusal is returned without shortening its requested wait

@@ -120,8 +120,43 @@ async def _open_responses(
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
     try:
         with scheduler.fail_after(SOURCE_FIRST_FRAME_DEADLINE_SECONDS):
-            first = await anext(events)
-        holder.first_frame_at = clock.monotonic()
+            startup: list[str] = []
+            startup_bytes = 0
+            while True:
+                frame = await anext(events)
+                if holder.first_frame_at is None:
+                    holder.first_frame_at = clock.monotonic()
+                startup_bytes += len(frame.encode())
+                if len(startup) >= 32 or startup_bytes > 64 * 1024:
+                    raise _failure("invalid_upstream_response", "Claude SSE startup exceeded its buffer limit")
+                startup.append(frame)
+                event = parse_sse_data_json(frame)
+                if event is None:
+                    if all(not line.strip() or line.startswith(":") for line in frame.splitlines()):
+                        continue
+                    break
+                if event.get("type") == "ping":
+                    continue
+                detail = event.get("error")
+                if (
+                    event.get("type") == "error"
+                    and isinstance(detail, dict)
+                    and detail.get("type") == "overloaded_error"
+                ):
+                    raise ModelSourceForwardingError(
+                        status_code=529,
+                        upstream_status_code=529,
+                        payload=cast(dict[str, JsonValue], _redact_json_value(event, secret)),
+                        retry_after=response.headers.get("Retry-After"),
+                        upstream_headers=public_headers(response.headers),
+                    )
+                if event.get("type") == "message_start":
+                    message = event.get("message")
+                    if isinstance(message, dict) and message.get("content", []) == []:
+                        usage = message.get("usage", {})
+                        if isinstance(usage, dict) and usage.get("output_tokens", 0) == 0:
+                            continue
+                break
     except BaseException as exc:
         try:
             await events.aclose()
@@ -135,7 +170,8 @@ async def _open_responses(
 
     async def frames() -> AsyncIterator[bytes]:
         async def native_frames() -> AsyncGenerator[str]:
-            yield first
+            for frame in startup:
+                yield frame
             async for frame in events:
                 yield frame
 

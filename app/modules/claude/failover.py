@@ -47,6 +47,7 @@ class FailoverState:
     credential_generation: int | None = None
     auth_retried: set[str] = field(default_factory=set)
     retry_source_id: str | None = None
+    overload_retried: bool = False
 
 
 def is_authentication_failure(error: ModelSourceForwardingError) -> bool:
