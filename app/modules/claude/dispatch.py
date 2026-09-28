@@ -21,9 +21,10 @@ from app.modules.claude.failover import SendBudget
 from app.modules.claude.profile import RequestProfile, recognize_native
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
+from app.modules.claude.resources import ResourceScope, resolve_origins, resource_ids
 from app.modules.claude.routing import select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL
-from app.modules.claude.session import NativeSessionBinding, NativeSessionOwnership, contains_account_bound_state
+from app.modules.claude.session import NativeSessionBinding, NativeSessionOwnership
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 
@@ -79,6 +80,7 @@ class ClaudeDispatchPreparer:
         retained_owner = None
         preferred_owner = None
         requires_owner = False
+        resource_keys: tuple[str, ...] = ()
         if not translated:
             native_ownership = NativeSessionOwnership(
                 session,
@@ -86,11 +88,14 @@ class ClaudeDispatchPreparer:
                 conversation_id=conversation_id,
                 model=model,
             )
-            requires_owner = contains_account_bound_state(logical)
-            retained_owner = await native_ownership.owner(required=requires_owner)
+            resource_keys = ResourceScope(api_key.id if api_key else "anonymous", conversation_id, model).keys(
+                resource_ids(logical)
+            )
+            requires_owner = bool(resource_keys)
+            retained_owner = await native_ownership.owner()
             preferred_owner = retained_owner
             if requires_owner:
-                owner_source_id = retained_owner
+                owner_source_id = await resolve_origins(session, resource_keys)
             elif retained_owner is None and metadata_identity is not None:
                 parent = metadata_identity.get("parent_session_id")
                 if isinstance(parent, str):
@@ -99,7 +104,7 @@ class ClaudeDispatchPreparer:
                         client_scope=api_key.id if api_key else "anonymous",
                         conversation_id=parent,
                         model=model,
-                    ).owner(required=False)
+                    ).owner()
         account = await select_account(
             session,
             model,
@@ -213,7 +218,7 @@ class ClaudeDispatchPreparer:
                 conversation_id=conversation_id,
                 model=model,
                 retained_owner=retained_owner,
-                requires_owner=requires_owner,
+                resource_keys=resource_keys,
             )
             if native_ownership is not None and endpoint == "messages"
             else None,

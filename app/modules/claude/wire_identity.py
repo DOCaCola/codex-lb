@@ -11,6 +11,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import RequestProfile, session_identity
+from app.modules.claude.resources import resource_ids
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
@@ -30,6 +31,8 @@ def native_conversation_id(body: dict[str, JsonValue], headers: Mapping[str, str
         candidates.append(session_id)
     if len(set(candidates)) > 1:
         raise ClaudeError("Claude session headers and metadata disagree")
+    if not candidates and resource_ids(body):
+        raise ClaudeError("Native Claude resource replay requires an explicit session identifier")
     return candidates[0] if candidates else str(uuid4())
 
 

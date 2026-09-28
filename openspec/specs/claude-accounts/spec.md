@@ -10,9 +10,9 @@ Provide separately owned Claude OAuth credentials and faithful native and adapte
 Native first-party thinking history SHALL remain unchanged in ordinary requests.
 Thinking alone MUST NOT require an unexpired account-owner record. Account
 preference SHALL be subordinate to authorization and eligibility. Native server
-resource state SHALL retain existing ownership restrictions.
-After account rebinding, native server-resource history MUST be rejected while
-the session's issuing account is ambiguous, rather than assigned to the new owner.
+resource state SHALL resolve observed resource origins independently of affinity.
+Account rebinding MUST NOT transfer resource ownership or prevent replay of a
+known resource on its authorized original account.
 
 #### Scenario: Idle thinking conversation
 - **WHEN** a native conversation resumes with thinking after affinity expires
@@ -111,9 +111,9 @@ Claude SHALL support Responses over downstream HTTP and WebSocket while using HT
 - **WHEN** a Responses request asks for unsupported grammar-constrained tool decoding or a provider-specific control without a Claude equivalent
 - **THEN** the adapter returns an explicit unsupported-parameter error before dispatch rather than silently ignoring it
 
-#### Scenario: Native signed history outlives ownership retention
-- **WHEN** native account-bound history is submitted after its one-hour ownership retention expires
-- **THEN** it fails explicitly and requires portable context rather than selecting a different account
+#### Scenario: Native resource history outlives provenance retention
+- **WHEN** native resource history is submitted after its thirty-day resource provenance expires
+- **THEN** it fails explicitly and requires portable context rather than guessing its origin from affinity
 
 ### Requirement: Advertised version following
 The service SHALL asynchronously follow the canonical stable Claude Code release at startup when stale and every 24 hours, sharing state across workers. It MUST preserve the last valid version on discovery failure, distinguish last checked from last changed, support manual pin/rollback, and use one immutable identity snapshot per request. It MUST NOT download executable updates or fabricate private billing fingerprints.
@@ -371,3 +371,25 @@ Selection SHALL distinguish quota-only exhaustion from other unavailability with
 #### Scenario: Known exhaustion without a deadline
 - **WHEN** all candidates are quota-exhausted but no candidate has a complete recovery deadline
 - **THEN** the response remains429 without a fabricated Retry-After
+
+### Requirement: Native resource provenance
+Native server-tool history SHALL resolve its authorized source from observed
+resource origins, independently of soft session affinity. Origins SHALL be
+scoped to client, conversation and model, retained for thirty days of authorized
+use, and persisted before output exposing the identifier. Unknown, expired or
+conflicting origins SHALL fail explicitly without inferring ownership from
+affinity or incoming history. Ordinary tools and translated replay SHALL retain
+their existing contracts. Count-token requests SHALL NOT create or extend origins.
+Unsupported native file/container resource references SHALL fail explicitly.
+
+#### Scenario: Affinity expires
+- **WHEN** native history replays a retained resource after affinity expires
+- **THEN** the request selects the resource's authorized origin account
+
+#### Scenario: Branch rebinds
+- **WHEN** different branches obtain resources on different accounts
+- **THEN** each resource resolves independently and mixed-origin history fails
+
+#### Scenario: Persistence fails
+- **WHEN** a new resource origin cannot be committed
+- **THEN** its identifying output is not delivered and generation is not retried

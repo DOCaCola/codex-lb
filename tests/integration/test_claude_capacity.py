@@ -185,7 +185,7 @@ async def test_rejected_new_candidate_does_not_bind_session(async_client, pool, 
         assert (
             await NativeSessionOwnership(
                 session, client_scope="anonymous", conversation_id="capacity-session", model=MODEL
-            ).owner(required=False)
+            ).owner()
             is None
         )
     for slot in held:

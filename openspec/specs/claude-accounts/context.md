@@ -53,8 +53,9 @@ Responses continuation uses the existing encrypted disk replay store (one-hour
 retention). Complete and incomplete Claude output is saved before terminal delivery.
 Compaction uses the selected Claude account for summary generation and the existing
 encrypted compaction envelope for portable summary restoration. Native Messages
-retains only a scope hash/account/expiry in the database, not conversation text;
-its sliding ownership TTL is one hour. Missing signed-history owners fail closed.
+retains scoped resource identifier hashes/account/expiry, not conversation text.
+Resource provenance slides for thirty days independently of one-hour soft
+affinity. Missing resource origins fail closed.
 
 ## Monitoring and UI
 
@@ -154,9 +155,9 @@ stay unchanged; empty-message or server-tool histories refuse recovery. Normal
 traffic is unchanged. No thinking-to-text, tool-to-text or synthetic redaction.
 Count-tokens and errors after output never use this recovery.
 
-After native account rebinding, resource ownership is ambiguous: server-resource
-history fails explicitly rather than being assigned to the new account. This
-marker is scoped and expires with session retention; it is not conversation storage.
+After native account rebinding, observed resources resolve independently: old
+resources still belong to the old account and new resources to their issuing
+account. Mixed or unknown origins fail rather than borrowing session affinity.
 Translated Responses envelopes and their ownership checks remain unchanged.
 Reference evidence: OmniRoute PR #7906, OpenCodex native versus translated replay,
 CLIProxyAPI parent affinity. These are source/mock checks, not live OAuth acceptance.
@@ -297,3 +298,32 @@ This adapts CLIProxyAPI's typed cooldown distinction and OpenCodex's earliest
 cooldown hint without copying their source or unscoped account scans.
 The source WS bridge preserves Retry-After, but older Codex clients may still
 treat429 as terminal. Header delivery alone does not guarantee automatic resume.
+
+### Native resource provenance
+
+Native server-tool identifiers are scoped by client/conversation/model and
+stored as hashes with source and timestamps. The one-hour affinity record is
+only a cache preference. Thirty-day sliding provenance is an operator-facing
+retention policy, not a guarantee of upstream resource validity. Cleanup deletes
+at most 500 expired rows per resource-bearing output transaction. No prompts,
+tool arguments, results or complete conversations are stored in this ledger.
+
+Origins commit before their first identifying SSE frame or JSON response.
+Persistence failure stops delivery without replaying generation; committed but
+undelivered entries expire normally. Authorized admitted replay refreshes
+retention; count_tokens is read-only. Token rotation leaves provenance intact.
+Deleting a source cascades its origins; re-enrollment does not guess old owners.
+
+For example, A issues R1 and a portable branch later moves to B and obtains R2.
+R1-only history routes to A and R2-only to B even after cache affinity expires.
+History containing both fails. Temporary owner failures keep existing scoped
+retry hints. Permanent loss still needs explicit portable context.
+
+There is no reliable backfill from legacy affinity rows. Pre-upgrade resource
+history may require portable context. Files/containers need separate endpoint
+and origin-capture support and are rejected explicitly, not assigned by guess.
+Translated authenticated reasoning/search replay remains unchanged.
+
+This is a local provenance design informed by the affinity/preservation lessons
+from the four AGENTS.md references, not copied resource-migration machinery.
+Mock verification does not establish live cross-account resource portability.

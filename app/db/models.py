@@ -1981,6 +1981,15 @@ class ClaudeQuotaHistory(Base):
     used_percent: Mapped[float] = mapped_column(Float, nullable=False)
 
 
+class ClaudeResourceOrigin(Base):
+    __tablename__ = "claude_resource_origins"
+
+    resource_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+
+
 class ClaudeSessionOwner(Base):
     __tablename__ = "claude_session_owners"
 

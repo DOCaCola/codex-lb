@@ -23,6 +23,7 @@ from app.modules.claude.dispatch import PreparedClaudeRequest
 from app.modules.claude.native import NativeObserver, usage_totals
 from app.modules.claude.observations import record_headers
 from app.modules.claude.recovery import historical_recovery
+from app.modules.claude.resources import record_origins
 from app.modules.claude.responses import ResponsesProjection, Usage
 from app.modules.model_sources.forwarding import (
     SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
@@ -204,6 +205,8 @@ async def _open_responses(
                     )
                     if projection is None:
                         native_observer.consume(cast(dict[str, JsonValue], safe_event))
+                        if prepared.native_binding is not None:
+                            await record_origins(prepared.native_binding.resource_scope, prepared.source.id, safe_event)
                         yield (
                             format_sse_event(cast(dict[str, JsonValue], safe_event)).encode()
                             if event.get("type") == "error"
@@ -306,6 +309,14 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                 ):
                     raise _failure("invalid_upstream_response", "Claude returned an invalid Messages response")
                 usage = SourceUsage(0, 0) if count_tokens else usage_totals(Usage.model_validate(data.get("usage", {})))
+                if not count_tokens and prepared.native_binding is not None:
+                    from pydantic import JsonValue as PydanticJsonValue
+
+                    await record_origins(
+                        prepared.native_binding.resource_scope,
+                        prepared.source.id,
+                        cast(dict[str, PydanticJsonValue], data),
+                    )
                 return SourceResponsesCompletion(
                     data, usage, None, response.status, upstream_headers=public_headers(response.headers)
                 )
