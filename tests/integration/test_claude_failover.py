@@ -104,13 +104,17 @@ async def test_cooldown_scope_monotonic_and_persistent(pool):
 
 
 @pytest.mark.parametrize("count_tokens", [False, True])
-async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch, count_tokens):
+@pytest.mark.parametrize("status", [401, 429])
+async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch, count_tokens, status):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from app.modules.claude import transport
+    from app.modules.claude.client import ClaudeClient
+    from tests.integration.test_claude_auth_recovery import rotated
 
+    monkeypatch.setattr(ClaudeClient, "refresh", AsyncMock(side_effect=rotated))
     sent, closed = [], []
 
     @asynccontextmanager
@@ -131,7 +135,7 @@ async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch
         )
         try:
             yield SimpleNamespace(
-                status=429 if failed else 200, headers={"Retry-After": "120"}, json=AsyncMock(return_value=data)
+                status=status if failed else 200, headers={"Retry-After": "120"}, json=AsyncMock(return_value=data)
             )
         finally:
             closed.append(True)
@@ -225,9 +229,16 @@ async def test_disconnect_between_attempts_stops_recovery(async_client, pool, mo
 
 
 @pytest.mark.parametrize("search", [False, True])
-async def test_bound_history_preserves_original_refusal(async_client, pool, monkeypatch, search):
+@pytest.mark.parametrize("status", [401, 429])
+async def test_bound_history_preserves_original_refusal(async_client, pool, monkeypatch, search, status):
+    from unittest.mock import AsyncMock
+
     from app.modules.claude import transport
+    from app.modules.claude.client import ClaudeClient
+    from tests.integration.test_claude_auth_recovery import rotated
     from tests.unit.test_claude_search import search_content
+
+    monkeypatch.setattr(ClaudeClient, "refresh", AsyncMock(side_effect=rotated))
 
     captured, _ = install_upstream(
         monkeypatch,
@@ -249,8 +260,8 @@ async def test_bound_history_preserves_original_refusal(async_client, pool, monk
     async def refuse(source, *args, **kwargs):
         sent.append(source.id)
         raise ModelSourceForwardingError(
-            status_code=429,
-            upstream_status_code=429,
+            status_code=status,
+            upstream_status_code=status,
             payload={"error": {"message": "original quota refusal"}},
             retry_after="123",
         )
@@ -261,10 +272,10 @@ async def test_bound_history_preserves_original_refusal(async_client, pool, monk
         body["tools"] = [{"type": "web_search"}]
         body["input"].append({"role": "user", "content": "continue"})
     result = await async_client.post("/v1/responses", headers=headers, json=body)
-    assert result.status_code == 429, result.text
+    assert result.status_code == status, result.text
     assert result.headers["retry-after"] == "123"
     assert "original quota refusal" in result.text
-    assert sent == [captured[0][0]]
+    assert sent == [captured[0][0]] * (2 if status == 401 else 1)
 
 
 async def test_late_stream_error_never_rotates(async_client, pool, monkeypatch):

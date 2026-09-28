@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from app.core.crypto import TokenEncryptor
@@ -16,6 +17,12 @@ def grant_fingerprint(credentials: Credentials) -> str:
     return hashlib.sha256(credentials.refresh_token.get_secret_value().encode()).hexdigest()
 
 
+@dataclass(frozen=True)
+class CredentialSnapshot:
+    credentials: Credentials = field(repr=False)
+    generation: int
+
+
 class ClaudeAuth:
     def __init__(self, repository: ClaudeRepository, client: ClaudeClient, encryptor: TokenEncryptor) -> None:
         self.repository = repository
@@ -23,6 +30,9 @@ class ClaudeAuth:
         self.encryptor = encryptor
 
     async def credentials(self, source_id: str) -> Credentials:
+        return (await self.snapshot(source_id)).credentials
+
+    async def snapshot(self, source_id: str, *, rejected_generation: int | None = None) -> CredentialSnapshot:
         row = await self.repository.get(source_id)
         if row is None:
             raise ClaudeError("Claude account not found")
@@ -34,12 +44,13 @@ class ClaudeAuth:
             # after a lease timeout: upstream might have rotated the token.
             raise ClaudeError("Claude refresh is in progress or its outcome is uncertain")
         credentials = decrypt_credentials(row.credentials_encrypted, self.encryptor)
-        if credentials.expires_at > now + timedelta(seconds=60):
+        generation = row.generation
+        force = rejected_generation is not None and generation == rejected_generation
+        if credentials.expires_at > now + timedelta(seconds=60) and not force:
             await bind_identity(self.client, self.repository, source_id, credentials)
-            return credentials
+            return CredentialSnapshot(credentials, generation)
         if row.retry_at is not None and row.retry_at > now.replace(tzinfo=None):
             raise ClaudeError("Claude refresh is cooling down; retry later")
-        generation = row.generation
         intent = uuid.uuid4().hex
         if not await self.repository.claim_refresh(source_id, generation, intent, now.replace(tzinfo=None)):
             raise ClaudeError("Claude credentials changed or refresh is already in progress; retry later")
@@ -70,4 +81,4 @@ class ClaudeAuth:
         ):
             raise ClaudeError("Claude credentials changed during refresh; retry with the current account")
         await bind_identity(self.client, self.repository, source_id, updated)
-        return updated
+        return CredentialSnapshot(updated, generation + 1)

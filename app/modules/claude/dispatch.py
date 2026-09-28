@@ -40,6 +40,7 @@ class PreparedClaudeRequest:
     transformations: tuple[str, ...]
     logical_body: dict[str, JsonValue] = field(repr=False)
     conversation_id: str
+    credential_generation: int
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
 
 
@@ -193,7 +194,7 @@ class ClaudeDispatchPreparer:
             stream=projected.body.get("stream") is True,
         )
         source_id = account.source_id
-        credentials = await self.auth.credentials(source_id)
+        snapshot = await self.auth.snapshot(source_id)
         # A pause or quota refresh may have committed while token
         # rotation was in flight. Re-read instead of using the earlier ORM view.
         session.expire_all()
@@ -205,7 +206,7 @@ class ClaudeDispatchPreparer:
             owner_source_id=source_id,
             require_streaming=logical.get("stream") is True,
         )
-        headers["authorization"] = f"Bearer {credentials.access_token.get_secret_value()}"
+        headers["authorization"] = f"Bearer {snapshot.credentials.access_token.get_secret_value()}"
         return PreparedClaudeRequest(
             source=account.source,
             url=CLAUDE_BASE_URL
@@ -216,4 +217,5 @@ class ClaudeDispatchPreparer:
             transformations=transformations,
             logical_body=deepcopy(logical),
             conversation_id=conversation_id,
+            credential_generation=snapshot.generation,
         )

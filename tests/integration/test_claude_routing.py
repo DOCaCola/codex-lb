@@ -246,7 +246,7 @@ async def test_invalid_payload_rejected_before_token_refresh(pool):
 
     async with SessionLocal() as session:
         preparer = ClaudeDispatchPreparer(ClaudeRepository(session))
-        preparer.auth.credentials = AsyncMock()
+        preparer.auth.snapshot = AsyncMock()
         with pytest.raises(ClaudeError):
             await preparer.prepare(
                 {"model": MODEL, "max_tokens": 100, "messages": []},
@@ -256,4 +256,4 @@ async def test_invalid_payload_rejected_before_token_refresh(pool):
                 endpoint="messages",
                 translated=True,
             )
-        preparer.auth.credentials.assert_not_awaited()
+        preparer.auth.snapshot.assert_not_awaited()

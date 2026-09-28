@@ -68,6 +68,26 @@ class ClaudeRepository:
         await self.session.commit()
         return claimed is not None
 
+    async def backoff_rejected_generation(self, source_id: str, generation: int, now: datetime) -> None:
+        from sqlalchemy import case
+
+        until = now + timedelta(minutes=10)
+        await self.session.execute(
+            update(ClaudeAccount)
+            .where(
+                ClaudeAccount.source_id == source_id,
+                ClaudeAccount.generation == generation,
+                ClaudeAccount.credential_status == "ready",
+                ClaudeAccount.refresh_intent.is_(None),
+            )
+            .values(
+                retry_at=case((ClaudeAccount.retry_at > until, ClaudeAccount.retry_at), else_=until),
+                version=ClaudeAccount.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+
     async def finish_refresh(
         self,
         source_id: str,

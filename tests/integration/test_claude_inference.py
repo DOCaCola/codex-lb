@@ -465,7 +465,7 @@ async def test_invalid_native_identity_fails_before_refresh(async_client, pool, 
     from app.modules.claude.auth import ClaudeAuth
 
     refresh = AsyncMock()
-    monkeypatch.setattr(ClaudeAuth, "credentials", refresh)
+    monkeypatch.setattr(ClaudeAuth, "snapshot", refresh)
     captured, _ = install_upstream(monkeypatch)
     response = await async_client.post(
         "/v1/messages",
@@ -701,25 +701,31 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("search", [None, False, True])
-@pytest.mark.parametrize("failover", [False, True])
+@pytest.mark.parametrize("failover", [False, 429, 401])
 async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search, failover):
     from tests.unit.test_claude_search import search_content
 
     captured, closed = install_upstream(monkeypatch, content=search_content() if search else None)
     if failover:
+        from unittest.mock import AsyncMock
+
         from app.modules.claude import transport
+        from app.modules.claude.client import ClaudeClient
         from app.modules.model_sources.forwarding import ModelSourceForwardingError
+        from tests.integration.test_claude_auth_recovery import rotated
 
         original = transport._open_source_stream
         refused = []
+        if failover == 401:
+            monkeypatch.setattr(ClaudeClient, "refresh", AsyncMock(side_effect=rotated))
 
         async def send(source, *args, **kwargs):
             if not refused:
                 refused.append(source.id)
                 raise ModelSourceForwardingError(
-                    status_code=429, upstream_status_code=429, payload={"error": {"message": "limited"}}
+                    status_code=failover, upstream_status_code=failover, payload={"error": {"message": "refused"}}
                 )
-            assert source.id != refused[0]
+            assert (source.id == refused[0]) == (failover == 401)
             return await original(source, *args, **kwargs)
 
         monkeypatch.setattr(transport, "_open_source_stream", send)

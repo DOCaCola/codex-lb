@@ -42,6 +42,7 @@ async def prepare_responses(
     continuation: SourceContinuation,
     *,
     excluded_source_ids: frozenset[str] = frozenset(),
+    retry_source_id: str | None = None,
 ) -> ClaudeAttempt:
     model = payload.get("model")
     if not isinstance(model, str):
@@ -59,7 +60,7 @@ async def prepare_responses(
             model,
             api_key,
             conversation_id=conversation_id,
-            owner_source_id=replay.owner_source_id,
+            owner_source_id=replay.owner_source_id or retry_source_id,
             preferred_source_id=replay.preferred_source_id,
             excluded_source_ids=excluded_source_ids,
         )

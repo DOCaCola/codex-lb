@@ -5386,7 +5386,13 @@ async def _dispatch_source_responses_response(
     native_request: PreparedClaudeRequest | None = None,
     count_tokens: bool = False,
 ) -> Response:
-    from app.modules.claude.failover import FailoverState, classify_refusal, record_refusal
+    from app.modules.claude.failover import (
+        FailoverState,
+        classify_refusal,
+        is_authentication_failure,
+        record_refusal,
+        recover_authentication,
+    )
 
     recovery = FailoverState() if source.kind == "claude" else None
     while True:
@@ -5411,6 +5417,15 @@ async def _dispatch_source_responses_response(
         except ModelSourceForwardingError as exc:
             if recovery is None or recovery.stream_opened or recovery.budget.remaining == remaining:
                 raise
+            if is_authentication_failure(exc):
+                recovery.last_error = exc
+                if await request.is_disconnected():
+                    return Response()
+                await recover_authentication(recovery, payload.model, api_key)
+                if recovery.budget.remaining == 0:
+                    raise
+                await anyio.lowlevel.checkpoint()
+                continue
             refusal = classify_refusal(exc, now=datetime.now(timezone.utc))
             if refusal is None:
                 raise
@@ -5418,6 +5433,7 @@ async def _dispatch_source_responses_response(
             # The attempt helper has already settled and released admission.
             await record_refusal(recovery.source_id, payload.model, refusal)
             recovery.excluded.add(recovery.source_id)
+            recovery.retry_source_id = None
             recovery.last_error = exc
             if recovery.budget.remaining == 0:
                 raise
@@ -5483,7 +5499,7 @@ async def _dispatch_source_responses_attempt(
         if native_request is not None:
             from app.modules.claude.inference import ClaudeAttempt
 
-            if claude_recovery is not None and claude_recovery.excluded:
+            if claude_recovery is not None and claude_recovery.last_error is not None:
                 from app.db.session import detach_session_objects
                 from app.modules.claude.dispatch import ClaudeDispatchPreparer
                 from app.modules.claude.repository import ClaudeRepository
@@ -5497,6 +5513,7 @@ async def _dispatch_source_responses_attempt(
                         endpoint="count_tokens" if count_tokens else "messages",
                         translated=False,
                         excluded_source_ids=frozenset(claude_recovery.excluded),
+                        owner_source_id=claude_recovery.retry_source_id,
                     )
                     detach_session_objects(session)
                 source = native_request.source
@@ -5509,6 +5526,7 @@ async def _dispatch_source_responses_attempt(
                 api_key,
                 continuation,
                 excluded_source_ids=frozenset(claude_recovery.excluded) if claude_recovery else frozenset(),
+                retry_source_id=claude_recovery.retry_source_id if claude_recovery else None,
             )
             source = claude_attempt.prepared.source
         if claude_attempt is not None and claude_recovery is not None:
@@ -5518,6 +5536,7 @@ async def _dispatch_source_responses_attempt(
             if native_request is not None:
                 native_request = claude_attempt.prepared
             claude_recovery.source_id = source.id
+            claude_recovery.credential_generation = claude_attempt.prepared.credential_generation
             if claude_recovery.excluded:
                 logger.info(
                     "claude_account_failover source_id=%s excluded_count=%d sends_remaining=%d",

@@ -13,8 +13,15 @@ from sqlalchemy import case
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.core.crypto import TokenEncryptor
 from app.db.models import ClaudeCooldown
 from app.db.session import get_background_session
+from app.modules.api_keys.service import ApiKeyData
+from app.modules.claude.auth import ClaudeAuth
+from app.modules.claude.client import ClaudeClient
+from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.repository import ClaudeRepository
+from app.modules.claude.routing import select_account
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 logger = logging.getLogger(__name__)
@@ -37,6 +44,47 @@ class FailoverState:
     source_id: str | None = None
     last_error: ModelSourceForwardingError | None = None
     stream_opened: bool = False
+    credential_generation: int | None = None
+    auth_retried: set[str] = field(default_factory=set)
+    retry_source_id: str | None = None
+
+
+def is_authentication_failure(error: ModelSourceForwardingError) -> bool:
+    if error.upstream_status_code != 401:
+        return False
+    detail = error.payload.get("error")
+    return isinstance(detail, dict) and detail.get("type") in (None, "authentication_error")
+
+
+async def recover_authentication(state: FailoverState, model: str, api_key: ApiKeyData | None) -> None:
+    assert state.source_id is not None and state.credential_generation is not None
+    source_id = state.source_id
+    state.retry_source_id = None
+    async with get_background_session() as session:
+        repository = ClaudeRepository(session)
+        if source_id in state.auth_retried:
+            await repository.backoff_rejected_generation(
+                source_id, state.credential_generation, datetime.now(UTC).replace(tzinfo=None)
+            )
+            state.excluded.add(source_id)
+            logger.info("claude_auth_recovery source_id=%s outcome=rejected_again", source_id)
+            return
+        if state.budget.remaining == 0:
+            return
+        state.auth_retried.add(source_id)
+        try:
+            # Authorization and current eligibility still precede refresh.
+            await select_account(session, model, api_key, conversation_id="", owner_source_id=source_id)
+            await ClaudeAuth(repository, ClaudeClient(), TokenEncryptor()).snapshot(
+                source_id, rejected_generation=state.credential_generation
+            )
+        except ClaudeError:
+            # Auth owns terminal/backoff/uncertain state. Never rewrite it here.
+            state.excluded.add(source_id)
+            logger.info("claude_auth_recovery source_id=%s outcome=unavailable", source_id)
+            return
+    state.retry_source_id = source_id
+    logger.info("claude_auth_recovery source_id=%s outcome=reprepare", source_id)
 
 
 @dataclass(frozen=True)

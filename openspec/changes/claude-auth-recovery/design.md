@@ -1,0 +1,5 @@
+## Decisions
+Return a token/generation snapshot from the auth layer, while keeping the existing credentials-only API for management consumers. An unchanged generation can force refresh through the durable intent claim; an advanced generation is reused. One authentication recovery per source per logical request; inference retries share the existing four-send limit. Refresh failures never retry an ambiguous token exchange. Repeated401 applies a ten-minute retry_at backoff only to the same ready generation with no active refresh intent; it does not mark the grant revoked. Expiry-based refresh or operator reconnect can subsequently recover the account. Rebuild identity and history and revalidate authorization before sending. Portable histories may use alternatives after failed recovery; hard ownership remains strict.
+
+## References
+CLIProxyAPI refresh-before-fallback; Sub2API stale-snapshot overwrite regression; OmniRoute persistence-before-replay. Our durable multi-worker intent mechanism remains authoritative.
