@@ -5,8 +5,9 @@ from sqlalchemy import select
 
 from app.db.models import ClaudeCooldown
 from app.db.session import SessionLocal
-from app.modules.claude.failover import Refusal, record_refusal
+from app.modules.claude.failover import Refusal, record_refusals
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
+from tests.claude_quota_helpers import overage_headers
 from tests.integration.test_claude_inference import MODEL, install_upstream
 from tests.integration.test_claude_routing import choose
 from tests.integration.test_claude_routing import pool as pool
@@ -24,7 +25,10 @@ pytestmark = pytest.mark.integration
         ("/backend-api/codex/responses", False),
     ],
 )
-async def test_retry_rebuilds_account_identity_after_settlement(async_client, pool, monkeypatch, path, stream):
+@pytest.mark.parametrize("quota_kind", ["generic", "overage", "mixed"])
+async def test_retry_rebuilds_account_identity_after_settlement(
+    async_client, pool, monkeypatch, path, stream, quota_kind
+):
     from app.modules.claude import transport
     from app.modules.proxy.source_dispatch import SourceDispatch
 
@@ -46,6 +50,7 @@ async def test_retry_rebuilds_account_identity_after_settlement(async_client, po
                 upstream_status_code=429,
                 payload={"error": {"message": "limited"}},
                 retry_after="120",
+                upstream_headers=overage_headers(mixed=quota_kind == "mixed") if quota_kind != "generic" else {},
             )
         assert settled == [failed[0][0]]
         return await original(source, route, body, **kwargs)
@@ -67,6 +72,17 @@ async def test_retry_rebuilds_account_identity_after_settlement(async_client, po
     async with SessionLocal() as session:
         cooldown = await session.get(ClaudeCooldown, (failed[0][0], MODEL))
         assert cooldown is not None
+        account_cooldown = await session.get(ClaudeCooldown, (failed[0][0], "*"))
+        assert (account_cooldown is not None) == (quota_kind == "mixed")
+    if quota_kind == "overage":
+        assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=failed[0][0]) == failed[0][0]
+    elif quota_kind == "mixed":
+        assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=failed[0][0]) != failed[0][0]
+        later = datetime.now(UTC) + timedelta(hours=3)
+        assert (
+            await choose(model="anthropic/claude-sonnet-5", preferred_source_id=failed[0][0], now=later) == failed[0][0]
+        )
+        assert await choose(preferred_source_id=failed[0][0], now=later) != failed[0][0]
 
 
 async def test_entitlement_preserves_pool(async_client, pool, monkeypatch):
@@ -92,15 +108,44 @@ async def test_entitlement_preserves_pool(async_client, pool, monkeypatch):
 
 async def test_cooldown_scope_monotonic_and_persistent(pool):
     now = datetime.now(UTC)
-    await record_refusal(pool[0], MODEL, Refusal("model", now + timedelta(hours=1), "retry_after"))
-    await record_refusal(pool[0], MODEL, Refusal("model", now + timedelta(seconds=5), "retry_after"))
+    await record_refusals(pool[0], MODEL, (Refusal("model", now + timedelta(hours=1), "retry_after"),))
+    await record_refusals(pool[0], MODEL, (Refusal("model", now + timedelta(seconds=5), "retry_after"),))
     assert await choose(preferred_source_id=pool[0]) == pool[1]
     assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=pool[0]) == pool[0]
     async with SessionLocal() as session:
         row = await session.get(ClaudeCooldown, (pool[0], MODEL))
         assert row.until.replace(tzinfo=UTC) == now + timedelta(hours=1)
-    await record_refusal(pool[0], MODEL, Refusal("account", now + timedelta(hours=1), "reset"))
+    await record_refusals(pool[0], MODEL, (Refusal("account", now + timedelta(hours=1), "reset"),))
     assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=pool[0]) == pool[1]
+
+
+async def test_mixed_restrictions_are_atomic(pool, monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    execute = AsyncSession.execute
+    writes = 0
+
+    async def fail_second_write(self, statement, *args, **kwargs):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise RuntimeError("simulated persistence failure")
+        return await execute(self, statement, *args, **kwargs)
+
+    now = datetime.now(UTC)
+    with monkeypatch.context() as patch:
+        patch.setattr(AsyncSession, "execute", fail_second_write)
+        with pytest.raises(RuntimeError, match="simulated persistence failure"):
+            await record_refusals(
+                pool[0],
+                MODEL,
+                (
+                    Refusal("account", now + timedelta(hours=2), "reset"),
+                    Refusal("model", now + timedelta(hours=80), "reset"),
+                ),
+            )
+    async with SessionLocal() as session:
+        assert list(await session.scalars(select(ClaudeCooldown))) == []
 
 
 @pytest.mark.parametrize("count_tokens", [False, True])
@@ -136,7 +181,7 @@ async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch
         try:
             yield SimpleNamespace(
                 status=status if failed else 200,
-                headers={"Retry-After": "0" if status == 529 else "120"},
+                headers=overage_headers() if status == 429 else {"Retry-After": "0" if status == 529 else "120"},
                 json=AsyncMock(return_value=data),
             )
         finally:
@@ -154,6 +199,12 @@ async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch
     assert response.status_code == 200, response.text
     assert len(sent) == len(closed) == 2
     assert (sent[0] == sent[1]) == (status == 529)
+    if status == 429:
+        async with SessionLocal() as session:
+            rows = list(await session.scalars(select(ClaudeCooldown)))
+            assert len(rows) == 1 and rows[0].model == MODEL
+            source_id = rows[0].source_id
+        assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=source_id) == source_id
 
 
 @pytest.mark.parametrize("status", [429, 529])
@@ -209,7 +260,7 @@ async def test_disconnect_between_attempts_stops_recovery(async_client, pool, mo
 
     disconnected = False
     sent = []
-    record = failover.record_refusal
+    record = failover.record_refusals
 
     async def record_then_disconnect(*args):
         nonlocal disconnected
@@ -225,7 +276,7 @@ async def test_disconnect_between_attempts_stops_recovery(async_client, pool, mo
             status_code=429, upstream_status_code=429, payload={"error": {"message": "limited"}}
         )
 
-    monkeypatch.setattr(failover, "record_refusal", record_then_disconnect)
+    monkeypatch.setattr(failover, "record_refusals", record_then_disconnect)
     monkeypatch.setattr(Request, "is_disconnected", is_disconnected)
     monkeypatch.setattr(transport, "_open_source_stream", send)
     await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hi", "stream": True})

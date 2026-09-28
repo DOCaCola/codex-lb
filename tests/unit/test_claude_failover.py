@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.modules.claude.failover import SendBudget, classify_refusal
+from app.modules.claude.failover import SendBudget, classify_refusals
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 pytestmark = pytest.mark.unit
@@ -10,7 +10,7 @@ NOW = datetime(2026, 9, 28, tzinfo=UTC)
 
 
 def refusal(message="limited", retry=None, headers=None, status=429):
-    return classify_refusal(
+    result = classify_refusals(
         ModelSourceForwardingError(
             status_code=status,
             upstream_status_code=status,
@@ -20,6 +20,7 @@ def refusal(message="limited", retry=None, headers=None, status=429):
         ),
         now=NOW,
     )
+    return result[0] if result else None
 
 
 @pytest.mark.parametrize("message", ["Usage credits are required for fast mode.", "Fast request rejected"])

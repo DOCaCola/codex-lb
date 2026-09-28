@@ -701,7 +701,7 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("search", [None, False, True])
-@pytest.mark.parametrize("failover", [False, 429, 401, 529, "capacity"])
+@pytest.mark.parametrize("failover", [False, 429, 401, 529, "capacity", "overage", "mixed"])
 async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search, failover):
     from tests.unit.test_claude_search import search_content
 
@@ -742,6 +742,7 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
         from app.modules.claude import transport
         from app.modules.claude.client import ClaudeClient
         from app.modules.model_sources.forwarding import ModelSourceForwardingError
+        from tests.claude_quota_helpers import overage_headers
         from tests.integration.test_claude_auth_recovery import rotated
 
         original = transport._open_source_stream
@@ -753,7 +754,12 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
             if not refused:
                 refused.append(source.id)
                 raise ModelSourceForwardingError(
-                    status_code=failover, upstream_status_code=failover, payload={"error": {"message": "refused"}}
+                    status_code=429 if failover in {"overage", "mixed"} else failover,
+                    upstream_status_code=429 if failover in {"overage", "mixed"} else failover,
+                    payload={"error": {"message": "refused"}},
+                    upstream_headers=overage_headers(mixed=failover == "mixed")
+                    if failover in {"overage", "mixed"}
+                    else {},
                 )
             assert (source.id == refused[0]) == (failover in {401, 529})
             return await original(source, *args, **kwargs)
@@ -813,6 +819,16 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
         row = await session.get(ClaudeAccount, captured[-1][0])
         state = AccountState.model_validate_json(row.state_json)
     assert state.header_usage["five_hour"].window.utilization == 25
+    if failover in {"overage", "mixed"}:
+        from datetime import UTC, datetime, timedelta
+
+        from tests.integration.test_claude_routing import choose
+
+        later = datetime.now(UTC) + timedelta(hours=3)
+        if failover == "overage":
+            assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=refused[0]) == refused[0]
+        assert await choose(model="anthropic/claude-sonnet-5", preferred_source_id=refused[0], now=later) == refused[0]
+        assert await choose(preferred_source_id=refused[0], now=later) != refused[0]
 
 
 @pytest.mark.parametrize("limit", [None, 0, -1, True, 999999])

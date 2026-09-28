@@ -5389,9 +5389,9 @@ async def _dispatch_source_responses_response(
     from app.modules.claude.admission import ClaudeCapacityBusy
     from app.modules.claude.failover import (
         FailoverState,
-        classify_refusal,
+        classify_refusals,
         is_authentication_failure,
-        record_refusal,
+        record_refusals,
         recover_authentication,
     )
     from app.modules.claude.overload import is_overload, retry_delay, wait_for_retry
@@ -5456,12 +5456,12 @@ async def _dispatch_source_responses_response(
                     raise
                 await anyio.lowlevel.checkpoint()
                 continue
-            refusal = classify_refusal(exc, now=datetime.now(timezone.utc))
-            if refusal is None:
+            refusals = classify_refusals(exc, now=datetime.now(timezone.utc))
+            if not refusals:
                 raise
             assert recovery.source_id is not None
             # The attempt helper has already settled and released admission.
-            await record_refusal(recovery.source_id, payload.model, refusal)
+            await record_refusals(recovery.source_id, payload.model, refusals)
             recovery.excluded.add(recovery.source_id)
             recovery.retry_source_id = None
             recovery.last_error = exc

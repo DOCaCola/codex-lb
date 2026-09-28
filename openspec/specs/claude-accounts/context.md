@@ -221,3 +221,32 @@ model-specific 1.02 window; they do not establish account-wide exhaustion. These
 are third-party reports, not our own live capture, and the upstream cause of
 overshoot is not established. Inspected snapshots: OpenCodex 3cc34e118192 and
 Sub2API 9a62841fd124 (2026-09-28).
+
+### Scoped overage refusals
+
+Unified rejection can describe the requested model's overage claim while included
+subscription windows remain healthy. Classify scope before assigning deadlines.
+Explicit shared rejection still blocks the account; overage evidence plus healthy
+shared windows blocks only the requested model. Allowed_warning is healthy.
+An omitted status requires finite utilization below one and the other window
+explicitly allowed; unknown is not healthy. Structured credits_required is model
+entitlement evidence, not a reason to disable siblings. Fast-mode refusals retain
+their separate no-failover policy.
+
+Mixed failures persist both scopes atomically. For example, shared reset in two
+hours and special-model reset in eighty hours must let siblings resume after two
+hours while retaining the model restriction. Retry-After and aggregate reset are
+assigned to the representative claim's scope, or the sole unambiguous scope.
+Explicit scoped resets remain lower bounds even with shorter retry hints. Missing
+attributable deadlines use the existing sixty-second default. No new spending
+policy or model-family entitlement inference is introduced. Existing deadlines
+only extend; historical ambiguous cooldowns are not automatically rewritten.
+
+This adapts CLIProxyAPI acdace936fa7's conservative classification and integration
+tests for issues 5915/5920, and Sub2API 9a62841fd124's independent shared/model
+restrictions. CLIProxyAPI fix 1cce9325738f discards overage Retry-After to avoid
+credential-wide backoff; here scope and deadline stay coupled, so model-only
+deadlines can be retained. Sub2API fix 222181efd6be restricts credits_required
+handling to Fable; our structured error applies to the requested model without
+copying its family mapping. These are source/test adaptations, not live OAuth
+qualification. No schema migration or operator setting is needed.
