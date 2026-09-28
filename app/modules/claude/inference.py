@@ -17,6 +17,7 @@ from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.dispatch import ClaudeDispatchPreparer, PreparedClaudeRequest
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
+from app.modules.claude.replay import authenticate_replay
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.responses import ResponsesProjection
 from app.modules.claude.routing import select_account
@@ -46,28 +47,26 @@ async def prepare_responses(
     conversation_id = continuation.scope.conversation_id
     client_scope = api_key.id if api_key else "anonymous"
     opaque = ClaudeOpaqueState(TokenEncryptor())
-    owner: str | None = None
-    restored: dict[str, dict[str, PydanticJsonValue]] = {}
-    items = payload.get("input")
-    if isinstance(items, list):
-        for item in items:
-            if not isinstance(item, dict) or item.get("type") != "reasoning":
-                continue
-            token = item.get("encrypted_content")
-            if not isinstance(token, str):
-                continue
-            block = opaque.decode(token, model=model, client_scope=client_scope, conversation_id=conversation_id)
-            if owner is not None and owner != block.source_id:
-                raise ClientPayloadError("Claude signed history contains multiple account owners", param="input")
-            owner = block.source_id
-            restored[token] = block.block
+    logical = cast(dict[str, PydanticJsonValue], payload)
+    replay = authenticate_replay(
+        logical, opaque, model=model, client_scope=client_scope, conversation_id=conversation_id
+    )
     async with get_background_session() as session:
-        account = await select_account(session, model, api_key, conversation_id=conversation_id, owner_source_id=owner)
+        account = await select_account(
+            session,
+            model,
+            api_key,
+            conversation_id=conversation_id,
+            owner_source_id=replay.owner_source_id,
+            preferred_source_id=replay.preferred_source_id,
+        )
         selected = next(row for row in account.source.models if row.model == model)
         projection = project_responses(
-            cast(dict[str, PydanticJsonValue], payload),
+            replay.project(logical, source_id=account.source_id, model=model),
             max_output_tokens=selected.max_output_tokens or 8192,
-            restore_reasoning=restored.__getitem__,
+            restore_reasoning=lambda token: (
+                opaque.decode(token, model=model, client_scope=client_scope, conversation_id=conversation_id).block
+            ),
         )
         prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
             projection.body,

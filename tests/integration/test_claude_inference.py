@@ -598,6 +598,48 @@ async def test_translated_disabled_thinking_does_not_enable_thinking_beta(async_
     assert "x-stainless-helper-method" not in headers
 
 
+@pytest.mark.parametrize("switch", ["account", "model", "none"])
+async def test_completed_thinking_recovery_through_responses(async_client, pool, monkeypatch, switch):
+    captured, _ = install_upstream(
+        monkeypatch,
+        content=[
+            {"type": "thinking", "thinking": "reason", "signature": "signed"},
+            {"type": "text", "text": "visible answer"},
+        ],
+    )
+    headers = {"session_id": "translated-recovery"}
+    first = await async_client.post(
+        "/v1/responses", headers=headers, json={"model": MODEL, "input": "Hello", "stream": False}
+    )
+    assert first.status_code == 200, first.text
+    original_source = captured[0][0]
+    if switch == "account":
+        from app.db.models import ModelSource
+        from app.db.session import SessionLocal
+
+        async with SessionLocal() as session:
+            source = await session.get(ModelSource, original_source)
+            source.is_enabled = False
+            await session.commit()
+    second = await async_client.post(
+        "/v1/responses",
+        headers=headers,
+        json={
+            "model": "anthropic/claude-sonnet-5" if switch == "model" else MODEL,
+            "input": "Continue",
+            "stream": False,
+            "previous_response_id": first.json()["id"],
+        },
+    )
+    assert second.status_code == 200, second.text
+    body = captured[1][2]
+    blocks = [block for message in body["messages"] for block in message["content"]]
+    assert any(block.get("text") == "visible answer" for block in blocks)
+    assert any(block.get("type") == "thinking" for block in blocks) == (switch == "none")
+    if switch == "account":
+        assert captured[1][0] != original_source
+
+
 async def test_claude_continuation_replayed_from_persisted_response(async_client, pool, monkeypatch):
     captured, _ = install_upstream(monkeypatch)
     first = await async_client.post(
@@ -618,6 +660,43 @@ async def test_claude_continuation_replayed_from_persisted_response(async_client
     assert second.status_code == 200, second.text
     assert len(captured[1][2]["messages"]) == 3
     assert captured[1][2]["messages"][1]["content"][0]["text"] == "Hello from Claude"
+
+
+async def test_active_thinking_model_switch_rejected_before_dispatch(async_client, pool, monkeypatch):
+    from app.core.openai.exceptions import ClientPayloadError
+    from app.modules.claude import inference
+
+    rejected = []
+    authenticate = inference.authenticate_replay
+
+    def observe(*args, **kwargs):
+        try:
+            return authenticate(*args, **kwargs)
+        except ClientPayloadError as exc:
+            rejected.append(str(exc))
+            raise
+
+    monkeypatch.setattr(inference, "authenticate_replay", observe)
+    captured, _ = install_upstream(
+        monkeypatch,
+        content=[
+            {"type": "thinking", "thinking": "reason", "signature": "signed"},
+            {"type": "text", "text": "answer"},
+        ],
+    )
+    headers = {"session_id": "active-recovery"}
+    first = await async_client.post(
+        "/v1/responses", headers=headers, json={"model": MODEL, "input": "Hello", "stream": False}
+    )
+    assert first.status_code == 200, first.text
+    second = await async_client.post(
+        "/v1/responses",
+        headers=headers,
+        json={"model": "anthropic/claude-sonnet-5", "input": first.json()["output"], "stream": False},
+    )
+    assert second.status_code == 400, second.text
+    assert rejected == ["Active Claude reasoning or search requires its original model"]
+    assert len(captured) == 1
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
