@@ -12,6 +12,8 @@ from app.core.auth.dependencies import (
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
 from app.dependencies import get_claude_service
 from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.reset_schemas import ConsumeGrant, ConsumeView, GrantsView
+from app.modules.claude.resets import ClaudeResets
 from app.modules.claude.schemas import (
     ClaudeAccountResponse,
     ClaudeAccountsResponse,
@@ -68,6 +70,34 @@ async def account_trends(source_id: str, service: ClaudeService = Depends(get_cl
     if await service.repository.get(source_id) is None:
         raise DashboardNotFoundError("Claude account not found")
     return await read_trends(service.repository.session, source_id, quota=True)
+
+
+@router.get("/{source_id}/reset-grants", response_model=GrantsView)
+async def reset_grants(source_id: str, service: ClaudeService = Depends(get_claude_service)) -> GrantsView:
+    try:
+        return await ClaudeResets(service.repository).read(source_id)
+    except ModelSourceNotFoundError as exc:
+        raise DashboardNotFoundError(str(exc)) from exc
+    except ClaudeError as exc:
+        raise DashboardBadRequestError(str(exc), code="claude_reset_unavailable") from exc
+
+
+@router.post("/{source_id}/reset-grants/consume", response_model=ConsumeView)
+async def consume_reset_grant(
+    source_id: str,
+    payload: ConsumeGrant,
+    request: Request,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+    service: ClaudeService = Depends(get_claude_service),
+) -> ConsumeView:
+    try:
+        result = await ClaudeResets(service.repository).consume(source_id, payload)
+    except ModelSourceNotFoundError as exc:
+        raise DashboardNotFoundError(str(exc)) from exc
+    except ClaudeError as exc:
+        raise DashboardBadRequestError(str(exc), code="claude_reset_refused") from exc
+    _audit(request, principal, "claude_reset_requested", source_id)
+    return result
 
 
 @router.post("/oauth/start", response_model=OAuthStarted)

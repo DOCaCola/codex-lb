@@ -15,11 +15,17 @@ def _window(name: WindowName, value: QuotaWindow | None, state: AccountState, no
     poll_failed = state.usage_error is not None
     observation = state.header_usage.get(name) if name in {"five_hour", "seven_day"} else None
     poll_order = state.usage_requested_at or state.usage_updated_at
+    requested_at = poll_order
     if observation is not None and (poll_order is None or observation.requested_at > poll_order):
         value = observation.window
         observed_at = observation.observed_at
         provenance = "inference_header"
         poll_failed = False
+        requested_at = observation.requested_at
+    barrier = state.reset_barriers.get(name)
+    if barrier is not None and (requested_at is None or requested_at <= barrier):
+        value = None
+        observed_at = None
     expired = value is not None and value.resets_at is not None and value.resets_at <= now
     unknown = value is None or observed_at is None or expired
     stale = poll_failed or (observed_at is not None and now - observed_at >= QUOTA_FRESHNESS)

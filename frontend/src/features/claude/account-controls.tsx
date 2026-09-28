@@ -16,6 +16,7 @@ import { useClaude } from "./use-claude";
 import type { ClaudeAccount, ClaudeSelection, OAuthStarted } from "./api";
 import { ClaudeVersionControls } from "./version-controls";
 import { ClaudeCapacitySettings } from "./capacity-settings";
+import { ClaudeResetGrants } from "./reset-grants";
 
 function ModelSelection({
   account,
@@ -275,6 +276,7 @@ export function ClaudeAccountControls({
         {new Date(account.expiresAt).toLocaleString()}.
       </p>
       <ClaudeQuota account={account} detailed />
+      <ClaudeResetGrants key={account.id} accountId={account.id} readOnly={readOnly} />
       <ProviderAccountTrends provider="claude" accountId={account.id} />
       <p className="text-xs text-muted-foreground">
         Quota observations are provider-reported. Recorded API-equivalent costs

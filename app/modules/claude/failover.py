@@ -9,10 +9,6 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Literal
 
-from sqlalchemy import case
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
 from app.core.crypto import TokenEncryptor
 from app.db.models import ClaudeCooldown
 from app.db.session import get_background_session
@@ -20,8 +16,10 @@ from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.auth import ClaudeAuth
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.quota_evidence import Evidence, Restriction, lock_account, read_evidence, save_evidence
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.routing import select_account
+from app.modules.claude.schemas import AccountState
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 logger = logging.getLogger(__name__)
@@ -30,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SendBudget:
     remaining: int = 4
+    requested_at: datetime | None = None
 
     def consume(self) -> None:
         if self.remaining <= 0:
@@ -93,6 +92,7 @@ class Refusal:
     scope: Literal["account", "model"]
     until: datetime
     reason: Literal["retry_after", "reset", "default"]
+    window: str = "unknown"
 
 
 def _reset(raw: str | None, now: datetime) -> datetime | None:
@@ -185,38 +185,60 @@ def classify_refusals(error: ModelSourceForwardingError, *, now: datetime) -> tu
     ):
         if not limited:
             continue
-        resets = [
-            deadline
-            for window in windows
-            if (deadline := _reset(headers.get(f"{prefix}-{window}-reset"), now)) is not None
-        ]
-        if claim_scope == scope and retry is not None:
-            restrictions.append(Refusal(scope, max([retry, *resets]), "retry_after"))
-        else:
-            if not resets and claim_scope == scope and aggregate is not None:
-                resets.append(aggregate)
-            restrictions.append(
-                Refusal(scope, max(resets), "reset")
-                if resets
-                else Refusal(scope, now + timedelta(seconds=60), "default")
-            )
+        for window in windows or ["unknown"]:
+            name = {"5h": "five_hour", "7d": "seven_day", "7d_oi": "seven_day_overage_included"}.get(window, "unknown")
+            if scope == "model" and entitlement:
+                name = "entitlement"
+            if name == "unknown" and claim in {"five_hour", "seven_day"} and scope == "account":
+                name = claim
+            if window == "unknown" and scope == "model" and "overage" in claim and not entitlement:
+                name = "seven_day_overage_included"
+            reset = _reset(headers.get(f"{prefix}-{window}-reset"), now)
+            attributable = claim_scope == scope and (len(windows) <= 1 or claim == name)
+            if attributable and retry is not None:
+                restrictions.append(Refusal(scope, max(retry, reset or retry), "retry_after", name))
+            elif reset is not None or (attributable and aggregate is not None):
+                deadline = reset or aggregate
+                assert deadline is not None
+                restrictions.append(Refusal(scope, deadline, "reset", name))
+            else:
+                restrictions.append(Refusal(scope, now + timedelta(seconds=60), "default", name))
     return tuple(restrictions)
 
 
-async def record_refusals(source_id: str, model: str, refusals: tuple[Refusal, ...]) -> None:
+async def record_refusals(
+    source_id: str,
+    model: str,
+    refusals: tuple[Refusal, ...],
+    *,
+    requested_at: datetime | None = None,
+) -> None:
+    now = datetime.now(UTC)
+    requested_at = requested_at or now
     async with get_background_session() as session:
-        insert = pg_insert if session.get_bind().dialect.name == "postgresql" else sqlite_insert
+        account = await lock_account(session, source_id)
+        state = AccountState.model_validate_json(account.state_json)
         for refusal in refusals:
-            until = refusal.until.astimezone(UTC).replace(tzinfo=None)
-            statement = insert(ClaudeCooldown).values(
-                source_id=source_id, model="*" if refusal.scope == "account" else model, until=until
-            )
-            await session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[ClaudeCooldown.source_id, ClaudeCooldown.model],
-                    set_={"until": case((ClaudeCooldown.until > until, ClaudeCooldown.until), else_=until)},
+            if refusal.until <= now:
+                continue
+            barrier = state.reset_barriers.get(refusal.window)
+            if barrier is not None and requested_at <= barrier:
+                continue
+            key = "*" if refusal.scope == "account" else model
+            row = await session.get(ClaudeCooldown, (source_id, key))
+            evidence = read_evidence(row) if row is not None else Evidence()
+            if row is None:
+                row = ClaudeCooldown(source_id=source_id, model=key, until=refusal.until.replace(tzinfo=None))
+                session.add(row)
+            evidence.restrictions.append(
+                Restriction(
+                    window=refusal.window,
+                    until=refusal.until,
+                    requested_at=requested_at,
                 )
             )
+            await save_evidence(session, row, evidence, now)
+            await session.flush()
         await session.commit()
     for refusal in refusals:
         logger.info("claude_refusal source_id=%s scope=%s cooldown=%s", source_id, refusal.scope, refusal.reason)

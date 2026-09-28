@@ -144,6 +144,7 @@ class AccountState(BaseModel):
     usage_requested_at: datetime | None = None
     usage_check_started_at: datetime | None = None
     header_usage: dict[Literal["five_hour", "seven_day"], HeaderQuotaObservation] = Field(default_factory=dict)
+    reset_barriers: dict[str, datetime] = Field(default_factory=dict)
 
 
 WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]

@@ -120,21 +120,21 @@ async def test_cooldown_scope_monotonic_and_persistent(pool):
 
 
 async def test_mixed_restrictions_are_atomic(pool, monkeypatch):
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.modules.claude import failover
 
-    execute = AsyncSession.execute
+    save = failover.save_evidence
     writes = 0
 
-    async def fail_second_write(self, statement, *args, **kwargs):
+    async def fail_second_write(*args, **kwargs):
         nonlocal writes
         writes += 1
         if writes == 2:
             raise RuntimeError("simulated persistence failure")
-        return await execute(self, statement, *args, **kwargs)
+        return await save(*args, **kwargs)
 
     now = datetime.now(UTC)
     with monkeypatch.context() as patch:
-        patch.setattr(AsyncSession, "execute", fail_second_write)
+        patch.setattr(failover, "save_evidence", fail_second_write)
         with pytest.raises(RuntimeError, match="simulated persistence failure"):
             await record_refusals(
                 pool[0],
@@ -262,9 +262,9 @@ async def test_disconnect_between_attempts_stops_recovery(async_client, pool, mo
     sent = []
     record = failover.record_refusals
 
-    async def record_then_disconnect(*args):
+    async def record_then_disconnect(*args, **kwargs):
         nonlocal disconnected
-        await record(*args)
+        await record(*args, **kwargs)
         disconnected = True
 
     async def is_disconnected(self):

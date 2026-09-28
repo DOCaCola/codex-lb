@@ -10,13 +10,17 @@ from app.db.models import ClaudeAccount
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.schemas import Credentials
+from app.modules.claude.schemas import AuthenticatedProfile, Credentials
 from app.modules.claude.version import ClaudeVersionService
 
 
 async def authenticated_identity(client: ClaudeClient, repository: ClaudeRepository, credentials: Credentials) -> str:
     version = await ClaudeVersionService(repository.session).snapshot()
     profile = await client.profile(credentials.access_token.get_secret_value(), version.version)
+    return profile_identity(profile)
+
+
+def profile_identity(profile: AuthenticatedProfile) -> str:
     return hashlib.sha256(json.dumps([profile.account.uuid, profile.organization.uuid]).encode()).hexdigest()
 
 

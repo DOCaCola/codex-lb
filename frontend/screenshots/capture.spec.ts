@@ -449,6 +449,22 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.screenshot({ animations: "disabled", path: test.info().outputPath(`claude-reconnect-${width}.png`) });
     await page.keyboard.press("Escape");
+    await page.route("**/api/claude-accounts/src_claude_demo/reset-grants", route => fulfill(route, {
+      status: { eligible: true, at_limit: true, ineligible_reason: null, cooldown_until: null, grants: [{
+        id: "launch-grant", label: "Claude usage reset", resets_total: 1, resets_left: 1,
+        starts_at: null, ends_at: "2026-10-22T16:00:00Z", clears: ["five_hour", "seven_day"],
+        paused: false, usable_now: true, use_requires_limit: true,
+      }] }, operations: [], error: null,
+    }));
+    await page.getByRole("button", { name: "Reset grants", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Redeem grant", exact: true })).toBeEnabled();
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`claude-reset-grants-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.getByRole("button", { name: "Redeem grant", exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`claude-reset-confirm-${width}.png`) });
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.keyboard.press("Escape");
     await page.goto(`${BASE_URL}/`);
     await expect(page.getByTestId("claude-account-card")).toBeVisible();
     await page.getByTestId("claude-account-card").screenshot({ animations: "disabled", path: test.info().outputPath(`claude-dashboard-${width}.png`) });

@@ -2023,6 +2023,20 @@ class ClaudeCooldown(Base):
     )
     model: Mapped[str] = mapped_column(String, primary_key=True)
     until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    evidence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ClaudeResetOperation(Base):
+    __tablename__ = "claude_reset_operations"
+
+    operation_id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String, nullable=False)
+    identity: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    grant_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    lease_until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class OpenRouterCooldown(Base):

@@ -59,7 +59,8 @@ async def record_headers(
         updates = {
             name: observation
             for name, observation in evidence.items()
-            if name not in current.header_usage or observation.requested_at > current.header_usage[name].requested_at
+            if (name not in current.reset_barriers or observation.requested_at > current.reset_barriers[name])
+            and (name not in current.header_usage or observation.requested_at > current.header_usage[name].requested_at)
         }
         if not updates:
             return None

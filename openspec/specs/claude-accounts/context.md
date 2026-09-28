@@ -250,3 +250,35 @@ deadlines can be retained. Sub2API fix 222181efd6be restricts credits_required
 handling to Fable; our structured error applies to the requested model without
 copying its family mapping. These are source/test adaptations, not live OAuth
 qualification. No schema migration or operator setting is needed.
+
+### Manual reset grants
+
+The account dialog explicitly discovers cedar_ember grants and requires confirmation
+before spending. Discovery failure is unknown, not zero availability. There is no
+automatic redemption, failover or juniper_tide support. Existing management headers
+and the runtime Claude Code version are reused.
+
+A SQL journal persists intent before POST, bound to verified account/organization
+identity and the selected grant. A 90-second lease prevents concurrent claims;
+explicit same-ID retries are allowed for ten minutes with a 25-second POST timeout.
+After uncertain expiry, a fresh operation needs separate risk acknowledgement and
+fresh eligibility. Records survive deletion/re-enrollment and token rotation and
+are retained without automatic pruning, so uncertainty is not silently forgotten.
+They contain identifiers, timestamps and typed outcomes, not credentials or prompts.
+
+Settlement and selective reconciliation commit atomically. The barrier is the
+original intent timestamp, not a retry timestamp: a retry can replay an earlier
+successful reset. For example, a five-hour refusal observed between a lost reset
+reply and its successful retry must survive that retry. Concurrent, unknown legacy,
+entitlement and uncleared-window restrictions also survive. Cleared usage is unknown
+until freshly observed; polling failure never changes a settled redemption result.
+The migration adds typed cooldown evidence and the operation journal. Historical
+cooldowns with no evidence remain unknown restrictions until normal expiry.
+
+Adapted protocol/safety lessons from OpenCodex 3cc34e118192, merged PR5632
+(2026-09-23), reviewed 2026-09-28. Its post-expiry fresh-ID policy accepts a
+double-spend risk; this UI requires explicit acknowledgement. OmniRoute a58000c7685f
+PR13074 implements a different program, while PR14728 was still an open proposal.
+No reference source was copied. Local mocked protocol, migration, concurrency and
+dashboard tests do not establish live OAuth redemption or billing acceptance;
+PostgreSQL runtime qualification remains outstanding.

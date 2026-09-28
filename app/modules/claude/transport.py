@@ -93,6 +93,7 @@ async def _open_responses(
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     requested_at = datetime.now(UTC)
+    prepared.budget.requested_at = requested_at
     try:
         stack, response, _ = await _open_source_stream(
             prepared.source,
@@ -270,6 +271,7 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     requested_at = datetime.now(UTC)
+    prepared.budget.requested_at = requested_at
     try:
         async with lease_model_source_session() as session:
             async with session.post(
