@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -13,6 +13,24 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import RequestProfile, session_identity
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
+
+
+def native_conversation_id(body: dict[str, JsonValue], headers: Mapping[str, str]) -> str:
+    """Explicit session identity only; shared prompt-cache cohorts are not sessions."""
+    values = {key.lower(): value for key, value in headers.items()}
+    identity = session_metadata(body)
+    candidates = [
+        values[key].strip()
+        for key in ("x-claude-code-session-id", "session_id", "x-session-id", "x-thread-id")
+        if values.get(key, "").strip()
+    ]
+    if identity is not None:
+        session_id = identity["session_id"]
+        assert isinstance(session_id, str)
+        candidates.append(session_id)
+    if len(set(candidates)) > 1:
+        raise ClaudeError("Claude session headers and metadata disagree")
+    return candidates[0] if candidates else str(uuid4())
 
 
 def session_metadata(body: dict[str, JsonValue]) -> dict[str, JsonValue] | None:

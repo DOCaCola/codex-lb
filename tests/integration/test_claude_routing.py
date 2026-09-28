@@ -81,6 +81,13 @@ async def test_affinity_survives_new_session_and_excludes_account(pool):
     )
 
 
+async def test_preference_never_overrides_authorization_or_eligibility(pool):
+    assert await choose(api_key=key(), preferred_source_id=pool[0]) == pool[0]
+    scoped = key(source_assignment_scope_enabled=True, assigned_source_ids=[pool[1]])
+    assert await choose(api_key=scoped, preferred_source_id=pool[0]) == pool[1]
+    assert await choose(api_key=key(), preferred_source_id=pool[0], excluded_source_ids=frozenset({pool[0]})) == pool[1]
+
+
 async def test_permissions_applied_before_owner_or_affinity(pool):
     scoped = key(source_assignment_scope_enabled=True, assigned_source_ids=[pool[1]])
     assert await choose(api_key=scoped) == pool[1]

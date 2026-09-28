@@ -140,3 +140,23 @@ completed cached-search text/tool/follow-up and live-search/citation/follow-up
 tests against a synthetic Anthropic recorder. The latter verified exact encrypted
 search result replay. This remains mock compatibility evidence, not live OAuth
 acceptance or billing qualification.
+# Native affinity and signature recovery
+
+Native thinking and redacted thinking alone do not require an account-owner
+record. Existing one-hour session affinity is soft; authorization and eligibility
+win, and child sessions can prefer their scoped parent's account. Explicit session
+headers and structured metadata must agree. Missing identity does not use content
+hashes or shared prompt-cache cohorts.
+
+A pre-delivery HTTP 400 explicitly rejecting a thinking signature may trigger one
+same-target retry with completed historical thinking omitted. Active tool chains
+stay unchanged; empty-message or server-tool histories refuse recovery. Normal
+traffic is unchanged. No thinking-to-text, tool-to-text or synthetic redaction.
+Count-tokens and errors after output never use this recovery.
+
+After native account rebinding, resource ownership is ambiguous: server-resource
+history fails explicitly rather than being assigned to the new account. This
+marker is scoped and expires with session retention; it is not conversation storage.
+Translated Responses envelopes and their ownership checks remain unchanged.
+Reference evidence: OmniRoute PR #7906, OpenCodex native versus translated replay,
+CLIProxyAPI parent affinity. These are source/mock checks, not live OAuth acceptance.

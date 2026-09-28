@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ from app.modules.claude.schemas import CLAUDE_BASE_URL
 from app.modules.claude.session import NativeSessionOwnership, contains_account_bound_state
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,9 @@ class ClaudeDispatchPreparer:
             raise ClaudeError("Claude session header and metadata disagree")
         session = self.repository.session
         native_ownership = None
+        retained_owner = None
+        preferred_owner = None
+        requires_owner = False
         if not translated:
             native_ownership = NativeSessionOwnership(
                 session,
@@ -73,15 +79,27 @@ class ClaudeDispatchPreparer:
                 conversation_id=conversation_id,
                 model=model,
             )
-            retained_owner = await native_ownership.owner(required=contains_account_bound_state(logical))
-            if retained_owner is not None:
+            requires_owner = contains_account_bound_state(logical)
+            retained_owner = await native_ownership.owner(required=requires_owner)
+            preferred_owner = retained_owner
+            if requires_owner:
                 owner_source_id = retained_owner
+            elif retained_owner is None and metadata_identity is not None:
+                parent = metadata_identity.get("parent_session_id")
+                if isinstance(parent, str):
+                    preferred_owner = await NativeSessionOwnership(
+                        session,
+                        client_scope=api_key.id if api_key else "anonymous",
+                        conversation_id=parent,
+                        model=model,
+                    ).owner(required=False)
         account = await select_account(
             session,
             model,
             api_key,
             conversation_id=conversation_id,
             owner_source_id=owner_source_id,
+            preferred_source_id=preferred_owner,
             require_streaming=logical.get("stream") is True,
         )
         if endpoint == "messages":
@@ -95,7 +113,9 @@ class ClaudeDispatchPreparer:
             ):
                 raise ClaudeError("Claude max_tokens must be positive and within the configured model output limit")
         if native_ownership is not None and endpoint == "messages":
-            claimed_owner = await native_ownership.claim(account.source_id)
+            claimed_owner = await native_ownership.claim(
+                account.source_id, replace_source_id=retained_owner if not requires_owner else None
+            )
             account = await select_account(
                 session,
                 model,
@@ -104,6 +124,18 @@ class ClaudeDispatchPreparer:
                 owner_source_id=claimed_owner,
                 require_streaming=logical.get("stream") is True,
             )
+            reason = (
+                "resource_owner"
+                if requires_owner
+                else "session_affinity"
+                if account.source_id == retained_owner
+                else "parent_affinity"
+                if account.source_id == preferred_owner
+                else "eligible_rebind"
+                if retained_owner is not None
+                else "new_session"
+            )
+            logger.info("claude_account_selected source_id=%s reason=%s", account.source_id, reason)
         identity = await ClaudeVersionService(session).snapshot()
         # Authorization and payload validation precede any token refresh.
         native = not translated and recognize_native(

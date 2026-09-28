@@ -49,7 +49,24 @@ async def test_expired_owner_requires_portable_context(pool):
         assert await retained.claim(pool[1]) == pool[1]
 
 
-@pytest.mark.parametrize("kind", ["thinking", "redacted_thinking", "server_tool_use", "web_search_tool_result"])
+async def test_soft_rebind_uses_compare_and_swap(pool):
+    async with SessionLocal() as session:
+        retained = owner(session)
+        await retained.claim(pool[0])
+        assert await retained.claim(pool[1], replace_source_id=pool[0]) == pool[1]
+        # A stale contender cannot overwrite a newer binding.
+        assert await retained.claim(pool[0], replace_source_id=pool[0]) == pool[1]
+        with pytest.raises(ClaudeError, match="resource history after account rebinding"):
+            await retained.owner(required=True)
+        assert await retained.owner(required=False) == pool[1]
+
+
+@pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
+def test_thinking_does_not_require_account_owner(kind):
+    assert not contains_account_bound_state({"messages": [{"role": "assistant", "content": [{"type": kind}]}]})
+
+
+@pytest.mark.parametrize("kind", ["server_tool_use", "web_search_tool_result"])
 def test_native_server_state_requires_owner(kind):
     assert contains_account_bound_state({"messages": [{"role": "assistant", "content": [{"type": kind}]}]})
     assert not contains_account_bound_state({"messages": [{"role": "user", "content": [{"type": "tool_result"}]}]})

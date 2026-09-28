@@ -30,8 +30,6 @@ def contains_account_bound_state(body: dict[str, JsonValue]) -> bool:
             and (
                 block.get("type")
                 in {
-                    "thinking",
-                    "redacted_thinking",
                     "server_tool_use",
                 }
                 or str(block.get("type", "")).endswith("_tool_result")
@@ -47,8 +45,13 @@ class NativeSessionOwnership:
     def __init__(self, session: AsyncSession, *, client_scope: str, conversation_id: str, model: str) -> None:
         self.session = session
         self.key = hashlib.sha256(json.dumps([client_scope, conversation_id, model]).encode()).hexdigest()
+        self.rebound_key = hashlib.sha256(json.dumps(["resource-owner-ambiguous", self.key]).encode()).hexdigest()
 
     async def owner(self, *, required: bool) -> str | None:
+        if required:
+            rebound = await self.session.get(ClaudeSessionOwner, self.rebound_key, populate_existing=True)
+            if rebound is not None and rebound.expires_at > utcnow():
+                raise ClaudeError("Native Claude resource history after account rebinding requires portable context")
         row = await self.session.get(ClaudeSessionOwner, self.key, populate_existing=True)
         if row is not None and row.expires_at > utcnow():
             return row.source_id
@@ -56,13 +59,29 @@ class NativeSessionOwnership:
             raise ClaudeError("Native Claude history has no retained account owner; start with portable context")
         return None
 
-    async def claim(self, source_id: str) -> str:
+    async def claim(self, source_id: str, *, replace_source_id: str | None = None) -> str:
         now = utcnow()
         if self.session.get_bind().dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import insert
         else:
             from sqlalchemy.dialects.sqlite import insert
         await self.session.execute(delete(ClaudeSessionOwner).where(ClaudeSessionOwner.expires_at <= now))
+        if replace_source_id is not None and replace_source_id != source_id:
+            changed = await self.session.execute(
+                update(ClaudeSessionOwner)
+                .where(ClaudeSessionOwner.scope_hash == self.key, ClaudeSessionOwner.source_id == replace_source_id)
+                .values(source_id=source_id)
+                .returning(ClaudeSessionOwner.source_id)
+            )
+            if changed.scalar_one_or_none() is not None:
+                # After a soft move the session alone cannot identify which
+                # account issued resource handles in an older branch. Keep a
+                # scoped ambiguity marker, not a guessed resource owner.
+                await self.session.execute(
+                    insert(ClaudeSessionOwner)
+                    .values(scope_hash=self.rebound_key, source_id=source_id, expires_at=now + NATIVE_SESSION_TTL)
+                    .on_conflict_do_nothing()
+                )
         await self.session.execute(
             insert(ClaudeSessionOwner)
             .values(
@@ -75,7 +94,7 @@ class NativeSessionOwnership:
         # Refresh retention without changing a concurrently claimed owner.
         await self.session.execute(
             update(ClaudeSessionOwner)
-            .where(ClaudeSessionOwner.scope_hash == self.key)
+            .where(ClaudeSessionOwner.scope_hash.in_([self.key, self.rebound_key]))
             .values(
                 expires_at=now + NATIVE_SESSION_TTL,
             )

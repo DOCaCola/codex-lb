@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from dataclasses import replace
 from typing import cast
 
 import aiohttp
@@ -18,6 +20,7 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.dispatch import PreparedClaudeRequest
 from app.modules.claude.native import NativeObserver, usage_totals
+from app.modules.claude.recovery import historical_recovery
 from app.modules.claude.responses import ResponsesProjection, Usage
 from app.modules.model_sources.forwarding import (
     SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
@@ -49,7 +52,33 @@ def _failure(code: str, message: str) -> ModelSourceForwardingError:
     )
 
 
+logger = logging.getLogger(__name__)
+
+
 async def open_responses(
+    prepared: PreparedClaudeRequest,
+    projection: ResponsesProjection | None,
+    *,
+    scheduler: Scheduler = REAL_SCHEDULER,
+    clock: Clock = REAL_CLOCK,
+) -> SourceResponsesStream:
+    try:
+        return await _open_responses(prepared, projection, scheduler=scheduler, clock=clock)
+    except ModelSourceForwardingError as exc:
+        recovered = historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
+        if recovered is None:
+            raise
+    logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
+    try:
+        result = await _open_responses(replace(prepared, body=recovered), projection, scheduler=scheduler, clock=clock)
+    except ModelSourceForwardingError:
+        logger.info("claude_signature_recovery source_id=%s outcome=rejected", prepared.source.id)
+        raise
+    logger.info("claude_signature_recovery source_id=%s outcome=stream_opened", prepared.source.id)
+    return result
+
+
+async def _open_responses(
     prepared: PreparedClaudeRequest,
     projection: ResponsesProjection | None,
     *,
@@ -175,6 +204,23 @@ def public_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
+    try:
+        return await _forward_native(prepared, count_tokens=count_tokens)
+    except ModelSourceForwardingError as exc:
+        recovered = None if count_tokens else historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
+        if recovered is None:
+            raise
+    logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
+    try:
+        result = await _forward_native(replace(prepared, body=recovered))
+    except ModelSourceForwardingError:
+        logger.info("claude_signature_recovery source_id=%s outcome=rejected", prepared.source.id)
+        raise
+    logger.info("claude_signature_recovery source_id=%s outcome=completed", prepared.source.id)
+    return result
+
+
+async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     try:
         async with lease_model_source_session() as session:

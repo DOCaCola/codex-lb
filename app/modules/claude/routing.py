@@ -72,6 +72,7 @@ async def select_account(
     *,
     conversation_id: str,
     owner_source_id: str | None = None,
+    preferred_source_id: str | None = None,
     excluded_source_ids: frozenset[str] = frozenset(),
     require_streaming: bool = False,
     now: datetime | None = None,
@@ -112,4 +113,8 @@ async def select_account(
             "claude_pool_unavailable", "No authorized Claude account is available for this model"
         )
     scope = api_key.id if api_key else "anonymous"
+    if preferred_source_id is not None:
+        preferred = next((account for account in eligible if account.source_id == preferred_source_id), None)
+        if preferred is not None:
+            return preferred
     return max(eligible, key=lambda account: _score(account.source_id, scope, conversation_id, model))

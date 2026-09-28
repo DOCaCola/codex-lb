@@ -1817,18 +1817,9 @@ async def claude_messages(
     if denial is not None:
         return denial
     try:
-        conversation = request.headers.get("x-claude-code-session-id")
-        if not conversation:
-            metadata = native_body.get("metadata")
-            user_id = metadata.get("user_id") if isinstance(metadata, dict) else None
-            if isinstance(user_id, str):
-                try:
-                    identity = json.loads(user_id)
-                except ValueError:
-                    identity = None
-                if isinstance(identity, dict) and isinstance(identity.get("session_id"), str):
-                    conversation = identity["session_id"]
-        conversation = conversation or str(uuid4())
+        from app.modules.claude.wire_identity import native_conversation_id
+
+        conversation = native_conversation_id(native_body, request.headers)
         async with get_background_session() as session:
             prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
                 native_body,

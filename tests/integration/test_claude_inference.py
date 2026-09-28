@@ -14,13 +14,21 @@ pool = routing_fixtures.pool
 pytestmark = pytest.mark.integration
 
 
-def install_upstream(monkeypatch, *, stop="end_turn", truncate=False, content=None):
+def install_upstream(monkeypatch, *, stop="end_turn", truncate=False, content=None, rejections=0):
     from app.modules.claude import transport
 
     captured, closed = [], []
 
     async def open_stream(source, path, payload, **kwargs):
         captured.append((source.id, path, payload, kwargs["prepared_headers"]))
+        if len(captured) <= rejections:
+            from app.modules.model_sources.forwarding import ModelSourceForwardingError
+
+            raise ModelSourceForwardingError(
+                status_code=400,
+                payload={"error": {"message": "Invalid signature in thinking block"}},
+                upstream_status_code=400,
+            )
         stack = AsyncExitStack()
         stack.callback(lambda: closed.append(source.id))
         events = [
@@ -60,6 +68,37 @@ def install_upstream(monkeypatch, *, stop="end_turn", truncate=False, content=No
 
     monkeypatch.setattr(transport, "_open_source_stream", open_stream)
     return captured, closed
+
+
+@pytest.mark.parametrize("rejections", [1, 2])
+async def test_public_native_signature_recovery_is_one_shot(async_client, pool, monkeypatch, rejections):
+    captured, closed = install_upstream(monkeypatch, rejections=rejections)
+    response = await async_client.post(
+        "/v1/messages",
+        headers=native_headers(),
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 100,
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "old", "signature": "signature"},
+                        {"type": "text", "text": "answer"},
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+            ],
+        },
+    )
+    assert len(captured) == 2
+    assert captured[0][0] == captured[1][0]
+    assert captured[0][2]["messages"][1]["content"][0]["type"] == "thinking"
+    assert captured[1][2]["messages"][1]["content"] == [{"type": "text", "text": "answer"}]
+    assert response.status_code == (200 if rejections == 1 else 400)
+    assert len(closed) == (1 if rejections == 1 else 0)
 
 
 @pytest.mark.parametrize("stream", [True, False])
@@ -170,7 +209,7 @@ async def test_native_stream_truncation_returns_native_error_and_closes_transpor
     assert closed == [captured[0][0]]
 
 
-async def test_native_signed_history_keeps_owner_when_other_account_is_available(async_client, pool, monkeypatch):
+async def test_native_thinking_can_rebind_when_owner_is_unavailable(async_client, pool, monkeypatch):
     from app.modules.claude.profile import CLI_IDENTITY
 
     captured, _ = install_upstream(monkeypatch)
@@ -200,8 +239,133 @@ async def test_native_signed_history_keeps_owner_when_other_account_is_available
     )
     await async_client.patch(f"/api/claude-accounts/{owner}", json={"isEnabled": False})
     second = await async_client.post("/v1/messages", headers=native_headers(), json=body)
-    assert second.status_code != 200
-    assert len(captured) == 1
+    assert second.status_code == 200, second.text
+    assert len(captured) == 2
+    assert captured[1][0] != owner
+    assert captured[1][2]["messages"] == messages
+
+
+async def test_native_child_prefers_parent_account(async_client, pool, monkeypatch):
+    from uuid import uuid4
+
+    captured, _ = install_upstream(monkeypatch)
+    parent, child = str(uuid4()), str(uuid4())
+    body = {
+        "model": "claude-opus-5",
+        "max_tokens": 100,
+        "stream": True,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    first = await async_client.post("/v1/messages", headers={"x-claude-code-session-id": parent}, json=body)
+    assert first.status_code == 200, first.text
+    body["metadata"] = {
+        "user_id": json.dumps(
+            {
+                "device_id": "test-device",
+                "session_id": child,
+                "parent_session_id": parent,
+            }
+        )
+    }
+    second = await async_client.post("/v1/messages", headers={"x-claude-code-session-id": child}, json=body)
+    assert second.status_code == 200, second.text
+    assert captured[0][0] == captured[1][0]
+
+
+async def test_native_thinking_after_idle_expiry(async_client, pool, monkeypatch):
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from app.core.utils.time import utcnow
+    from app.db.models import ClaudeSessionOwner
+    from app.db.session import SessionLocal
+
+    captured, _ = install_upstream(monkeypatch)
+    body = {
+        "model": "claude-opus-5",
+        "max_tokens": 100,
+        "stream": True,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    assert (await async_client.post("/v1/messages", headers=native_headers(), json=body)).status_code == 200
+    async with SessionLocal() as session:
+        await session.execute(update(ClaudeSessionOwner).values(expires_at=utcnow() - timedelta(seconds=1)))
+        await session.commit()
+    body["messages"].extend(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "unchanged", "signature": "original"},
+                    {"type": "text", "text": "answer"},
+                ],
+            },
+            {"role": "user", "content": "continue"},
+        ]
+    )
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=body)
+    assert response.status_code == 200, response.text
+    assert captured[1][2]["messages"] == body["messages"]
+
+
+@pytest.mark.parametrize("rejections", [1, 2])
+async def test_native_json_signature_recovery(async_client, pool, monkeypatch, rejections):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from app.modules.claude import transport
+
+    requests, closed = [], []
+
+    @asynccontextmanager
+    async def post(url, **kwargs):
+        requests.append(kwargs["json"])
+        rejected = len(requests) <= rejections
+        data = (
+            {"error": {"message": "Invalid signature in thinking block"}}
+            if rejected
+            else {
+                "id": "msg_done",
+                "content": [{"type": "text", "text": "done"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+            }
+        )
+        try:
+            yield SimpleNamespace(status=400 if rejected else 200, headers={}, json=AsyncMock(return_value=data))
+        finally:
+            closed.append(True)
+
+    @asynccontextmanager
+    async def lease():
+        yield SimpleNamespace(post=post)
+
+    monkeypatch.setattr(transport, "lease_model_source_session", lease)
+    response = await async_client.post(
+        "/v1/messages",
+        headers=native_headers(),
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 100,
+            "stream": False,
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "old", "signature": "sig"},
+                        {"type": "text", "text": "answer"},
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+            ],
+        },
+    )
+    assert len(requests) == len(closed) == 2
+    assert response.status_code == (200 if rejections == 1 else 400)
+    assert requests[0]["messages"][1]["content"][0]["type"] == "thinking"
+    assert requests[1]["messages"][1]["content"] == [{"type": "text", "text": "answer"}]
 
 
 async def test_native_count_tokens_forwards_json_and_headers_without_generation_usage(async_client, pool, monkeypatch):
