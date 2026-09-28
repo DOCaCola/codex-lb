@@ -31,6 +31,7 @@ from app.modules.claude.schemas import (
     OAuthComplete,
     OAuthStart,
     OAuthStarted,
+    UsageSnapshot,
 )
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.service import ModelSourceNotFoundError
@@ -197,13 +198,17 @@ class ClaudeService:
         return self._response(row)
 
     async def refresh(self, source_id: str, *, catalog: bool = True) -> ClaudeAccountResponse:
-        credentials = await self.auth.credentials(source_id)
+        snapshot = await self.auth.snapshot(source_id)
+        credentials = snapshot.credentials
         row = await self._get(source_id)
+        if row.generation != snapshot.generation:
+            raise ClaudeError("Claude credentials changed before metadata refresh")
         state = AccountState.model_validate_json(row.state_json)
         identity = await ClaudeVersionService(self.repository.session).snapshot()
         token = credentials.access_token.get_secret_value()
         changed = False
         if catalog:
+            state.catalog_requested_at = datetime.now(UTC)
             try:
                 state.catalog = await self.client.catalog(token, identity.version)
                 state.catalog_updated_at = datetime.now(UTC)
@@ -211,23 +216,67 @@ class ClaudeService:
                 changed = True
             except ClaudeError as exc:
                 state.catalog_error = str(exc)
+        requested_at = datetime.now(UTC)
+        state.usage_check_started_at = requested_at
         try:
             state.usage = await self.client.usage(token, identity.version)
             state.usage_updated_at = datetime.now(UTC)
+            state.usage_requested_at = requested_at
             state.usage_error = None
-            await self.repository.record_quota(source_id, state.usage, state.usage_updated_at)
         except ClaudeError as exc:
             state.usage_error = str(exc)
         await self._save(row, state, project=changed)
         return self._response(row)
 
     async def _save(self, row: ClaudeAccount, state: AccountState, *, project: bool) -> None:
-        row.state_json = state.model_dump_json()
+        baseline = AccountState.model_validate_json(row.state_json).model_dump()
+        changes = {key: value for key, value in state.model_dump().items() if value != baseline[key]}
+        poll_fields = ("usage", "usage_updated_at", "usage_requested_at", "usage_error", "usage_check_started_at")
+        catalog_fields = ("catalog", "catalog_updated_at", "catalog_error", "catalog_requested_at")
+        desired = state.model_dump()
+        for marker, fields in (("usage_check_started_at", poll_fields), ("catalog_requested_at", catalog_fields)):
+            if marker in changes:
+                changes.update({key: desired[key] for key in fields})
+
+        def merge(current: AccountState) -> AccountState:
+            updates = dict(changes)
+            if (
+                current.usage_check_started_at is not None
+                and state.usage_check_started_at is not None
+                and current.usage_check_started_at > state.usage_check_started_at
+            ):
+                for key in poll_fields:
+                    updates.pop(key, None)
+            if (
+                current.catalog_requested_at is not None
+                and state.catalog_requested_at is not None
+                and current.catalog_requested_at > state.catalog_requested_at
+            ):
+                for key in catalog_fields:
+                    updates.pop(key, None)
+            return AccountState.model_validate({**current.model_dump(), **updates})
+
         try:
             await self.repository.session.flush()
+            merged = await self.repository.mutate_state(row.source_id, row.generation, merge)
+            if merged is None:
+                raise ClaudeError("Claude credentials changed during update; reload and retry")
             if project:
-                await self.repository.sources.replace_models(row.source, project_models(state), commit=False)
+                await self.repository.sources.replace_models(row.source, project_models(merged), commit=False)
+            if "usage" in changes and merged.usage is not None and merged.usage_updated_at is not None:
+                effective = quota_status(merged, now=datetime.now(UTC))
+                sample = UsageSnapshot.model_validate(
+                    {
+                        window.name: {"utilization": window.utilization, "resets_at": window.resets_at}
+                        for window in effective.windows
+                        if window.provenance == "usage_api"
+                        and window.observed_at == state.usage_updated_at
+                        and window.freshness == "fresh"
+                    }
+                )
+                await self.repository.record_quota(row.source_id, sample, merged.usage_updated_at, sample_seconds=60)
             await self.repository.session.commit()
+            await self.repository.session.refresh(row)
         except StaleDataError as exc:
             await self.repository.session.rollback()
             raise ClaudeError("Claude account changed during refresh; reload and retry") from exc

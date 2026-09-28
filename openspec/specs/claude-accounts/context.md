@@ -199,3 +199,25 @@ claude_session_changed before inference; the held slot is released. Existing
 SourceDispatch owns admitted-request cleanup and settlement. This adapts Sub2API's
 selection/admission integration and CLIProxyAPI's distinction between local busy
 and provider failures, without adding their deployment-specific RPM/session caps.
+
+### Passive inference quota observations
+
+Physical Claude responses update five-hour and seven-day usage before reading the
+body, including rejected attempts. Each sample belongs to its sending account and
+credential generation. Request-start ordering chooses poll versus header evidence
+per window; header receipt does not refresh unrelated windows or clear cooldowns.
+An expired reset becomes unknown, not a fabricated zero. Generation/version-fenced
+state merges preserve concurrent settings and poll changes. Header persistence is
+best-effort with a 500ms deadline; cancellation retains upstream cleanup ownership.
+History samples are throttled per account/window to once per minute.
+
+Fractions above 1.0 remain valid: 1.04 is stored/displayed as 104% and blocks the
+applicable window, while the remaining-quota bar is bounded at zero. There is no
+alternate-scale guessing. Invalid or nonfinite converted percentages are ignored.
+This differs from OpenCodex PRs 3809/3825's defensive upper bound: Sub2API commit
+e681431454ab53a4d4fa0b8c6930497a14e5bdd0 tests overshoot and Dario issue 1244 reports
+a physical 5h utilization of 1.04. CLIProxyAPI issues 5915/5920 report a separate
+model-specific 1.02 window; they do not establish account-wide exhaustion. These
+are third-party reports, not our own live capture, and the upstream cause of
+overshoot is not established. Inspected snapshots: OpenCodex 3cc34e118192 and
+Sub2API 9a62841fd124 (2026-09-28).

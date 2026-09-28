@@ -52,6 +52,25 @@ const account: ClaudeAccount = {
 };
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 describe("Claude shared account surfaces", () => {
+  it("preserves usage overshoot while bounding the remaining bar", () => {
+    render(
+      <ClaudeQuota account={{
+        ...account,
+        quota: {
+          ...account.quota,
+          windows: [{
+            ...account.quota.windows[0],
+            utilization: 104,
+            freshness: "fresh",
+            exhausted: true,
+          }],
+        },
+      }} />,
+    );
+    expect(screen.getByText("104% used")).toBeInTheDocument();
+    expect(screen.getByTestId("claude-quota-five_hour")).toHaveAttribute("value", "0");
+    expect(screen.getByTestId("claude-quota-five_hour-fill")).toHaveStyle({ width: "0%" });
+  });
   it("requires explicit refresh ownership consent before enrollment", async () => {
     const client = new QueryClient({
       defaultOptions: {

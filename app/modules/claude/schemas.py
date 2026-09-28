@@ -126,20 +126,32 @@ class UsageSnapshot(BaseModel):
     seven_day_sonnet: QuotaWindow | None = None
 
 
+class HeaderQuotaObservation(BaseModel):
+    window: QuotaWindow
+    requested_at: datetime
+    observed_at: datetime
+
+
 class AccountState(BaseModel):
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
     catalog_updated_at: datetime | None = None
     catalog_error: str | None = None
+    catalog_requested_at: datetime | None = None
     usage: UsageSnapshot | None = None
     usage_updated_at: datetime | None = None
     usage_error: str | None = None
+    usage_requested_at: datetime | None = None
+    usage_check_started_at: datetime | None = None
+    header_usage: dict[Literal["five_hour", "seven_day"], HeaderQuotaObservation] = Field(default_factory=dict)
 
 
 WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]
 
 
 class WindowStatus(DashboardModel):
+    observed_at: datetime | None = None
+    provenance: Literal["usage_api", "inference_header"] = "usage_api"
     name: WindowName
     utilization: float | None
     resets_at: datetime | None

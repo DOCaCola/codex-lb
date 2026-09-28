@@ -6,6 +6,7 @@ import contextlib
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import cast
 
 import aiohttp
@@ -20,6 +21,7 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.dispatch import PreparedClaudeRequest
 from app.modules.claude.native import NativeObserver, usage_totals
+from app.modules.claude.observations import record_headers
 from app.modules.claude.recovery import historical_recovery
 from app.modules.claude.responses import ResponsesProjection, Usage
 from app.modules.model_sources.forwarding import (
@@ -90,6 +92,7 @@ async def _open_responses(
     payload = cast(dict[str, JsonValue], {**prepared.body, "stream": True})
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
+    requested_at = datetime.now(UTC)
     try:
         stack, response, _ = await _open_source_stream(
             prepared.source,
@@ -102,6 +105,9 @@ async def _open_responses(
             clock=clock,
         )
     except ModelSourceForwardingError as exc:
+        await record_headers(
+            prepared.source.id, prepared.credential_generation, exc.upstream_headers, requested_at=requested_at
+        )
         raise ModelSourceForwardingError(
             status_code=exc.status_code,
             payload=cast(
@@ -119,6 +125,9 @@ async def _open_responses(
     observer = SourceStreamUsageParser(holder, response_shape="responses")
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
     try:
+        await record_headers(
+            prepared.source.id, prepared.credential_generation, response.headers, requested_at=requested_at
+        )
         with scheduler.fail_after(SOURCE_FIRST_FRAME_DEADLINE_SECONDS):
             startup: list[str] = []
             startup_bytes = 0
@@ -260,6 +269,7 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
 async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
+    requested_at = datetime.now(UTC)
     try:
         async with lease_model_source_session() as session:
             async with session.post(
@@ -269,6 +279,9 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                 timeout=_source_client_timeout(prepared.source),
                 allow_redirects=False,
             ) as response:
+                await record_headers(
+                    prepared.source.id, prepared.credential_generation, response.headers, requested_at=requested_at
+                )
                 data = await _response_json(response)
                 if data is None:
                     raise _failure("invalid_upstream_response", "Claude returned invalid JSON")

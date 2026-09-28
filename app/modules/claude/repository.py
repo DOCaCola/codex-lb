@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudeQuotaHistory
-from app.modules.claude.schemas import UsageSnapshot
+from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.schemas import AccountState, UsageSnapshot
 from app.modules.model_sources.repository import ModelSourcesRepository
 
 
@@ -21,7 +23,41 @@ class ClaudeRepository:
     async def list_accounts(self) -> list[ClaudeAccount]:
         return list((await self.session.scalars(select(ClaudeAccount))).unique())
 
-    async def record_quota(self, source_id: str, usage: UsageSnapshot, observed_at: datetime) -> None:
+    async def mutate_state(
+        self, source_id: str, generation: int, mutate: Callable[[AccountState], AccountState | None]
+    ) -> AccountState | None:
+        """Merge against current state; caller owns commit and related history/settings writes."""
+        for _ in range(3):
+            row = (
+                await self.session.execute(
+                    select(ClaudeAccount.state_json, ClaudeAccount.version).where(
+                        ClaudeAccount.source_id == source_id, ClaudeAccount.generation == generation
+                    )
+                )
+            ).one_or_none()
+            if row is None:
+                return None
+            state = mutate(AccountState.model_validate_json(row.state_json))
+            if state is None:
+                return None
+            changed = await self.session.scalar(
+                update(ClaudeAccount)
+                .where(
+                    ClaudeAccount.source_id == source_id,
+                    ClaudeAccount.generation == generation,
+                    ClaudeAccount.version == row.version,
+                )
+                .values(state_json=state.model_dump_json(), version=ClaudeAccount.version + 1)
+                .returning(ClaudeAccount.source_id)
+                .execution_options(synchronize_session=False)
+            )
+            if changed is not None:
+                return state
+        raise ClaudeError("Claude account changed concurrently; retry the update")
+
+    async def record_quota(
+        self, source_id: str, usage: UsageSnapshot, observed_at: datetime, *, sample_seconds: int = 0
+    ) -> None:
         observed_at = observed_at.astimezone(UTC).replace(tzinfo=None)
         for name, window in (
             ("five_hour", usage.five_hour),
@@ -30,6 +66,14 @@ class ClaudeRepository:
             ("seven_day_sonnet", usage.seven_day_sonnet),
         ):
             if window is not None:
+                if sample_seconds:
+                    last = await self.session.scalar(
+                        select(func.max(ClaudeQuotaHistory.observed_at)).where(
+                            ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == name
+                        )
+                    )
+                    if last is not None and observed_at - last < timedelta(seconds=sample_seconds):
+                        continue
                 self.session.add(
                     ClaudeQuotaHistory(
                         source_id=source_id, observed_at=observed_at, window=name, used_percent=window.utilization

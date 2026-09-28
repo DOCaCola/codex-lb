@@ -10,12 +10,22 @@ QUOTA_FRESHNESS = timedelta(minutes=5)
 
 
 def _window(name: WindowName, value: QuotaWindow | None, state: AccountState, now: datetime) -> WindowStatus:
+    observed_at = state.usage_updated_at
+    provenance = "usage_api"
+    poll_failed = state.usage_error is not None
+    observation = state.header_usage.get(name) if name in {"five_hour", "seven_day"} else None
+    poll_order = state.usage_requested_at or state.usage_updated_at
+    if observation is not None and (poll_order is None or observation.requested_at > poll_order):
+        value = observation.window
+        observed_at = observation.observed_at
+        provenance = "inference_header"
+        poll_failed = False
     expired = value is not None and value.resets_at is not None and value.resets_at <= now
-    unknown = value is None or state.usage_updated_at is None or expired
-    stale = state.usage_error is not None or (
-        state.usage_updated_at is not None and now - state.usage_updated_at >= QUOTA_FRESHNESS
-    )
+    unknown = value is None or observed_at is None or expired
+    stale = poll_failed or (observed_at is not None and now - observed_at >= QUOTA_FRESHNESS)
     return WindowStatus(
+        observed_at=observed_at,
+        provenance=provenance,
         name=name,
         utilization=value.utilization if value is not None else None,
         resets_at=value.resets_at if value is not None else None,
@@ -53,7 +63,7 @@ def quota_status(state: AccountState, *, now: datetime) -> QuotaStatus:
     )
     windows = [_window(name, value, state, now) for name, value in values]
     return QuotaStatus(
-        observed_at=state.usage_updated_at,
+        observed_at=max((window.observed_at for window in windows if window.observed_at is not None), default=None),
         windows=windows,
         models=[model_quota(selection.model, windows) for selection in state.selections],
     )

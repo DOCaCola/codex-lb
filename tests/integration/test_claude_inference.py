@@ -706,6 +706,19 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
     from tests.unit.test_claude_search import search_content
 
     captured, closed = install_upstream(monkeypatch, content=search_content() if search else None)
+    from app.db.models import ClaudeAccount
+    from app.db.session import SessionLocal
+    from app.modules.claude import transport
+    from app.modules.claude.schemas import AccountState
+
+    send_with_headers = transport._open_source_stream
+
+    async def observed_send(*args, **kwargs):
+        stack, response, extra = await send_with_headers(*args, **kwargs)
+        response.headers["anthropic-ratelimit-unified-5h-utilization"] = "0.25"
+        return stack, response, extra
+
+    monkeypatch.setattr(transport, "_open_source_stream", observed_send)
     if failover == "capacity":
         from app.modules.proxy import api, source_admission
         from tests.integration.test_claude_capacity import configure
@@ -795,6 +808,11 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
     assert len(closed) == 2
+
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, captured[-1][0])
+        state = AccountState.model_validate_json(row.state_json)
+    assert state.header_usage["five_hour"].window.utilization == 25
 
 
 @pytest.mark.parametrize("limit", [None, 0, -1, True, 999999])
