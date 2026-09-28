@@ -5386,6 +5386,7 @@ async def _dispatch_source_responses_response(
     native_request: PreparedClaudeRequest | None = None,
     count_tokens: bool = False,
 ) -> Response:
+    from app.modules.claude.admission import ClaudeCapacityBusy
     from app.modules.claude.failover import (
         FailoverState,
         classify_refusal,
@@ -5418,6 +5419,14 @@ async def _dispatch_source_responses_response(
                 count_tokens=count_tokens,
                 claude_recovery=recovery,
             )
+        except ClaudeCapacityBusy as exc:
+            assert recovery is not None
+            if exc.source_id in recovery.excluded or recovery.retry_source_id is not None:
+                raise
+            recovery.excluded.add(exc.source_id)
+            recovery.last_error = exc
+            logger.info("claude_capacity_reselect source_id=%s", exc.source_id)
+            continue
         except ModelSourceForwardingError as exc:
             if recovery is None or recovery.stream_opened or recovery.budget.remaining == remaining:
                 raise
@@ -5584,6 +5593,10 @@ async def _dispatch_source_responses_attempt(
         )
     claims = try_claim_source_admission(source)
     if claims is None:
+        if claude_recovery is not None:
+            from app.modules.claude.admission import ClaudeCapacityBusy
+
+            raise ClaudeCapacityBusy(source.id)
         return _logged_error_json_response(
             request,
             503,
@@ -5594,6 +5607,8 @@ async def _dispatch_source_responses_attempt(
         # Inside the route-helper latch: the budget serializer can raise
         # (a lone surrogate in the body) and a claimed slot must never outlive
         # the request that claimed it.
+        if claude_attempt is not None and claude_attempt.prepared.native_binding is not None:
+            await claude_attempt.prepared.native_binding.commit(source.id)
         admission_budget = estimate_api_key_request_usage(payload)
         reservation = await _enforce_request_limits(
             api_key,

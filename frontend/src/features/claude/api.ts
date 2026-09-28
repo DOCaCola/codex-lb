@@ -8,6 +8,7 @@ export const SelectionSchema = z.object({
 });
 export type ClaudeSelection = z.infer<typeof SelectionSchema>;
 export const ClaudeAccountSchema = z.object({
+  maxConcurrency: z.number().int().positive().nullable(),
   id: z.string(),
   name: z.string(),
   isEnabled: z.boolean(),
@@ -48,6 +49,7 @@ export const ClaudeAccountSchema = z.object({
 });
 export type ClaudeAccount = z.infer<typeof ClaudeAccountSchema>;
 export type ClaudeUpdate = {
+  maxConcurrency?: number | null;
   name?: string;
   isEnabled?: boolean;
   selections?: ClaudeSelection[];

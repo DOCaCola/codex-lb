@@ -185,6 +185,8 @@ class ClaudeService:
             row.source.name = payload.name.strip()
         if payload.is_enabled is not None:
             row.source.is_enabled = payload.is_enabled
+        if "max_concurrency" in payload.model_fields_set:
+            row.source.max_concurrency = payload.max_concurrency
         if payload.selections is not None:
             selected = [item.model for item in payload.selections]
             known = {item.id for item in state.catalog} | {item.model for item in state.selections}
@@ -243,6 +245,7 @@ class ClaudeService:
         if row.refresh_intent and row.refresh_started_at and row.refresh_started_at < utcnow() - timedelta(minutes=1):
             status = "uncertain"
         return ClaudeAccountResponse(
+            max_concurrency=row.source.max_concurrency,
             id=row.source_id,
             name=row.source.name,
             is_enabled=row.source.is_enabled,

@@ -177,3 +177,25 @@ malformed or unknown events end recovery eligibility. Retry waiting owns no
 admission/reservation and observes client disconnects. Long Retry-After hints
 return unchanged instead of exceeding the ten-second recovery window. These
 paths are locally tested, not qualified against live OAuth traffic.
+
+## Capacity-aware pool admission
+
+Claude accounts reuse the existing source concurrency limit. The dashboard field
+is optional: empty means unlimited; a positive integer applies per worker across
+the account's models, not globally across replicas or as a claimed provider quota.
+For example, portable history preferring a full account A can be reprepared for
+available B. Active account-bound reasoning/search history on A cannot move.
+
+Atomic admission, not a racy preflight counter, decides availability. Validation
+and credential preparation still precede the claim; a typed local rejection sends
+selection back through the normal authorized, ownership-aware preparation path.
+Each rejected source is excluded once. This does not spend an inference-send
+budget or cause quota/auth/health penalties. All-full pools return local busy
+with a one-second retry hint; no new waiting queue is introduced.
+
+Native affinity is saved after admission so rejected new candidates do not create
+false resource-owner history. Concurrent incompatible ownership changes return
+claude_session_changed before inference; the held slot is released. Existing
+SourceDispatch owns admitted-request cleanup and settlement. This adapts Sub2API's
+selection/admission integration and CLIProxyAPI's distinction between local busy
+and provider failures, without adding their deployment-specific RPM/session caps.

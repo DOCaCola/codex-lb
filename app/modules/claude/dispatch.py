@@ -23,7 +23,7 @@ from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.routing import select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL
-from app.modules.claude.session import NativeSessionOwnership, contains_account_bound_state
+from app.modules.claude.session import NativeSessionBinding, NativeSessionOwnership, contains_account_bound_state
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 
@@ -41,6 +41,7 @@ class PreparedClaudeRequest:
     logical_body: dict[str, JsonValue] = field(repr=False)
     conversation_id: str
     credential_generation: int
+    native_binding: NativeSessionBinding | None
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
 
 
@@ -120,17 +121,6 @@ class ClaudeDispatchPreparer:
             ):
                 raise ClaudeError("Claude max_tokens must be positive and within the configured model output limit")
         if native_ownership is not None and endpoint == "messages":
-            claimed_owner = await native_ownership.claim(
-                account.source_id, replace_source_id=retained_owner if not requires_owner else None
-            )
-            account = await select_account(
-                session,
-                model,
-                api_key,
-                conversation_id=conversation_id,
-                owner_source_id=claimed_owner,
-                require_streaming=logical.get("stream") is True,
-            )
             reason = (
                 "resource_owner"
                 if requires_owner
@@ -218,4 +208,13 @@ class ClaudeDispatchPreparer:
             logical_body=deepcopy(logical),
             conversation_id=conversation_id,
             credential_generation=snapshot.generation,
+            native_binding=NativeSessionBinding(
+                client_scope=api_key.id if api_key else "anonymous",
+                conversation_id=conversation_id,
+                model=model,
+                retained_owner=retained_owner,
+                requires_owner=requires_owner,
+            )
+            if native_ownership is not None and endpoint == "messages"
+            else None,
         )

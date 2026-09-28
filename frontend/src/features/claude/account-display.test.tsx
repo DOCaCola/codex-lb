@@ -15,6 +15,7 @@ import { server } from "@/test/mocks/server";
 import { ClaudeAccountControls } from "./account-controls";
 
 const account: ClaudeAccount = {
+  maxConcurrency: null,
   id: "claude-test",
   name: "Private Claude",
   isEnabled: true,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import timedelta
 
 from pydantic import JsonValue
@@ -12,9 +13,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
 from app.db.models import ClaudeSessionOwner
+from app.db.session import get_background_session
 from app.modules.claude.credentials import ClaudeError
+from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 NATIVE_SESSION_TTL = timedelta(hours=1)
+
+
+@dataclass(frozen=True)
+class NativeSessionBinding:
+    client_scope: str
+    conversation_id: str
+    model: str
+    retained_owner: str | None
+    requires_owner: bool
+
+    async def commit(self, source_id: str) -> None:
+        """Persist affinity only after admission, without overwriting a concurrent binding."""
+        async with get_background_session() as session:
+            ownership = NativeSessionOwnership(
+                session, client_scope=self.client_scope, conversation_id=self.conversation_id, model=self.model
+            )
+            try:
+                current = await ownership.owner(required=self.requires_owner)
+                if current == self.retained_owner:
+                    claimed = await ownership.claim(
+                        source_id, replace_source_id=self.retained_owner if not self.requires_owner else None
+                    )
+                    if claimed == source_id:
+                        return
+                elif current == source_id:
+                    return
+            except ClaudeError:
+                pass
+        raise ModelSourceForwardingError(
+            status_code=503,
+            payload={
+                "error": {
+                    "type": "server_error",
+                    "code": "claude_session_changed",
+                    "message": "Claude session ownership changed during admission; retry the request.",
+                }
+            },
+            retry_after="1",
+        )
 
 
 def contains_account_bound_state(body: dict[str, JsonValue]) -> bool:

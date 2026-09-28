@@ -167,12 +167,14 @@ class ClaudeImport(DashboardModel):
 
 
 class ClaudeUpdate(DashboardModel):
+    max_concurrency: int | None = Field(default=None, gt=0, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=128)
     is_enabled: bool | None = None
     selections: list[ModelSelection] | None = None
 
 
 class ClaudeAccountResponse(DashboardModel):
+    max_concurrency: int | None
     id: str
     name: str
     is_enabled: bool

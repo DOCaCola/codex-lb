@@ -701,12 +701,29 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("search", [None, False, True])
-@pytest.mark.parametrize("failover", [False, 429, 401, 529])
+@pytest.mark.parametrize("failover", [False, 429, 401, 529, "capacity"])
 async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search, failover):
     from tests.unit.test_claude_search import search_content
 
     captured, closed = install_upstream(monkeypatch, content=search_content() if search else None)
-    if failover:
+    if failover == "capacity":
+        from app.modules.proxy import api, source_admission
+        from tests.integration.test_claude_capacity import configure
+
+        await configure(async_client, pool)
+        bulkhead = source_admission.SourceBulkhead()
+        monkeypatch.setattr(source_admission, "_BULKHEAD", bulkhead)
+        claim = api.try_claim_source_admission
+        full = []
+
+        def claim_available(source):
+            if not full:
+                full.append(source.id)
+                bulkhead.try_acquire(source.id, 1)
+            return claim(source)
+
+        monkeypatch.setattr(api, "try_claim_source_admission", claim_available)
+    elif failover:
         from unittest.mock import AsyncMock
 
         from app.modules.claude import transport

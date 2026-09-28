@@ -15,6 +15,7 @@ import { ProviderAccountTrends } from "@/features/accounts/components/provider-a
 import { useClaude } from "./use-claude";
 import type { ClaudeAccount, ClaudeSelection, OAuthStarted } from "./api";
 import { ClaudeVersionControls } from "./version-controls";
+import { ClaudeCapacitySettings } from "./capacity-settings";
 
 function ModelSelection({
   account,
@@ -287,6 +288,14 @@ export function ClaudeAccountControls({
             {message}
           </p>
         ))}
+      <ClaudeCapacitySettings
+        key={`${account.id}:${account.maxConcurrency}`}
+        value={account.maxConcurrency}
+        readOnly={readOnly}
+        onSave={(maxConcurrency) =>
+          api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })
+        }
+      />
       <ModelSelection
         key={account.id + JSON.stringify(account.state.selections)}
         account={account}

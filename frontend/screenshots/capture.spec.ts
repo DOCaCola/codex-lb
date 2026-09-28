@@ -430,7 +430,7 @@ for (const width of [1440, 390]) {
     await applyTheme(page, "light");
     await interceptApi(page);
     const account = {
-      id: "src_claude_demo", name: "Research Claude", isEnabled: true, credentialStatus: "ready", expiresAt: "2026-09-26T12:00:00Z",
+      id: "src_claude_demo", name: "Research Claude", isEnabled: true, maxConcurrency: null, credentialStatus: "ready", expiresAt: "2026-09-26T12:00:00Z",
       state: { selections: [{ model: "claude-opus-5", contextWindow: 200000, maxOutputTokens: 8192 }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5" }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
       quota: { observedAt: null, models: [], windows: [
         { name: "five_hour", utilization: 32, resetsAt: "2026-09-25T17:00:00Z", freshness: "fresh", exhausted: false },
@@ -441,6 +441,7 @@ for (const width of [1440, 390]) {
     await page.route("**/api/claude-accounts/version", route => fulfill(route, { effectiveVersion: "2.1.282", discoveredVersion: "2.1.282", pinnedVersion: null, lastCheckedAt: null, lastChangedAt: null, error: null }));
     await page.goto(`${BASE_URL}/accounts?selected=src_claude_demo`);
     await expect(page.getByRole("heading", { name: "Research Claude", exact: true })).toBeVisible();
+    await expect(page.getByRole("spinbutton", { name: "Maximum concurrent requests" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     await page.screenshot({ animations: "disabled", fullPage: true, path: test.info().outputPath(`claude-accounts-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
