@@ -40,6 +40,29 @@ change design. No implementation was copied.
 This improves future evidence only: discarded historical 403 bodies and provider
 details missing from historical 400 records cannot be recovered by this change.
 
+## Tool wire identities
+
+OpenRouter can translate Responses namespaces into Chat function names, which may
+exceed an endpoint's 64-character limit. Inceptron rejected the Codex document tool
+`mcp__codex_apps__codex_document_control / execute_document_command` this way.
+The OpenRouter forwarding boundary now flattens namespace tools using stable
+ASCII aliases derived from the structured namespace/name identity. Invalid,
+oversized and reserved-prefix bare names also receive aliases. Valid ordinary
+bare names remain unchanged; no tool is removed.
+
+Request-local reverse mapping restores call identities before client delivery
+and continuation persistence. The same mapping covers history-only calls,
+tool choices and streaming/non-streaming Responses and Chat replies. Call IDs,
+arguments and outputs are not rewritten. There is no configuration or migration;
+native OpenAI, Claude and generic compatible sources retain their existing path.
+This resolves the observed name-length rejection, not every possible provider
+validation failure.
+
+Reference design: OpenCodex's bounded OpenAI Chat registry and exact document-tool
+regression at 3cc34e118192 (inspected 2026-09-28). Unlike that implementation,
+oversized bare names are included. Full references and decisions live in
+`bounded-openrouter-tool-names/design.md`.
+
 ## Unified account presentation
 
 The dashboard uses one card/list collection for native and OpenRouter accounts; Accounts uses one search/filter list and a shared detail column. The add-account chooser includes OpenRouter. Provider-specific controls stay in the selected account's details, not a separate top-level provider section.

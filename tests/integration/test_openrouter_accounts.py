@@ -359,13 +359,18 @@ async def test_missing_source_history_never_dispatches_incomplete_input(async_cl
 @pytest.mark.parametrize("reconnect", [False, True])
 async def test_websocket_source_tool_continuation(async_client, provider, path, custom, reconnect):
     requests = []
+    namespace = "mcp__codex_apps__codex_document_control"
+    name = "execute_document_command"
 
     async def upstream(request):
         body = await request.json()
         requests.append(body)
+        alias = body["tools"][0]["name"]
+        assert len(alias) <= 64
+        assert alias != name
         response_id = f"resp_tool_{len(requests)}"
         output = (
-            [{"type": "function_call", "id": "fc_test", "call_id": "call_test", "name": "lookup", "arguments": "{}"}]
+            [{"type": "function_call", "id": "fc_test", "call_id": "call_test", "name": alias, "arguments": "{}"}]
             if len(requests) == 1
             else []
         )
@@ -375,8 +380,7 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
                     "type": "custom_tool_call",
                     "id": "ct_test",
                     "call_id": "call_test",
-                    "name": "lookup",
-                    "namespace": "functions",
+                    "name": alias,
                     "input": "lookup test",
                 }
             ]
@@ -437,16 +441,17 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
                     accepted = await asyncio.wait_for(outgoing.get(), 5)
                     assert accepted["type"] == "websocket.accept", accepted
                 payload = {"type": "response.create", "model": "openrouter/vendor/test", "input": "Hello"}
-                if custom:
-                    payload["tools"] = [
-                        {
-                            "type": "namespace",
-                            "name": "functions",
-                            "tools": [
-                                {"type": "custom", "name": "lookup", "format": {"type": "text"}},
-                            ],
-                        }
-                    ]
+                payload["tools"] = [
+                    {
+                        "type": "namespace",
+                        "name": namespace,
+                        "tools": [
+                            {"type": "custom", "name": name, "format": {"type": "text"}}
+                            if custom
+                            else {"type": "function", "name": name, "parameters": {"type": "object", "properties": {}}},
+                        ],
+                    }
+                ]
                 if turn:
                     payload.update(
                         previous_response_id="resp_tool_1",
@@ -465,15 +470,18 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
                     event = json.loads(message["text"])
                     assert event["type"] not in ("error", "response.failed"), event
                     if event["type"] == "response.completed":
+                        if not turn:
+                            assert event["response"]["output"][0]["name"] == name
+                            assert event["response"]["output"][0]["namespace"] == namespace
                         break
             assert len(requests) == 2
             assert not requests[1].get("previous_response_id")
             assert [item["type"] for item in requests[1]["input"] if "type" in item][-2:] == (
                 ["custom_tool_call", "custom_tool_call_output"] if custom else ["function_call", "function_call_output"]
             )
-            if custom:
-                assert requests[1]["input"][-2]["namespace"] == "functions"
-                assert requests[1]["tools"][0]["type"] == "namespace"
+            assert "namespace" not in requests[1]["input"][-2]
+            assert requests[1]["input"][-2]["name"] == requests[0]["tools"][0]["name"]
+            assert requests[1]["tools"][0]["type"] == ("custom" if custom else "function")
         finally:
             await incoming.put({"type": "websocket.disconnect", "code": 1000})
             try:

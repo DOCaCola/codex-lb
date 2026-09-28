@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from json import JSONDecodeError
@@ -26,6 +26,7 @@ from app.core.utils.shared_future import (
 from app.core.utils.shared_future import _await_task_deferring_cancellation
 from app.core.utils.sse import extract_sse_data
 from app.db.models import ModelSource
+from app.modules.openrouter.tool_names import ToolNames
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +306,9 @@ async def forward_chat_completion(
     from app.modules.openrouter.protocol import project_request
 
     payload = project_request(source, payload, responses=False)
+    tool_names = ToolNames()
+    if source.kind == "openrouter":
+        payload = tool_names.project(payload, responses=False)
     stack = AsyncExitStack()
     try:
         session = await stack.enter_async_context(lease_model_source_session())
@@ -326,7 +330,7 @@ async def forward_chat_completion(
         if data is None:
             raise _invalid_upstream_response_error(response.status)
         result = SourceChatCompletion(
-            payload=data,
+            payload=tool_names.restore(data),
             usage=_usage_from_chat_payload(data),
             timings=_timings_from_payload(data),
             upstream_status_code=response.status,
@@ -355,6 +359,9 @@ async def stream_chat_completion(
     from app.modules.openrouter.protocol import project_request
 
     payload = project_request(source, payload, responses=False)
+    tool_names = ToolNames()
+    if source.kind == "openrouter":
+        payload = tool_names.project(payload, responses=False)
     usage_holder = SourceUsageHolder()
     usage_parser = SourceStreamUsageParser(usage_holder, response_shape="chat")
     # Chat completions keep the source's own 401/403 envelope (recode is a
@@ -389,7 +396,7 @@ async def stream_chat_completion(
         clock=clock,
     )
     return SourceChatStream(
-        body=body,
+        body=tool_names.restore_stream(body) if tool_names.originals else body,
         usage_holder=usage_holder,
         upstream_status_code=response.status,
         transport=transport,
@@ -406,6 +413,9 @@ async def forward_responses(
     from app.modules.openrouter.protocol import project_request
 
     payload = project_request(source, payload, responses=True)
+    tool_names = ToolNames()
+    if source.kind == "openrouter":
+        payload = tool_names.project(payload, responses=True)
     try:
         async with lease_model_source_session() as session:
             # Non-stream generations legitimately spend minutes before the
@@ -428,7 +438,7 @@ async def forward_responses(
                 if data is None:
                     raise _invalid_upstream_response_error(response.status)
                 return SourceResponsesCompletion(
-                    payload=data,
+                    payload=tool_names.restore(data),
                     usage=_usage_from_responses_payload(data),
                     timings=_timings_from_payload(data),
                     upstream_status_code=response.status,
@@ -529,6 +539,9 @@ async def stream_responses(
     from app.modules.openrouter.protocol import project_request
 
     payload = project_request(source, payload, responses=True)
+    tool_names = ToolNames()
+    if source.kind == "openrouter":
+        payload = tool_names.project(payload, responses=True)
     usage_holder = SourceUsageHolder()
     usage_parser = SourceStreamUsageParser(usage_holder, response_shape="responses")
     stack, response, first_chunk = await _open_source_stream(
@@ -556,7 +569,7 @@ async def stream_responses(
         clock=clock,
     )
     return SourceResponsesStream(
-        body=body,
+        body=tool_names.restore_stream(body) if tool_names.originals else body,
         usage_holder=usage_holder,
         upstream_status_code=response.status,
         transport=transport,
@@ -612,7 +625,7 @@ async def _source_stream_body(
     idle_seconds: float,
     scheduler: Scheduler,
     clock: Clock,
-) -> AsyncIterator[bytes]:
+) -> AsyncGenerator[bytes, None]:
     """Relay source bytes chunk by chunk; the transport is released exactly once.
 
     ``first_chunk`` is the chunk the open already read (Responses streams,
