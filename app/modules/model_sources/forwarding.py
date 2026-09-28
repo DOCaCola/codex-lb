@@ -316,7 +316,11 @@ async def forward_chat_completion(
                 timeout=_source_client_timeout(source),
             )
         )
-        data = await _response_json(response)
+        data = (
+            await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
+            if response.status >= 400
+            else await _response_json(response)
+        )
         if response.status >= 400:
             raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=_error_payload(data))
         if data is None:
@@ -414,9 +418,9 @@ async def forward_responses(
                 timeout=_source_client_timeout(source),
             ) as response:
                 if response.status >= 400:
-                    if recode_credential_failures and response.status in _CREDENTIAL_REJECTION_STATUSES:
+                    if recode_credential_failures and _recode_credentials(source, response.status):
                         raise _credentials_rejected_error(response, source)
-                    data = await _response_json(response)
+                    data = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
                     raise _upstream_status_error(
                         response, source, encryptor=encryptor, error_payload=_error_payload(data)
                     )
@@ -785,9 +789,9 @@ async def _open_source_stream(
                 raise _unreachable_error(exc) from exc
             raise _timeout_error("header", source, elapsed=clock.monotonic() - opened_at) from exc
         if response.status >= 400:
-            if recode_credential_failures and response.status in _CREDENTIAL_REJECTION_STATUSES:
+            if recode_credential_failures and _recode_credentials(source, response.status):
                 raise _credentials_rejected_error(response, source)
-            data = await _read_error_body(response, scheduler=scheduler)
+            data = await _read_error_body(response, source=source, scheduler=scheduler)
             raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=_error_payload(data))
         if first_frame_deadline_seconds is None:
             return stack, response, None
@@ -810,6 +814,11 @@ async def _open_source_stream(
 
 
 _CREDENTIAL_REJECTION_STATUSES = frozenset({401, 403})
+
+
+def _recode_credentials(source: ModelSource, status: int) -> bool:
+    # OpenRouter 403 also covers key funding and provider policy, not just auth.
+    return status in _CREDENTIAL_REJECTION_STATUSES and not (source.kind == "openrouter" and status == 403)
 
 
 def _phase_deadline(scheduler: Scheduler, seconds: float | None) -> AbstractContextManager[Any]:
@@ -848,11 +857,17 @@ def _source_client_timeout(source: ModelSource) -> aiohttp.ClientTimeout:
     )
 
 
-async def _read_error_body(response: aiohttp.ClientResponse, *, scheduler: Scheduler) -> dict[str, JsonValue] | None:
+async def _read_error_body(
+    response: aiohttp.ClientResponse, *, source: ModelSource, scheduler: Scheduler
+) -> dict[str, JsonValue] | None:
     """Read an error body under the first-frame deadline; ``None`` keeps the honest status with a generic envelope."""
 
     try:
         with scheduler.fail_after(SOURCE_FIRST_FRAME_DEADLINE_SECONDS):
+            if source.kind == "openrouter":
+                from app.modules.openrouter.errors import read_error
+
+                return await read_error(response)
             return await _response_json(response)
     except TimeoutError:
         return None
@@ -875,9 +890,11 @@ def _upstream_status_error(
 ) -> ModelSourceForwardingError:
     """Honest passthrough of a source 4xx/5xx: status, redacted envelope and ``Retry-After``."""
     if source.kind == "openrouter":
-        from app.modules.openrouter.protocol import normalize_error
+        from app.modules.openrouter.errors import normalize_error
 
-        error_payload = normalize_error(error_payload, response.status)
+        error_payload = normalize_error(
+            error_payload, response.status, secret=_source_api_key_secret(source, encryptor=encryptor)
+        )
     return ModelSourceForwardingError(
         status_code=response.status,
         payload=_redact_source_error_payload(error_payload, source, encryptor=encryptor),

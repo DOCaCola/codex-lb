@@ -47,17 +47,3 @@ def project_request(source: ModelSource, payload: dict[str, JsonValue], *, respo
     if provider is None:
         projected["provider"] = {"sort": "price", "require_parameters": True}
     return projected
-
-
-def normalize_error(payload: dict[str, JsonValue], status: int) -> dict[str, JsonValue]:
-    """OpenRouter uses numeric HTTP codes; Codex requires string error codes."""
-    error = payload.get("error")
-    if not isinstance(error, dict):
-        return payload
-    normalized = dict(error)
-    code = normalized.get("code")
-    if isinstance(code, int):
-        normalized["code"] = str(code)
-    if not isinstance(normalized.get("type"), str):
-        normalized["type"] = "invalid_request_error" if status < 500 else "upstream_error"
-    return {**payload, "error": normalized}

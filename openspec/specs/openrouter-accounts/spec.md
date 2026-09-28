@@ -78,7 +78,7 @@ The system MUST retain synchronized supported parameters and advertise parallel-
 - **THEN** clients receive low, medium, xhigh with the original default
 
 ### Requirement: OpenRouter errors conform to client error contracts
-OpenRouter HTTP rejections MUST preserve their HTTP status and message while exposing string error codes and types to clients. WebSocket clients MUST receive a parseable terminal error rather than wait for a completion that will never arrive.
+OpenRouter HTTP rejections MUST preserve their HTTP status and sanitized message while exposing string error codes and types to clients when provided. Responses forwarding MUST retain its upstream 401 protection: return a generic proxy-credential 502 without reading the rejected credential body. WebSocket clients MUST receive a parseable terminal error rather than wait for a completion that will never arrive.
 
 #### Scenario: Numeric provider error code
 - **WHEN** OpenRouter rejects a WebSocket-backed turn with HTTP 404 and numeric code 404
@@ -90,6 +90,21 @@ The model selector SHALL offer text generation, image generation, vision, tools,
 #### Scenario: Filter image models with reference input
 - **WHEN** an operator selects image generation and vision filters
 - **THEN** only models with image generation metadata and image input support are shown, without removing hidden selections
+
+### Requirement: Safe OpenRouter provider diagnostics
+OpenRouter HTTP 403 rejections MUST retain their status without being labeled invalid proxy credentials solely from that status. Structured nested provider reasons and provider names SHALL appear in the sanitized message visible to clients and request logs. The system MUST bound error body reads and diagnostic lengths, redact configured and recognizable credential values before truncation, and exclude arbitrary raw metadata. Existing unknown-source credential protection and OpenRouter 401 protection MUST remain unchanged.
+
+#### Scenario: Provider rejects a request
+- **WHEN** OpenRouter returns 400 with a generic message and structured provider metadata
+- **THEN** clients and request logs include the sanitized provider reason without raw metadata or credential values
+
+#### Scenario: Funding or policy denial
+- **WHEN** OpenRouter returns 403 with a denial message
+- **THEN** the client sees status 403 and a sanitized reason, not an assertion that credentials are invalid
+
+#### Scenario: Unusable error body
+- **WHEN** an OpenRouter error body is oversized or not valid JSON
+- **THEN** the original error status is retained with a generic message and no raw body disclosure
 
 ### Requirement: Image catalog selection
 The system SHALL synchronize OpenRouter's dedicated image catalog and selected image models' endpoint capabilities and pricing. Image selections MUST remain explicit and persist through refresh. Image-only models MUST be discoverable through `/v1/models` but MUST NOT be advertised as Codex conversation models or dispatched as chat/Responses models. The account model selector MUST distinguish images from text and display image billable units instead of fictitious text context or token caps.

@@ -6,7 +6,8 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.db.models import ModelSource
 from app.modules.model_sources.catalog import source_models_to_upstream_models
 from app.modules.openrouter.catalog import project_models
-from app.modules.openrouter.protocol import normalize_error, project_request
+from app.modules.openrouter.errors import normalize_error
+from app.modules.openrouter.protocol import project_request
 from app.modules.openrouter.schemas import AccountState, CatalogModel, ModelSelection
 
 pytestmark = pytest.mark.unit

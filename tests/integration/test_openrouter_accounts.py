@@ -59,7 +59,8 @@ def provider(monkeypatch):
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("parallel", [True, False])
-async def test_websocket_parameter_rejection_is_terminal(async_client, provider, path, parallel):
+@pytest.mark.parametrize("status", [400, 403, 404])
+async def test_websocket_parameter_rejection_is_terminal(async_client, provider, path, parallel, status):
     calls = []
 
     async def upstream(request):
@@ -67,7 +68,7 @@ async def test_websocket_parameter_rejection_is_terminal(async_client, provider,
         calls.append(body)
         assert "parallel_tool_calls" not in body
         assert body["provider"] == {"sort": "price", "require_parameters": True}
-        return web.json_response({"error": {"code": 404, "message": "No endpoints found"}}, status=404)
+        return web.json_response({"error": {"code": status, "message": "No endpoints found"}}, status=status)
 
     async with stub_source_upstreams() as start:
         url = await start(upstream)
@@ -117,9 +118,9 @@ async def test_websocket_parameter_rejection_is_terminal(async_client, provider,
                 assert message["type"] == "websocket.send"
                 event = json.loads(message["text"])
                 assert event["type"] == "error"
-                assert event["status"] == (404 if parallel else 400)
+                assert event["status"] == (status if parallel else 400)
                 # Mirrors Codex's WrappedWebsocketError string field contract.
-                assert event["error"]["code"] == ("404" if parallel else "unsupported_parameter")
+                assert event["error"]["code"] == (str(status) if parallel else "unsupported_parameter")
                 assert isinstance(event["error"]["message"], str)
                 assert event["error"]["type"] == "invalid_request_error"
                 if parallel:

@@ -27,11 +27,10 @@ from app.modules.model_sources.forwarding import SourceStreamTransport, SourceUs
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 from app.modules.openrouter import routing
-from app.modules.openrouter.protocol import normalize_error
+from app.modules.openrouter.errors import normalize_error, read_error
 from app.modules.openrouter.schemas import ImageEndpoint, ImageModel
 
 MAX_IMAGE_RESPONSE_BYTES = 100 * 1024 * 1024
-MAX_ERROR_BYTES = 64 * 1024
 
 
 class ImageRequest(BaseModel):
@@ -317,12 +316,8 @@ async def image_response(
         )
         upstream_status = response.status
         if not 200 <= response.status < 300:
-            raw_error = await bounded_body(response, MAX_ERROR_BYTES)
-            try:
-                data = json.loads(raw_error)
-            except ValueError:
-                data = {}
-            normalized = normalize_error(dict(data), response.status) if is_json_mapping(data) else {}
+            data = await read_error(response)
+            normalized = normalize_error(data or {}, response.status, secret=token)
             error = normalized.get("error")
             if not is_json_mapping(error):
                 error = {"code": str(response.status), "message": "OpenRouter image request failed"}
