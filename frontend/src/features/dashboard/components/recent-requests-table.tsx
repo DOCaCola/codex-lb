@@ -1,4 +1,5 @@
 import { Inbox } from "lucide-react";
+import { formatGenerationSpeed } from "@/features/dashboard/generation-speed";
 import {
   useMemo,
   useRef,
@@ -68,6 +69,7 @@ const STATUS_CLASS_MAP: Record<string, string> = {
 const TRANSPORT_LABELS: Record<string, string> = {
   auto: "Auto",
   http: "HTTP",
+  openai_compatible_http: "HTTP",
   websocket: "WS",
   automation: "Automation",
 };
@@ -277,20 +279,6 @@ function formatRequestCostSummary(request: RequestLog | null, t: ReturnType<type
   }
 
   return `${formatCurrency(totalUsd)} = ${segments.join(" + ")}`;
-}
-
-function formatGenerationSpeed(request: RequestLog): string | null {
-  if (request.outputTokensRaw == null || request.latencyMs == null || request.latencyFirstTokenMs == null) {
-    return null;
-  }
-
-  const outputCount = request.outputTokensRaw - (request.reasoningTokens ?? 0);
-  const generationMs = request.latencyMs - request.latencyFirstTokenMs;
-  if (outputCount <= 0 || generationMs <= 0) {
-    return null;
-  }
-
-  return (outputCount / (generationMs / 1000)).toFixed(1);
 }
 
 function formatCompactElapsed(ms: number | null | undefined): string | null {
@@ -507,10 +495,12 @@ export function RecentRequestsTable({
                       {t(`dashboard.requestStatus.${request.status}`, { defaultValue: REQUEST_STATUS_LABELS[request.status] ?? request.status })}
                     </Badge>
                   </TableCell> : null}
-                  {isColumnVisible("ttft") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums">
+                  {isColumnVisible("ttft") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums"
+                    title={request.modelSourceKind === "openrouter" ? t("dashboard.requests.gatewayTtft", "Gateway-observed time to first generated content, including reasoning or tool arguments.") : undefined}>
                     {formatCompactElapsed(request.latencyFirstTokenMs) ?? "--"}
                   </TableCell> : null}
-                  {isColumnVisible("tps") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums">
+                  {isColumnVisible("tps") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums"
+                    title={request.modelSourceKind === "openrouter" ? t("dashboard.requests.gatewayTps", "Estimated output tokens/s, including reasoning, after first output. Unavailable for failed turns or generation windows under one second.") : undefined}>
                     {generationSpeed ?? "--"}
                   </TableCell> : null}
                   {isColumnVisible("tokens") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums">

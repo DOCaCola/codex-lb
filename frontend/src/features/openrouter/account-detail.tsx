@@ -8,6 +8,7 @@ import { AlertMessage } from "@/components/alert-message";
 import type { OpenRouterAccount } from "./api";
 import {
   OpenRouterName,
+  OpenRouterTier,
   OpenRouterMetrics,
   OpenRouterFreshness,
 } from "./account-display";
@@ -53,7 +54,7 @@ export function OpenRouterAccountDetail({
             <h2 className="break-words text-lg font-semibold">
               <OpenRouterName account={account} />
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">OpenRouter</p>
+            <p className="mt-1 text-sm text-muted-foreground">OpenRouter · <OpenRouterTier account={account} /></p>
           </div>
           <StatusBadge status={openRouterStatus(account)} />
         </div>

@@ -18,6 +18,35 @@ vi.mock("@/features/accounts/components/provider-account-trends", () => ({
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 
 describe("Unified provider accounts", () => {
+  it.each([
+    [true, "Free"],
+    [false, "Paid"],
+    [null, "Unknown"],
+  ] as const)("displays key tier %s in account cards and lists", (free, label) => {
+    const account = createOpenRouterAccount();
+    if (free === null) account.state.key = null;
+    else account.state.key!.is_free_tier = free;
+    render(
+      <MemoryRouter>
+        <OpenRouterAccountCard account={account} />
+        <DashboardAccountList accounts={[]} openRouterAccounts={[account]} />
+        <AccountList accounts={[]} openRouterAccounts={[account]} selectedAccountId={null}
+          onSelect={vi.fn()} onOpenImport={vi.fn()} onOpenOauth={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTitle(/API key tier reported/)).toHaveLength(3);
+    for (const tier of screen.getAllByTitle(/API key tier reported/)) {
+      expect(tier).toHaveTextContent(label);
+    }
+  });
+
+  it("marks retained tier metadata stale", () => {
+    const account = createOpenRouterAccount();
+    account.state.key_error = "Refresh failed";
+    render(<MemoryRouter><OpenRouterAccountCard account={account} /></MemoryRouter>);
+    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent("Paid· stale");
+  });
+
   it("uses Pause and Resume instead of an enabled switch", async () => {
     const account = createOpenRouterAccount();
     const onToggle = vi.fn();
@@ -35,6 +64,7 @@ describe("Unified provider accounts", () => {
       <OpenRouterAccountDetail account={account} {...props} />,
     );
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent("Paid");
     await userEvent.click(
       screen.getByRole("button", { name: "Image models (0)" }),
     );

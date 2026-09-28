@@ -31,6 +31,7 @@ from app.modules.model_sources.forwarding import (
     ModelSourceForwardingError,
     SourceChatStream,
     SourceStreamTransport,
+    SourceTimings,
     SourceUsage,
     SourceUsageHolder,
 )
@@ -231,6 +232,23 @@ def _attach_stream(owner: SourceDispatch, *, holder: SourceUsageHolder | None = 
 
 
 # -- finish() latch ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_finish_reads_final_timings_after_closing_stream(
+    recorder: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _owner(recorder)
+    holder = SourceUsageHolder(timings=SourceTimings(100, 200))
+    _attach_stream(owner, holder=holder)
+
+    async def close(stream: _FakeStream) -> None:
+        stream.usage_holder.timings = SourceTimings(100, 2000)
+
+    monkeypatch.setattr(_FakeStream, "aclose", close)
+    await owner.finish(status="cancelled")
+    assert recorder.rows[0]["latency_ms"] == 2000
+    assert recorder.rows[0]["latency_first_token_ms"] == 100
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,18 @@ export function OpenRouterName({ account }: { account: OpenRouterAccount }) {
   );
 }
 
+export function OpenRouterTier({ account }: { account: OpenRouterAccount }) {
+  const { key, key_error } = account.state;
+  return (
+    <span title="API key tier reported by OpenRouter; Paid does not identify a commercial subscription plan.">
+      {key === null ? "Unknown" : key.is_free_tier ? "Free" : "Paid"}
+      {key !== null && key_error && (
+        <span className="ml-1 text-amber-600 dark:text-amber-400">· stale</span>
+      )}
+    </span>
+  );
+}
+
 function Metric({
   label,
   value,
@@ -171,7 +183,7 @@ export function OpenRouterListItem({
             <OpenRouterName account={account} />
           </p>
           <p className="text-xs text-muted-foreground">
-            OpenRouter · {account.state.selections.length} models selected
+            OpenRouter · <OpenRouterTier account={account} /> · {account.state.selections.length} models selected
           </p>
         </div>
         <StatusBadge status={openRouterStatus(account)} />
@@ -201,7 +213,7 @@ export function OpenRouterAccountCard({
             <OpenRouterName account={account} />
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            OpenRouter · {account.state.selections.length} models selected
+            OpenRouter · <OpenRouterTier account={account} /> · {account.state.selections.length} models selected
           </p>
         </div>
         <StatusBadge status={openRouterStatus(account)} />

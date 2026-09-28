@@ -32,7 +32,7 @@ import type { OpenRouterAccount } from "@/features/openrouter/api";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeName, ClaudeQuota } from "@/features/claude/account-display";
 import { claudeStatus } from "@/features/claude/display-values";
-import { OpenRouterName } from "@/features/openrouter/account-display";
+import { OpenRouterName, OpenRouterTier } from "@/features/openrouter/account-display";
 import {
   keyAllowance,
   money,
@@ -823,7 +823,7 @@ function OpenRouterRow({ account }: { account: OpenRouterAccount }) {
         </p>
       </div>
       <StatusBadge status={openRouterStatus(account)} />
-      <span className="text-xs text-muted-foreground">OpenRouter</span>
+      <span className="text-xs text-muted-foreground">OpenRouter · <OpenRouterTier account={account} /></span>
       <div className="text-xs">
         <p className="text-muted-foreground">Key allowance left</p>
         <span className="font-medium tabular-nums">

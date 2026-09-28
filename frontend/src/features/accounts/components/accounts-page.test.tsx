@@ -10,6 +10,12 @@ import { ADMIN_PERMISSIONS, createUpstreamProxyAdmin } from "@/test/mocks/factor
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
 
+// Trends have their own query-provider integration coverage; these tests exercise
+// the account page's selection and mutation controls.
+vi.mock("@/features/accounts/components/provider-account-trends", () => ({
+  ProviderAccountTrends: () => <div>Account trends</div>,
+}));
+
 const openRouterMocks = vi.hoisted(() => ({ accounts: [] as import("@/features/openrouter/api").OpenRouterAccount[] }));
 vi.mock("@/features/openrouter/use-openrouter", () => ({
   useOpenRouterAccounts: () => ({ data: { accounts: openRouterMocks.accounts }, error: null, isLoading: false }),

@@ -76,6 +76,7 @@ const AccountSchema = z.object({
         limit_reset: z.string().nullable(),
         usage: z.number(),
         usage_daily: z.number(),
+        is_free_tier: z.boolean(),
         usage_weekly: z.number(),
         usage_monthly: z.number(),
         free_model_daily_requests: z

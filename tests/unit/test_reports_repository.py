@@ -21,6 +21,38 @@ from app.modules.reports.repository import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+async def test_openrouter_tps_uses_total_output_and_excludes_unreliable_samples(async_session):
+    for index, (duration, status, first) in enumerate(
+        [
+            (2500, "success", 500),
+            (550, "success", 500),
+            (4500, "error", 500),
+            (2500, "success", None),
+        ]
+    ):
+        async_session.add(
+            RequestLog(
+                request_id=f"or-speed-{index}",
+                requested_at=datetime(2026, 6, 1, 9),
+                model="openrouter/test",
+                model_source_kind="openrouter",
+                status=status,
+                output_tokens=100,
+                reasoning_tokens=40,
+                latency_ms=duration,
+                latency_first_token_ms=first,
+            )
+        )
+    await async_session.commit()
+    rows = await ReportsRepository(async_session).aggregate_daily_rows(
+        date(2026, 6, 1),
+        date(2026, 6, 1),
+        timezone.utc,
+    )
+    assert rows[0].median_tps == 50
+
+
 class ReportAggregateFilters(TypedDict, total=False):
     account_ids: list[str]
     model: str

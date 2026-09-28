@@ -394,7 +394,10 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
                 "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "cost": 0.001},
             },
         }
-        return web.Response(text=f"data: {json.dumps(event)}\n\n", content_type="text/event-stream")
+        delta = {"type": "response.output_text.delta", "delta": "hello"}
+        return web.Response(
+            text=f"data: {json.dumps(delta)}\n\ndata: {json.dumps(event)}\n\n", content_type="text/event-stream"
+        )
 
     async with stub_source_upstreams() as start:
         url = await start(upstream)
@@ -490,6 +493,11 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
                 if not task.done():
                     task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
+        async with SessionLocal() as session:
+            logs = list(await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id)))
+            assert len(logs) == 2
+            assert all(log.latency_first_token_ms is not None and log.latency_ms is not None for log in logs)
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])

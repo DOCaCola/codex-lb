@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
@@ -26,6 +27,7 @@ from app.core.utils.shared_future import (
 from app.core.utils.shared_future import _await_task_deferring_cancellation
 from app.core.utils.sse import extract_sse_data
 from app.db.models import ModelSource
+from app.modules.openrouter.timing import has_generated_content
 from app.modules.openrouter.tool_names import ToolNames
 
 logger = logging.getLogger(__name__)
@@ -93,16 +95,9 @@ class SourceUsage:
 
 @dataclass(frozen=True, slots=True)
 class SourceTimings:
-    """Server-reported generation timing, for TTFT/tokens-per-second reporting.
+    """OpenRouter gateway observations or other sources' reported metrics."""
 
-    Maps directly onto ``RequestLog.latency_first_token_ms`` /
-    ``RequestLog.latency_ms`` so source-routed requests get the same TTFT and
-    tokens-per-second dashboard reporting as subscription-backed ones, sourced
-    from the upstream's own measurements rather than proxy-side timers (the
-    proxy does not instrument source forwarding round trips itself).
-    """
-
-    latency_first_token_ms: int
+    latency_first_token_ms: int | None
     latency_ms: int
 
 
@@ -310,6 +305,7 @@ async def forward_chat_completion(
     if source.kind == "openrouter":
         payload = tool_names.project(payload, responses=False)
     stack = AsyncExitStack()
+    started_at = REAL_CLOCK.monotonic()
     try:
         session = await stack.enter_async_context(lease_model_source_session())
         response = await stack.enter_async_context(
@@ -332,7 +328,11 @@ async def forward_chat_completion(
         result = SourceChatCompletion(
             payload=tool_names.restore(data),
             usage=_usage_from_chat_payload(data),
-            timings=_timings_from_payload(data),
+            timings=(
+                SourceTimings(None, round((REAL_CLOCK.monotonic() - started_at) * 1000))
+                if source.kind == "openrouter"
+                else _timings_from_payload(data)
+            ),
             upstream_status_code=response.status,
         )
     except (aiohttp.ClientError, TimeoutError) as exc:
@@ -363,7 +363,9 @@ async def stream_chat_completion(
     if source.kind == "openrouter":
         payload = tool_names.project(payload, responses=False)
     usage_holder = SourceUsageHolder()
-    usage_parser = SourceStreamUsageParser(usage_holder, response_shape="chat")
+    usage_parser = SourceStreamUsageParser(
+        usage_holder, response_shape="chat", clock=clock if source.kind == "openrouter" else None
+    )
     # Chat completions keep the source's own 401/403 envelope (recode is a
     # Responses-dispatch decision) and return at the source's headers exactly
     # as before the hardening: the first byte is the first token, which a local
@@ -416,6 +418,7 @@ async def forward_responses(
     tool_names = ToolNames()
     if source.kind == "openrouter":
         payload = tool_names.project(payload, responses=True)
+    started_at = REAL_CLOCK.monotonic()
     try:
         async with lease_model_source_session() as session:
             # Non-stream generations legitimately spend minutes before the
@@ -440,7 +443,11 @@ async def forward_responses(
                 return SourceResponsesCompletion(
                     payload=tool_names.restore(data),
                     usage=_usage_from_responses_payload(data),
-                    timings=_timings_from_payload(data),
+                    timings=(
+                        SourceTimings(None, round((REAL_CLOCK.monotonic() - started_at) * 1000))
+                        if source.kind == "openrouter"
+                        else _timings_from_payload(data)
+                    ),
                     upstream_status_code=response.status,
                 )
     except (aiohttp.ClientError, TimeoutError) as exc:
@@ -543,7 +550,9 @@ async def stream_responses(
     if source.kind == "openrouter":
         payload = tool_names.project(payload, responses=True)
     usage_holder = SourceUsageHolder()
-    usage_parser = SourceStreamUsageParser(usage_holder, response_shape="responses")
+    usage_parser = SourceStreamUsageParser(
+        usage_holder, response_shape="responses", clock=clock if source.kind == "openrouter" else None
+    )
     stack, response, first_chunk = await _open_source_stream(
         source,
         "/responses",
@@ -730,6 +739,7 @@ async def _source_stream_body(
             for pending in withheld:
                 yield pending
     finally:
+        usage_parser.end_timing()
         # A plain ``async with stack`` unwinds unshielded: repeated
         # cancellation delivery can interrupt ``__aexit__`` mid-unwind and
         # leak the pooled HTTP session lease.
@@ -1365,12 +1375,32 @@ class SourceStreamUsageParser:
     # parser must not buffer the whole stream in memory.
     _MAX_BUFFER_CHARS = 1_048_576
 
-    def __init__(self, usage_holder: SourceUsageHolder, *, response_shape: str) -> None:
+    def __init__(self, usage_holder: SourceUsageHolder, *, response_shape: str, clock: Clock | None = None) -> None:
         self._usage_holder = usage_holder
         self._response_shape = response_shape
         self._buffer = ""
         self._bom_pending = True
         self._cr_pending = False
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._clock = clock
+        self._started_at = clock.monotonic() if clock is not None else 0.0
+        self._first_token_ms: int | None = None
+        self._timing_finished = False
+
+    def end_timing(self) -> None:
+        if self._clock is not None and not self._timing_finished:
+            self._usage_holder.timings = SourceTimings(
+                self._first_token_ms, round((self._clock.monotonic() - self._started_at) * 1000)
+            )
+
+    def _observe_timing(self, event: Mapping[str, JsonValue]) -> None:
+        if self._clock is None or self._timing_finished:
+            return
+        if self._first_token_ms is None and has_generated_content(event, responses=self._response_shape == "responses"):
+            self._first_token_ms = round((self._clock.monotonic() - self._started_at) * 1000)
+        self.end_timing()
+        if event.get("type") in {"response.completed", "response.incomplete", "response.failed", "error"}:
+            self._timing_finished = True
 
     def feed(self, chunk: bytes) -> None:
         # SSE permits CRLF (and bare CR) line endings; normalize so frame
@@ -1381,7 +1411,7 @@ class SourceStreamUsageParser:
         # frame into two halves that parse to nothing while the event-block
         # reassembler delivers the whole event to the client (I11: delivered
         # => pinned; usage never captured).
-        text = chunk.decode("utf-8", errors="ignore")
+        text = self._decoder.decode(chunk)
         if self._cr_pending:
             self._cr_pending = False
             text = text.removeprefix("\n")
@@ -1421,7 +1451,7 @@ class SourceStreamUsageParser:
         starts with ``data:`` and parses to nothing. Idempotent.
         """
 
-        tail, self._buffer = self._buffer, ""
+        tail, self._buffer = self._buffer + self._decoder.decode(b"", final=True), ""
         if tail.strip():
             self._capture_frame(tail)
 
@@ -1438,6 +1468,8 @@ class SourceStreamUsageParser:
             return
         if data.strip() == "[DONE]" and self._response_shape == "chat":
             self._usage_holder.successful_terminal_seen = True
+            self.end_timing()
+            self._timing_finished = True
             return
         try:
             parsed = json.loads(data)
@@ -1445,6 +1477,7 @@ class SourceStreamUsageParser:
             return
         if not isinstance(parsed, dict):
             return
+        self._observe_timing(parsed)
         if self._response_shape == "responses":
             usage = _usage_from_responses_event(parsed)
             timings = _timings_from_responses_event(parsed)
@@ -1454,7 +1487,7 @@ class SourceStreamUsageParser:
             timings = _timings_from_payload(parsed)
         if usage is not None:
             self._usage_holder.usage = usage
-        if timings is not None:
+        if timings is not None and self._clock is None:
             self._usage_holder.timings = timings
 
     def _observe_responses_event(self, event: dict[str, JsonValue]) -> None:

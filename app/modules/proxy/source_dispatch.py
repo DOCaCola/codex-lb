@@ -620,13 +620,14 @@ class SourceDispatch:
         holder = self.observe_stream()
         if usage is None and holder is not None:
             usage = holder.usage
-        if timings is None and holder is not None:
-            timings = holder.timings
         if upstream_status_code is None and self.stream is not None:
             upstream_status_code = self.stream.upstream_status_code
         try:
             await _await_cleanup_deferring_cancellation(self.close_source(), scheduler=self.scheduler)
         finally:
+            # Closing an unfinished stream records its final observed duration.
+            if timings is None and holder is not None:
+                timings = holder.timings
             try:
                 await _await_cleanup_deferring_cancellation(
                     self.settle_or_release(status, usage), scheduler=self.scheduler

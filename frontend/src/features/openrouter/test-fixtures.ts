@@ -24,6 +24,7 @@ export function createOpenRouterAccount(
         limit_reset: "monthly",
         usage: 7.75,
         usage_daily: 1.25,
+        is_free_tier: false,
         usage_weekly: 4.5,
         usage_monthly: 7.75,
         free_model_daily_requests: { used: 12, limit: 1000, remaining: 988 },

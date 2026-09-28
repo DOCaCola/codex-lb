@@ -379,7 +379,10 @@ def _daily_speed_medians_stmt(
             *([RequestLog.api_key_id.in_(api_key_ids)] if api_key_ids else []),
         ),
     )
-    token_count = RequestLog.output_tokens - func.coalesce(RequestLog.reasoning_tokens, 0)
+    token_count = case(
+        (RequestLog.model_source_kind == "openrouter", RequestLog.output_tokens),
+        else_=RequestLog.output_tokens - func.coalesce(RequestLog.reasoning_tokens, 0),
+    )
     ttft_values_cte = (
         select(
             day_ranges_cte.c.report_date,
@@ -401,6 +404,14 @@ def _daily_speed_medians_stmt(
             RequestLog.latency_ms.is_not(None),
             RequestLog.latency_first_token_ms.is_not(None),
             RequestLog.latency_ms > RequestLog.latency_first_token_ms,
+            or_(
+                RequestLog.model_source_kind.is_(None),
+                RequestLog.model_source_kind != "openrouter",
+                and_(
+                    RequestLog.status == "success",
+                    RequestLog.latency_ms - RequestLog.latency_first_token_ms >= 1000,
+                ),
+            ),
         )
         .cte("daily_tps_values")
     )

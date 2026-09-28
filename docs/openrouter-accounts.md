@@ -63,6 +63,18 @@ Monitoring refreshes every minute for enabled accounts. The dashboard keeps thes
 
 ## Transport and recovery
 
+Account cards, lists and details display **Free** or **Paid** from OpenRouter's
+API-key tier flag. Paid means non-free, not an identified Standard, Business or
+Enterprise subscription. Missing metadata is **Unknown**; retained metadata is
+marked stale when refresh fails.
+
+For Chat/Responses streams, TTFT measures gateway-observed time to the first
+generated text, reasoning or tool-argument delta. TPS is marked **≈** and includes
+reported reasoning tokens. It is available only for successful turns with known
+usage and a generation window of at least one second. Nonstreaming and
+terminal-snapshot-only responses have duration but no TTFT/TPS. Historical rows
+are not backfilled. OpenRouter's upstream transport badge reads **Up HTTP**.
+
 Codex can keep WebSockets enabled. The client socket terminates at codex-lb; native OpenRouter Responses requests use HTTPS/SSE upstream. The same routing, client-key policy, admission and usage settlement apply to both client transports. Custom tools and namespaces are preserved.
 
 OpenRouter Responses is stateless: codex-lb sends `store:false` and materialized history, never an upstream `previous_response_id`. Private replay retention uses the existing one-hour TTL, 1,000-entry limit, 256 MiB per-entry limit and 1 GiB total disk budget. Completion is retained before being delivered, so immediate tool continuations can resolve it. Client identity must remain stable across reconnects. Expired or unavailable history asks the client for a full resend; it never silently discards context.

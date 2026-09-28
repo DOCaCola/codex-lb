@@ -5,6 +5,7 @@ import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { ADMIN_PERMISSIONS, OPERATOR_PERMISSIONS } from "@/test/mocks/factories";
 import { RecentRequestsTable } from "@/features/dashboard/components/recent-requests-table";
+import { formatGenerationSpeed } from "@/features/dashboard/generation-speed";
 import {
   ALL_REQUEST_LOG_COLUMNS,
   MAX_REQUEST_LOG_COLUMN_WIDTH,
@@ -96,6 +97,37 @@ function openRequestDetails() {
   fireEvent.click(screen.getByRole("button", { name: "View Details" }));
   return screen.getByRole("dialog");
 }
+
+describe("OpenRouter gateway metrics", () => {
+  it("uses total output and marks generation TPS estimated", () => {
+    expect(formatGenerationSpeed({
+      ...LAYOUT_REQUEST, modelSourceKind: "openrouter",
+      latencyMs: 2500, latencyFirstTokenMs: 500, outputTokensRaw: 100, reasoningTokens: 40,
+    })).toBe("≈50.0");
+  });
+
+  it.each([
+    { latencyMs: 1000, latencyFirstTokenMs: 500 },
+    { latencyFirstTokenMs: null },
+    { outputTokensRaw: null },
+    { status: "error" },
+  ])("omits unmeasurable/unsuccessful TPS: %j", (override) => {
+    expect(formatGenerationSpeed({
+      ...LAYOUT_REQUEST, modelSourceKind: "openrouter",
+      latencyMs: 2500, latencyFirstTokenMs: 500, ...override,
+    })).toBeNull();
+  });
+
+  it("labels compatible upstream transport HTTP", () => {
+    render(<RecentRequestsTable
+      accounts={[]}
+      requests={[{ ...LAYOUT_REQUEST, upstreamTransport: "openai_compatible_http" }]}
+      {...PAGINATION_PROPS}
+    />);
+    expect(screen.getByText("Up HTTP")).toBeInTheDocument();
+    expect(screen.queryByText(/openai_compatible_http/)).not.toBeInTheDocument();
+  });
+});
 
 describe("RecentRequestsTable", () => {
   beforeEach(() => {

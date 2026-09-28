@@ -3,9 +3,10 @@ import re
 
 import pytest
 from aiohttp import web
+from sqlalchemy import select
 
 from app.core.utils.sse import parse_sse_data_json
-from app.db.models import ModelSource
+from app.db.models import ModelSource, RequestLog
 from app.db.session import SessionLocal
 from tests.integration.model_source_helpers import stub_source_upstreams
 from tests.integration.test_openrouter_accounts import provider
@@ -79,6 +80,12 @@ async def test_public_tool_names_roundtrip(async_client, provider, path, stream)
             events = [
                 {"type": "response.created", "response": {**result, "status": "in_progress", "output": []}},
                 {"type": "response.output_item.added", "output_index": 0, "item": item},
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": 0,
+                    "item_id": "fc_one",
+                    "delta": "{}",
+                },
                 {"type": "response.output_item.done", "output_index": 0, "item": item},
                 {"type": "response.completed", "response": result},
             ]
@@ -143,3 +150,11 @@ async def test_public_tool_names_roundtrip(async_client, provider, path, stream)
             returned = data["choices"][0]["message"]["tool_calls"][0]["function"] if chat else data["output"][0]
         assert returned["name"] == name
         assert returned["arguments"] == '{"text":"unchanged"}'
+        async with SessionLocal() as session:
+            log = await session.scalar(select(RequestLog).where(RequestLog.model_source_id == account_id))
+            assert log.latency_ms is not None
+            if stream:
+                assert log.latency_first_token_ms is not None
+                assert log.latency_ms >= log.latency_first_token_ms
+            else:
+                assert log.latency_first_token_ms is None

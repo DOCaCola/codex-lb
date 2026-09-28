@@ -1,5 +1,25 @@
 # Implementation context
 
+## Observed timing and account tiers
+
+OpenRouter streaming timings use the gateway's monotonic clock, starting before
+the upstream request and counting first generated text, reasoning or tool argument
+delta. Terminal snapshots alone cannot establish TTFT. Completed duration freezes
+at the terminal event; client drain time does not extend it. TPS is an estimate,
+includes reasoning output tokens, and requires success and at least one second
+after first output. For example, 100 output tokens over two observed generation
+seconds displays approximately 50 tokens/s. Old null measurements remain unknown.
+
+Account tier uses `/api/v1/key`'s `is_free_tier`: true means Free, false is displayed
+as Paid, absent key metadata is Unknown. Paid means non-free API key, not proof of
+a Standard, Business or Enterprise plan. Failed refreshes retain a stale marker.
+Cards, both account lists and details share this presentation. Compatible upstream
+transport displays as Up HTTP; storage and API transport identifiers are unchanged.
+
+Timing reference evidence and revisions are recorded in the
+`openrouter-stream-timings` change design. These are source inspections, not live
+provider qualification. No provider or reference implementation code was copied.
+
 OpenRouter accounts reuse model-source scoping, encrypted inference credentials and accounting rather than masquerading as subscription accounts. An extension table stores the synchronized provider snapshot, operator selections and optional management credential. Optimistic version checks prevent a slow refresh from overwriting an operator's concurrent selection edit.
 
 The client WebSocket bridge follows OpenCodex's separation of downstream transport from provider transport: it calls the existing Responses route in-process, streams SSE events as WebSocket frames, and closes owned work on disconnect. It does not imitate OmniRoute's proprietary `/v1/ws` protocol or require OpenRouter to accept upstream WebSockets.
