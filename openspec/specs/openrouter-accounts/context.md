@@ -85,6 +85,12 @@ oversized bare names are included. Full references and decisions live in
 
 ## Unified account presentation
 
+The add-account chooser groups enrollment under Codex, Claude and OpenRouter,
+in that order. Codex offers OAuth and auth.json import; Claude retains its combined
+OAuth/import flow, and OpenRouter uses API-key enrollment. A shared option component
+keeps icon containers and focus styles consistent. Optional groups are omitted
+when unavailable, and the dialog scrolls on short screens.
+
 The dashboard uses one card/list collection for native and OpenRouter accounts; Accounts uses one search/filter list and a shared detail column. The add-account chooser includes OpenRouter. Provider-specific controls stay in the selected account's details, not a separate top-level provider section.
 
 For example, select **Add account → OpenRouter**, save an inference key, and choose **Models** in the resulting detail view. Dashboard **Details** links retain the source ID in the selected query parameter. Dollar balances never contribute to Codex quota aggregates. Name sorting includes both providers, while native-only quota/reset sorts place OpenRouter accounts last.

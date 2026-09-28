@@ -1,14 +1,9 @@
-import { KeyRound, Plus, Upload } from "lucide-react";
+import { KeyRound, Plus, Upload, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
 
 export type AddAccountDialogProps = {
   open: boolean;
@@ -19,18 +14,31 @@ export type AddAccountDialogProps = {
   onClaude?: () => void;
 };
 
+function AccountOption({ icon: Icon, title, description, onClick }: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" onClick={onClick}
+      className="flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50">
+        <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
+      </span>
+    </button>
+  );
+}
+
 export function AddAccountDialog({
-  open,
-  onOpenChange,
-  onImport,
-  onAddAccount,
-  onOpenRouter,
-  onClaude,
+  open, onOpenChange, onImport, onAddAccount, onOpenRouter, onClaude,
 }: AddAccountDialogProps) {
   const { t } = useTranslation();
-  // Close the chooser first, then defer the action to the next frame. Opening a
-  // second modal Dialog in the same tick the chooser closes can leave Radix's
-  // `pointer-events: none` stuck on <body>, making the next dialog uninteractive.
+  // Close first so Radix releases its pointer lock before the next modal opens.
   const handleSelect = (action: () => void) => {
     onOpenChange(false);
     requestAnimationFrame(() => action());
@@ -38,89 +46,37 @@ export function AddAccountDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("accounts.addDialog.title")}</DialogTitle>
           <DialogDescription>
-            {t("accounts.addDialog.description")}
+            {t("accounts.addDialog.providerDescription", "Choose a provider and how to connect your account.")}
           </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-2">
+        <div className="space-y-5">
+          <fieldset className="min-w-0 space-y-2">
+            <legend className="mb-2 text-xs font-semibold text-muted-foreground">Codex</legend>
+            <AccountOption icon={Plus} title={t("accounts.addDialog.oauthTitle")}
+              description={t("accounts.addDialog.oauthDescription")} onClick={() => handleSelect(onAddAccount)} />
+            <AccountOption icon={Upload} title={t("common.actions.import")}
+              description={t("accounts.addDialog.importDescription")} onClick={() => handleSelect(onImport)} />
+          </fieldset>
           {onClaude && (
-            <button
-              type="button"
-              onClick={() => handleSelect(onClaude)}
-              className="flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <KeyRound className="h-4 w-4" />
-              <span>
-                <span className="block text-sm font-medium">Claude</span>
-                <span className="block text-xs text-muted-foreground">
-                  Sign in with OAuth or import a Claude Code credential file.
-                </span>
-              </span>
-            </button>
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-2 text-xs font-semibold text-muted-foreground">Claude</legend>
+              <AccountOption icon={KeyRound} title={t("accounts.addDialog.claudeTitle", "OAuth or file import")}
+                description={t("accounts.addDialog.claudeDescription", "Sign in with OAuth or import a Claude Code credential file.")}
+                onClick={() => handleSelect(onClaude)} />
+            </fieldset>
           )}
           {onOpenRouter && (
-            <button
-              type="button"
-              onClick={() => handleSelect(onOpenRouter)}
-              className="flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-            >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50">
-                <KeyRound className="h-4 w-4 text-muted-foreground" />
-              </span>
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">OpenRouter</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Connect an API key and choose models to make available to
-                  clients.
-                </span>
-              </span>
-            </button>
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-2 text-xs font-semibold text-muted-foreground">OpenRouter</legend>
+              <AccountOption icon={KeyRound} title={t("accounts.addDialog.openRouterTitle", "API key")}
+                description={t("accounts.addDialog.openRouterDescription", "Connect an API key and choose models to make available to clients.")}
+                onClick={() => handleSelect(onOpenRouter)} />
+            </fieldset>
           )}
-          <button
-            type="button"
-            onClick={() => handleSelect(onAddAccount)}
-            className={cn(
-              "flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50",
-              "outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
-            )}
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50">
-              <Plus className="h-4 w-4 text-muted-foreground" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">
-                {t("accounts.addDialog.oauthTitle")}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {t("accounts.addDialog.oauthDescription")}
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleSelect(onImport)}
-            className={cn(
-              "flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50",
-              "outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
-            )}
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50">
-              <Upload className="h-4 w-4 text-muted-foreground" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">
-                {t("common.actions.import")}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {t("accounts.addDialog.importDescription")}
-              </span>
-            </span>
-          </button>
         </div>
       </DialogContent>
     </Dialog>
