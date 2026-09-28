@@ -701,10 +701,28 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("search", [None, False, True])
-async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search):
+@pytest.mark.parametrize("failover", [False, True])
+async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, monkeypatch, path, search, failover):
     from tests.unit.test_claude_search import search_content
 
     captured, closed = install_upstream(monkeypatch, content=search_content() if search else None)
+    if failover:
+        from app.modules.claude import transport
+        from app.modules.model_sources.forwarding import ModelSourceForwardingError
+
+        original = transport._open_source_stream
+        refused = []
+
+        async def send(source, *args, **kwargs):
+            if not refused:
+                refused.append(source.id)
+                raise ModelSourceForwardingError(
+                    status_code=429, upstream_status_code=429, payload={"error": {"message": "limited"}}
+                )
+            assert source.id != refused[0]
+            return await original(source, *args, **kwargs)
+
+        monkeypatch.setattr(transport, "_open_source_stream", send)
     incoming, outgoing = asyncio.Queue(), asyncio.Queue()
     scope = {
         "type": "websocket",

@@ -40,6 +40,8 @@ async def prepare_responses(
     payload: dict[str, JsonValue],
     api_key: ApiKeyData | None,
     continuation: SourceContinuation,
+    *,
+    excluded_source_ids: frozenset[str] = frozenset(),
 ) -> ClaudeAttempt:
     model = payload.get("model")
     if not isinstance(model, str):
@@ -59,6 +61,7 @@ async def prepare_responses(
             conversation_id=conversation_id,
             owner_source_id=replay.owner_source_id,
             preferred_source_id=replay.preferred_source_id,
+            excluded_source_ids=excluded_source_ids,
         )
         selected = next(row for row in account.source.models if row.model == model)
         projection = project_responses(

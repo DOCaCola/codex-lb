@@ -66,7 +66,7 @@ async def open_responses(
         return await _open_responses(prepared, projection, scheduler=scheduler, clock=clock)
     except ModelSourceForwardingError as exc:
         recovered = historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
-        if recovered is None:
+        if recovered is None or prepared.budget.remaining == 0:
             raise
     logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
     try:
@@ -88,6 +88,7 @@ async def _open_responses(
     # SSE is also used for downstream non-stream requests. It provides native
     # liveness pings during long thinking without inventing output progress.
     payload = cast(dict[str, JsonValue], {**prepared.body, "stream": True})
+    prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     try:
         stack, response, _ = await _open_source_stream(
@@ -208,7 +209,7 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
         return await _forward_native(prepared, count_tokens=count_tokens)
     except ModelSourceForwardingError as exc:
         recovered = None if count_tokens else historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
-        if recovered is None:
+        if recovered is None or prepared.budget.remaining == 0:
             raise
     logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
     try:
@@ -221,6 +222,7 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
 
 
 async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
+    prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     try:
         async with lease_model_source_session() as session:

@@ -18,6 +18,7 @@ import anyio
 
 if TYPE_CHECKING:
     from app.modules.claude.dispatch import PreparedClaudeRequest
+    from app.modules.claude.failover import FailoverState
     from app.modules.claude.inference import ClaudeAttempt
 from fastapi import (
     APIRouter,
@@ -5385,6 +5386,59 @@ async def _dispatch_source_responses_response(
     native_request: PreparedClaudeRequest | None = None,
     count_tokens: bool = False,
 ) -> Response:
+    from app.modules.claude.failover import FailoverState, classify_refusal, record_refusal
+
+    recovery = FailoverState() if source.kind == "claude" else None
+    while True:
+        if recovery is not None and recovery.last_error is not None and await request.is_disconnected():
+            return Response()
+        remaining = recovery.budget.remaining if recovery else 0
+        try:
+            return await _dispatch_source_responses_attempt(
+                request,
+                payload,
+                source=source,
+                api_key=api_key,
+                rate_limit_headers=rate_limit_headers,
+                pre_normalization_effort=pre_normalization_effort,
+                enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+                native_codex_heartbeat=native_codex_heartbeat,
+                context=context,
+                native_request=native_request,
+                count_tokens=count_tokens,
+                claude_recovery=recovery,
+            )
+        except ModelSourceForwardingError as exc:
+            if recovery is None or recovery.stream_opened or recovery.budget.remaining == remaining:
+                raise
+            refusal = classify_refusal(exc, now=datetime.now(timezone.utc))
+            if refusal is None:
+                raise
+            assert recovery.source_id is not None
+            # The attempt helper has already settled and released admission.
+            await record_refusal(recovery.source_id, payload.model, refusal)
+            recovery.excluded.add(recovery.source_id)
+            recovery.last_error = exc
+            if recovery.budget.remaining == 0:
+                raise
+            await anyio.lowlevel.checkpoint()
+
+
+async def _dispatch_source_responses_attempt(
+    request: Request,
+    payload: ResponsesRequest,
+    *,
+    source: ModelSource,
+    api_key: ApiKeyData | None,
+    rate_limit_headers: Mapping[str, str],
+    pre_normalization_effort: str | None,
+    enforce_openai_sdk_contract: bool = True,
+    native_codex_heartbeat: bool = False,
+    context: ProxyContext | None = None,
+    native_request: PreparedClaudeRequest | None = None,
+    count_tokens: bool = False,
+    claude_recovery: FailoverState | None = None,
+) -> Response:
     """Serve a Responses request from an OpenAI-compatible model source.
 
     Every dispatched attempt is owned by one ``SourceDispatch``: the bulkhead
@@ -5429,11 +5483,48 @@ async def _dispatch_source_responses_response(
         if native_request is not None:
             from app.modules.claude.inference import ClaudeAttempt
 
+            if claude_recovery is not None and claude_recovery.excluded:
+                from app.db.session import detach_session_objects
+                from app.modules.claude.dispatch import ClaudeDispatchPreparer
+                from app.modules.claude.repository import ClaudeRepository
+
+                async with get_background_session() as session:
+                    native_request = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
+                        native_request.logical_body,
+                        api_key,
+                        conversation_id=native_request.conversation_id,
+                        incoming_headers=request.headers,
+                        endpoint="count_tokens" if count_tokens else "messages",
+                        translated=False,
+                        excluded_source_ids=frozenset(claude_recovery.excluded),
+                    )
+                    detach_session_objects(session)
+                source = native_request.source
             claude_attempt = ClaudeAttempt(native_request, None)
         elif source.kind == "claude":
             assert continuation is not None
-            claude_attempt = await prepare_claude_responses(request, source_payload, api_key, continuation)
+            claude_attempt = await prepare_claude_responses(
+                request,
+                source_payload,
+                api_key,
+                continuation,
+                excluded_source_ids=frozenset(claude_recovery.excluded) if claude_recovery else frozenset(),
+            )
             source = claude_attempt.prepared.source
+        if claude_attempt is not None and claude_recovery is not None:
+            claude_attempt = replace(
+                claude_attempt, prepared=replace(claude_attempt.prepared, budget=claude_recovery.budget)
+            )
+            if native_request is not None:
+                native_request = claude_attempt.prepared
+            claude_recovery.source_id = source.id
+            if claude_recovery.excluded:
+                logger.info(
+                    "claude_account_failover source_id=%s excluded_count=%d sends_remaining=%d",
+                    source.id,
+                    len(claude_recovery.excluded),
+                    claude_recovery.budget.remaining,
+                )
         # Validate before acquiring usage or admission; forwarding owns projection.
         from app.modules.openrouter.protocol import project_request
 
@@ -5441,6 +5532,8 @@ async def _dispatch_source_responses_response(
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     except ClaudeError as exc:
+        if claude_recovery is not None and claude_recovery.last_error is not None:
+            raise claude_recovery.last_error from exc
         return _logged_error_json_response(
             request,
             exc.status_code,
@@ -5493,6 +5586,8 @@ async def _dispatch_source_responses_response(
                 request, owner, _open_owned_source_stream(owner, source_payload, claude_attempt=claude_attempt)
             )
             stream = owner.stream
+            if claude_recovery is not None:
+                claude_recovery.stream_opened = True
             if stream is None:
                 raise RuntimeError("model source open completed without assigning the stream")
             if native_request is not None:
@@ -5541,6 +5636,8 @@ async def _dispatch_source_responses_response(
                 request, owner, _open_owned_source_stream(owner, source_payload, claude_attempt=claude_attempt)
             )
             assert owner.stream is not None
+            if claude_recovery is not None:
+                claude_recovery.stream_opened = True
             result = await open_with_disconnect_watch(request, owner, collect_response(owner.stream))
         else:
             result = await open_with_disconnect_watch(request, owner, forward_source_responses(source, source_payload))

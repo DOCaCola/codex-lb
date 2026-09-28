@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import ClaudeAccount, ModelSource, ModelSourceModel
+from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourceModel
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.quota import model_quota, quota_status
@@ -98,10 +98,19 @@ async def select_account(
     if require_streaming:
         statement = statement.where(ModelSourceModel.supports_streaming.is_(True))
     accounts = list((await session.scalars(statement)).unique())
+    cooled = set(
+        await session.scalars(
+            select(ClaudeCooldown.source_id).where(
+                ClaudeCooldown.model.in_(("*", model)), ClaudeCooldown.until > now.replace(tzinfo=None)
+            )
+        )
+    )
     eligible = [
         account
         for account in accounts
-        if account.source_id not in excluded_source_ids and eligibility(account, model, now=now).eligible
+        if account.source_id not in excluded_source_ids
+        and account.source_id not in cooled
+        and eligibility(account, model, now=now).eligible
     ]
     if not eligible:
         if owner_source_id is not None:

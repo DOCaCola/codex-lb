@@ -2015,6 +2015,16 @@ class ClaudeVersionState(Base):
     error: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class ClaudeCooldown(Base):
+    __tablename__ = "claude_cooldowns"
+
+    source_id: Mapped[str] = mapped_column(
+        String, ForeignKey("claude_accounts.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(String, primary_key=True)
+    until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class OpenRouterCooldown(Base):
     __tablename__ = "openrouter_cooldowns"
 

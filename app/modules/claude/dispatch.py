@@ -17,6 +17,7 @@ from app.modules.claude.auth import ClaudeAuth
 from app.modules.claude.caching import cache_translated
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.failover import SendBudget
 from app.modules.claude.profile import RequestProfile, recognize_native
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
@@ -37,6 +38,9 @@ class PreparedClaudeRequest:
     headers: dict[str, str] = field(repr=False)
     body: dict[str, JsonValue] = field(repr=False)
     transformations: tuple[str, ...]
+    logical_body: dict[str, JsonValue] = field(repr=False)
+    conversation_id: str
+    budget: SendBudget = field(default_factory=SendBudget, compare=False)
 
 
 class ClaudeDispatchPreparer:
@@ -54,6 +58,7 @@ class ClaudeDispatchPreparer:
         endpoint: Literal["messages", "count_tokens"],
         translated: bool,
         owner_source_id: str | None = None,
+        excluded_source_ids: frozenset[str] = frozenset(),
     ) -> PreparedClaudeRequest:
         model = logical.get("model")
         if not isinstance(model, str) or not model.startswith("anthropic/"):
@@ -100,6 +105,7 @@ class ClaudeDispatchPreparer:
             conversation_id=conversation_id,
             owner_source_id=owner_source_id,
             preferred_source_id=preferred_owner,
+            excluded_source_ids=excluded_source_ids,
             require_streaming=logical.get("stream") is True,
         )
         if endpoint == "messages":
@@ -208,4 +214,6 @@ class ClaudeDispatchPreparer:
             headers=headers,
             body=projected.body,
             transformations=transformations,
+            logical_body=deepcopy(logical),
+            conversation_id=conversation_id,
         )
