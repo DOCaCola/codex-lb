@@ -22,6 +22,8 @@ from app.modules.claude.replay import authenticate_replay
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.responses import ResponsesProjection
 from app.modules.claude.routing import ClaudePoolUnavailable, select_account
+from app.modules.claude.schemas import AccountState
+from app.modules.claude.service import catalog_reasoning
 from app.modules.model_sources.continuation import SourceContinuation
 from app.modules.model_sources.forwarding import (
     ModelSourceForwardingError,
@@ -122,6 +124,7 @@ async def prepare_responses(
         projection = project_responses(
             projected,
             max_output_tokens=selected.max_output_tokens,
+            reasoning=catalog_reasoning(AccountState.model_validate_json(account.state_json), model),
             restore_reasoning=lambda token: (
                 opaque.decode(token, model=model, client_scope=client_scope, conversation_id=conversation_id).block
             ),

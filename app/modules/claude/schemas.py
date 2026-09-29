@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.db.models import AccountRoutingPolicy
+from app.modules.claude.capabilities import CatalogCapabilities
 from app.modules.claude.model_limits import ModelTokenLimits, resolve_token_limits
 from app.modules.shared.schemas import DashboardModel
 
@@ -100,6 +101,8 @@ class CatalogModel(BaseModel):
     created_at: datetime | None = None
     max_input_tokens: int | None = Field(default=None, strict=True, gt=0)
     max_tokens: int | None = Field(default=None, strict=True, gt=0)
+    # None until a catalog refresh records them (older stored state).
+    capabilities: CatalogCapabilities | None = None
 
     @model_validator(mode="after")
     def resolve_limits(self) -> CatalogModel:

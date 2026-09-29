@@ -92,6 +92,64 @@ def test_haiku_budget_reasoning_is_advertised_with_dated_api_price():
     assert metadata["supported_reasoning_levels"] == ["low", "medium", "high", "max"]
 
 
+def _caps(levels: tuple[str, ...], *, adaptive: bool, budget: bool) -> dict:
+    """Claude /v1/models capability tree, as returned over the OAuth path (2026-09-29)."""
+    effort = {"supported": bool(levels)} | {
+        level: {"supported": level in levels} for level in ("low", "medium", "high", "xhigh", "max")
+    }
+    return {
+        "effort": effort,
+        "thinking": {
+            "supported": True,
+            "types": {"adaptive": {"supported": adaptive}, "enabled": {"supported": budget}},
+        },
+        "image_input": {"supported": True},
+    }
+
+
+FULL = ("low", "medium", "high", "xhigh", "max")
+
+
+@pytest.mark.parametrize(
+    "model_id,capabilities,levels,default",
+    [
+        ("claude-opus-5-5", _caps(FULL, adaptive=True, budget=False), list(FULL), "medium"),
+        ("claude-sonnet-5-5", _caps(FULL, adaptive=True, budget=False), list(FULL), "high"),
+        (
+            "claude-opus-4-6",
+            _caps(("low", "medium", "high", "max"), adaptive=True, budget=True),
+            ["low", "medium", "high", "max"],
+            "high",
+        ),
+        (
+            "claude-haiku-4-5-20251001",
+            _caps((), adaptive=False, budget=True),
+            ["low", "medium", "high", "max"],
+            "medium",
+        ),
+    ],
+)
+def test_reasoning_levels_follow_catalog_capabilities(model_id, capabilities, levels, default):
+    model = CatalogModel(id=model_id, display_name=model_id, capabilities=capabilities)
+    state = AccountState(catalog=[model], selections=[ModelSelection(model=model_id)])
+    # Stored account state round-trips the parsed capabilities.
+    state = AccountState.model_validate_json(state.model_dump_json())
+    metadata = json.loads(project_models(state)[0].raw_metadata_json)
+    assert metadata["supports_reasoning"] is True
+    assert metadata["supported_reasoning_levels"] == levels
+    assert metadata["default_reasoning_level"] == default
+
+
+def test_catalog_without_reasoning_capability_advertises_none():
+    capabilities = _caps((), adaptive=False, budget=False)
+    model = CatalogModel(id="claude-opus-5", display_name="Opus", capabilities=capabilities)
+    metadata = json.loads(
+        project_models(AccountState(catalog=[model], selections=[ModelSelection(model=model.id)]))[0].raw_metadata_json
+    )
+    assert metadata["supports_reasoning"] is False
+    assert metadata["supported_reasoning_levels"] == []
+
+
 @pytest.mark.parametrize("value", [0, -1, True, "64000", 1.5])
 def test_invalid_discovered_limits_are_rejected(value):
     with pytest.raises(ValidationError):

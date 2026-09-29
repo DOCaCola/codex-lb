@@ -12,7 +12,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
-from app.modules.claude.capabilities import model_policy
+from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, model_policy
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
 from app.modules.claude.tool_schema import ToolArguments, adapt_tool_schema
@@ -81,6 +81,7 @@ def project_responses(
     payload: dict[str, JsonValue],
     *,
     max_output_tokens: int,
+    reasoning: ReasoningSpec | None,
     restore_reasoning: Callable[[str], dict[str, JsonValue]] | None = None,
 ) -> MessagesProjection:
     if payload.get("previous_response_id") or payload.get("conversation"):
@@ -315,18 +316,21 @@ def project_responses(
         selected = body["tool_choice"]
         assert isinstance(selected, dict)
         selected["disable_parallel_tool_use"] = True
-    reasoning = payload.get("reasoning")
+    requested_reasoning = payload.get("reasoning")
     policy = model_policy(str(payload.get("model", "")))
-    if isinstance(reasoning, dict) and reasoning.get("effort") not in (None, "none"):
-        effort = reasoning.get("effort")
-        if effort not in ("low", "medium", "high", "max"):
+    if isinstance(requested_reasoning, dict) and requested_reasoning.get("effort") not in (None, "none"):
+        requested_effort = requested_reasoning.get("effort")
+        if not isinstance(requested_effort, str) or requested_effort not in EFFORT_LEVELS:
             raise invalid("Unsupported Claude reasoning effort", "reasoning")
-        if policy is None or not policy.supports_reasoning:
-            raise invalid("This Claude model has no configured reasoning policy", "reasoning")
-        display = reasoning.get("display")
+        if reasoning is None:
+            raise invalid("This Claude model does not support reasoning", "reasoning")
+        effort = reasoning.effective_effort(requested_effort)
+        if effort is None:
+            raise invalid(f"This Claude model does not support {requested_effort} reasoning", "reasoning")
+        display = requested_reasoning.get("display")
         if display not in (None, "summarized", "omitted"):
             raise invalid("Unsupported Claude thinking display", "reasoning")
-        if policy.adaptive_reasoning:
+        if reasoning.mode == "adaptive":
             body["thinking"] = {"type": "adaptive"}
             if display == "summarized":
                 body["thinking"]["display"] = "summarized"

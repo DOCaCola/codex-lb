@@ -17,6 +17,11 @@ from tests.integration.test_claude_accounts import import_body
 
 pytestmark = pytest.mark.integration
 MODEL = "anthropic/claude-opus-5"
+# Capability tree Claude's OAuth /v1/models reports for Opus 5 / Sonnet 5 (2026-09-29).
+ADAPTIVE_XHIGH = {
+    "effort": {"supported": True} | {level: {"supported": True} for level in ("low", "medium", "high", "xhigh", "max")},
+    "thinking": {"supported": True, "types": {"adaptive": {"supported": True}, "enabled": {"supported": False}}},
+}
 
 
 def key(**overrides):
@@ -44,8 +49,8 @@ async def pool(async_client, monkeypatch):
         "catalog",
         AsyncMock(
             return_value=[
-                CatalogModel(id="claude-opus-5", display_name="Opus"),
-                CatalogModel(id="claude-sonnet-5", display_name="Sonnet"),
+                CatalogModel(id="claude-opus-5", display_name="Opus", capabilities=ADAPTIVE_XHIGH),
+                CatalogModel(id="claude-sonnet-5", display_name="Sonnet", capabilities=ADAPTIVE_XHIGH),
             ]
         ),
     )

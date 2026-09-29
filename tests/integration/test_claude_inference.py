@@ -1290,4 +1290,11 @@ async def test_catalog_orders_native_claude_after_openai_before_other_sources(as
     assert all(index < slugs.index(MODEL) for index, slug in enumerate(slugs) if slug.startswith("gpt-"))
     claude = next(entry for entry in entries if entry["slug"] == MODEL)
     assert claude["prefer_websockets"] is True
-    assert [level["effort"] for level in claude["supported_reasoning_levels"]] == ["low", "medium", "high", "max"]
+    assert [level["effort"] for level in claude["supported_reasoning_levels"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert claude["default_reasoning_level"] == "high"

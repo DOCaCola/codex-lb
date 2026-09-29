@@ -6,6 +6,7 @@ from pydantic import JsonValue
 
 from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
+from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
@@ -15,29 +16,55 @@ from tests.claude_json_helpers import array, at
 pytestmark = pytest.mark.unit
 
 
+def project(payload, **kwargs):
+    """Project with the policy-derived reasoning the payload's model would get."""
+    return project_responses(payload, reasoning=reasoning_spec(str(payload.get("model", "")), None), **kwargs)
+
+
 def request(**overrides):
     return {"model": "anthropic/claude-opus-5", "input": "Hello", **overrides}
 
 
 @pytest.mark.parametrize("maximum,expected", [(128000, 64000), (64000, 64000), (32000, 32000)])
 def test_default_output_budget_is_distinct_from_capability(maximum, expected):
-    assert project_responses(request(), max_output_tokens=maximum).body["max_tokens"] == expected
+    assert project(request(), max_output_tokens=maximum).body["max_tokens"] == expected
 
 
 def test_explicit_output_budget_can_exceed_default_but_not_capability():
-    assert project_responses(request(max_output_tokens=100000), max_output_tokens=128000).body["max_tokens"] == 100000
+    assert project(request(max_output_tokens=100000), max_output_tokens=128000).body["max_tokens"] == 100000
     with pytest.raises(ClientPayloadError):
-        project_responses(request(max_output_tokens=128001), max_output_tokens=128000)
+        project(request(max_output_tokens=128001), max_output_tokens=128000)
 
 
 @pytest.mark.parametrize("reasoning", [None, {"effort": "high"}])
 def test_null_sampling_controls_are_absent(reasoning):
-    body = project_responses(
+    body = project(
         request(temperature=None, top_p=None, **({"reasoning": reasoning} if reasoning else {})),
         max_output_tokens=64000,
     ).body
     assert "temperature" not in body
     assert "top_p" not in body
+
+
+@pytest.mark.parametrize(
+    "levels,requested,sent",
+    [
+        (("low", "medium", "high", "xhigh", "max"), "xhigh", "xhigh"),
+        (("low", "medium", "high", "max"), "xhigh", "high"),
+        (("low", "medium", "high"), "max", "high"),
+        (("low", "medium", "high", "max"), "max", "max"),
+    ],
+)
+def test_adaptive_effort_is_forwarded_or_stepped_down_never_escalated(levels, requested, sent):
+    spec = ReasoningSpec(mode="adaptive", levels=levels, default="high")
+    body = project_responses(request(reasoning={"effort": requested}), max_output_tokens=64000, reasoning=spec).body
+    assert body["thinking"] == {"type": "adaptive"}
+    assert body["output_config"] == {"effort": sent}
+
+
+def test_reasoning_is_rejected_for_a_model_without_reasoning_capability():
+    with pytest.raises(ClientPayloadError):
+        project_responses(request(reasoning={"effort": "high"}), max_output_tokens=64000, reasoning=None)
 
 
 def test_structured_output_and_reasoning_share_output_configuration():
@@ -47,7 +74,7 @@ def test_structured_output_and_reasoning_share_output_configuration():
         "required": ["answer"],
         "additionalProperties": False,
     }
-    result = project_responses(
+    result = project(
         request(text={"format": {"type": "json_schema", "schema": schema}}, reasoning={"effort": "high"}),
         max_output_tokens=8192,
     )
@@ -56,7 +83,7 @@ def test_structured_output_and_reasoning_share_output_configuration():
 
 @pytest.mark.parametrize("model", ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"])
 def test_budget_thinking_is_bounded_by_caller_output_limit(model):
-    result = project_responses(
+    result = project(
         request(model=f"anthropic/{model}", reasoning={"effort": "medium"}, max_output_tokens=10000),
         max_output_tokens=64000,
     )
@@ -64,7 +91,7 @@ def test_budget_thinking_is_bounded_by_caller_output_limit(model):
     assert result.body["max_tokens"] == 10000
     assert "output_config" not in result.body
     with pytest.raises(ClientPayloadError):
-        project_responses(
+        project(
             request(model=f"anthropic/{model}", reasoning={"effort": "medium"}, max_output_tokens=8192),
             max_output_tokens=64000,
         )
@@ -81,7 +108,7 @@ def test_budget_thinking_is_bounded_by_caller_output_limit(model):
 )
 def test_unsupported_semantics_are_not_silently_dropped(payload):
     with pytest.raises(ClientPayloadError):
-        project_responses(request(**payload), max_output_tokens=8192)
+        project(request(**payload), max_output_tokens=8192)
 
 
 def scope():
@@ -106,7 +133,7 @@ def test_text_and_inline_image_projection_does_not_mutate_input():
         ],
     )
     before = json.dumps(payload)
-    projected = project_responses(payload, max_output_tokens=8192)
+    projected = project(payload, max_output_tokens=8192)
     assert projected.body["system"] == [{"type": "text", "text": "Keep instructions"}]
     assert at(projected.body, "messages", 0, "content", 1, "source", "media_type") == "image/png"
     assert json.dumps(payload) == before
@@ -124,7 +151,7 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
             }
         ]
     )
-    projected = project_responses(payload, max_output_tokens=8192)
+    projected = project(payload, max_output_tokens=8192)
     wire = next(iter(projected.tools))
     opaque = codec()
     adapter = ResponsesProjection(scope(), projected.tools, opaque)
@@ -155,7 +182,7 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
         *array(response["output"]),
         {"type": "custom_tool_call_output", "call_id": "call1", "output": "done"},
     ]
-    replay = project_responses(
+    replay = project(
         request(tools=payload["tools"], input=history),
         max_output_tokens=8192,
         restore_reasoning=lambda token: (
@@ -252,4 +279,4 @@ def test_early_stop_is_not_completed():
 )
 def test_unsupported_or_orphaned_history_rejected(item):
     with pytest.raises(ClientPayloadError):
-        project_responses(request(input=[item]), max_output_tokens=8192)
+        project(request(input=[item]), max_output_tokens=8192)

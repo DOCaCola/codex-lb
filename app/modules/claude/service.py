@@ -14,7 +14,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import AccountRoutingPolicy, ClaudeAccount, ClaudeOAuthFlow, ModelSource, ModelSourceModel
 from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
-from app.modules.claude.capabilities import model_policy
+from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
 from app.modules.claude.identity import authenticated_identity
@@ -371,6 +371,13 @@ class ClaudeService:
         )
 
 
+def catalog_reasoning(state: AccountState, model: str) -> ReasoningSpec | None:
+    """Reasoning for a selected model, from this account's catalog capabilities."""
+    upstream = model.removeprefix("anthropic/")
+    entry = next((item for item in state.catalog if item.id == upstream), None)
+    return reasoning_spec(upstream, entry.capabilities if entry else None)
+
+
 def project_models(state: AccountState) -> list[ModelSourceModel]:
     from app.core.usage.pricing import get_pricing_for_model
 
@@ -379,7 +386,7 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
     for selection in state.selections:
         model = catalog.get(selection.model)
         limits = model.token_limits if model else None
-        policy = model_policy(selection.model)
+        reasoning = catalog_reasoning(state, selection.model)
         resolved_price = get_pricing_for_model(selection.model)
         price = resolved_price[1] if resolved_price is not None else None
         result.append(
@@ -406,11 +413,9 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
                             else {}
                         ),
                         "upstream_model": selection.model,
-                        "supports_reasoning": bool(policy and policy.supports_reasoning),
-                        "supported_reasoning_levels": ["low", "medium", "high", "max"]
-                        if policy and policy.supports_reasoning
-                        else [],
-                        "default_reasoning_level": "medium" if policy and policy.supports_reasoning else None,
+                        "supports_reasoning": reasoning is not None,
+                        "supported_reasoning_levels": list(reasoning.levels) if reasoning else [],
+                        "default_reasoning_level": reasoning.default if reasoning else None,
                     }
                 ),
             )

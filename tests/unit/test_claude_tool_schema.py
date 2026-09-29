@@ -6,6 +6,7 @@ from jsonschema import Draft202012Validator
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude import tool_schema
+from app.modules.claude.capabilities import reasoning_spec
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.responses import ResponsesProjection
@@ -13,6 +14,12 @@ from app.modules.claude.tool_schema import adapt_tool_schema
 from tests.unit.test_claude_protocol import codec, request, scope
 
 pytestmark = pytest.mark.unit
+
+
+def project(payload, **kwargs):
+    """Project with the policy-derived reasoning the payload's model would get."""
+    return project_responses(payload, reasoning=reasoning_spec(str(payload.get("model", "")), None), **kwargs)
+
 
 MODES = {
     "oneOf": [
@@ -202,7 +209,7 @@ def test_streamed_envelope_is_private_and_matches_final_and_history():
     payload = request(
         tools=tools, tool_choice={"type": "function", "name": "automation_update", "namespace": "codex_app"}
     )
-    projected = project_responses(payload, max_output_tokens=8192)
+    projected = project(payload, max_output_tokens=8192)
     wire = next(iter(projected.tools))
     assert projected.body["tool_choice"] == {"type": "tool", "name": wire}
     adapter = ResponsesProjection(scope(), projected.tools, codec())
@@ -238,12 +245,12 @@ def test_streamed_envelope_is_private_and_matches_final_and_history():
         {"type": "function_call_output", "call_id": "call1", "output": "ok"},
     ]
     before = copy.deepcopy(history)
-    follow = project_responses(request(tools=tools, input=history), max_output_tokens=8192)
+    follow = project(request(tools=tools, input=history), max_output_tokens=8192)
     assert follow.body["messages"][1]["content"][0]["input"] == {"arguments": arguments}
     assert history == before
     # Removed or changed declarations reproject logical arguments, never double-wrap.
     for current in ([], declaration({"type": "object"})):
-        plain = project_responses(request(tools=current, input=history), max_output_tokens=8192)
+        plain = project(request(tools=current, input=history), max_output_tokens=8192)
         assert plain.body["messages"][1]["content"][0]["input"] == arguments
 
 
@@ -259,7 +266,7 @@ def test_streamed_envelope_is_private_and_matches_final_and_history():
     ],
 )
 def test_bad_stream_never_emits_argument_or_done(raw):
-    projected = project_responses(request(tools=declaration()), max_output_tokens=8192)
+    projected = project(request(tools=declaration()), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())
     adapter.consume({"type": "message_start", "message": {"id": "bad"}})
     adapter.consume(
@@ -286,7 +293,7 @@ def test_bad_stream_never_emits_argument_or_done(raw):
 
 
 def test_complete_message_unwraps_tool_input():
-    projected = project_responses(request(tools=declaration()), max_output_tokens=8192)
+    projected = project(request(tools=declaration()), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())
     arguments = {"mode": "view", "id": "item"}
     result = adapter.complete(
@@ -310,7 +317,7 @@ def test_wrapped_argument_buffer_is_bounded(monkeypatch):
     from app.modules.claude import responses
 
     monkeypatch.setattr(responses, "MAX_TOOL_ARGUMENT_BYTES", 10)
-    projected = project_responses(request(tools=declaration()), max_output_tokens=8192)
+    projected = project(request(tools=declaration()), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())
     adapter.consume({"type": "message_start", "message": {"id": "big"}})
     adapter.consume(

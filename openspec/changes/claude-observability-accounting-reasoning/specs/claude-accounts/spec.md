@@ -17,3 +17,16 @@ Known budget-thinking models SHALL advertise reasoning separately from adaptive-
 #### Scenario: Haiku reasoning cap
 - **WHEN** Haiku 4.5 receives high reasoning with an explicit output cap below the mapped budget
 - **THEN** the request fails before dispatch rather than enlarging the cap
+
+## ADDED Requirements
+
+### Requirement: Claude reasoning levels from catalog capabilities
+When Claude's model catalog reports a model's capabilities, advertised reasoning levels and the thinking mode SHALL be derived from them: adaptive-thinking models SHALL advertise exactly the reported effort levels, including `xhigh` where reported; budget-only models SHALL advertise the documented budget ladder; a model reporting neither SHALL advertise no reasoning. The explicit policy table SHALL apply only when stored catalog entries lack capabilities. The advertised default SHALL be the provider's API default effort for adaptive models (`medium` for Claude Opus 5.5, otherwise `high`) and `medium` for budget models. A requested `xhigh` or `max` the model does not support SHALL be sent as `high`; a requested effort SHALL never be sent as a higher level.
+
+#### Scenario: Opus 5.5 advertises xhigh from the catalog
+- **WHEN** the catalog reports adaptive thinking with low, medium, high, xhigh and max effort for Claude Opus 5.5
+- **THEN** the Codex model catalog advertises those five levels with default `medium`, and a request for `xhigh` is sent upstream as `xhigh`
+
+#### Scenario: Unsupported xhigh steps down
+- **WHEN** a client requests `xhigh` for a model whose catalog reports effort up to `max` without `xhigh`
+- **THEN** the request is sent with effort `high`, not `max`

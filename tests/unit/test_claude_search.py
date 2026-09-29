@@ -5,6 +5,7 @@ import pytest
 from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
+from app.modules.claude.capabilities import reasoning_spec
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.responses import ResponsesProjection
@@ -12,6 +13,11 @@ from tests.claude_json_helpers import at
 from tests.unit.test_claude_protocol import codec, request, scope
 
 pytestmark = pytest.mark.unit
+
+
+def project(payload, **kwargs):
+    """Project with the policy-derived reasoning the payload's model would get."""
+    return project_responses(payload, reasoning=reasoning_spec(str(payload.get("model", "")), None), **kwargs)
 
 
 def search_content() -> list[JsonValue]:
@@ -50,14 +56,14 @@ def search_content() -> list[JsonValue]:
 def test_cached_only_search_is_omitted_without_mutating_caller(kind):
     payload = request(tools=[{"type": kind, "external_web_access": False}])
     original = deepcopy(payload)
-    projected = project_responses(payload, max_output_tokens=8192)
+    projected = project(payload, max_output_tokens=8192)
     assert "tools" not in projected.body
     assert not projected.search_enabled
     assert payload == original
 
 
 def test_live_search_declaration_and_constraints():
-    projected = project_responses(
+    projected = project(
         request(
             tools=[
                 {
@@ -92,7 +98,7 @@ def test_live_search_declaration_and_constraints():
 )
 def test_unsupported_live_options_fail_explicitly(option):
     with pytest.raises(ClientPayloadError):
-        project_responses(request(tools=[{"type": "web_search", **option}]), max_output_tokens=8192)
+        project(request(tools=[{"type": "web_search", **option}]), max_output_tokens=8192)
 
 
 def test_search_lifecycle_citations_and_authenticated_replay():
@@ -104,7 +110,7 @@ def test_search_lifecycle_citations_and_authenticated_replay():
     assert at(response, "output", 2, "content", 0, "annotations", 0, "start_index") == 3
     output = response["output"]
     assert isinstance(output, list)
-    replay = project_responses(
+    replay = project(
         request(input=[{"role": "user", "content": "Search"}, *output]),
         max_output_tokens=8192,
         restore_reasoning=lambda token: (
@@ -120,7 +126,7 @@ def test_search_lifecycle_citations_and_authenticated_replay():
     assert isinstance(restored, list)
     assert restored[:2] == search_content()[:2]
     with pytest.raises(ClientPayloadError, match="opaque state"):
-        project_responses(request(input=[output[0]]), max_output_tokens=8192)
+        project(request(input=[output[0]]), max_output_tokens=8192)
 
 
 def test_stream_search_json_and_citation_deltas():
