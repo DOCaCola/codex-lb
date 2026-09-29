@@ -88,6 +88,7 @@ export const DashboardSettingsSchema = z
       .optional()
       .default(5),
     singleAccountId: z.string().nullable().optional().default(null),
+    claudeSingleAccountId: z.string().nullable().optional().default(null),
     proxyAccountResponseCreateLimit: z.number().int().min(0).optional().default(4),
     proxyAccountResponseCreateLimitEnvironmentValue: z.number().int().min(0).optional().default(4),
     proxyAccountResponseCreateLimitOverride: z.number().int().min(0).nullable().optional().default(null),
@@ -274,6 +275,7 @@ export const SettingsUpdateRequestSchema = z
     relativeAvailabilityPower: z.number().positive().optional(),
     relativeAvailabilityTopK: z.number().int().min(1).max(20).optional(),
     singleAccountId: z.string().nullable().optional(),
+    claudeSingleAccountId: z.string().nullable().optional(),
     proxyAccountResponseCreateLimit: z.number().int().min(0).nullable().optional(),
     proxyAccountStreamLimit: z.number().int().min(0).nullable().optional(),
     proxyAccountStreamRecoveryReserve: z.number().int().min(0).nullable().optional(),

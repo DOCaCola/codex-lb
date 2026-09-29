@@ -1413,6 +1413,7 @@ class DashboardSettings(Base):
         nullable=False,
     )
     single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    claude_single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # Subscription-exhaustion overflow designation (#2123). No foreign key on
     # purpose: a dangling id means "off", mirroring single_account_id. The drain
     # deadline is armed when the designation is cleared and compared against
@@ -1965,6 +1966,7 @@ class ClaudeAccount(Base):
     refresh_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     state_json: Mapped[str] = mapped_column(Text, nullable=False)
+    last_selected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     source: Mapped[ModelSource] = relationship(lazy="selectin")
     __mapper_args__ = {"version_id_col": version}

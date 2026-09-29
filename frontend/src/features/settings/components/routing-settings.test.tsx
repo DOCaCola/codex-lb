@@ -40,6 +40,24 @@ const BASE_SETTINGS: DashboardSettings = {
 const BASE_UPDATE_PAYLOAD = buildSettingsUpdateRequest(BASE_SETTINGS, {});
 
 describe("RoutingSettings", () => {
+  it("enables single-account routing in a Claude-only installation", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<RoutingSettings settings={BASE_SETTINGS} busy={false} onSave={onSave}
+      claudeAccounts={[{ id: "claude-one", name: "Claude", isEnabled: true, credentialStatus: "ready" }]} />);
+    await user.click(screen.getByRole("button", { name: /Single account/i }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ routingStrategy: "single_account", singleAccountId: null, claudeSingleAccountId: "claude-one" }));
+  });
+
+  it("saves Claude selection without changing the OpenAI target", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<RoutingSettings settings={{ ...BASE_SETTINGS, routingStrategy: "single_account", singleAccountId: "openai-one" }} busy={false} onSave={onSave}
+      claudeAccounts={[{ id: "claude-one", name: "Claude", isEnabled: true, credentialStatus: "ready" }]} />);
+    await user.click(screen.getByRole("combobox", { name: "Selected Claude account" }));
+    await user.click(screen.getByRole("option", { name: "Claude" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ singleAccountId: "openai-one", claudeSingleAccountId: "claude-one" }));
+  });
   it("saves per-account capacity limits including zero for unlimited", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
@@ -584,8 +602,8 @@ describe("RoutingSettings", () => {
       />,
     );
 
-    expect(screen.getByText("Selected account")).toBeInTheDocument();
-    await user.click(screen.getByRole("combobox", { name: "Selected account" }));
+    expect(screen.getByText("Selected OpenAI account")).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "Selected OpenAI account" }));
     await user.click(await screen.findByRole("option", { name: /two@example.com/i }));
 
     expect(onSave).toHaveBeenCalledWith({
@@ -631,7 +649,7 @@ describe("RoutingSettings", () => {
       />,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Selected account" }));
+    await user.click(screen.getByRole("combobox", { name: "Selected OpenAI account" }));
 
     expect(await screen.findByRole("option", { name: /active@example.com/i })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /reauth@example.com/i })).not.toBeInTheDocument();

@@ -1,4 +1,4 @@
-"""Native Messages ownership. Stores a scope hash and account, never history."""
+"""Claude session affinity. Stores a scope hash and account, never history."""
 
 from __future__ import annotations
 
@@ -11,12 +11,20 @@ from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import ClaudeSessionOwner
+from app.db.models import ClaudeAccount, ClaudeSessionOwner
 from app.db.session import get_background_session
 from app.modules.claude.resources import ResourceScope, touch_origins
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 NATIVE_SESSION_TTL = timedelta(hours=1)
+
+
+async def record_admission(source_id: str) -> None:
+    async with get_background_session() as session:
+        await session.execute(
+            update(ClaudeAccount).where(ClaudeAccount.source_id == source_id).values(last_selected_at=utcnow())
+        )
+        await session.commit()
 
 
 @dataclass(frozen=True)

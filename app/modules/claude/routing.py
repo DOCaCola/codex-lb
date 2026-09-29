@@ -7,7 +7,6 @@ credentials and acquire source admission before sending any bytes upstream.
 
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -18,12 +17,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config.settings_cache import get_settings_cache
 from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourceModel
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.quota import model_quota, quota_status
 from app.modules.claude.quota_evidence import read_evidence
+from app.modules.claude.scheduling import choose
 from app.modules.claude.schemas import AccountState
+from app.modules.claude.session import NativeSessionOwnership
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 
 
@@ -89,11 +91,6 @@ def eligibility(
     return Eligibility(True, "ready")
 
 
-def _score(source_id: str, scope: str, conversation_id: str, model: str) -> bytes:
-    values = (scope, conversation_id, model, source_id)
-    return hashlib.sha256("".join(f"{len(value)}:{value}" for value in values).encode()).digest()
-
-
 async def select_account(
     session: AsyncSession,
     model: str,
@@ -113,6 +110,19 @@ async def select_account(
     ):
         raise ClaudePoolUnavailable("model_not_allowed", "Claude model is not allowed for this API key")
     allowed = allowed_source_ids_for_api_key(api_key)
+    settings = await get_settings_cache().get()
+    if settings.routing_strategy == "single_account":
+        target = settings.claude_single_account_id
+        if not target:
+            raise ClaudePoolUnavailable(
+                "claude_single_account_missing", "Select a Claude account for single-account routing"
+            )
+        if owner_source_id is not None and owner_source_id != target:
+            raise ClaudePoolUnavailable(
+                "previous_response_owner_unavailable",
+                "Claude owner conflicts with the configured single-account target",
+            )
+        owner_source_id = target
     statement = (
         select(ClaudeAccount)
         .options(selectinload(ClaudeAccount.source).selectinload(ModelSource.models))
@@ -168,8 +178,12 @@ async def select_account(
             "claude_pool_unavailable", "No authorized Claude account is available for this model", retry_at=retry_at
         )
     scope = api_key.id if api_key else "anonymous"
+    if preferred_source_id is None:
+        preferred_source_id = await NativeSessionOwnership(
+            session, client_scope=scope, conversation_id=conversation_id, model=model
+        ).owner()
     if preferred_source_id is not None:
         preferred = next((account for account in eligible if account.source_id == preferred_source_id), None)
         if preferred is not None:
             return preferred
-    return max(eligible, key=lambda account: _score(account.source_id, scope, conversation_id, model))
+    return choose(eligible, settings, now=now, client_scope=scope, conversation_id=conversation_id, model=model)

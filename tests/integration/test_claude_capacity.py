@@ -137,6 +137,25 @@ async def test_cancel_during_affinity_commit_releases_slot(async_client, pool, m
     assert all(bulkhead.in_flight(source_id) == 0 for source_id in pool)
 
 
+@pytest.mark.parametrize("path", ["/v1/messages", "/v1/responses"])
+async def test_admission_recency_failure_releases_owned_slot(async_client, pool, monkeypatch, bulkhead, path):
+    from app.modules.claude import session as claude_session
+
+    await configure(async_client, pool)
+    captured, _ = install_upstream(monkeypatch)
+    monkeypatch.setattr(claude_session, "record_admission", AsyncMock(side_effect=asyncio.CancelledError))
+    body = {"model": MODEL, "stream": True}
+    body.update(
+        {"messages": [{"role": "user", "content": "Hi"}], "max_tokens": 100}
+        if path.endswith("messages")
+        else {"input": "Hi"}
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await async_client.post(path, json=body)
+    assert not captured
+    assert all(bulkhead.in_flight(source_id) == 0 for source_id in pool)
+
+
 async def test_auth_retry_does_not_move_when_owner_fills(async_client, pool, monkeypatch, bulkhead):
     from app.modules.claude import transport
     from app.modules.model_sources.forwarding import ModelSourceForwardingError

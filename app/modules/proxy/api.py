@@ -5637,6 +5637,10 @@ async def _dispatch_source_responses_attempt(
         claims.release_if_unowned()
         raise
     try:
+        if claude_attempt is not None:
+            from app.modules.claude.session import record_admission
+
+            await record_admission(source.id)
         if payload.stream:
             await open_with_disconnect_watch(
                 request, owner, _open_owned_source_stream(owner, source_payload, claude_attempt=claude_attempt)

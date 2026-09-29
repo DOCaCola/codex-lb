@@ -40,13 +40,18 @@ def _window(name: WindowName, value: QuotaWindow | None, state: AccountState, no
     )
 
 
-def model_quota(model: str, windows: list[WindowStatus]) -> ModelQuota:
+def applicable_windows(model: str) -> set[WindowName]:
     upstream_model = model.removeprefix("anthropic/")
     applicable: set[WindowName] = {"five_hour", "seven_day"}
     if upstream_model.startswith("claude-opus-"):
         applicable.add("seven_day_opus")
     elif upstream_model.startswith("claude-sonnet-"):
         applicable.add("seven_day_sonnet")
+    return applicable
+
+
+def model_quota(model: str, windows: list[WindowStatus]) -> ModelQuota:
+    applicable = applicable_windows(model)
     blocking = [window for window in windows if window.name in applicable and window.exhausted]
     # All applicable exhausted windows must reset; never give a false deadline
     # when even one has an unknown reset time.

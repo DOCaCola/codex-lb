@@ -327,3 +327,22 @@ Translated authenticated reasoning/search replay remains unchanged.
 This is a local provenance design informed by the affinity/preservation lessons
 from the four AGENTS.md references, not copied resource-migration machinery.
 Mock verification does not establish live cross-account resource portability.
+
+## Shared routing policy
+
+Claude reuses the selected routing strategy, earlier-reset preference and
+relative-availability tuning, but never the OpenAI account pool or plan-capacity
+estimates. Every Claude candidate supplies one normalized capacity unit. Fresh
+five-hour usage maps to primary pressure; the most utilized fresh applicable
+weekly window supplies secondary pressure and its reset time. Quota strategies
+prefer the cohort with fresh shared five-hour and weekly readings. With no such
+cohort, eligible accounts rank neutrally; unknown usage remains unknown in storage
+and presentation. Existing stale-exhaustion exclusion still applies.
+
+Eligible durable affinity stabilizes admitted native and translated conversations.
+Hard resource owners remain mandatory. Independent provider-specific single-account
+targets fail explicitly when missing, unavailable or conflicting with ownership.
+OpenRouter routing is unchanged. Round-robin uses durable admission recency as a
+hint, not an atomic cross-worker scheduling lock; existing concurrency admission
+remains authoritative. RPM/session caps and automatic Claude plan multipliers are
+not part of this policy.

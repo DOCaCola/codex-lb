@@ -420,6 +420,33 @@ test("provider request attribution", async ({ page }) => {
   await filtered;
 });
 
+for (const width of [1440, 390]) {
+  test(`provider routing pools — ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await applyTheme(page, "light");
+    await interceptApi(page);
+    await page.route("**/api/settings", route => fulfill(route, {
+      ...settings, routingStrategy: "single_account", singleAccountId: accounts[0].accountId,
+      claudeSingleAccountId: "claude-routing",
+    }));
+    await page.route("**/api/claude-accounts", route => fulfill(route, { accounts: [{
+      id: "claude-routing", name: "Claude research", isEnabled: true, credentialStatus: "ready",
+      maxConcurrency: null, expiresAt: "2026-10-01T12:00:00Z",
+      state: { selections: [], catalog: [], catalog_updated_at: null, catalog_error: null, usage_updated_at: null, usage_error: null },
+      quota: { observedAt: null, windows: [], models: [] },
+    }] }));
+    await page.goto(`${BASE_URL}/settings`);
+    await page.getByRole("button", { name: "Show advanced settings" }).click();
+    const claude = page.getByRole("combobox", { name: "Selected Claude account" });
+    await expect(claude).toHaveText("Claude research");
+    await claude.scrollIntoViewIfNeeded();
+    const openai = page.getByRole("combobox", { name: "Selected OpenAI account" });
+    await expect(openai).toBeVisible();
+    expect((await claude.boundingBox())!.width).toBeLessThan(width);
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`routing-pools-${width}.png`) });
+  });
+}
+
 test("settings — dark", async ({ page }) => {
   await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings", fullPage: true });
 });

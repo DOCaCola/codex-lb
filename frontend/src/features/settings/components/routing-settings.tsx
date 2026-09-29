@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { AccountSummary } from "@/features/accounts/schemas";
+import type { ClaudeAccount } from "@/features/claude/api";
 import { InheritBadge } from "@/features/settings/components/inherit-badge";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
 import type {
@@ -75,6 +76,7 @@ export type RoutingSettingsProps = {
   settings: DashboardSettings;
   accounts?: AccountSummary[];
   accountsLoading?: boolean;
+  claudeAccounts?: Pick<ClaudeAccount, "id" | "name" | "isEnabled" | "credentialStatus">[];
   busy: boolean;
   onSave: (payload: SettingsUpdateRequest) => Promise<void>;
 };
@@ -230,6 +232,7 @@ export function RoutingSettings({
   settings,
   accounts = EMPTY_ACCOUNTS,
   accountsLoading = false,
+  claudeAccounts = [],
   busy,
   onSave,
 }: RoutingSettingsProps) {
@@ -433,6 +436,13 @@ export function RoutingSettings({
   const blockedSelectedAccount =
     selectedAccount !== undefined && !isSingleAccountRoutingSelectable(selectedAccount.status) ? selectedAccount : null;
   const firstAccountId = selectableAccounts[0]?.accountId;
+  const selectableClaudeAccounts = claudeAccounts.filter(
+    (account) => account.isEnabled && account.credentialStatus === "ready",
+  );
+  const blockedClaudeAccount = claudeAccounts.find(
+    (account) => account.id === settings.claudeSingleAccountId && !selectableClaudeAccounts.includes(account),
+  );
+  const firstClaudeAccountId = selectableClaudeAccounts[0]?.id;
   const additionalQuotaOverrides = settings.additionalQuotaRoutingPolicies ?? {};
   const knownAdditionalQuotaKeys = new Set((settings.additionalQuotaPolicies ?? []).map((policy) => policy.quotaKey));
   const additionalQuotaRows = [
@@ -614,7 +624,9 @@ export function RoutingSettings({
               ].map((strategy) => {
                 const strategyValue = STRATEGY_GUIDE_VALUES[strategy];
                 const isSelected = settings.routingStrategy === strategyValue;
-                const isDisabled = strategyValue === "single_account" && !settings.singleAccountId && !firstAccountId;
+                const isDisabled = strategyValue === "single_account"
+                  && !settings.singleAccountId && !firstAccountId
+                  && !settings.claudeSingleAccountId && !firstClaudeAccountId;
                 return (
                   <button
                     key={strategy}
@@ -623,8 +635,11 @@ export function RoutingSettings({
                     onClick={() => {
                       if (strategyValue === "single_account") {
                         const selectedAccountId = settings.singleAccountId ?? firstAccountId;
-                        if (!selectedAccountId) return;
-                        save({ routingStrategy: strategyValue as DashboardSettings["routingStrategy"], singleAccountId: selectedAccountId });
+                        save({
+                          routingStrategy: strategyValue as DashboardSettings["routingStrategy"],
+                          singleAccountId: selectedAccountId ?? null,
+                          claudeSingleAccountId: settings.claudeSingleAccountId ?? firstClaudeAccountId ?? null,
+                        });
                         return;
                       }
                       save({ routingStrategy: strategyValue as DashboardSettings["routingStrategy"] });
@@ -815,48 +830,77 @@ export function RoutingSettings({
             </>
           ) : null}
 
+          <p className="p-3 text-xs text-muted-foreground">{t("settings.routing.providerPools")}</p>
           {settings.routingStrategy === "single_account" ? (
-            <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium">{t("settings.routing.singleAccount.label")}</p>
-                <p className="text-xs text-muted-foreground">
-                  {t("settings.routing.singleAccount.description")}
-                </p>
-              </div>
-              <Select
-                value={settings.singleAccountId ?? undefined}
-                onValueChange={(value) => save({ singleAccountId: value })}
-              >
-                <SelectTrigger
-                  aria-label={t("settings.routing.singleAccount.label")}
-                  className="h-8 w-full text-xs sm:w-64"
-                  disabled={busy || accountsLoading || selectableAccounts.length === 0}
+            <>
+              <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">{t("settings.routing.singleAccount.label")}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.routing.singleAccount.description")}
+                  </p>
+                </div>
+                <Select
+                  value={settings.singleAccountId ?? undefined}
+                  onValueChange={(value) => save({ singleAccountId: value })}
                 >
-                  <SelectValue
-                    placeholder={
-                      accountsLoading
-                        ? t("settings.routing.singleAccount.loading")
-                        : t("settings.routing.singleAccount.placeholder")
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  {blockedSelectedAccount ? (
-                    <SelectItem key={blockedSelectedAccount.accountId} value={blockedSelectedAccount.accountId} disabled>
-                      {accountLabel(blockedSelectedAccount)}
-                    </SelectItem>
-                  ) : null}
-                  {selectableAccounts.map((account) => (
-                    <SelectItem key={account.accountId} value={account.accountId}>
-                      {accountLabel(account)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!accountsLoading && selectableAccounts.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{t("settings.routing.singleAccount.empty")}</p>
-              ) : null}
-            </div>
+                  <SelectTrigger
+                    aria-label={t("settings.routing.singleAccount.label")}
+                    className="h-8 w-full text-xs sm:w-64"
+                    disabled={busy || accountsLoading || selectableAccounts.length === 0}
+                  >
+                    <SelectValue
+                      placeholder={
+                        accountsLoading
+                          ? t("settings.routing.singleAccount.loading")
+                          : t("settings.routing.singleAccount.placeholder")
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    {blockedSelectedAccount ? (
+                      <SelectItem key={blockedSelectedAccount.accountId} value={blockedSelectedAccount.accountId} disabled>
+                        {accountLabel(blockedSelectedAccount)}
+                      </SelectItem>
+                    ) : null}
+                    {selectableAccounts.map((account) => (
+                      <SelectItem key={account.accountId} value={account.accountId}>
+                        {accountLabel(account)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!accountsLoading && selectableAccounts.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t("settings.routing.singleAccount.empty")}</p>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-medium">{t("settings.routing.claudeSingleAccount.label")}</p>
+                <Select
+                  value={settings.claudeSingleAccountId ?? undefined}
+                  onValueChange={(value) => save({ claudeSingleAccountId: value })}
+                >
+                  <SelectTrigger
+                    aria-label={t("settings.routing.claudeSingleAccount.label")}
+                    className="h-8 w-full text-xs sm:w-64"
+                    disabled={busy || selectableClaudeAccounts.length === 0}
+                  >
+                    <SelectValue placeholder={t("settings.routing.singleAccount.placeholder")} />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    {blockedClaudeAccount ? (
+                      <SelectItem value={blockedClaudeAccount.id} disabled>{blockedClaudeAccount.name}</SelectItem>
+                    ) : null}
+                    {selectableClaudeAccounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectableClaudeAccounts.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t("settings.routing.claudeSingleAccount.empty")}</p>
+                ) : null}
+              </div>
+            </>
           ) : null}
 
           <div className="space-y-3 p-3">

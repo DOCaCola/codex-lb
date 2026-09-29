@@ -148,17 +148,52 @@ async def test_empty_or_disabled_pool_is_explicit_error(pool, async_client):
     assert error.value.code == "claude_pool_unavailable"
 
 
-async def test_rendezvous_distribution_and_order_independence(pool):
-    from app.modules.claude.routing import _score
-
+async def test_unknown_quota_distribution_and_stability(pool):
     chosen = set()
-    for index in range(100):
+    for index in range(20):
         conversation = f"conversation-{index}"
-        first = max(pool, key=lambda source: _score(source, "key", conversation, MODEL))
-        second = max(reversed(pool), key=lambda source: _score(source, "key", conversation, MODEL))
-        assert first == second
-        chosen.add(first)
+        async with SessionLocal() as session:
+            first = await select_account(session, MODEL, key(), conversation_id=conversation)
+            second = await select_account(session, MODEL, key(), conversation_id=conversation)
+            assert first.source_id == second.source_id
+            chosen.add(first.source_id)
     assert chosen == set(pool)
+
+
+async def test_single_account_targets_are_provider_scoped(pool, async_client):
+    response = await async_client.put(
+        "/api/settings", json={"routingStrategy": "single_account", "singleAccountId": "openai-only"}
+    )
+    assert response.status_code == 200
+    with pytest.raises(ClaudePoolUnavailable, match="Select a Claude account"):
+        await choose()
+    response = await async_client.put("/api/settings", json={"claudeSingleAccountId": pool[1]})
+    assert response.status_code == 200
+    assert response.json()["singleAccountId"] == "openai-only"
+    assert await choose(preferred_source_id=pool[0]) == pool[1]
+    with pytest.raises(ClaudePoolUnavailable, match="conflicts"):
+        await choose(owner_source_id=pool[0])
+    with pytest.raises(ClaudePoolUnavailable):
+        await choose(api_key=key(source_assignment_scope_enabled=True, assigned_source_ids=[pool[0]]))
+    response = await async_client.put("/api/settings", json={"warmupModel": "auto"})
+    assert response.json()["claudeSingleAccountId"] == pool[1]
+    response = await async_client.put("/api/settings", json={"claudeSingleAccountId": None})
+    assert response.json()["claudeSingleAccountId"] is None
+
+
+async def test_round_robin_recency_and_affinity(pool, async_client):
+    from app.modules.claude.session import NativeSessionBinding, record_admission
+
+    response = await async_client.put("/api/settings", json={"routingStrategy": "round_robin"})
+    assert response.status_code == 200
+    first = await choose()
+    await record_admission(first)
+    second = await choose()
+    assert second != first
+    await NativeSessionBinding("anonymous", "conversation", MODEL, None).commit(first)
+    assert await choose() == first
+    with pytest.raises(ClaudePoolUnavailable):
+        await choose(model="gpt-6-astra")
 
 
 async def test_prepare_uses_provider_credentials_and_preserves_logical_history(pool):

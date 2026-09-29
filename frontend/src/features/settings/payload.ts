@@ -31,6 +31,7 @@ export function buildSettingsUpdateRequest(
     relativeAvailabilityPower: settings.relativeAvailabilityPower,
     relativeAvailabilityTopK: settings.relativeAvailabilityTopK,
     singleAccountId: settings.singleAccountId,
+    claudeSingleAccountId: settings.claudeSingleAccountId,
     openaiCacheAffinityMaxAgeSeconds: settings.openaiCacheAffinityMaxAgeSeconds,
     dashboardSessionTtlSeconds: settings.dashboardSessionTtlSeconds,
     warmupModel: settings.warmupModel,

@@ -237,6 +237,7 @@ const SettingsPayloadSchema = z.looseObject({
   relativeAvailabilityPower: z.number().positive().optional(),
   relativeAvailabilityTopK: z.number().int().min(1).max(20).optional(),
   singleAccountId: z.string().nullable().optional(),
+  claudeSingleAccountId: z.string().nullable().optional(),
   openaiCacheAffinityMaxAgeSeconds: z.number().int().positive().optional(),
   stickyReallocationBudgetThresholdPct: z.number().min(0).max(100).optional(),
   stickyReallocationPrimaryBudgetThresholdPct: z

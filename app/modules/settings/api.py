@@ -252,6 +252,7 @@ def _dashboard_settings_response(settings, *, principal: DashboardPrincipal) -> 
         relative_availability_power=settings.relative_availability_power,
         relative_availability_top_k=settings.relative_availability_top_k,
         single_account_id=settings.single_account_id,
+        claude_single_account_id=settings.claude_single_account_id,
         openai_cache_affinity_max_age_seconds=settings.openai_cache_affinity_max_age_seconds,
         dashboard_session_ttl_seconds=settings.dashboard_session_ttl_seconds,
         http_responses_session_bridge_prompt_cache_idle_ttl_seconds=settings.http_responses_session_bridge_prompt_cache_idle_ttl_seconds,
@@ -1263,6 +1264,11 @@ async def update_settings(
                     else current.relative_availability_top_k
                 ),
                 single_account_id=single_account_id,
+                claude_single_account_id=(
+                    payload.claude_single_account_id
+                    if "claude_single_account_id" in payload.model_fields_set
+                    else current.claude_single_account_id
+                ),
                 openai_cache_affinity_max_age_seconds=(
                     payload.openai_cache_affinity_max_age_seconds
                     if payload.openai_cache_affinity_max_age_seconds is not None
@@ -1540,6 +1546,7 @@ async def update_settings(
             "relative_availability_power",
             "relative_availability_top_k",
             "single_account_id",
+            "claude_single_account_id",
             "openai_cache_affinity_max_age_seconds",
             "dashboard_session_ttl_seconds",
             "http_responses_session_bridge_prompt_cache_idle_ttl_seconds",

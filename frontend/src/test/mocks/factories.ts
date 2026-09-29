@@ -940,6 +940,7 @@ export function createDashboardSettings(
 		relativeAvailabilityPower: 2,
 		relativeAvailabilityTopK: 5,
 		singleAccountId: null,
+		claudeSingleAccountId: null,
 		proxyAccountResponseCreateLimit: 4,
 		proxyAccountResponseCreateLimitEnvironmentValue: 4,
 		proxyAccountResponseCreateLimitOverride: 4,

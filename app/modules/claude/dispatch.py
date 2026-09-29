@@ -81,15 +81,19 @@ class ClaudeDispatchPreparer:
         preferred_owner = None
         requires_owner = False
         resource_keys: tuple[str, ...] = ()
-        if not translated:
+        if not translated or endpoint == "messages":
             native_ownership = NativeSessionOwnership(
                 session,
                 client_scope=api_key.id if api_key else "anonymous",
                 conversation_id=conversation_id,
                 model=model,
             )
-            resource_keys = ResourceScope(api_key.id if api_key else "anonymous", conversation_id, model).keys(
-                resource_ids(logical)
+            resource_keys = (
+                ()
+                if translated
+                else ResourceScope(api_key.id if api_key else "anonymous", conversation_id, model).keys(
+                    resource_ids(logical)
+                )
             )
             requires_owner = bool(resource_keys)
             retained_owner = await native_ownership.owner()
@@ -220,6 +224,6 @@ class ClaudeDispatchPreparer:
                 retained_owner=retained_owner,
                 resource_keys=resource_keys,
             )
-            if native_ownership is not None and endpoint == "messages"
+            if endpoint == "messages"
             else None,
         )

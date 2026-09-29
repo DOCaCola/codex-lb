@@ -111,6 +111,12 @@ async def test_responses_route_reaches_claude_with_owned_cleanup(async_client, p
     assert closed == [captured[0][0]]
     assert captured[0][2]["model"] == "claude-opus-5"
     assert captured[0][3]["authorization"] in {"Bearer access-account-a", "Bearer access-account-b"}
+    from app.db.models import ClaudeAccount
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as session:
+        selected = await session.get(ClaudeAccount, captured[0][0])
+        assert selected is not None and selected.last_selected_at is not None
     if stream:
         assert '"type":"response.completed"' in response.text or '"type": "response.completed"' in response.text
     else:

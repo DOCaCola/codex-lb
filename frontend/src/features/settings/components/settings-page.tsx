@@ -26,6 +26,7 @@ import { ResilienceSettings } from "@/features/settings/components/resilience-se
 import { SessionBridgeSettings } from "@/features/settings/components/session-bridge-settings";
 import { BackgroundJobsSettings } from "@/features/settings/components/background-jobs-settings";
 import { RoutingSettings } from "@/features/settings/components/routing-settings";
+import { useClaudeAccounts } from "@/features/claude/use-claude";
 import { UpstreamTimeoutSettings } from "@/features/settings/components/upstream-timeout-settings";
 import { SettingsSkeleton } from "@/features/settings/components/settings-skeleton";
 import { TelemetrySettings } from "@/features/settings/components/telemetry-settings";
@@ -65,6 +66,7 @@ export function SettingsPage() {
   const { settingsQuery, updateSettingsMutation } = useSettings();
   const [initialRetryError, setInitialRetryError] = useState<string | null>(null);
   const { accountsQuery } = useAccounts();
+  const claudeAccountsQuery = useClaudeAccounts();
   const authMode = useAuthStore((state) => state.authMode);
   const canWrite = useAuthStore((state) => state.canWrite);
   // Security-bearing controls (API-key auth policy, firewall, proxy endpoints)
@@ -218,6 +220,7 @@ export function SettingsPage() {
               waitForQueryKeys={FIREWALL_LAYOUT_QUERY_KEYS}
             >
               <RoutingSettings
+                claudeAccounts={claudeAccountsQuery.data?.accounts}
                 key={[
                   settings.openaiCacheAffinityMaxAgeSeconds,
                   settings.warmupModel,
