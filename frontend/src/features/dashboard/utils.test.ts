@@ -16,6 +16,16 @@ import {
 import { createDashboardOverview, createDefaultRequestLogs } from "@/test/mocks/factories";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 
+function pricedCoverage(knownCostUsd: number) {
+  return {
+    knownCostUsd,
+    pricedRequests: knownCostUsd > 0 ? 1 : 0,
+    unpricedRequests: 0,
+    unmeteredRequests: 0,
+    coverageUnknown: false,
+  };
+}
+
 function account(overrides: Partial<AccountSummary> & Pick<AccountSummary, "accountId" | "email">): AccountSummary {
   return {
     accountId: overrides.accountId,
@@ -984,6 +994,7 @@ describe("buildDashboardView", () => {
         cost: {
           currency: "USD",
           totalUsd: 1.82,
+          costCoverage: pricedCoverage(1.82),
         },
         metrics: {
           requests: 228,
@@ -1068,6 +1079,7 @@ describe("buildDashboardView", () => {
         cost: {
           currency: "USD",
           totalUsd: 1.82,
+          costCoverage: pricedCoverage(1.82),
         },
         metrics: {
           requests: 228,
@@ -1188,6 +1200,7 @@ describe("buildDashboardView", () => {
           cost: {
             currency: "USD",
             totalUsd: 56,
+            costCoverage: pricedCoverage(56),
           },
           metrics: {
             requests: 228,
@@ -1231,6 +1244,7 @@ describe("buildDashboardView", () => {
           cost: {
             currency: "USD",
             totalUsd: 24,
+            costCoverage: pricedCoverage(24),
           },
           metrics: {
             requests: 228,
@@ -1273,6 +1287,7 @@ describe("buildDashboardView", () => {
           cost: {
             currency: "USD",
             totalUsd: 15,
+            costCoverage: pricedCoverage(15),
           },
           comparison: {
             canCompare: true,
@@ -1280,6 +1295,7 @@ describe("buildDashboardView", () => {
               requests: 1000,
               tokens: 900,
               costUsd: 10,
+              costCoverage: pricedCoverage(10),
             },
           },
         },
@@ -1292,6 +1308,47 @@ describe("buildDashboardView", () => {
     expect(view.stats[1]?.comparison).toEqual({ text: "▼ 50%", tone: "negative" });
     expect(view.stats[2]?.comparison).toEqual({ text: "▲ 50%", tone: "positive" });
     expect(view.stats[view.stats.length - 1]?.comparison).toBeUndefined();
+  });
+
+  it("labels an incomplete cost subtotal and withholds its average and comparison", () => {
+    const overview = createDashboardOverview();
+    const incomplete = { ...pricedCoverage(15), pricedRequests: 3, unpricedRequests: 2 };
+
+    const view = buildDashboardView(
+      {
+        ...overview,
+        summary: {
+          ...overview.summary,
+          cost: { currency: "USD", totalUsd: 15, costCoverage: incomplete },
+          comparison: {
+            canCompare: true,
+            previous: { requests: 1000, tokens: 900, costUsd: 10, costCoverage: pricedCoverage(10) },
+          },
+        },
+      },
+      createDefaultRequestLogs(),
+      false,
+    );
+
+    expect(view.stats[2]?.value).toBe("$15.00");
+    expect(view.stats[2]?.meta).toBe("$15.00 known · incomplete (3 priced, 2 unpriced)");
+    expect(view.stats[2]?.comparison).toBeUndefined();
+  });
+
+  it("shows an unknown cost card when no request was priced", () => {
+    const overview = createDashboardOverview();
+    const unknown = { ...pricedCoverage(0), unmeteredRequests: 4 };
+
+    const view = buildDashboardView(
+      {
+        ...overview,
+        summary: { ...overview.summary, cost: { currency: "USD", totalUsd: 0, costCoverage: unknown } },
+      },
+      createDefaultRequestLogs(),
+      false,
+    );
+
+    expect(view.stats[2]?.value).toBe("Unknown");
   });
 
   it("hides comparison indicators for sub-percent deltas that would round to 0%", () => {
@@ -1315,6 +1372,7 @@ describe("buildDashboardView", () => {
           cost: {
             currency: "USD",
             totalUsd: 10.04,
+            costCoverage: pricedCoverage(10.04),
           },
           comparison: {
             canCompare: true,
@@ -1322,6 +1380,7 @@ describe("buildDashboardView", () => {
               requests: 1000,
               tokens: 1000,
               costUsd: 10,
+              costCoverage: pricedCoverage(10),
             },
           },
         },
@@ -1349,6 +1408,7 @@ describe("buildDashboardView", () => {
               requests: 1000,
               tokens: 1000,
               costUsd: 10,
+              costCoverage: pricedCoverage(10),
             },
           },
         },
@@ -1372,6 +1432,7 @@ describe("buildDashboardView", () => {
               requests: 0,
               tokens: 0,
               costUsd: 0,
+              costCoverage: pricedCoverage(0),
             },
           },
         },
@@ -1396,7 +1457,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           conversationRequests: 0,
@@ -1444,7 +1505,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           conversationRequests: 0,
@@ -1474,7 +1535,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           conversationRequests: 0,
@@ -1503,7 +1564,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           conversationRequests: 0,
@@ -1534,7 +1595,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           conversationRequests: 0,
@@ -1567,7 +1628,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           tokens: 2000,
@@ -1599,7 +1660,7 @@ describe("buildDashboardView", () => {
           windowMinutes: 300,
         },
         secondaryWindow: null,
-        cost: { currency: "USD", totalUsd: 12.5 },
+        cost: { currency: "USD", totalUsd: 12.5, costCoverage: pricedCoverage(12.5) },
         metrics: {
           requests: 500,
           tokens: 2000,

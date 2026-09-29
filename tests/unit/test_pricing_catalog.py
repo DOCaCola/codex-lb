@@ -50,6 +50,57 @@ def test_models_dev_units_context_threshold_and_priority():
     assert calculate_cost_from_usage(UsageTokens(300000, 1000, 100000), price) == 4.275
 
 
+def test_models_dev_anthropic_cache_write_tiers():
+    payload = {
+        **models_dev(),
+        "anthropic": {
+            "models": {
+                "claude-test": {
+                    "modalities": {"output": ["text"]},
+                    "cost": {"input": 1, "output": 5, "cache_read": 0.1, "cache_write_5m": 1.25, "cache_write_1h": 2},
+                }
+            }
+        },
+    }
+    price = catalog.parse_models_dev(payload)["claude-test"]
+    assert price.cache_write_5m_per_1m == 1.25
+    assert price.cache_write_1h_per_1m == 2
+
+
+def test_litellm_anthropic_actual_cache_write_fields_and_context_tier():
+    entry = {
+        "litellm_provider": "anthropic",
+        "mode": "chat",
+        "input_cost_per_token": 1e-6,
+        "output_cost_per_token": 5e-6,
+        "cache_read_input_token_cost": 1e-7,
+        "cache_creation_input_token_cost": 1.25e-6,
+        "cache_creation_input_token_cost_above_1hr": 2e-6,
+        "input_cost_per_token_above_200k_tokens": 2e-6,
+        "output_cost_per_token_above_200k_tokens": 1e-5,
+        "cache_read_input_token_cost_above_200k_tokens": 2e-7,
+        "cache_creation_input_token_cost_above_200k_tokens": 2.5e-6,
+        "cache_creation_input_token_cost_above_1hr_above_200k_tokens": 4e-6,
+    }
+    price = catalog.parse_litellm({"claude-haiku-4-5": entry})["claude-haiku-4-5"]
+    assert price.cache_write_1h_per_1m == 2
+    assert price.long_context_cache_write_5m_per_1m == 2.5
+    assert price.long_context_cache_write_1h_per_1m == 4
+    assert price.long_context_threshold_tokens == 200_000
+    zero = catalog.parse_litellm({"claude-free": {**entry, "cache_creation_input_token_cost_above_1hr": 0}})[
+        "claude-free"
+    ]
+    assert zero.cache_write_1h_per_1m == 0
+    missing = catalog.parse_litellm(
+        {
+            "claude-missing": {
+                key: value for key, value in entry.items() if key != "cache_creation_input_token_cost_above_1hr"
+            }
+        }
+    )["claude-missing"]
+    assert missing.cache_write_1h_per_1m is None
+
+
 @pytest.mark.parametrize("bad", [-1, float("nan"), float("inf"), True, "10"])
 def test_invalid_source_cannot_install_prices(bad):
     with pytest.raises(ValueError):

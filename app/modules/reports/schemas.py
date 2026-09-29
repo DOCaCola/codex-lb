@@ -15,6 +15,10 @@ class DailyReportRow(DashboardModel):
     reasoning_tokens: int | None
     cached_input_tokens: int
     cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
     active_accounts: int
     conversations: int = 0
     error_count: int = 0
@@ -28,7 +32,11 @@ class ModelCostEntry(DashboardModel):
     model: str
     cost_usd: float
     requests: int = 0
-    percentage: float = 0.0
+    percentage: float | None = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class AccountCostEntry(DashboardModel):
@@ -36,13 +44,21 @@ class AccountCostEntry(DashboardModel):
     alias: str | None = None
     cost_usd: float = 0.0
     requests: int = 0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class UserAgentCostEntry(DashboardModel):
     useragent: str
     cost_usd: float = 0.0
     requests: int = 0
-    percentage: float = 0.0
+    percentage: float | None = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class ReportSummary(DashboardModel):
@@ -57,14 +73,22 @@ class ReportSummary(DashboardModel):
     total_cancelled: int = 0
     active_accounts: int
     total_conversations: int = 0
-    avg_cost_per_day: float = 0.0
+    avg_cost_per_day: float | None = 0.0
     avg_requests_per_day: float = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class ReportComparisonPrevious(DashboardModel):
     total_cost_usd: float
     total_tokens: int
     total_requests: int
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class ReportComparison(DashboardModel):

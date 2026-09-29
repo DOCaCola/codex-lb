@@ -273,7 +273,7 @@ def error_message_from_payload(payload: Mapping[str, JsonValue]) -> str | None:
 
 
 def source_usage_cost_usd(source: ModelSource, model: str, usage: SourceUsage | None) -> float | None:
-    """Source pricing for ``usage``; unpriced entries cost ``0.0`` (never ``None`` for known usage)."""
+    """API-equivalent estimate; missing prices are unknown, not free."""
 
     if usage is None:
         return None
@@ -285,8 +285,11 @@ def source_usage_cost_usd(source: ModelSource, model: str, usage: SourceUsage | 
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
         cached_input_tokens=usage.cached_input_tokens,
+        cache_creation_tokens=usage.cache_creation_tokens,
+        cache_creation_5m_tokens=usage.cache_creation_5m_tokens,
+        cache_creation_1h_tokens=usage.cache_creation_1h_tokens,
     )
-    return 0.0 if cost_usd is None else cost_usd
+    return cost_usd
 
 
 def _reservation_requires_usage(reservation: ApiKeyUsageReservationData | None) -> bool:
@@ -324,6 +327,11 @@ class SourceDispatch:
     claims: SourceAdmission
     admission_budget: ApiKeyRequestUsageBudget | None
     requested_service_tier: str | None
+    requested_reasoning_effort: str | None = None
+    upstream_reasoning_effort: str | None = None
+    upstream_thinking_mode: str | None = None
+    upstream_thinking_budget_tokens: int | None = None
+    count_tokens: bool = False
     cleanup_scheduler: CleanupScheduler | None = None
     scheduler: Scheduler = REAL_SCHEDULER
     clock: Clock = REAL_CLOCK
@@ -552,6 +560,7 @@ class SourceDispatch:
         if source_response_id is None and holder is not None and holder.response_id:
             source_response_id = holder.response_id
         _useragent, _useragent_group, conversation_id = _request_log_client_fields(headers)
+        cost_usd = source_usage_cost_usd(self.source, self.model, usage)
         try:
             async with get_background_session() as session:
                 await RequestLogsRepository(session).add_log(
@@ -563,10 +572,23 @@ class SourceDispatch:
                     api_key_id=self.api_key.id if self.api_key is not None else None,
                     session_id=_owner_lookup_session_id_from_headers(headers),
                     model=self.model,
+                    request_kind="count_tokens" if self.count_tokens else "normal",
                     input_tokens=usage.input_tokens if usage is not None else None,
                     output_tokens=usage.output_tokens if usage is not None else None,
                     cached_input_tokens=usage.cached_input_tokens if usage is not None else None,
-                    cost_usd=source_usage_cost_usd(self.source, self.model, usage),
+                    cache_creation_tokens=usage.cache_creation_tokens if usage is not None else None,
+                    cache_creation_5m_tokens=usage.cache_creation_5m_tokens if usage is not None else None,
+                    cache_creation_1h_tokens=usage.cache_creation_1h_tokens if usage is not None else None,
+                    reasoning_tokens=usage.reasoning_tokens if usage is not None else None,
+                    reasoning_effort=self.requested_reasoning_effort,
+                    upstream_reasoning_effort=self.upstream_reasoning_effort,
+                    upstream_thinking_mode=self.upstream_thinking_mode,
+                    upstream_thinking_budget_tokens=self.upstream_thinking_budget_tokens,
+                    cost_usd=cost_usd,
+                    cost_provenance=("api_equivalent_estimate" if cost_usd is not None else "unpriced")
+                    if self.source.kind == "claude" and usage is not None
+                    else None,
+                    preserve_unknown_cost=True,
                     latency_ms=timings.latency_ms if timings is not None else None,
                     latency_first_token_ms=timings.latency_first_token_ms if timings is not None else None,
                     status=status,

@@ -121,6 +121,10 @@ class AccountRequestUsageSummary:
     total_tokens: int
     cached_input_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 # The account-listing request-usage summary dedupes and re-aggregates the
@@ -262,6 +266,10 @@ class AccountsRepository:
                 sums.output_tokens,
                 sums.cached_input_tokens,
                 sums.total_cost_usd,
+                sums.priced_requests,
+                sums.unpriced_requests,
+                sums.unmetered_requests,
+                sums.coverage_unknown,
             ]
             for account_id, sums in folded.items()
         }
@@ -274,18 +282,34 @@ class AccountsRepository:
             output_tokens,
             cached_input_tokens,
             total_cost_usd,
+            priced,
+            unpriced,
+            unmetered,
         ) in result.all():
             if not account_id:
                 continue
-            totals = merged.setdefault(account_id, [0, 0, 0, 0, 0.0])
+            totals = merged.setdefault(account_id, [0, 0, 0, 0, 0.0, 0, 0, 0, 0])
             totals[0] += int(request_count or 0)
             totals[1] += int(input_tokens or 0)
             totals[2] += int(output_tokens or 0)
             totals[3] += int(cached_input_tokens or 0)
             totals[4] += float(total_cost_usd or 0.0)
+            totals[5] += int(priced or 0)
+            totals[6] += int(unpriced or 0)
+            totals[7] += int(unmetered or 0)
 
         summaries: dict[str, AccountRequestUsageSummary] = {}
-        for account_id, (request_count, input_sum, output_sum, cached_sum, total_cost_usd) in merged.items():
+        for account_id, (
+            request_count,
+            input_sum,
+            output_sum,
+            cached_sum,
+            total_cost_usd,
+            priced,
+            unpriced,
+            unmetered,
+            unknown,
+        ) in merged.items():
             input_total = int(input_sum)
             output_total = int(output_sum)
             cached_total = max(0, min(int(cached_sum), input_total))
@@ -294,6 +318,10 @@ class AccountsRepository:
                 total_tokens=input_total + output_total,
                 cached_input_tokens=cached_total,
                 total_cost_usd=round(float(total_cost_usd), 6),
+                priced_requests=int(priced),
+                unpriced_requests=int(unpriced),
+                unmetered_requests=int(unmetered),
+                coverage_unknown=bool(unknown),
             )
         if ttl_seconds > 0:
             _store_request_usage_summaries(cache_key, summaries, ttl_seconds, generation)

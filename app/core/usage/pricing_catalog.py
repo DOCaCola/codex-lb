@@ -55,39 +55,63 @@ def _price(values: dict[str, float]) -> ModelPrice:
 
 
 def parse_models_dev(payload: JsonValue) -> dict[str, ModelPrice]:
-    models = _object(_object(_object(payload).get("openai")).get("models"))
     result: dict[str, ModelPrice] = {}
     names = {"input": "input_per_1m", "output": "output_per_1m", "cache_read": "cached_input_per_1m"}
-    for model, raw in models.items():
-        entry = _object(raw)
-        # The bare personality alias must keep resolving to the canonical Sol entry.
-        if model == "gpt-5.6" or _object(entry.get("modalities")).get("output") != ["text"]:
-            continue
-        try:
-            cost = _object(entry.get("cost"))
-            values = _rates(cost, names)
-            tiers = cost.get("tiers", [])
-            if not isinstance(tiers, list) or len(tiers) > 1:
-                raise ValueError("Unsupported context tiers")
-            if tiers:
-                tier = _object(tiers[0])
-                descriptor = _object(tier.get("tier"))
-                if descriptor.get("type") != "context":
-                    raise ValueError("Unsupported price tier")
-                values.update(_rates(descriptor, {"size": "long_context_threshold_tokens"}))
-                values.update(_rates(tier, {key: "long_context_" + value for key, value in names.items()}))
-            elif cost.get("context_over_200k") is not None:
-                # Legacy data has no precise threshold. Do not guess 200k vs 272k.
-                raise ValueError("Context tier lacks an explicit threshold")
-            modes = _object(_object(entry.get("experimental")).get("modes"))
-            for raw_mode in modes.values():
-                mode = _object(raw_mode)
-                tier_name = _object(_object(mode.get("provider")).get("body")).get("service_tier")
-                if tier_name in ("priority", "flex"):
-                    values.update(_rates(_object(mode.get("cost")), {k: f"{tier_name}_{v}" for k, v in names.items()}))
-            result[model.lower()] = _price(values)
-        except (ValueError, OverflowError):
-            logger.debug("Ignoring unsupported models.dev price for %s", model)
+    for provider in ("openai", "anthropic"):
+        models = _object(_object(_object(payload).get(provider)).get("models"))
+        for model, raw in models.items():
+            entry = _object(raw)
+            # The bare personality alias must keep resolving to the canonical Sol entry.
+            if model == "gpt-5.6" or _object(entry.get("modalities")).get("output") != ["text"]:
+                continue
+            try:
+                cost = _object(entry.get("cost"))
+                values = _rates(cost, names)
+                if provider == "anthropic":
+                    values.update(
+                        _rates(
+                            cost,
+                            {
+                                "cache_write": "cache_write_5m_per_1m",
+                                "cache_write_5m": "cache_write_5m_per_1m",
+                                "cache_write_1h": "cache_write_1h_per_1m",
+                            },
+                        )
+                    )
+                tiers = cost.get("tiers", [])
+                if not isinstance(tiers, list) or len(tiers) > 1:
+                    raise ValueError("Unsupported context tiers")
+                if tiers:
+                    tier = _object(tiers[0])
+                    descriptor = _object(tier.get("tier"))
+                    if descriptor.get("type") != "context":
+                        raise ValueError("Unsupported price tier")
+                    values.update(_rates(descriptor, {"size": "long_context_threshold_tokens"}))
+                    values.update(_rates(tier, {key: "long_context_" + value for key, value in names.items()}))
+                    if provider == "anthropic":
+                        values.update(
+                            _rates(
+                                tier,
+                                {
+                                    "cache_write_5m": "long_context_cache_write_5m_per_1m",
+                                    "cache_write_1h": "long_context_cache_write_1h_per_1m",
+                                },
+                            )
+                        )
+                elif cost.get("context_over_200k") is not None:
+                    # Legacy data has no precise threshold. Do not guess 200k vs 272k.
+                    raise ValueError("Context tier lacks an explicit threshold")
+                modes = _object(_object(entry.get("experimental")).get("modes")) if provider == "openai" else {}
+                for raw_mode in modes.values():
+                    mode = _object(raw_mode)
+                    tier_name = _object(_object(mode.get("provider")).get("body")).get("service_tier")
+                    if tier_name in ("priority", "flex"):
+                        values.update(
+                            _rates(_object(mode.get("cost")), {k: f"{tier_name}_{v}" for k, v in names.items()})
+                        )
+                result[model.lower()] = _price(values)
+            except (ValueError, OverflowError):
+                logger.debug("Ignoring unsupported models.dev price for %s", model)
     if not result:
         raise ValueError("models.dev supplied no valid OpenAI prices")
     return result
@@ -102,12 +126,23 @@ def parse_litellm(payload: JsonValue) -> dict[str, ModelPrice]:
     }
     for model, raw in _object(payload).items():
         entry = _object(raw)
-        if entry.get("litellm_provider") != "openai" or entry.get("mode") != "chat" or "/" in model:
+        if entry.get("litellm_provider") not in {"openai", "anthropic"} or entry.get("mode") != "chat" or "/" in model:
             continue
         if any(word in model for word in ("audio", "realtime")) or model == "gpt-5.6":
             continue
         try:
             values = _rates(entry, base, 1_000_000)
+            if entry.get("litellm_provider") == "anthropic":
+                values.update(
+                    _rates(
+                        entry,
+                        {
+                            "cache_creation_input_token_cost": "cache_write_5m_per_1m",
+                            "cache_creation_input_token_cost_above_1hr": "cache_write_1h_per_1m",
+                        },
+                        1_000_000,
+                    )
+                )
             for tier in ("priority", "flex"):
                 values.update(_rates(entry, {f"{k}_{tier}": f"{tier}_{v}" for k, v in base.items()}, 1_000_000))
             thresholds = {
@@ -124,6 +159,19 @@ def parse_litellm(payload: JsonValue) -> dict[str, ModelPrice]:
                     suffix = f"_above_{threshold // 1000}k_tokens" + (f"_{tier}" if tier else "")
                     prefix = f"{tier}_long_context_" if tier else "long_context_"
                     values.update(_rates(entry, {k + suffix: prefix + v for k, v in base.items()}, 1_000_000))
+                if entry.get("litellm_provider") == "anthropic":
+                    long_5m = f"cache_creation_input_token_cost_above_{threshold // 1000}k_tokens"
+                    long_1h = f"cache_creation_input_token_cost_above_1hr_above_{threshold // 1000}k_tokens"
+                    values.update(
+                        _rates(
+                            entry,
+                            {
+                                long_5m: "long_context_cache_write_5m_per_1m",
+                                long_1h: "long_context_cache_write_1h_per_1m",
+                            },
+                            1_000_000,
+                        )
+                    )
             result[model.lower()] = _price(values)
         except (ValueError, OverflowError):
             logger.debug("Ignoring unsupported LiteLLM price for %s", model)
@@ -232,7 +280,7 @@ _prices: dict[str, ModelPrice] | None = None
 def get_active_prices() -> dict[str, ModelPrice]:
     global _prices
     if _prices is None:
-        _prices = {**DEFAULT_PRICING_MODELS, **decode_snapshot(json.loads(BUNDLE_PATH.read_text()))}
+        _prices = merge_catalogs(decode_snapshot(json.loads(BUNDLE_PATH.read_text())), DEFAULT_PRICING_MODELS)
     return _prices
 
 

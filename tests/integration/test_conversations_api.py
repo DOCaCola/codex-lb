@@ -226,6 +226,7 @@ async def test_conversation_list_contract_search_and_aggregate(async_client, db_
         "totalTokens",
         "cachedInputTokens",
         "totalCostUsd",
+        "costCoverage",
     }
     assert entry["conversationId"] == "Conv-A"
     assert entry["requestCount"] == 3
@@ -394,6 +395,62 @@ async def test_conversation_list_percent_search_is_not_match_all(async_client, d
 
     assert response.status_code == 200
     assert response.json() == {"conversations": [], "total": 0, "hasMore": False}
+
+
+@pytest.mark.asyncio
+async def test_conversation_cost_coverage_keeps_mixed_rows_distinct(async_client, db_setup):
+    now = utcnow().replace(microsecond=0)
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                RequestLog(
+                    request_id="coverage-priced",
+                    requested_at=now - timedelta(minutes=2),
+                    model="mixed-model",
+                    status="success",
+                    conversation_id="coverage-conversation",
+                    input_tokens=10,
+                    output_tokens=2,
+                    cost_usd=0.4,
+                ),
+                RequestLog(
+                    request_id="coverage-unpriced",
+                    requested_at=now - timedelta(minutes=1),
+                    model="mixed-model",
+                    status="success",
+                    conversation_id="coverage-conversation",
+                    input_tokens=10,
+                    output_tokens=2,
+                    cost_usd=None,
+                ),
+                RequestLog(
+                    request_id="coverage-unmetered",
+                    requested_at=now,
+                    model="mixed-model",
+                    status="error",
+                    conversation_id="coverage-conversation",
+                    latency_ms=10,
+                    cost_usd=None,
+                ),
+            ]
+        )
+        await session.commit()
+
+    listing = await async_client.get("/api/conversations", params={"search": "coverage-conversation"})
+    assert listing.status_code == 200
+    entry = listing.json()["conversations"][0]
+    assert entry["totalCostUsd"] == pytest.approx(0.4)
+    assert entry["costCoverage"] == {
+        "knownCostUsd": pytest.approx(0.4),
+        "pricedRequests": 1,
+        "unpricedRequests": 1,
+        "unmeteredRequests": 1,
+        "coverageUnknown": False,
+    }
+
+    details = await async_client.get("/api/conversations/coverage-conversation")
+    assert details.status_code == 200
+    assert details.json()["modelStats"][0]["costCoverage"] == entry["costCoverage"]
 
 
 @pytest.mark.asyncio
@@ -618,6 +675,7 @@ async def test_conversation_details_exact_rows_elapsed_order_and_404(async_clien
             "cachedInputTokens",
             "totalOutputTokens",
             "totalCostUsd",
+            "costCoverage",
         }
         for row in body["modelStats"]
     )
@@ -830,6 +888,13 @@ async def test_conversation_details_excludes_warmups_and_soft_deleted_rows(async
             "cachedInputTokens": None,
             "totalOutputTokens": 15,
             "totalCostUsd": pytest.approx(3.0),
+            "costCoverage": {
+                "knownCostUsd": pytest.approx(3.0),
+                "pricedRequests": 2,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
+                "coverageUnknown": False,
+            },
         }
     ]
 

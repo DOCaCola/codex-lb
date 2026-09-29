@@ -30,6 +30,10 @@ class AccountRequestUsage(DashboardModel):
     total_tokens: int = 0
     cached_input_tokens: int = 0
     total_cost_usd: float = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class AccountUsageResetCredits(DashboardModel):

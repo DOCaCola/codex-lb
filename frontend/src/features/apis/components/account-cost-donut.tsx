@@ -4,6 +4,7 @@ import { Cell, Pie, PieChart, Sector, type PieSectorShapeProps } from "@/compone
 
 import { buildDonutPalette } from "@/utils/colors";
 import { formatCurrency } from "@/utils/formatters";
+import { formatCoveredCost, type CostCoverage } from "@/features/dashboard/cost-coverage";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useThemeStore } from "@/hooks/use-theme";
@@ -12,6 +13,7 @@ import type { ApiKeyAccountCost } from "@/features/apis/schemas";
 export type AccountCostDonutProps = {
   accountCosts: ApiKeyAccountCost[];
   totalCostUsd: number;
+  totalCoverage?: CostCoverage;
 };
 
 const CHART_SIZE = 152;
@@ -32,7 +34,7 @@ type DonutDatum = {
   fill: string;
 };
 
-export function AccountCostDonut({ accountCosts, totalCostUsd }: AccountCostDonutProps) {
+export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: AccountCostDonutProps) {
   const { t } = useTranslation();
   const isDark = useThemeStore((s) => s.theme === "dark");
   const blurred = usePrivacyStore((s) => s.blurred);
@@ -42,7 +44,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd }: AccountCostDonu
   const consumedColor = isDark ? "#404040" : "#d3d3d3";
 
 	const { chartData, legendItems } = useMemo(() => {
-		const visibleCosts = accountCosts.filter((ac) => ac.costUsd > 0);
+		const visibleCosts = accountCosts.filter((ac) => (ac.costUsd ?? 0) > 0 || (ac.unpricedRequests ?? 0) > 0 || (ac.unmeteredRequests ?? 0) > 0);
 		const palette = buildDonutPalette(visibleCosts.length, isDark);
 
 		const items = visibleCosts.map((ac, i) => {
@@ -51,7 +53,8 @@ export function AccountCostDonut({ accountCosts, totalCostUsd }: AccountCostDonu
 				id: isDeleted ? "__deleted__" : (ac.accountId ?? `__unknown_${i}__`),
 				label: isDeleted ? t("apis.accountCost.deletedAccount") : (ac.email ?? t("apis.accountCost.unknownAccount")),
 				isDeleted,
-				value: ac.costUsd,
+				value: ac.costUsd ?? 0,
+				coverage: ac,
 				color: isDeleted ? consumedColor : palette[i % palette.length],
 			};
 		});
@@ -150,7 +153,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd }: AccountCostDonu
             <div className="absolute inset-[22px] flex items-center justify-center rounded-full text-center pointer-events-none">
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("apis.accountCost.centerLabel")}</p>
-                <p className="text-base font-semibold tabular-nums">{formatCurrency(totalCostUsd)}</p>
+                <p className="text-base font-semibold tabular-nums">{totalCoverage ? formatCoveredCost(totalCostUsd, totalCoverage) : formatCurrency(totalCostUsd)}</p>
               </div>
             </div>
           </div>
@@ -197,7 +200,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd }: AccountCostDonu
                     </span>
                   </div>
                   <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatCurrency(item.value)}
+                    {formatCoveredCost(item.value, item.coverage)}
                   </span>
                 </button>
               );

@@ -15,3 +15,10 @@ queries retain their existing rollup optimization.
 This change covers request rows, request details, account filter options and
 authorized name search. It does not change routing, retry policy, billing or
 conversation-summary rollup dimensions.
+
+Claude request costs are API-equivalent estimates from the shared pricing
+catalog, not provider subscription invoices. A missing price is unknown; an
+explicit zero rate is free. Cost-limited API keys with unpriced usage retain
+their admission reservation estimate as the limit debit, while the request log
+keeps cost unknown. Historical rows without provenance keep their stored values,
+but even a stored zero is presented as unknown rather than claimed as free.

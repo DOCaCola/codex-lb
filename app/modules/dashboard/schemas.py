@@ -6,7 +6,7 @@ from typing import List, Literal
 from pydantic import Field
 
 from app.modules.accounts.schemas import AccountSummary
-from app.modules.shared.schemas import DashboardModel
+from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 from app.modules.usage.schemas import MetricsTrends, UsageWindow, UsageWindowResponse
 
 DashboardOverviewTimeframeKey = Literal["1d", "7d", "30d"]
@@ -22,6 +22,7 @@ class DashboardOverviewTimeframe(DashboardModel):
 class DashboardUsageCost(DashboardModel):
     currency: str
     total_usd: float = Field(alias="totalUsd")
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class DashboardUsageMetrics(DashboardModel):
@@ -40,6 +41,7 @@ class DashboardMetricsComparisonPrevious(DashboardModel):
     requests: int
     tokens: int
     cost_usd: float = Field(alias="costUsd")
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class DashboardMetricsComparison(DashboardModel):

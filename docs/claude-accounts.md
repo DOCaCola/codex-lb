@@ -34,6 +34,9 @@ semantics or inventing a signature. New reasoning and tool requests remain enabl
 Use Responses or native Messages when exact native tool-continuation semantics matter.
 Adaptive Claude requests ask for summarized thinking by default; use
 `thinking: {"type": "adaptive", "display": "omitted"}` to hide it.
+Haiku 4.5 and Sonnet 4.5 instead use budget-based thinking. Translated
+low/medium/high/max efforts request 4,096/8,192/16,384/32,000 thinking tokens;
+the output limit must exceed the budget and is never raised automatically.
 
 ## Model budgets
 
@@ -46,6 +49,14 @@ Translated requests without an output budget use the smaller of 64,000 tokens an
 the model's maximum output. Explicit native or translated budgets remain accepted
 up to that maximum. A 128,000-token output capability therefore does not force every
 request to reserve 128,000 tokens.
+
+Request details show cache reads and cache writes separately when Claude reports
+them, along with total duration, first generated-content latency and upstream
+thinking mode. Upstream thinking mode and effort are shown only when codex-lb sent
+them; a request that leaves them to Claude's model-dependent default shows neither.
+Costs are API-equivalent estimates, not Claude subscription
+charges. Missing prices appear as unknown (`--`), while token counts remain
+visible. Historical logs without cache-write or timing detail are not inferred.
 
 Upgrading preserves selected model IDs and removes former manual budgets.
 Existing projections stay disabled until a successful catalog refresh resolves

@@ -241,10 +241,16 @@ class TestUsage7d:
                 total_output_tokens=50,
                 cached_input_tokens=25,
                 total_cost_usd=1.8,
+                total_priced_requests=3,
+                total_unpriced_requests=0,
+                total_unmetered_requests=0,
                 account_id="acc_1",
                 email="alice@example.com",
                 is_deleted=False,
                 cost_usd=1.0,
+                priced_requests=2,
+                unpriced_requests=0,
+                unmetered_requests=0,
             ),
             SimpleNamespace(
                 total_requests=3,
@@ -252,10 +258,16 @@ class TestUsage7d:
                 total_output_tokens=50,
                 cached_input_tokens=25,
                 total_cost_usd=1.8,
+                total_priced_requests=3,
+                total_unpriced_requests=0,
+                total_unmetered_requests=0,
                 account_id="acc_del",
                 email=None,
                 is_deleted=True,
                 cost_usd=0.8,
+                priced_requests=1,
+                unpriced_requests=0,
+                unmetered_requests=0,
             ),
         ]
 
@@ -267,17 +279,20 @@ class TestUsage7d:
         assert result.total_tokens == 250
         assert result.cached_input_tokens == 25
         assert result.total_cost_usd == 1.8
+        assert (result.priced_requests, result.unpriced_requests, result.unmetered_requests) == (3, 0, 0)
         assert result.account_costs == [
             ApiKeyAccountCost(
                 account_id="acc_1",
                 email="alice@example.com",
                 cost_usd=1.0,
+                priced_requests=2,
                 is_deleted=False,
             ),
             ApiKeyAccountCost(
                 account_id=None,
                 email=None,
                 cost_usd=0.8,
+                priced_requests=1,
                 is_deleted=True,
             ),
         ]

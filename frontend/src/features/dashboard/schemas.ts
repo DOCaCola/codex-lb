@@ -53,9 +53,18 @@ const DashboardOverviewTimeframeSchema = z.object({
   bucketCount: z.number().int().positive(),
 });
 
+const CostCoverageSchema = z.object({
+  knownCostUsd: z.number(),
+  pricedRequests: z.number().int().nonnegative(),
+  unpricedRequests: z.number().int().nonnegative(),
+  unmeteredRequests: z.number().int().nonnegative(),
+  coverageUnknown: z.boolean(),
+});
+
 const UsageCostSchema = z.object({
   currency: z.string(),
   totalUsd: z.number(),
+  costCoverage: CostCoverageSchema,
 });
 
 const DashboardMetricsSchema = z.object({
@@ -74,6 +83,7 @@ const DashboardMetricsComparisonPreviousSchema = z.object({
   requests: z.number(),
   tokens: z.number(),
   costUsd: z.number(),
+  costCoverage: CostCoverageSchema,
 });
 
 const DashboardMetricsComparisonSchema = z.object({
@@ -84,6 +94,8 @@ const DashboardMetricsComparisonSchema = z.object({
 const TrendPointSchema = z.object({
   t: z.iso.datetime({ offset: true }),
   v: z.number(),
+  // Present on cost points only; `v` is then the bucket's known-cost subtotal.
+  coverage: CostCoverageSchema.nullable().optional(),
 });
 
 const MetricsTrendsSchema = z.object({
@@ -196,6 +208,7 @@ const RequestLogCostBreakdownSchema = z.object({
   cachedInputUsd: z.number().nullable().optional().default(null),
   outputUsd: z.number().nullable().optional().default(null),
   totalUsd: z.number().nullable().optional().default(null),
+  cacheWriteUsd: z.number().nullable().optional(),
 });
 
 export const RequestLogSchema = z.object({
@@ -242,8 +255,15 @@ export const RequestLogSchema = z.object({
   outputTokensRaw: z.number().nullable().optional().default(null),
   reasoningTokens: z.number().nullable().optional(),
   cachedInputTokens: z.number().nullable(),
+  cacheCreationTokens: z.number().int().nonnegative().nullable().optional(),
+  cacheCreation5mTokens: z.number().int().nonnegative().nullable().optional(),
+  cacheCreation1hTokens: z.number().int().nonnegative().nullable().optional(),
   reasoningEffort: z.string().nullable(),
+  upstreamReasoningEffort: z.string().nullable().optional(),
+  upstreamThinkingMode: z.string().nullable().optional(),
+  upstreamThinkingBudgetTokens: z.number().int().nonnegative().nullable().optional(),
   costUsd: z.number().nullable(),
+  costProvenance: z.string().nullable().optional(),
   costBreakdown: RequestLogCostBreakdownSchema.nullable().optional().default(null),
   latencyMs: z.number().nullable(),
   latencyFirstTokenMs: z.number().nullable().optional().default(null),
@@ -257,7 +277,9 @@ export const RequestLogsResponseSchema = z.object({
   conversation: z.object({
     requestCount: z.number().int().nonnegative(),
     aggregatedCostUsd: z.number(),
+    costCoverage: CostCoverageSchema.nullable().optional(),
   }).nullable().optional().default(null),
+  costCoverage: CostCoverageSchema.optional(),
 });
 
 const RequestLogModelOptionSchema = z.object({
@@ -335,6 +357,7 @@ export const ConversationModelStatSchema = z.object({
   cachedInputTokens: z.number().int().nonnegative().nullable(),
   totalOutputTokens: z.number().int().nonnegative(),
   totalCostUsd: z.number(),
+  costCoverage: CostCoverageSchema,
 });
 
 export const ConversationEntrySchema = z.object({
@@ -351,6 +374,7 @@ export const ConversationEntrySchema = z.object({
   totalTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative().nullable(),
   totalCostUsd: z.number(),
+  costCoverage: CostCoverageSchema,
 });
 
 export const ConversationsResponseSchema = z.object({

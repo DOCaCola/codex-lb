@@ -105,6 +105,10 @@ describe("AccountUsagePanel", () => {
         totalTokens: 51_480,
         cachedInputTokens: 41_470,
         totalCostUsd: 0.13,
+        pricedRequests: 7,
+        unpricedRequests: 0,
+        unmeteredRequests: 0,
+        coverageUnknown: false,
       },
     });
 

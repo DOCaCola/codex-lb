@@ -20,3 +20,13 @@ class DashboardModel(BaseModel):
                 return value.isoformat() + "Z"
             return value.isoformat().replace("+00:00", "Z")
         return value
+
+
+class RequestCostCoverage(DashboardModel):
+    """Known-cost subtotal plus request-level priced/unpriced/unmetered coverage."""
+
+    known_cost_usd: float = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False

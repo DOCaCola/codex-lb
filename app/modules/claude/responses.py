@@ -7,7 +7,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue, model_validator
 
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
@@ -20,19 +20,57 @@ class Usage(BaseModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cache_read_input_tokens: int = Field(default=0, ge=0)
-    cache_creation_input_tokens: int = Field(default=0, ge=0)
+    cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_5m_input_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_1h_input_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def cache_creation_detail(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        detail = value.get("cache_creation")
+        result = dict(value)
+        output_details = value.get("output_tokens_details")
+        if isinstance(output_details, dict) and "reasoning_tokens" in output_details:
+            result["reasoning_tokens"] = output_details["reasoning_tokens"]
+        if not isinstance(detail, dict):
+            return result
+        five = detail.get("ephemeral_5m_input_tokens")
+        one_hour = detail.get("ephemeral_1h_input_tokens")
+        total = value.get("cache_creation_input_tokens")
+        if total is None and isinstance(five, int) and isinstance(one_hour, int):
+            total = five + one_hour
+        elif total is None and (five is not None or one_hour is not None):
+            raise ValueError("Claude cache creation total is missing")
+        return {
+            **result,
+            **({"cache_creation_input_tokens": total} if total is not None else {}),
+            "cache_creation_5m_input_tokens": five,
+            "cache_creation_1h_input_tokens": one_hour,
+        }
 
     def responses(self) -> dict[str, JsonValue]:
-        total_input = self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens
-        return {
+        total_input = self.input_tokens + self.cache_read_input_tokens + (self.cache_creation_input_tokens or 0)
+        details: dict[str, JsonValue] = {
+            "cached_tokens": self.cache_read_input_tokens,
+        }
+        if self.cache_creation_input_tokens is not None:
+            details["cache_creation_tokens"] = self.cache_creation_input_tokens
+        if self.cache_creation_5m_input_tokens is not None:
+            details["cache_creation_5m_tokens"] = self.cache_creation_5m_input_tokens
+        if self.cache_creation_1h_input_tokens is not None:
+            details["cache_creation_1h_tokens"] = self.cache_creation_1h_input_tokens
+        result: dict[str, JsonValue] = {
             "input_tokens": total_input,
             "output_tokens": self.output_tokens,
             "total_tokens": total_input + self.output_tokens,
-            "input_tokens_details": {
-                "cached_tokens": self.cache_read_input_tokens,
-                "cache_creation_tokens": self.cache_creation_input_tokens,
-            },
+            "input_tokens_details": details,
         }
+        if self.reasoning_tokens is not None:
+            result["output_tokens_details"] = {"reasoning_tokens": self.reasoning_tokens}
+        return result
 
 
 @dataclass

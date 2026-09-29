@@ -15,7 +15,15 @@ pytestmark = pytest.mark.integration
 
 
 def install_upstream(
-    monkeypatch, *, stop="end_turn", truncate=False, content=None, rejections=0, message_id="msg_fixture"
+    monkeypatch,
+    *,
+    stop="end_turn",
+    truncate=False,
+    content=None,
+    rejections=0,
+    message_id="msg_fixture",
+    start_usage=None,
+    delta_usage=None,
 ):
     from app.modules.claude import transport
 
@@ -34,7 +42,7 @@ def install_upstream(
         stack = AsyncExitStack()
         stack.callback(lambda: closed.append(source.id))
         events = [
-            {"type": "message_start", "message": {"id": message_id, "usage": {"input_tokens": 10}}},
+            {"type": "message_start", "message": {"id": message_id, "usage": start_usage or {"input_tokens": 10}}},
             {"type": "ping"},
             {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello from Claude"}},
@@ -52,7 +60,11 @@ def install_upstream(
         if not truncate:
             events.extend(
                 [
-                    {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 7}},
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": stop},
+                        "usage": delta_usage or {"output_tokens": 7},
+                    },
                     {"type": "message_stop"},
                 ]
             )
@@ -123,6 +135,247 @@ async def test_responses_route_reaches_claude_with_owned_cleanup(async_client, p
         assert '"type":"response.completed"' in response.text or '"type": "response.completed"' in response.text
     else:
         assert response.json()["usage"]["total_tokens"] == 17
+
+
+@pytest.mark.parametrize("surface", ["responses", "messages", "chat"])
+async def test_claude_public_routes_preserve_cache_write_and_semantic_timing(async_client, pool, monkeypatch, surface):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
+    install_upstream(
+        monkeypatch,
+        start_usage={
+            "input_tokens": 100,
+            "cache_read_input_tokens": 40,
+            "cache_creation_input_tokens": 30,
+            "cache_creation": {"ephemeral_5m_input_tokens": 20, "ephemeral_1h_input_tokens": 10},
+        },
+        delta_usage={"output_tokens": 9},
+    )
+    if surface == "messages":
+        response = await async_client.post(
+            "/v1/messages",
+            headers=native_headers(),
+            json={
+                "model": "claude-opus-5",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": 100,
+                "stream": True,
+            },
+        )
+    elif surface == "chat":
+        response = await async_client.post(
+            "/v1/chat/completions",
+            json={"model": MODEL, "messages": [{"role": "user", "content": "Hello"}], "stream": False},
+        )
+    else:
+        response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+    assert response.status_code == 200, response.text
+    async with SessionLocal() as session:
+        row = (
+            await session.scalars(select(RequestLog).where(RequestLog.model == MODEL).order_by(RequestLog.id.desc()))
+        ).first()
+        assert row is not None
+        assert (row.input_tokens, row.output_tokens, row.cached_input_tokens) == (170, 9, 40)
+        assert (row.cache_creation_tokens, row.cache_creation_5m_tokens, row.cache_creation_1h_tokens) == (30, 20, 10)
+        assert row.reasoning_tokens is None
+        assert row.latency_ms is not None and row.latency_first_token_ms is not None
+        assert row.cost_provenance == "api_equivalent_estimate"
+        assert row.cost_usd == pytest.approx((100 * 5 + 40 * 0.5 + 20 * 6.25 + 10 * 10 + 9 * 25) / 1_000_000)
+
+
+async def test_claude_route_uses_long_context_cache_write_rates(async_client, pool, monkeypatch):
+    from app.core.usage import pricing_catalog
+    from app.core.usage.pricing import ModelPrice
+
+    monkeypatch.setattr(
+        pricing_catalog,
+        "_prices",
+        {
+            "claude-opus-5": ModelPrice(
+                1,
+                5,
+                0.1,
+                1.25,
+                2,
+                long_context_threshold_tokens=100,
+                long_context_input_per_1m=2,
+                long_context_output_per_1m=10,
+                long_context_cached_input_per_1m=0.2,
+                long_context_cache_write_5m_per_1m=2.5,
+                long_context_cache_write_1h_per_1m=4,
+            )
+        },
+    )
+    install_upstream(
+        monkeypatch,
+        start_usage={
+            "input_tokens": 51,
+            "cache_read_input_tokens": 20,
+            "cache_creation_input_tokens": 30,
+            "cache_creation": {"ephemeral_5m_input_tokens": 20, "ephemeral_1h_input_tokens": 10},
+        },
+        delta_usage={"output_tokens": 10},
+    )
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello"})
+    assert response.status_code == 200, response.text
+    listed = await async_client.get("/api/request-logs")
+    row = next(item for item in listed.json()["requests"] if item["model"] == MODEL)
+    assert row["costUsd"] == pytest.approx((102 + 4 + 50 + 40 + 100) / 1_000_000)
+    assert row["costBreakdown"]["cacheWriteUsd"] == pytest.approx(90 / 1_000_000)
+
+
+async def test_unknown_claude_write_ttl_keeps_cost_unknown_and_cost_limit_reserved(async_client, pool, monkeypatch):
+    from sqlalchemy import select
+
+    from app.db.models import ApiKeyUsageReservation, RequestLog
+    from app.db.session import SessionLocal
+    from tests.integration.model_source_helpers import _enable_api_key_auth
+
+    await _enable_api_key_auth(async_client)
+    created = await async_client.post(
+        "/api/api-keys/",
+        json={
+            "name": "claude-unpriced-cache-write",
+            "assignedSourceIds": [pool[0]],
+            "limits": [{"limitType": "cost_usd", "limitWindow": "weekly", "maxValue": 100_000_000}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    key = created.json()
+    install_upstream(
+        monkeypatch,
+        start_usage={"input_tokens": 100, "cache_creation_input_tokens": 30},
+        delta_usage={"output_tokens": 9},
+    )
+    response = await async_client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {key['key']}"},
+        json={"model": MODEL, "input": "Hello", "stream": False},
+    )
+    assert response.status_code == 200, response.text
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.api_key_id == key["id"]))).one()
+        reservation = (
+            await session.scalars(select(ApiKeyUsageReservation).where(ApiKeyUsageReservation.api_key_id == key["id"]))
+        ).one()
+        assert row.cache_creation_tokens == 30 and row.cost_usd is None
+        assert row.cost_provenance == "unpriced"
+        assert reservation.status == "finalized" and reservation.cost_microdollars > 0
+    listed = await async_client.get("/api/request-logs", params={"limit": 10})
+    assert listed.status_code == 200, listed.text
+    entry = next(item for item in listed.json()["requests"] if item["apiKeyId"] == key["id"])
+    assert entry["inputTokens"] == 130
+    assert entry["cacheCreationTokens"] == 30
+    assert entry["costUsd"] is None
+    assert entry["costProvenance"] == "unpriced"
+    assert entry["costBreakdown"]["totalUsd"] is None
+
+
+async def test_haiku_budget_reasoning_roundtrips_and_logs_upstream_mode(async_client, pool, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+    from app.modules.claude.client import ClaudeClient
+    from app.modules.claude.schemas import CatalogModel
+
+    model = "claude-haiku-4-5-20251001"
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[CatalogModel(id=model, display_name="Haiku")]))
+    refreshed = await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")
+    assert refreshed.status_code == 200
+    selected = await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"selections": [{"model": model}]})
+    assert selected.status_code == 200
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/responses",
+        json={
+            "model": f"anthropic/{model}",
+            "input": "Hello",
+            "stream": False,
+            "reasoning": {"effort": "medium"},
+            "max_output_tokens": 10000,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+    assert captured[0][2]["max_tokens"] == 10000
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == f"anthropic/{model}"))).one()
+        assert row.reasoning_effort == "medium"
+        assert row.upstream_thinking_mode == "enabled"
+        assert row.upstream_thinking_budget_tokens == 8192
+        assert row.reasoning_tokens is None
+
+    rejected = await async_client.post(
+        "/v1/responses",
+        json={
+            "model": f"anthropic/{model}",
+            "input": "Hello",
+            "reasoning": {"effort": "medium"},
+            "max_output_tokens": 8192,
+        },
+    )
+    assert rejected.status_code == 400
+    assert len(captured) == 1
+
+
+@pytest.mark.parametrize("sampling", [{"temperature": 0.2}, {"top_p": 0.9}])
+async def test_claude_responses_rejects_thinking_sampling_conflicts(async_client, pool, monkeypatch, sampling):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/responses",
+        json={"model": MODEL, "input": "Hello", "reasoning": {"effort": "medium"}, **sampling},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == next(iter(sampling))
+    assert captured == []
+
+
+async def test_claude_request_without_thinking_records_unset_upstream_reasoning(async_client, pool, monkeypatch):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": False})
+    assert response.status_code == 200, response.text
+    assert "thinking" not in captured[0][2]
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
+        # Left to the model-dependent API default: recorded as unset, not guessed.
+        assert row.upstream_thinking_mode is None
+        assert row.upstream_reasoning_effort is None
+
+
+@pytest.mark.parametrize("truncate", [False, True])
+async def test_claude_metadata_only_stream_has_duration_without_fabricated_ttft(
+    async_client, pool, monkeypatch, truncate
+):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
+    install_upstream(monkeypatch, content=[{"type": "text", "text": ""}], truncate=truncate)
+    if truncate:
+        from app.modules.model_sources.forwarding import ModelSourceForwardingError
+
+        with pytest.raises(ModelSourceForwardingError):
+            await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+    else:
+        response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+        assert response.status_code == 200
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
+        assert row.latency_ms is not None
+        assert row.latency_first_token_ms is None
+        assert row.status == ("error" if truncate else "success")
 
 
 async def test_pause_turn_not_reported_as_completed(async_client, pool, monkeypatch):
@@ -485,6 +738,45 @@ async def test_native_wire_identity_and_features_survive_route(async_client, poo
     assert set(wire_headers["anthropic-beta"].split(",")) == {"oauth-2025-04-20", "future-feature-2026-09-26"}
     assert wire_body["thinking"] == body["thinking"]
     assert wire_body["output_config"] == body["output_config"]
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as session:
+        rows = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).all()
+        assert len(rows) == 2
+        assert all(row.reasoning_effort == "high" for row in rows)
+        assert all(row.upstream_reasoning_effort == "high" for row in rows)
+        assert all(row.upstream_thinking_mode == "adaptive" for row in rows)
+
+
+async def test_native_budget_has_no_invented_effort(async_client, pool, monkeypatch):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/messages",
+        headers=native_headers(),
+        json={
+            "model": "claude-opus-5",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 10000,
+            "thinking": {"type": "enabled", "budget_tokens": 4096},
+            "stream": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["thinking"] == {"type": "enabled", "budget_tokens": 4096}
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
+        assert row.reasoning_effort is None
+        assert row.upstream_reasoning_effort is None
+        assert row.upstream_thinking_mode == "enabled"
+        assert row.upstream_thinking_budget_tokens == 4096
 
 
 @pytest.mark.parametrize(

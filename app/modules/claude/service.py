@@ -372,12 +372,16 @@ class ClaudeService:
 
 
 def project_models(state: AccountState) -> list[ModelSourceModel]:
+    from app.core.usage.pricing import get_pricing_for_model
+
     catalog = {model.id: model for model in state.catalog}
     result: list[ModelSourceModel] = []
     for selection in state.selections:
         model = catalog.get(selection.model)
         limits = model.token_limits if model else None
         policy = model_policy(selection.model)
+        resolved_price = get_pricing_for_model(selection.model)
+        price = resolved_price[1] if resolved_price is not None else None
         result.append(
             ModelSourceModel(
                 model=f"anthropic/{selection.model}",
@@ -388,6 +392,9 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
                 supports_streaming=True,
                 supports_tools=True,
                 supports_vision=True,
+                input_per_1m=price.input_per_1m if price is not None else None,
+                cached_input_per_1m=price.cached_input_per_1m if price is not None else None,
+                output_per_1m=price.output_per_1m if price is not None else None,
                 raw_metadata_json=json.dumps(
                     {
                         **(
@@ -399,11 +406,11 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
                             else {}
                         ),
                         "upstream_model": selection.model,
-                        "supports_reasoning": bool(policy and policy.adaptive_reasoning),
+                        "supports_reasoning": bool(policy and policy.supports_reasoning),
                         "supported_reasoning_levels": ["low", "medium", "high", "max"]
-                        if policy and policy.adaptive_reasoning
+                        if policy and policy.supports_reasoning
                         else [],
-                        "default_reasoning_level": "medium" if policy and policy.adaptive_reasoning else None,
+                        "default_reasoning_level": "medium" if policy and policy.supports_reasoning else None,
                     }
                 ),
             )

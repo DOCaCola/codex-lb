@@ -36,6 +36,10 @@ describe("AccountSummarySchema", () => {
         totalTokens: 1500,
         cachedInputTokens: 1100,
         totalCostUsd: 0.02,
+        pricedRequests: 3,
+        unpricedRequests: 0,
+        unmeteredRequests: 0,
+        coverageUnknown: false,
       },
       auth: {
         access: {

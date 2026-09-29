@@ -73,6 +73,10 @@ class ApiKeyUsageSummaryResponse(DashboardModel):
     total_tokens: int
     cached_input_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class ApiKeyResponse(DashboardModel):
@@ -111,6 +115,10 @@ class ApiKeyCreateResponse(ApiKeyResponse):
 class ApiKeyTrendPoint(DashboardModel):
     t: datetime
     v: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class ApiKeyTrendsResponse(DashboardModel):
@@ -123,6 +131,9 @@ class ApiKeyAccountCostResponse(DashboardModel):
     account_id: str | None = None
     email: str | None = None
     cost_usd: float = 0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
     is_deleted: bool = False
 
 
@@ -130,6 +141,9 @@ class ApiKeyUsage7DayResponse(DashboardModel):
     key_id: str
     total_tokens: int = 0
     total_cost_usd: float = 0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
     total_requests: int = 0
     cached_input_tokens: int = 0
     account_costs: list[ApiKeyAccountCostResponse] = Field(default_factory=list)

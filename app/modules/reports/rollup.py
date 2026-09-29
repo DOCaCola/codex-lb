@@ -8,12 +8,14 @@ from datetime import datetime, timedelta
 from sqlalchemy import case, delete, func, insert, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.usage.coverage import request_cost_expressions
 from app.core.usage.logs import CANCELLED_STATUS, NON_ERROR_STATUSES
 from app.core.utils.time import utcnow
 from app.db.models import AccountUsageRollupState, RequestLog, RequestReportHourlyRollup
 from app.db.session import get_background_session, sqlite_writer_section
 from app.modules.accounts.usage_rollup import FOLD_LAG, _insert_fn, _locked_state, _state_bootstrap_stmt
 from app.modules.accounts.usage_time_rollup import (
+    _ceil_to_hour,
     _dimension_expr,
     _requested_at_epoch_bucket_expr,
     conversation_id_expr,
@@ -37,6 +39,10 @@ MEASURES = (
     "reasoning_usage_known_requests",
     "cached_input_tokens",
     "cost_usd",
+    "priced_requests",
+    "unpriced_requests",
+    "unmetered_requests",
+    "coverage_unknown",
 )
 
 
@@ -50,7 +56,8 @@ def raw_measures() -> list:
         func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("reasoning_tokens"),
         func.count(RequestLog.reasoning_tokens).label("reasoning_usage_known_requests"),
         func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-        func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+        *request_cost_expressions(RequestLog),
+        literal(0).label("coverage_unknown"),
     ]
 
 
@@ -118,10 +125,41 @@ async def run_report_fold_pass(*, now: datetime | None = None) -> int:
     committed = 0
     for _ in range(REPORT_MAX_SLICES):
         async with get_background_session() as session:
+            if not await repair_next_report_coverage_slice(session):
+                break
+            committed += 1
+    for _ in range(REPORT_MAX_SLICES):
+        async with get_background_session() as session:
             if not await fold_next_report_slice(session, target):
                 break
             committed += 1
     return committed
+
+
+async def repair_next_report_coverage_slice(session: AsyncSession) -> bool:
+    """Refold a bounded, fully retained historical slice; old pruned rows stay unknown."""
+    async with sqlite_writer_section():
+        state = await _locked_state(session)
+        if state is None or state.reports_coverage_repair_from is None:
+            return False
+        earliest = (await session.execute(select(func.min(RequestLog.requested_at)))).scalar_one_or_none()
+        start = (
+            max(state.reports_coverage_repair_from, _ceil_to_hour(earliest))
+            if earliest
+            else state.reports_folded_through
+        )
+        end = min(start + REPORT_FOLD_SLICE, state.reports_folded_through)
+        if start < end:
+            await session.execute(
+                delete(RequestReportHourlyRollup).where(
+                    RequestReportHourlyRollup.bucket_epoch >= epoch_seconds(start),
+                    RequestReportHourlyRollup.bucket_epoch < epoch_seconds(end),
+                )
+            )
+            await session.execute(report_fold_insert(session, start, end))
+        state.reports_coverage_repair_from = end if end < state.reports_folded_through else None
+        await session.commit()
+        return start < end
 
 
 async def rekey_report_accounts(session: AsyncSession, account_ids: list[str], target_id: str | None) -> None:

@@ -65,6 +65,7 @@ class StickySessionKind(str, Enum):
 class RequestKind(str, Enum):
     NORMAL = "normal"
     WARMUP = "warmup"
+    COUNT_TOKENS = "count_tokens"
 
 
 class FileAccountPin(Base):
@@ -210,6 +211,13 @@ class AccountUsageRollup(Base):
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
     cached_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
     total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default=text("0"), nullable=False)
+    priced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unpriced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unmetered_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    coverage_unknown: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    coverage_repair_attempted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
 
 class ApiKeyUsageRollup(Base):
@@ -230,6 +238,13 @@ class ApiKeyUsageRollup(Base):
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
     cached_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
     total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default=text("0"), nullable=False)
+    priced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unpriced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unmetered_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    coverage_unknown: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    coverage_repair_attempted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
 
 class AccountUsageRollupState(Base):
@@ -284,6 +299,7 @@ class AccountUsageRollupState(Base):
         nullable=False,
         server_default=text("'1970-01-01 00:00:00'"),
     )
+    reports_coverage_repair_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class RequestReportHourlyRollup(Base):
@@ -311,6 +327,10 @@ class RequestReportHourlyRollup(Base):
     reasoning_usage_known_requests: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
     cached_input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    priced_requests: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    unpriced_requests: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    unmetered_requests: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    coverage_unknown: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
 
 
 class RequestUsageHourlyRollup(Base):
@@ -369,6 +389,10 @@ class RequestUsageHourlyRollup(Base):
     # count(cost_usd IS NOT NULL) — preserves the "all-NULL model excluded"
     # rule of cost-by-model aggregations.
     cost_count: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    priced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unpriced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unmetered_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    coverage_unknown: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
 
 
 class RequestUsageHourlyErrorRollup(Base):
@@ -426,6 +450,10 @@ class RequestDemandQuarterRollup(Base):
     )
     cached_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default=text("0"), nullable=False)
+    priced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unpriced_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    unmetered_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
+    coverage_unknown: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
 
 
 class RequestConversationHourlyRollup(Base):
@@ -521,9 +549,16 @@ class RequestLog(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_creation_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_creation_5m_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_creation_1h_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_provenance: Mapped[str | None] = mapped_column(String, nullable=True)
     reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
+    upstream_reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
+    upstream_thinking_mode: Mapped[str | None] = mapped_column(String, nullable=True)
+    upstream_thinking_budget_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_first_token_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Pre-attempt wait (account selection, admission waits, failed failover

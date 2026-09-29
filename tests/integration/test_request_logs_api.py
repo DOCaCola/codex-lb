@@ -110,6 +110,7 @@ async def test_request_logs_api_returns_recent(async_client, db_setup):
         "cachedInputUsd": None,
         "outputUsd": None,
         "totalUsd": None,
+        "cacheWriteUsd": None,
     }
     assert latest["transport"] == "websocket"
     assert latest["requestKind"] == "normal"
@@ -130,6 +131,7 @@ async def test_request_logs_api_returns_recent(async_client, db_setup):
         "cachedInputUsd": None,
         "outputUsd": pytest.approx(0.002),
         "totalUsd": pytest.approx(0.002125),
+        "cacheWriteUsd": None,
     }
     assert older["transport"] == "http"
     assert older["requestKind"] == "normal"
@@ -517,6 +519,13 @@ async def test_request_logs_api_rejects_guest_conversation_filter_and_preserves_
     assert admin_payload["conversation"] == {
         "requestCount": 1,
         "aggregatedCostUsd": 4.25,
+        "costCoverage": {
+            "knownCostUsd": 4.25,
+            "pricedRequests": 1,
+            "unpricedRequests": 0,
+            "unmeteredRequests": 0,
+            "coverageUnknown": False,
+        },
     }
 
 

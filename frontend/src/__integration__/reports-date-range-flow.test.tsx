@@ -11,6 +11,10 @@ import { renderWithProviders } from "@/test/utils";
 
 const EMPTY_REPORT: ReportsResponse = {
   summary: {
+    pricedRequests: 0,
+    unpricedRequests: 0,
+    unmeteredRequests: 0,
+    coverageUnknown: false,
     totalCostUsd: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -28,6 +32,10 @@ const EMPTY_REPORT: ReportsResponse = {
   comparison: {
     canCompare: false,
     previous: {
+      pricedRequests: 0,
+      unpricedRequests: 0,
+      unmeteredRequests: 0,
+      coverageUnknown: false,
       totalCostUsd: 0,
       totalTokens: 0,
       totalRequests: 0,
@@ -47,6 +55,10 @@ const REPORT_WITH_MODEL: ReportsResponse = {
       costUsd: 0,
       requests: 0,
       percentage: 100,
+      pricedRequests: 0,
+      unpricedRequests: 0,
+      unmeteredRequests: 0,
+      coverageUnknown: false,
     },
   ],
 };

@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.usage.coverage import request_cost_expressions
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountUsageRollup, AccountUsageRollupState, ApiKey, ApiKeyUsageRollup, RequestLog
 from app.db.session import get_background_session, sqlite_writer_section
@@ -61,6 +62,10 @@ class UsageRollupSums:
     output_tokens: int
     cached_input_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: int = 0
 
 
 def deduped_usage_aggregate_stmt(
@@ -99,6 +104,7 @@ def deduped_usage_aggregate_stmt(
         )
         .subquery("latest_request_log_ids")
     )
+    cost, priced, unpriced, unmetered = request_cost_expressions(RequestLog)
     return (
         select(
             RequestLog.account_id,
@@ -106,7 +112,10 @@ def deduped_usage_aggregate_stmt(
             func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(output_tokens_expr), 0).label("output_tokens"),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
+            cost.label("total_cost_usd"),
+            priced,
+            unpriced,
+            unmetered,
         )
         .join(latest_request_log_ids, RequestLog.id == latest_request_log_ids.c.request_log_id)
         .group_by(RequestLog.account_id)
@@ -134,6 +143,7 @@ def api_key_usage_aggregate_stmt(
         conditions.append(RequestLog.requested_at > after_exclusive)
     if until_inclusive is not None:
         conditions.append(RequestLog.requested_at <= until_inclusive)
+    cost, priced, unpriced, unmetered = request_cost_expressions(RequestLog)
     return (
         select(
             RequestLog.api_key_id,
@@ -141,14 +151,27 @@ def api_key_usage_aggregate_stmt(
             func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(output_tokens_expr), 0).label("output_tokens"),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
+            cost.label("total_cost_usd"),
+            priced,
+            unpriced,
+            unmetered,
         )
         .where(*conditions)
         .group_by(RequestLog.api_key_id)
     )
 
 
-_SUM_COLUMNS = ("request_count", "input_tokens", "output_tokens", "cached_input_tokens", "total_cost_usd")
+_SUM_COLUMNS = (
+    "request_count",
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "total_cost_usd",
+    "priced_requests",
+    "unpriced_requests",
+    "unmetered_requests",
+    "coverage_unknown",
+)
 
 
 def _add_rollup_sums_stmt(session: AsyncSession, model, key_field: str, key_value: str, sums: UsageRollupSums):
@@ -159,6 +182,10 @@ def _add_rollup_sums_stmt(session: AsyncSession, model, key_field: str, key_valu
         output_tokens=sums.output_tokens,
         cached_input_tokens=sums.cached_input_tokens,
         total_cost_usd=sums.total_cost_usd,
+        priced_requests=sums.priced_requests,
+        unpriced_requests=sums.unpriced_requests,
+        unmetered_requests=sums.unmetered_requests,
+        coverage_unknown=sums.coverage_unknown,
     )
     return stmt.on_conflict_do_update(
         index_elements=[getattr(model, key_field)],
@@ -209,11 +236,21 @@ async def merge_rollups_into(session: AsyncSession, canonical_account_id: str, d
         output_tokens=sum(row.output_tokens for row in duplicates),
         cached_input_tokens=sum(row.cached_input_tokens for row in duplicates),
         total_cost_usd=sum(row.total_cost_usd for row in duplicates),
+        priced_requests=sum(row.priced_requests for row in duplicates),
+        unpriced_requests=sum(row.unpriced_requests for row in duplicates),
+        unmetered_requests=sum(row.unmetered_requests for row in duplicates),
+        coverage_unknown=sum(row.coverage_unknown for row in duplicates),
     )
     for row in duplicates:
         await session.delete(row)
     await session.flush()
     await session.execute(_add_sums_stmt(session, canonical_account_id, merged))
+    if merged.coverage_unknown:
+        await session.execute(
+            update(AccountUsageRollup)
+            .where(AccountUsageRollup.account_id == canonical_account_id)
+            .values(coverage_repair_attempted=False)
+        )
 
 
 class AccountUsageRollupRepository:
@@ -240,6 +277,10 @@ class AccountUsageRollupRepository:
                 AccountUsageRollup.output_tokens,
                 AccountUsageRollup.cached_input_tokens,
                 AccountUsageRollup.total_cost_usd,
+                AccountUsageRollup.priced_requests,
+                AccountUsageRollup.unpriced_requests,
+                AccountUsageRollup.unmetered_requests,
+                AccountUsageRollup.coverage_unknown,
             )
             .select_from(AccountUsageRollupState)
             .outerjoin(AccountUsageRollup, join_on)
@@ -250,15 +291,19 @@ class AccountUsageRollupRepository:
             return {}, None
         watermark = rows[0][0]
         sums = {
-            account_id: UsageRollupSums(
-                request_count=request_count,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cached_input_tokens=cached_input_tokens,
-                total_cost_usd=total_cost_usd,
+            row.account_id: UsageRollupSums(
+                request_count=row.request_count,
+                input_tokens=row.input_tokens,
+                output_tokens=row.output_tokens,
+                cached_input_tokens=row.cached_input_tokens,
+                total_cost_usd=row.total_cost_usd,
+                priced_requests=row.priced_requests,
+                unpriced_requests=row.unpriced_requests,
+                unmetered_requests=row.unmetered_requests,
+                coverage_unknown=row.coverage_unknown,
             )
-            for (_, account_id, request_count, input_tokens, output_tokens, cached_input_tokens, total_cost_usd) in rows
-            if account_id is not None
+            for row in rows
+            if row.account_id is not None
         }
         return sums, watermark
 
@@ -281,6 +326,10 @@ async def read_api_key_rollup_state(
             ApiKeyUsageRollup.output_tokens,
             ApiKeyUsageRollup.cached_input_tokens,
             ApiKeyUsageRollup.total_cost_usd,
+            ApiKeyUsageRollup.priced_requests,
+            ApiKeyUsageRollup.unpriced_requests,
+            ApiKeyUsageRollup.unmetered_requests,
+            ApiKeyUsageRollup.coverage_unknown,
         )
         .select_from(AccountUsageRollupState)
         .outerjoin(ApiKeyUsageRollup, join_on)
@@ -291,15 +340,19 @@ async def read_api_key_rollup_state(
         return {}, None
     watermark = rows[0][0]
     sums = {
-        api_key_id: UsageRollupSums(
-            request_count=request_count,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_input_tokens=cached_input_tokens,
-            total_cost_usd=total_cost_usd,
+        row.api_key_id: UsageRollupSums(
+            request_count=row.request_count,
+            input_tokens=row.input_tokens,
+            output_tokens=row.output_tokens,
+            cached_input_tokens=row.cached_input_tokens,
+            total_cost_usd=row.total_cost_usd,
+            priced_requests=row.priced_requests,
+            unpriced_requests=row.unpriced_requests,
+            unmetered_requests=row.unmetered_requests,
+            coverage_unknown=row.coverage_unknown,
         )
-        for (_, api_key_id, request_count, input_tokens, output_tokens, cached_input_tokens, total_cost_usd) in rows
-        if api_key_id is not None
+        for row in rows
+        if row.api_key_id is not None
     }
     return sums, watermark
 
@@ -346,6 +399,8 @@ async def run_fold_pass(*, now: datetime | None = None) -> int:
     holds one giant transaction. Returns the number of committed slices.
     """
     target = (now or utcnow()) - FOLD_LAG
+    async with get_background_session() as repair_session:
+        await repair_lifetime_cost_coverage(repair_session)
     committed = 0
     while True:
         async with get_background_session() as session:
@@ -354,6 +409,71 @@ async def run_fold_pass(*, now: datetime | None = None) -> int:
             committed += 1
         if status is _FoldStatus.DONE:
             return committed
+
+
+async def repair_lifetime_cost_coverage(session: AsyncSession, *, limit: int = 50) -> int:
+    """Repair only rows whose full folded request population is still retained."""
+    async with sqlite_writer_section():
+        state = await _locked_state(session)
+        if state is None:
+            return 0
+        accounts = (
+            await session.scalars(
+                select(AccountUsageRollup)
+                .where(AccountUsageRollup.coverage_unknown > 0, AccountUsageRollup.coverage_repair_attempted.is_(False))
+                .limit(limit)
+            )
+        ).all()
+        keys = (
+            await session.scalars(
+                select(ApiKeyUsageRollup)
+                .where(ApiKeyUsageRollup.coverage_unknown > 0, ApiKeyUsageRollup.coverage_repair_attempted.is_(False))
+                .limit(limit)
+            )
+        ).all()
+        repaired = 0
+        if accounts:
+            rows = (
+                await session.execute(
+                    deduped_usage_aggregate_stmt(
+                        account_ids=[row.account_id for row in accounts], until_inclusive=state.folded_through
+                    )
+                )
+            ).all()
+            by_account = {row.account_id: row for row in rows}
+            for rollup in accounts:
+                rollup.coverage_repair_attempted = True
+                raw = by_account.get(rollup.account_id)
+                if raw is None or int(raw.request_count) != rollup.request_count:
+                    continue
+                rollup.total_cost_usd = float(raw.total_cost_usd)
+                rollup.priced_requests = int(raw.priced_requests)
+                rollup.unpriced_requests = int(raw.unpriced_requests)
+                rollup.unmetered_requests = int(raw.unmetered_requests)
+                rollup.coverage_unknown = 0
+                repaired += 1
+        if keys:
+            rows = (
+                await session.execute(
+                    api_key_usage_aggregate_stmt(
+                        api_key_ids=[row.api_key_id for row in keys], until_inclusive=state.folded_through
+                    )
+                )
+            ).all()
+            by_key = {row.api_key_id: row for row in rows}
+            for rollup in keys:
+                rollup.coverage_repair_attempted = True
+                raw = by_key.get(rollup.api_key_id)
+                if raw is None or int(raw.request_count) != rollup.request_count:
+                    continue
+                rollup.total_cost_usd = float(raw.total_cost_usd)
+                rollup.priced_requests = int(raw.priced_requests)
+                rollup.unpriced_requests = int(raw.unpriced_requests)
+                rollup.unmetered_requests = int(raw.unmetered_requests)
+                rollup.coverage_unknown = 0
+                repaired += 1
+        await session.commit()
+        return repaired
 
 
 async def _fold_next_slice(session: AsyncSession, target: datetime) -> tuple[_FoldStatus, bool]:
@@ -447,7 +567,17 @@ async def _fold_next_slice(session: AsyncSession, target: datetime) -> tuple[_Fo
             existing_ids = set(
                 (await session.execute(select(Account.id).where(Account.id.in_(candidate_ids)))).scalars().all()
             )
-        for account_id, request_count, input_tokens, output_tokens, cached_input_tokens, total_cost_usd in rows:
+        for (
+            account_id,
+            request_count,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            total_cost_usd,
+            priced,
+            unpriced,
+            unmetered,
+        ) in rows:
             if not account_id or account_id not in existing_ids:
                 continue
             sums = UsageRollupSums(
@@ -456,6 +586,9 @@ async def _fold_next_slice(session: AsyncSession, target: datetime) -> tuple[_Fo
                 output_tokens=int(output_tokens or 0),
                 cached_input_tokens=int(cached_input_tokens or 0),
                 total_cost_usd=float(total_cost_usd or 0.0),
+                priced_requests=int(priced or 0),
+                unpriced_requests=int(unpriced or 0),
+                unmetered_requests=int(unmetered or 0),
             )
             await session.execute(_add_sums_stmt(session, account_id, sums))
 
@@ -465,7 +598,17 @@ async def _fold_next_slice(session: AsyncSession, target: datetime) -> tuple[_Fo
             existing_key_ids = set(
                 (await session.execute(select(ApiKey.id).where(ApiKey.id.in_(candidate_key_ids)))).scalars().all()
             )
-        for key_id, request_count, input_tokens, output_tokens, cached_input_tokens, total_cost_usd in key_rows:
+        for (
+            key_id,
+            request_count,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            total_cost_usd,
+            priced,
+            unpriced,
+            unmetered,
+        ) in key_rows:
             if not key_id or key_id not in existing_key_ids:
                 continue
             sums = UsageRollupSums(
@@ -474,6 +617,9 @@ async def _fold_next_slice(session: AsyncSession, target: datetime) -> tuple[_Fo
                 output_tokens=int(output_tokens or 0),
                 cached_input_tokens=int(cached_input_tokens or 0),
                 total_cost_usd=float(total_cost_usd or 0.0),
+                priced_requests=int(priced or 0),
+                unpriced_requests=int(unpriced or 0),
+                unmetered_requests=int(unmetered or 0),
             )
             await session.execute(_add_rollup_sums_stmt(session, ApiKeyUsageRollup, "api_key_id", key_id, sums))
         await session.execute(

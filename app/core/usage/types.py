@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+
+from app.core.usage.coverage import CostCoverage
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class UsageCostSummary:
     currency: str
     total_usd_7d: float
     by_model: list[UsageCostByModel]
+    cost_coverage: CostCoverage = field(default_factory=CostCoverage)
 
 
 @dataclass(frozen=True)
@@ -125,8 +128,8 @@ class BucketModelAggregate:
     output_tokens: int
     cached_input_tokens: int
     reasoning_tokens: int
-    cost_usd: float = 0.0
     cancelled_count: int = 0
+    cost_coverage: CostCoverage = field(default_factory=CostCoverage)
 
 
 @dataclass(frozen=True)
@@ -142,18 +145,18 @@ class RequestActivityAggregate:
     input_tokens: int
     output_tokens: int
     cached_input_tokens: int
-    cost_usd: float
     cancelled_count: int = 0
     conversation_count: int = 0
     conversation_request_count: int = 0
+    cost_coverage: CostCoverage = field(default_factory=CostCoverage)
 
 
 @dataclass(frozen=True)
 class UsageSummaryLogsAggregate:
     """SQL-side replacement for summing a window of RequestLog ORM rows in
     Python; field semantics mirror the log helpers exactly (reasoning-token
-    fallback for output, per-row cached<=input clamp, None-cost rows excluded
-    from per-model cost)."""
+    fallback for output, per-row cached<=input clamp, models without a priced
+    request excluded from per-model cost)."""
 
     request_count: int
     error_count: int
@@ -162,6 +165,7 @@ class UsageSummaryLogsAggregate:
     top_error: str | None
     cost_by_model: list[tuple[str, float]]
     cancelled_count: int = 0
+    cost_coverage: CostCoverage = field(default_factory=CostCoverage)
 
     @property
     def cost_total_usd(self) -> float:

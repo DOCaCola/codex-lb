@@ -91,6 +91,10 @@ class SourceUsage:
     output_tokens: int
     cached_input_tokens: int = 0
     reported_cost_usd: float | None = None
+    cache_creation_tokens: int | None = None
+    cache_creation_5m_tokens: int | None = None
+    cache_creation_1h_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +174,13 @@ class SourceResponsesStream(_TransportOwnedStream):
     usage_holder: "SourceUsageHolder"
     upstream_status_code: int
     upstream_headers: Mapping[str, str] = field(default_factory=dict, kw_only=True)
+    timing_observer: "SourceStreamUsageParser | None" = field(default=None, kw_only=True, repr=False, compare=False)
+
+    async def aclose(self) -> None:
+        if self.timing_observer is not None:
+            self.timing_observer.end_timing()
+        if self.transport is not None:
+            await self.transport.aclose()
 
 
 @dataclass(slots=True)
@@ -1344,15 +1355,41 @@ def _usage_from_responses_mapping(usage: Mapping[str, JsonValue]) -> SourceUsage
         # API-key limit counters or record negative cost at settlement.
         return None
     cached_tokens = 0
+    cache_creation_tokens: int | None = None
+    cache_creation_5m_tokens: int | None = None
+    cache_creation_1h_tokens: int | None = None
+    reasoning_tokens: int | None = None
     details = usage.get("input_tokens_details")
     if is_json_mapping(details):
         raw_cached = details.get("cached_tokens")
         cached_tokens = raw_cached if isinstance(raw_cached, int) else 0
+        for key, target in (
+            ("cache_creation_tokens", "total"),
+            ("cache_creation_5m_tokens", "5m"),
+            ("cache_creation_1h_tokens", "1h"),
+        ):
+            value = details.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                if target == "total":
+                    cache_creation_tokens = value
+                elif target == "5m":
+                    cache_creation_5m_tokens = value
+                else:
+                    cache_creation_1h_tokens = value
+    output_details = usage.get("output_tokens_details")
+    if is_json_mapping(output_details):
+        value = output_details.get("reasoning_tokens")
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= output_tokens:
+            reasoning_tokens = value
     return SourceUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cached_input_tokens=max(0, min(cached_tokens, input_tokens)),
         reported_cost_usd=_reported_cost(usage),
+        cache_creation_tokens=cache_creation_tokens,
+        cache_creation_5m_tokens=cache_creation_5m_tokens,
+        cache_creation_1h_tokens=cache_creation_1h_tokens,
+        reasoning_tokens=reasoning_tokens,
     )
 
 
@@ -1369,13 +1406,35 @@ def _is_json_content_type(content_type: str | None) -> bool:
     return content_type.split(";", 1)[0].strip().lower() in {"application/json", "text/json"}
 
 
+def _claude_generated_content(event: Mapping[str, JsonValue]) -> bool:
+    kind = event.get("type")
+    if kind == "content_block_start":
+        block = event.get("content_block")
+        if not is_json_mapping(block):
+            return False
+        return any(isinstance(block.get(key), str) and bool(block[key]) for key in ("text", "thinking", "name"))
+    if kind != "content_block_delta":
+        return False
+    delta = event.get("delta")
+    return is_json_mapping(delta) and any(
+        isinstance(delta.get(key), str) and bool(delta[key]) for key in ("text", "thinking", "partial_json")
+    )
+
+
 class SourceStreamUsageParser:
     # A single SSE frame carrying usage is tiny; anything past this cap means
     # the upstream is not producing frame boundaries we recognize, and the
     # parser must not buffer the whole stream in memory.
     _MAX_BUFFER_CHARS = 1_048_576
 
-    def __init__(self, usage_holder: SourceUsageHolder, *, response_shape: str, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        usage_holder: SourceUsageHolder,
+        *,
+        response_shape: str,
+        clock: Clock | None = None,
+        started_at: float | None = None,
+    ) -> None:
         self._usage_holder = usage_holder
         self._response_shape = response_shape
         self._buffer = ""
@@ -1383,7 +1442,7 @@ class SourceStreamUsageParser:
         self._cr_pending = False
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._clock = clock
-        self._started_at = clock.monotonic() if clock is not None else 0.0
+        self._started_at = (started_at if started_at is not None else clock.monotonic()) if clock is not None else 0.0
         self._first_token_ms: int | None = None
         self._timing_finished = False
 
@@ -1396,10 +1455,21 @@ class SourceStreamUsageParser:
     def _observe_timing(self, event: Mapping[str, JsonValue]) -> None:
         if self._clock is None or self._timing_finished:
             return
-        if self._first_token_ms is None and has_generated_content(event, responses=self._response_shape == "responses"):
+        generated = (
+            _claude_generated_content(event)
+            if self._response_shape == "claude"
+            else has_generated_content(event, responses=self._response_shape == "responses")
+        )
+        if self._first_token_ms is None and generated:
             self._first_token_ms = round((self._clock.monotonic() - self._started_at) * 1000)
         self.end_timing()
-        if event.get("type") in {"response.completed", "response.incomplete", "response.failed", "error"}:
+        if event.get("type") in {
+            "response.completed",
+            "response.incomplete",
+            "response.failed",
+            "error",
+            "message_stop",
+        }:
             self._timing_finished = True
 
     def feed(self, chunk: bytes) -> None:
@@ -1482,6 +1552,9 @@ class SourceStreamUsageParser:
             usage = _usage_from_responses_event(parsed)
             timings = _timings_from_responses_event(parsed)
             self._observe_responses_event(parsed)
+        elif self._response_shape == "claude":
+            usage = None
+            timings = None
         else:
             usage = _usage_from_chat_payload(parsed)
             timings = _timings_from_payload(parsed)

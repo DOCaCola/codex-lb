@@ -14,9 +14,13 @@ from app.modules.model_sources.forwarding import ModelSourceForwardingError, Sou
 
 def usage_totals(usage: Usage) -> SourceUsage:
     return SourceUsage(
-        input_tokens=usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens,
+        input_tokens=usage.input_tokens + usage.cache_read_input_tokens + (usage.cache_creation_input_tokens or 0),
         output_tokens=usage.output_tokens,
         cached_input_tokens=usage.cache_read_input_tokens,
+        cache_creation_tokens=usage.cache_creation_input_tokens,
+        cache_creation_5m_tokens=usage.cache_creation_5m_input_tokens,
+        cache_creation_1h_tokens=usage.cache_creation_1h_input_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
     )
 
 

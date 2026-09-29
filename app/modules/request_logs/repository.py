@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from typing import cast as typing_cast
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, make_transient_to_detached
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.usage.coverage import CostCoverage, coverage_from_values, request_cost_expressions
 from app.core.usage.logs import (
     CANCELLED_STATUS,
     CLIENT_DISCONNECT_ERROR_CODE,
@@ -116,6 +117,7 @@ class RequestLogsResult:
     logs: list[RequestLog]
     total: int
     aggregated_cost_usd: float | None = None
+    cost_coverage: CostCoverage = field(default_factory=CostCoverage)
 
 
 # The exact COUNT(*) behind the request-log listing's "X-Y of N" scans the
@@ -181,6 +183,7 @@ class ConversationListSummary:
     total_tokens: int
     cached_input_tokens: int | None
     cost_usd: float
+    cost_coverage: CostCoverage
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +212,7 @@ class ConversationModelStatRow:
     cached_input_tokens: int | None
     output_tokens: int
     cost_usd: float
+    cost_coverage: CostCoverage
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,7 +316,7 @@ class RequestLogsRepository:
                 func.count(func.distinct(RequestLog.account_id)).label("account_count"),
                 func.coalesce(func.sum(func.coalesce(RequestLog.input_tokens, 0) + output), 0).label("total_tokens"),
                 func.sum(cached).label("cached_input_tokens"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                *request_cost_expressions(RequestLog),
             )
             .where(*summary_conditions)
             .group_by(conversation_id)
@@ -359,7 +363,10 @@ class RequestLogsRepository:
                 account_count=int(row.account_count),
                 total_tokens=int(row.total_tokens),
                 cached_input_tokens=(int(row.cached_input_tokens) if row.cached_input_tokens is not None else None),
-                cost_usd=float(row.cost_usd or 0.0),
+                cost_usd=float(row.known_cost_usd or 0.0),
+                cost_coverage=coverage_from_values(
+                    row.known_cost_usd, row.priced_requests, row.unpriced_requests, row.unmetered_requests
+                ),
             )
             for row in page_rows
         ]
@@ -466,7 +473,7 @@ class RequestLogsRepository:
                     func.coalesce(func.sum(func.coalesce(RequestLog.input_tokens, 0)), 0).label("input_tokens"),
                     func.sum(cached).label("cached_input_tokens"),
                     func.coalesce(func.sum(output), 0).label("output_tokens"),
-                    func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                    *request_cost_expressions(RequestLog),
                 )
                 .where(*conditions)
                 .group_by(RequestLog.model, RequestLog.reasoning_effort)
@@ -494,7 +501,10 @@ class RequestLogsRepository:
                     input_tokens=int(row.input_tokens),
                     cached_input_tokens=(int(row.cached_input_tokens) if row.cached_input_tokens is not None else None),
                     output_tokens=int(row.output_tokens),
-                    cost_usd=float(row.cost_usd or 0.0),
+                    cost_usd=float(row.known_cost_usd or 0.0),
+                    cost_coverage=coverage_from_values(
+                        row.known_cost_usd, row.priced_requests, row.unpriced_requests, row.unmetered_requests
+                    ),
                 )
                 for row in model_rows
             ],
@@ -601,11 +611,17 @@ class RequestLogsRepository:
         # hour, so a folded bucket is never split across the merge; any other
         # granularity degrades to the full raw scan.
         merged: dict[tuple[int, str, str | None], list[float]] = {}
+        coverage: dict[tuple[int, str, str | None], CostCoverage] = {}
 
-        def _add(key: tuple[int, str, str | None], values: tuple[int, int, int, int, int, int, int, float]) -> None:
-            entry = merged.setdefault(key, [0, 0, 0, 0, 0, 0, 0, 0.0])
+        def _add(
+            key: tuple[int, str, str | None],
+            values: tuple[int, int, int, int, int, int, int],
+            cost: CostCoverage,
+        ) -> None:
+            entry = merged.setdefault(key, [0, 0, 0, 0, 0, 0, 0])
             for index, value in enumerate(values):
                 entry[index] += value
+            coverage[key] = coverage.get(key, CostCoverage()) + cost
 
         raw_windows: list[RawWindow] = [(since, None)]
         if bucket_seconds > 0 and bucket_seconds % HOURLY_BUCKET_SECONDS == 0:
@@ -629,7 +645,13 @@ class RequestLogsRepository:
                         rollup.output_tokens,
                         rollup.cached_input_tokens,
                         rollup.reasoning_tokens,
+                    ),
+                    coverage_from_values(
                         rollup.cost_usd,
+                        rollup.priced_requests,
+                        rollup.unpriced_requests,
+                        rollup.unmetered_requests,
+                        unknown=bool(rollup.coverage_unknown),
                     ),
                 )
         if raw_windows:
@@ -646,7 +668,7 @@ class RequestLogsRepository:
                     func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
                     func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
                     func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("reasoning_tokens"),
-                    func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                    *request_cost_expressions(RequestLog),
                 )
                 .where(raw_windows_clause(raw_windows))
                 .where(self._exclude_warmup_clause())
@@ -663,7 +685,9 @@ class RequestLogsRepository:
                         int(row.output_tokens),
                         int(row.cached_input_tokens),
                         int(row.reasoning_tokens),
-                        float(row.cost_usd or 0.0),
+                    ),
+                    coverage_from_values(
+                        row.known_cost_usd, row.priced_requests, row.unpriced_requests, row.unmetered_requests
                     ),
                 )
         return [
@@ -678,7 +702,7 @@ class RequestLogsRepository:
                 output_tokens=int(entry[4]),
                 cached_input_tokens=int(entry[5]),
                 reasoning_tokens=int(entry[6]),
-                cost_usd=float(entry[7]),
+                cost_coverage=coverage[key],
             )
             for key, entry in sorted(merged.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or ""))
         ]
@@ -745,14 +769,20 @@ class RequestLogsRepository:
             filters=(RequestUsageHourlyRollup.request_kind.not_in(WARMUP_REQUEST_KINDS),),
         )
         request_count = error_count = input_tokens = output_tokens = cached_input_tokens = 0
-        cost_usd = 0.0
+        cost_coverage = CostCoverage()
         for rollup in rollup_rows:
             request_count += rollup.request_count
             error_count += rollup.error_count
             input_tokens += rollup.input_tokens
             output_tokens += rollup.output_tokens
             cached_input_tokens += rollup.cached_input_tokens
-            cost_usd += rollup.cost_usd
+            cost_coverage += coverage_from_values(
+                rollup.cost_usd,
+                rollup.priced_requests,
+                rollup.unpriced_requests,
+                rollup.unmetered_requests,
+                unknown=bool(rollup.coverage_unknown),
+            )
         if raw_windows:
             totals_stmt = select(
                 func.count().label("request_count"),
@@ -763,7 +793,7 @@ class RequestLogsRepository:
                 func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
                 func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
                 func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                *request_cost_expressions(RequestLog),
             ).where(
                 raw_windows_clause(raw_windows),
                 self._exclude_warmup_clause(),
@@ -774,7 +804,9 @@ class RequestLogsRepository:
             input_tokens += int(row.input_tokens)
             output_tokens += int(row.output_tokens)
             cached_input_tokens += int(row.cached_input_tokens)
-            cost_usd += float(row.cost_usd or 0.0)
+            cost_coverage += coverage_from_values(
+                row.known_cost_usd, row.priced_requests, row.unpriced_requests, row.unmetered_requests
+            )
 
         # Distinct conversation counts are not additive across the fold
         # boundary, so they merge the conversation satellite with the raw
@@ -802,7 +834,7 @@ class RequestLogsRepository:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cached_input_tokens=cached_input_tokens,
-            cost_usd=cost_usd,
+            cost_coverage=cost_coverage,
             cancelled_count=await self._cancelled_count(since, until),
             conversation_count=int(conversation_row.conversation_count or 0),
             conversation_request_count=int(conversation_row.conversation_request_count or 0),
@@ -841,8 +873,9 @@ class RequestLogsRepository:
         every RequestLog row (the secondary window is typically 7 days).
 
         Matches the Python log helpers exactly: output tokens fall back to
-        reasoning tokens, cached tokens clamp per-row to [0, input_tokens],
-        and models whose costs are all NULL are omitted from per-model cost.
+        reasoning tokens and cached tokens clamp per-row to [0, input_tokens].
+        Cost uses the request-coverage contract: only priced requests add to
+        the subtotal, and models without one are omitted from per-model cost.
         """
         dialect = self._session.get_bind().dialect.name
         # SQLite's two-argument min()/max() scalar functions are its
@@ -878,8 +911,7 @@ class RequestLogsRepository:
                     func.count().label("request_count"),
                     func.coalesce(func.sum(tokens_expr), 0).label("total_tokens"),
                     func.coalesce(func.sum(cached_expr), 0).label("cached_input_tokens"),
-                    func.sum(RequestLog.cost_usd).label("cost_usd"),
-                    func.count(RequestLog.cost_usd).label("cost_count"),
+                    *request_cost_expressions(RequestLog),
                 )
                 .where(*window)
                 .group_by(RequestLog.model, is_error_expr, is_cancelled_expr, RequestLog.error_code)
@@ -892,8 +924,7 @@ class RequestLogsRepository:
         total_tokens = 0
         cached_input_tokens = 0
         error_code_counts: dict[str, int] = {}
-        cost_sums: dict[str, float] = {}
-        cost_counts: dict[str, int] = {}
+        coverage_by_model: dict[str, CostCoverage] = {}
         for (
             model,
             is_error,
@@ -903,7 +934,9 @@ class RequestLogsRepository:
             group_tokens,
             group_cached,
             group_cost,
-            cost_count,
+            group_priced,
+            group_unpriced,
+            group_unmetered,
         ) in rows:
             group_count = int(group_count or 0)
             request_count += group_count
@@ -915,8 +948,9 @@ class RequestLogsRepository:
                     error_code_counts[error_code] = error_code_counts.get(error_code, 0) + group_count
             elif is_cancelled:
                 cancelled_count += group_count
-            cost_sums[model] = cost_sums.get(model, 0.0) + float(group_cost or 0.0)
-            cost_counts[model] = cost_counts.get(model, 0) + int(cost_count or 0)
+            coverage_by_model[model] = coverage_by_model.get(model, CostCoverage()) + coverage_from_values(
+                group_cost, group_priced, group_unpriced, group_unmetered
+            )
 
         top_error = None
         if error_code_counts:
@@ -931,9 +965,12 @@ class RequestLogsRepository:
             total_tokens=total_tokens,
             cached_input_tokens=cached_input_tokens,
             top_error=top_error,
-            # Models whose costs are all NULL stay out, matching the legacy
-            # per-row skip of None costs.
-            cost_by_model=sorted((model, cost_sums[model]) for model, count in cost_counts.items() if count > 0),
+            cost_by_model=sorted(
+                (model, coverage.known_cost_usd)
+                for model, coverage in coverage_by_model.items()
+                if coverage.priced_requests > 0
+            ),
+            cost_coverage=sum(coverage_by_model.values(), CostCoverage()),
         )
 
     async def top_error_between(self, since: datetime, until: datetime) -> str | None:
@@ -1014,8 +1051,14 @@ class RequestLogsRepository:
         error_message: str | None = None,
         requested_at: datetime | None = None,
         cached_input_tokens: int | None = None,
+        cache_creation_tokens: int | None = None,
+        cache_creation_5m_tokens: int | None = None,
+        cache_creation_1h_tokens: int | None = None,
         reasoning_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        upstream_reasoning_effort: str | None = None,
+        upstream_thinking_mode: str | None = None,
+        upstream_thinking_budget_tokens: int | None = None,
         service_tier: str | None = None,
         requested_service_tier: str | None = None,
         actual_service_tier: str | None = None,
@@ -1037,6 +1080,7 @@ class RequestLogsRepository:
         model_source_id: str | None = None,
         model_source_kind: str | None = None,
         cost_usd: float | None = None,
+        cost_provenance: str | None = None,
         preserve_unknown_cost: bool = False,
         bridge_stage: str | None = None,
         request_kind: str = RequestKind.NORMAL.value,
@@ -1094,9 +1138,16 @@ class RequestLogsRepository:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cached_input_tokens=cached_input_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_creation_5m_tokens=cache_creation_5m_tokens,
+                cache_creation_1h_tokens=cache_creation_1h_tokens,
                 reasoning_tokens=reasoning_tokens,
                 cost_usd=None,
+                cost_provenance=cost_provenance,
                 reasoning_effort=reasoning_effort,
+                upstream_reasoning_effort=upstream_reasoning_effort,
+                upstream_thinking_mode=upstream_thinking_mode,
+                upstream_thinking_budget_tokens=upstream_thinking_budget_tokens,
                 latency_ms=latency_ms,
                 latency_first_token_ms=latency_first_token_ms,
                 latency_queue_ms=latency_queue_ms,
@@ -1315,8 +1366,10 @@ class RequestLogsRepository:
         logs = list(result.scalars().all())
 
         if conversation_id is not None:
-            total, aggregated_cost_usd = await self._count_and_sum_recent(filters)
-            return RequestLogsResult(logs=logs, total=total, aggregated_cost_usd=aggregated_cost_usd)
+            total, coverage = await self._count_and_sum_recent(filters)
+            return RequestLogsResult(
+                logs=logs, total=total, aggregated_cost_usd=coverage.known_cost_usd, cost_coverage=coverage
+            )
 
         demand_params: _DemandCountParams | None = None
         if (
@@ -1339,8 +1392,11 @@ class RequestLogsRepository:
             )
 
         ttl_seconds = _COUNT_CACHE_TTL_SECONDS
+        coverage = await self._coverage_recent(filters)
         if ttl_seconds <= 0:
-            return RequestLogsResult(logs=logs, total=await self._count_recent(filters, demand_params))
+            return RequestLogsResult(
+                logs=logs, total=await self._count_recent(filters, demand_params), cost_coverage=coverage
+            )
         window_identity = ("timeframe", timeframe) if cache_mode == "timeframe" else ("since", since)
         cache_key = (
             search,
@@ -1365,19 +1421,24 @@ class RequestLogsRepository:
         if total is None:
             total = await self._count_recent(filters, demand_params)
             _store_recent_count(cache_key, total, ttl_seconds)
-        return RequestLogsResult(logs=logs, total=total)
+        return RequestLogsResult(logs=logs, total=total, cost_coverage=coverage)
 
-    async def _count_and_sum_recent(self, filters: _RequestLogFilters) -> tuple[int, float]:
-        aggregate_stmt = select(
-            func.count(),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0),
-        ).select_from(RequestLog)
+    async def _count_and_sum_recent(self, filters: _RequestLogFilters) -> tuple[int, CostCoverage]:
+        aggregate_stmt = select(func.count(), *request_cost_expressions(RequestLog)).select_from(RequestLog)
         aggregate_stmt = self._apply_related_search_joins(aggregate_stmt, filters.needs_related_search_joins)
         if filters.conditions:
             aggregate_stmt = aggregate_stmt.where(and_(*filters.conditions))
         result = await self._session.execute(aggregate_stmt)
-        request_count, aggregated_cost_usd = result.one()
-        return int(request_count), float(aggregated_cost_usd)
+        request_count, cost, priced, unpriced, unmetered = result.one()
+        return int(request_count), coverage_from_values(cost, priced, unpriced, unmetered)
+
+    async def _coverage_recent(self, filters: _RequestLogFilters) -> CostCoverage:
+        stmt = select(*request_cost_expressions(RequestLog)).select_from(RequestLog)
+        stmt = self._apply_related_search_joins(stmt, filters.needs_related_search_joins)
+        if filters.conditions:
+            stmt = stmt.where(and_(*filters.conditions))
+        cost, priced, unpriced, unmetered = (await self._session.execute(stmt)).one()
+        return coverage_from_values(cost, priced, unpriced, unmetered)
 
     async def _count_recent(
         self,

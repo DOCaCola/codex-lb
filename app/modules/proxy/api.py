@@ -226,7 +226,6 @@ from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.model_sources.catalog import (
     source_model_audio_cost_usd,
-    source_model_cost_usd,
     source_model_request_overrides,
     source_model_supported_tool_types,
     source_model_supports_reasoning,
@@ -370,6 +369,7 @@ from app.modules.proxy.source_dispatch import (
     relayed_frame_delivers_content,
     relayed_terminal_kind,
     settlement_stream,
+    source_usage_cost_usd,
 )
 from app.modules.proxy.types import (
     CreditStatusDetailsData,
@@ -5702,6 +5702,35 @@ async def _dispatch_source_responses_attempt(
         if claude_attempt is not None and claude_attempt.prepared.native_binding is not None:
             await claude_attempt.prepared.native_binding.commit(source.id)
         admission_budget = estimate_api_key_request_usage(payload)
+        requested_effort: str | None = None
+        upstream_effort: str | None = None
+        upstream_thinking_mode: str | None = None
+        upstream_thinking_budget: int | None = None
+        if source.kind == "claude" and claude_attempt is not None:
+            if native_request is not None:
+                requested_output = native_request.logical_body.get("output_config")
+                if isinstance(requested_output, dict) and isinstance(requested_output.get("effort"), str):
+                    requested_effort = requested_output["effort"]
+            else:
+                requested_effort = payload._codex_lb_client_reasoning_effort
+                if requested_effort is None and (api_key is None or api_key.enforced_reasoning_effort is None):
+                    reasoning_value = source_payload.get("reasoning")
+                    reasoning_effort = reasoning_value.get("effort") if isinstance(reasoning_value, dict) else None
+                    if isinstance(reasoning_effort, str):
+                        requested_effort = reasoning_effort
+            upstream_output = claude_attempt.prepared.body.get("output_config")
+            if isinstance(upstream_output, dict) and isinstance(upstream_output.get("effort"), str):
+                upstream_effort = upstream_output["effort"]
+            # Record what was sent, not a guessed effective value: an absent
+            # ``thinking`` block runs adaptive on newer models and no thinking on
+            # older ones, and the effort default is model-dependent too, so both
+            # stay NULL when the upstream body leaves them to the API default.
+            thinking_value = claude_attempt.prepared.body.get("thinking")
+            if isinstance(thinking_value, dict):
+                mode = thinking_value.get("type")
+                budget = thinking_value.get("budget_tokens")
+                upstream_thinking_mode = mode if isinstance(mode, str) else None
+                upstream_thinking_budget = budget if isinstance(budget, int) and not isinstance(budget, bool) else None
         reservation = await _enforce_request_limits(
             api_key,
             request_model=payload.model,
@@ -5717,6 +5746,11 @@ async def _dispatch_source_responses_attempt(
             claims=claims,
             admission_budget=admission_budget,
             requested_service_tier=payload.service_tier,
+            requested_reasoning_effort=requested_effort,
+            upstream_reasoning_effort=upstream_effort,
+            upstream_thinking_mode=upstream_thinking_mode,
+            upstream_thinking_budget_tokens=upstream_thinking_budget,
+            count_tokens=count_tokens,
             cleanup_scheduler=_responses_cleanup_scheduler(context.service) if context is not None else None,
             scheduler=scheduler_for(context.service) if context is not None else REAL_SCHEDULER,
             clock=clock_for(context.service) if context is not None else REAL_CLOCK,
@@ -9456,6 +9490,7 @@ async def _settle_source_reservation(
                 cached_input_tokens=usage.cached_input_tokens,
                 service_tier=None,
                 cost_microdollars=int(cost_usd * 1_000_000) if cost_usd is not None else None,
+                cost_unknown=cost_usd is None,
             )
         return True
     except Exception:
@@ -9485,14 +9520,7 @@ def _source_usage_cost_usd(source: ModelSource, model: str, usage: SourceUsage |
         row.model == model and "image" in json.loads(row.raw_metadata_json or "{}") for row in source.models
     ):
         return None
-    cost_usd = source_model_cost_usd(
-        source,
-        model,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        cached_input_tokens=usage.cached_input_tokens,
-    )
-    return 0.0 if cost_usd is None else cost_usd
+    return source_usage_cost_usd(source, model, usage)
 
 
 async def _log_source_chat_completion(
@@ -9511,12 +9539,13 @@ async def _log_source_chat_completion(
     preserve_unknown_cost: bool = False,
 ) -> None:
     conversation_id = _request_log_client_fields(request.headers)[2]
+    cost_usd = cost_usd_override if cost_usd_override is not None else _source_usage_cost_usd(source, model, usage)
     try:
         async with get_background_session() as session:
             await RequestLogsRepository(session).add_log(
                 account_id=None,
                 model_source_id=source.id,
-                preserve_unknown_cost=preserve_unknown_cost,
+                preserve_unknown_cost=True,
                 model_source_kind=source.kind,
                 api_key_id=api_key.id if api_key is not None else None,
                 request_id=ensure_request_id(),
@@ -9524,9 +9553,14 @@ async def _log_source_chat_completion(
                 input_tokens=usage.input_tokens if usage is not None else None,
                 output_tokens=usage.output_tokens if usage is not None else None,
                 cached_input_tokens=usage.cached_input_tokens if usage is not None else None,
-                cost_usd=(
-                    cost_usd_override if cost_usd_override is not None else _source_usage_cost_usd(source, model, usage)
-                ),
+                cache_creation_tokens=usage.cache_creation_tokens if usage is not None else None,
+                cache_creation_5m_tokens=usage.cache_creation_5m_tokens if usage is not None else None,
+                cache_creation_1h_tokens=usage.cache_creation_1h_tokens if usage is not None else None,
+                reasoning_tokens=usage.reasoning_tokens if usage is not None else None,
+                cost_usd=cost_usd,
+                cost_provenance=("api_equivalent_estimate" if cost_usd is not None else "unpriced")
+                if source.kind == "claude" and usage is not None
+                else None,
                 latency_ms=timings.latency_ms if timings is not None else None,
                 latency_first_token_ms=(timings.latency_first_token_ms if timings is not None else None),
                 status=status,

@@ -420,6 +420,11 @@ def _project_demand_slot_units(slots) -> dict:
     return projected
 
 
+def _without_cost(value):
+    # Fold order changes float summation order; costs are compared with approx.
+    return replace(value, cost_coverage=replace(value.cost_coverage, known_cost_usd=0.0))
+
+
 def _assert_snapshots_equal(actual: dict, expected: dict, *, skip_keys: tuple[str, ...] = ()) -> None:
     assert actual.keys() == expected.keys()
     for key, expected_value in expected.items():
@@ -429,8 +434,10 @@ def _assert_snapshots_equal(actual: dict, expected: dict, *, skip_keys: tuple[st
         if key.startswith("buckets"):
             _assert_bucket_lists_equal(actual_value, expected_value, key)
         elif key.startswith("activity"):
-            assert replace(actual_value, cost_usd=0.0) == replace(expected_value, cost_usd=0.0), key
-            assert actual_value.cost_usd == pytest.approx(expected_value.cost_usd, rel=1e-9, abs=1e-12), key
+            assert _without_cost(actual_value) == _without_cost(expected_value), key
+            assert actual_value.cost_coverage.known_cost_usd == pytest.approx(
+                expected_value.cost_coverage.known_cost_usd, rel=1e-9, abs=1e-12
+            ), key
         elif key == "demand":
             assert actual_value.keys() == expected_value.keys(), key
             for demand_key, expected_entry in expected_value.items():
@@ -474,8 +481,10 @@ def _assert_bucket_lists_equal(actual, expected, context: str) -> None:
     expected_sorted = sorted(expected, key=_key)
     assert len(actual_sorted) == len(expected_sorted), context
     for actual_row, expected_row in zip(actual_sorted, expected_sorted, strict=True):
-        assert replace(actual_row, cost_usd=0.0) == replace(expected_row, cost_usd=0.0), context
-        assert actual_row.cost_usd == pytest.approx(expected_row.cost_usd, rel=1e-9, abs=1e-12), context
+        assert _without_cost(actual_row) == _without_cost(expected_row), context
+        assert actual_row.cost_coverage.known_cost_usd == pytest.approx(
+            expected_row.cost_coverage.known_cost_usd, rel=1e-9, abs=1e-12
+        ), context
 
 
 async def _watermark() -> datetime | None:
@@ -555,8 +564,8 @@ async def test_reader_is_consistent_under_concurrent_fold_commit(db_setup, monke
     assert fold_injections["count"] == 1
     assert await _watermark() == TARGET_W
     expected = reference["activity_between"]
-    assert replace(activity, cost_usd=0.0) == replace(expected, cost_usd=0.0)
-    assert activity.cost_usd == pytest.approx(expected.cost_usd, rel=1e-9)
+    assert _without_cost(activity) == _without_cost(expected)
+    assert activity.cost_coverage.known_cost_usd == pytest.approx(expected.cost_coverage.known_cost_usd, rel=1e-9)
 
 
 @pytest.mark.asyncio

@@ -141,7 +141,7 @@ describe("CostPerDayChart", () => {
       />,
     );
 
-    expect(capturedProps?.data).toEqual([
+    expect(capturedProps?.data).toMatchObject([
       { date: "06-05", cost: 3.77 },
       { date: "06-06", cost: 0 },
       { date: "06-07", cost: 4.54 },

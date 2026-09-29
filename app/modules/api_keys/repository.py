@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, raiseload, selectinload
 
+from app.core.usage.coverage import request_cost_expressions
 from app.core.utils.time import utcnow
 from app.db.models import (
     Account,
@@ -75,6 +76,10 @@ class ApiKeyUsageSummary:
     total_tokens: int
     cached_input_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +87,10 @@ class ApiKeyTrendBucket:
     bucket_epoch: int
     total_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +99,9 @@ class ApiKeyUsageTotals:
     total_tokens: int
     cached_input_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
     account_costs: list["ApiKeyAccountCost"] = field(default_factory=list)
 
 
@@ -98,6 +110,9 @@ class ApiKeyAccountCost:
     account_id: str | None
     email: str | None
     cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
     is_deleted: bool = False
 
 
@@ -118,30 +133,45 @@ class ApiKeysRepository:
     def _build_account_costs(rows: Sequence[object]) -> list[ApiKeyAccountCost]:
         account_costs: list[ApiKeyAccountCost] = []
         deleted_cost = 0.0
+        deleted_priced = 0
+        deleted_unpriced = 0
+        deleted_unmetered = 0
 
         for row in rows:
             cost = round(float(getattr(row, "cost_usd", 0.0) or 0.0), 6)
-            if cost <= 0:
+            priced = int(getattr(row, "priced_requests", 0) or 0)
+            unpriced = int(getattr(row, "unpriced_requests", 0) or 0)
+            unmetered = int(getattr(row, "unmetered_requests", 0) or 0)
+            if cost <= 0 and not (priced or unpriced or unmetered):
                 continue
             is_deleted = bool(getattr(row, "is_deleted", False))
             if is_deleted:
                 deleted_cost += cost
+                deleted_priced += priced
+                deleted_unpriced += unpriced
+                deleted_unmetered += unmetered
                 continue
             account_costs.append(
                 ApiKeyAccountCost(
                     account_id=getattr(row, "account_id", None),
                     email=getattr(row, "email", None),
                     cost_usd=cost,
+                    priced_requests=priced,
+                    unpriced_requests=unpriced,
+                    unmetered_requests=unmetered,
                     is_deleted=False,
                 )
             )
 
-        if deleted_cost > 0:
+        if deleted_cost > 0 or deleted_priced or deleted_unpriced or deleted_unmetered:
             account_costs.append(
                 ApiKeyAccountCost(
                     account_id=None,
                     email=None,
                     cost_usd=round(deleted_cost, 6),
+                    priced_requests=deleted_priced,
+                    unpriced_requests=deleted_unpriced,
+                    unmetered_requests=deleted_unmetered,
                     is_deleted=True,
                 )
             )
@@ -267,6 +297,10 @@ class ApiKeysRepository:
                 sums.output_tokens,
                 sums.cached_input_tokens,
                 sums.total_cost_usd,
+                sums.priced_requests,
+                sums.unpriced_requests,
+                sums.unmetered_requests,
+                sums.coverage_unknown,
             ]
             for key_id, sums in folded.items()
         }
@@ -279,18 +313,34 @@ class ApiKeysRepository:
             output_tokens,
             cached_input_tokens,
             total_cost_usd,
+            priced,
+            unpriced,
+            unmetered,
         ) in result.all():
             if not api_key_id:
                 continue
-            totals = merged.setdefault(api_key_id, [0, 0, 0, 0, 0.0])
+            totals = merged.setdefault(api_key_id, [0, 0, 0, 0, 0.0, 0, 0, 0, 0])
             totals[0] += int(request_count or 0)
             totals[1] += int(input_tokens or 0)
             totals[2] += int(output_tokens or 0)
             totals[3] += int(cached_input_tokens or 0)
             totals[4] += float(total_cost_usd or 0.0)
+            totals[5] += int(priced or 0)
+            totals[6] += int(unpriced or 0)
+            totals[7] += int(unmetered or 0)
 
         summaries: dict[str, ApiKeyUsageSummary] = {}
-        for api_key_id, (request_count, input_sum, output_sum, cached_sum, total_cost_usd) in merged.items():
+        for api_key_id, (
+            request_count,
+            input_sum,
+            output_sum,
+            cached_sum,
+            total_cost_usd,
+            priced,
+            unpriced,
+            unmetered,
+            unknown,
+        ) in merged.items():
             input_total = int(input_sum)
             output_total = int(output_sum)
             cached_total = max(0, min(int(cached_sum), input_total))
@@ -299,6 +349,10 @@ class ApiKeysRepository:
                 total_tokens=input_total + output_total,
                 cached_input_tokens=cached_total,
                 total_cost_usd=round(float(total_cost_usd), 6),
+                priced_requests=int(priced),
+                unpriced_requests=int(unpriced),
+                unmetered_requests=int(unmetered),
+                coverage_unknown=bool(unknown),
             )
         return summaries
 
@@ -1014,7 +1068,8 @@ class ApiKeysRepository:
                 RequestLog.account_id,
                 Account.email,
                 deleted_expr.label("is_deleted"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                request_cost_expressions(RequestLog)[0].label("cost_usd"),
+                *request_cost_expressions(RequestLog)[1:],
             )
             .outerjoin(Account, Account.id == RequestLog.account_id)
             .where(
@@ -1041,11 +1096,24 @@ class ApiKeysRepository:
         # bucket sizes degrade to the full raw scan.
         merged: dict[int, list[float]] = {}
 
-        def _add(bucket_epoch: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
-            entry = merged.setdefault(bucket_epoch, [0, 0, 0.0])
+        def _add(
+            bucket_epoch: int,
+            input_tokens: int,
+            output_tokens: int,
+            cost_usd: float,
+            priced: int,
+            unpriced: int,
+            unmetered: int,
+            unknown: bool,
+        ) -> None:
+            entry = merged.setdefault(bucket_epoch, [0, 0, 0.0, 0, 0, 0, 0])
             entry[0] += input_tokens
             entry[1] += output_tokens
             entry[2] += cost_usd
+            entry[3] += priced
+            entry[4] += unpriced
+            entry[5] += unmetered
+            entry[6] += int(unknown)
 
         raw_windows: list[RawWindow] = [(since, until)]
         if bucket_seconds > 0 and bucket_seconds % HOURLY_BUCKET_SECONDS == 0:
@@ -1064,6 +1132,10 @@ class ApiKeysRepository:
                     rollup.input_tokens,
                     rollup.output_or_reasoning_tokens,
                     rollup.cost_usd,
+                    rollup.priced_requests,
+                    rollup.unpriced_requests,
+                    rollup.unmetered_requests,
+                    bool(rollup.coverage_unknown),
                 )
         if raw_windows:
             bind = self._session.get_bind()
@@ -1085,7 +1157,8 @@ class ApiKeysRepository:
                         func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
                         0,
                     ).label("total_output_tokens"),
-                    func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
+                    request_cost_expressions(RequestLog)[0].label("total_cost_usd"),
+                    *request_cost_expressions(RequestLog)[1:],
                 )
                 .where(
                     RequestLog.api_key_id == key_id,
@@ -1100,12 +1173,20 @@ class ApiKeysRepository:
                     int(row.total_input_tokens or 0),
                     int(row.total_output_tokens or 0),
                     float(row.total_cost_usd or 0.0),
+                    int(row.priced_requests or 0),
+                    int(row.unpriced_requests or 0),
+                    int(row.unmetered_requests or 0),
+                    False,
                 )
         return [
             ApiKeyTrendBucket(
                 bucket_epoch=bucket_epoch,
                 total_tokens=int(entry[0] + entry[1]),
                 total_cost_usd=round(float(entry[2]), 6),
+                priced_requests=int(entry[3]),
+                unpriced_requests=int(entry[4]),
+                unmetered_requests=int(entry[5]),
+                coverage_unknown=bool(entry[6]),
             )
             for bucket_epoch, entry in sorted(merged.items())
         ]
@@ -1121,6 +1202,12 @@ class ApiKeysRepository:
                 RequestLog.reasoning_tokens.label("reasoning_tokens"),
                 RequestLog.cached_input_tokens.label("cached_input_tokens"),
                 RequestLog.cost_usd.label("cost_usd"),
+                RequestLog.cost_provenance.label("cost_provenance"),
+                RequestLog.model_source_kind.label("model_source_kind"),
+                RequestLog.request_kind.label("request_kind"),
+                RequestLog.status.label("status"),
+                RequestLog.upstream_status_code.label("upstream_status_code"),
+                RequestLog.latency_ms.label("latency_ms"),
             )
             .where(
                 RequestLog.api_key_id == key_id,
@@ -1130,6 +1217,7 @@ class ApiKeysRepository:
             )
             .cte("filtered_logs")
         )
+        coverage_columns = request_cost_expressions(filtered_logs.c)
         usage_totals = select(
             func.count(filtered_logs.c.id).label("total_requests"),
             func.coalesce(func.sum(filtered_logs.c.input_tokens), 0).label("total_input_tokens"),
@@ -1138,7 +1226,8 @@ class ApiKeysRepository:
                 0,
             ).label("total_output_tokens"),
             func.coalesce(func.sum(filtered_logs.c.cached_input_tokens), 0).label("cached_input_tokens"),
-            func.coalesce(func.sum(filtered_logs.c.cost_usd), 0.0).label("total_cost_usd"),
+            coverage_columns[0].label("total_cost_usd"),
+            *coverage_columns[1:],
         ).cte("usage_totals")
         deleted_expr = func.coalesce(filtered_logs.c.deleted_at.is_not(None), False)
         usage_grouped = (
@@ -1146,7 +1235,8 @@ class ApiKeysRepository:
                 filtered_logs.c.account_id.label("account_id"),
                 Account.email.label("email"),
                 deleted_expr.label("is_deleted"),
-                func.coalesce(func.sum(filtered_logs.c.cost_usd), 0.0).label("cost_usd"),
+                coverage_columns[0].label("cost_usd"),
+                *coverage_columns[1:],
             )
             .select_from(filtered_logs.outerjoin(Account, Account.id == filtered_logs.c.account_id))
             .group_by(filtered_logs.c.account_id, Account.email, deleted_expr)
@@ -1158,10 +1248,16 @@ class ApiKeysRepository:
             usage_totals.c.total_output_tokens,
             usage_totals.c.cached_input_tokens,
             usage_totals.c.total_cost_usd,
+            usage_totals.c.priced_requests.label("total_priced_requests"),
+            usage_totals.c.unpriced_requests.label("total_unpriced_requests"),
+            usage_totals.c.unmetered_requests.label("total_unmetered_requests"),
             usage_grouped.c.account_id,
             usage_grouped.c.email,
             usage_grouped.c.is_deleted,
             usage_grouped.c.cost_usd,
+            usage_grouped.c.priced_requests,
+            usage_grouped.c.unpriced_requests,
+            usage_grouped.c.unmetered_requests,
         ).select_from(usage_totals.outerjoin(usage_grouped, true()))
         result = await self._session.execute(stmt)
         rows = result.all()
@@ -1175,6 +1271,9 @@ class ApiKeysRepository:
             total_tokens=input_sum + output_sum,
             cached_input_tokens=cached_sum,
             total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+            priced_requests=int(row.total_priced_requests or 0),
+            unpriced_requests=int(row.total_unpriced_requests or 0),
+            unmetered_requests=int(row.total_unmetered_requests or 0),
             account_costs=self._build_account_costs(rows),
         )
 

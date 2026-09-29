@@ -30,6 +30,16 @@ def test_explicit_output_budget_can_exceed_default_but_not_capability():
         project_responses(request(max_output_tokens=128001), max_output_tokens=128000)
 
 
+@pytest.mark.parametrize("reasoning", [None, {"effort": "high"}])
+def test_null_sampling_controls_are_absent(reasoning):
+    body = project_responses(
+        request(temperature=None, top_p=None, **({"reasoning": reasoning} if reasoning else {})),
+        max_output_tokens=64000,
+    ).body
+    assert "temperature" not in body
+    assert "top_p" not in body
+
+
 def test_structured_output_and_reasoning_share_output_configuration():
     schema = {
         "type": "object",
@@ -42,6 +52,22 @@ def test_structured_output_and_reasoning_share_output_configuration():
         max_output_tokens=8192,
     )
     assert result.body["output_config"] == {"effort": "high", "format": {"type": "json_schema", "schema": schema}}
+
+
+@pytest.mark.parametrize("model", ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"])
+def test_budget_thinking_is_bounded_by_caller_output_limit(model):
+    result = project_responses(
+        request(model=f"anthropic/{model}", reasoning={"effort": "medium"}, max_output_tokens=10000),
+        max_output_tokens=64000,
+    )
+    assert result.body["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+    assert result.body["max_tokens"] == 10000
+    assert "output_config" not in result.body
+    with pytest.raises(ClientPayloadError):
+        project_responses(
+            request(model=f"anthropic/{model}", reasoning={"effort": "medium"}, max_output_tokens=8192),
+            max_output_tokens=64000,
+        )
 
 
 @pytest.mark.parametrize(

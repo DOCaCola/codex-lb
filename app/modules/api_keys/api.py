@@ -87,6 +87,10 @@ def _to_response(row: ApiKeyData) -> ApiKeyResponse:
                 total_tokens=row.usage_summary.total_tokens,
                 cached_input_tokens=row.usage_summary.cached_input_tokens,
                 total_cost_usd=row.usage_summary.total_cost_usd,
+                priced_requests=row.usage_summary.priced_requests,
+                unpriced_requests=row.usage_summary.unpriced_requests,
+                unmetered_requests=row.usage_summary.unmetered_requests,
+                coverage_unknown=row.usage_summary.coverage_unknown,
             )
             if row.usage_summary is not None
             else None
@@ -313,7 +317,17 @@ async def get_api_key_trends(
         raise DashboardNotFoundError(f"API key not found: {key_id}")
     return ApiKeyTrendsResponse(
         key_id=result.key_id,
-        cost=[ApiKeyTrendPoint(t=p.t, v=p.v) for p in result.cost],
+        cost=[
+            ApiKeyTrendPoint(
+                t=p.t,
+                v=p.v,
+                priced_requests=p.priced_requests,
+                unpriced_requests=p.unpriced_requests,
+                unmetered_requests=p.unmetered_requests,
+                coverage_unknown=p.coverage_unknown,
+            )
+            for p in result.cost
+        ],
         tokens=[ApiKeyTrendPoint(t=p.t, v=p.v) for p in result.tokens],
     )
 
@@ -330,6 +344,9 @@ async def get_api_key_usage_7d(
         key_id=result.key_id,
         total_tokens=result.total_tokens,
         total_cost_usd=result.total_cost_usd,
+        priced_requests=result.priced_requests,
+        unpriced_requests=result.unpriced_requests,
+        unmetered_requests=result.unmetered_requests,
         total_requests=result.total_requests,
         cached_input_tokens=result.cached_input_tokens,
         account_costs=[
@@ -337,6 +354,9 @@ async def get_api_key_usage_7d(
                 account_id=ac.account_id,
                 email=ac.email,
                 cost_usd=ac.cost_usd,
+                priced_requests=ac.priced_requests,
+                unpriced_requests=ac.unpriced_requests,
+                unmetered_requests=ac.unmetered_requests,
                 is_deleted=ac.is_deleted,
             )
             for ac in result.account_costs

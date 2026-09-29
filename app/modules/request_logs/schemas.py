@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.modules.shared.schemas import DashboardModel
+from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 
 
 class RequestLogCostBreakdown(DashboardModel):
@@ -12,6 +12,7 @@ class RequestLogCostBreakdown(DashboardModel):
     cached_input_usd: float | None = None
     output_usd: float | None = None
     total_usd: float | None = None
+    cache_write_usd: float | None = None
 
 
 class RequestLogEntry(DashboardModel):
@@ -61,8 +62,15 @@ class RequestLogEntry(DashboardModel):
     output_tokens_raw: int | None = None
     reasoning_tokens: int | None = None
     cached_input_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cache_creation_5m_tokens: int | None = None
+    cache_creation_1h_tokens: int | None = None
     reasoning_effort: str | None = None
+    upstream_reasoning_effort: str | None = None
+    upstream_thinking_mode: str | None = None
+    upstream_thinking_budget_tokens: int | None = None
     cost_usd: float | None = None
+    cost_provenance: str | None = None
     cost_breakdown: RequestLogCostBreakdown = Field(default_factory=RequestLogCostBreakdown)
     latency_ms: int | None = None
     latency_first_token_ms: int | None = None
@@ -72,6 +80,7 @@ class RequestLogEntry(DashboardModel):
 class RequestLogConversation(DashboardModel):
     request_count: int
     aggregated_cost_usd: float
+    cost_coverage: RequestCostCoverage | None = None
 
 
 class RequestLogsResponse(DashboardModel):
@@ -79,6 +88,7 @@ class RequestLogsResponse(DashboardModel):
     total: int
     has_more: bool
     conversation: RequestLogConversation | None = None
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class RequestLogModelOption(DashboardModel):
@@ -113,6 +123,7 @@ class ConversationModelStat(DashboardModel):
     cached_input_tokens: int | None
     total_output_tokens: int
     total_cost_usd: float
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class ConversationEntry(DashboardModel):
@@ -129,6 +140,7 @@ class ConversationEntry(DashboardModel):
     total_tokens: int
     cached_input_tokens: int | None
     total_cost_usd: float
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class ConversationsResponse(DashboardModel):

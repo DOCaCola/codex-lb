@@ -31,6 +31,7 @@ import { DashboardViewSelector } from "@/features/dashboard/components/filters/d
 import { OverviewTimeframeSelect } from "@/features/dashboard/components/filters/overview-timeframe-select";
 import { RequestFilters } from "@/features/dashboard/components/filters/request-filters";
 import { RecentRequestsTable } from "@/features/dashboard/components/recent-requests-table";
+import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
 import { StatsGrid } from "@/features/dashboard/components/stats-grid";
 import { UsageDonuts } from "@/features/dashboard/components/usage-donuts";
 import { WeeklyCreditsPaceCard } from "@/features/dashboard/components/weekly-credits-pace-card";
@@ -59,7 +60,6 @@ import { REQUEST_STATUS_LABELS } from "@/utils/constants";
 import { getErrorMessageOrNull } from "@/utils/errors";
 import {
   formatModelLabel,
-  formatCurrency,
   formatSlug,
 } from "@/utils/formatters";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -346,7 +346,9 @@ export function DashboardPage() {
     if (!conv || !filters.conversationId) {
       return null;
     }
-    const cost = formatCurrency(conv.aggregatedCostUsd);
+    const cost = conv.costCoverage
+      ? formatCoveredCost(conv.aggregatedCostUsd, conv.costCoverage)
+      : "Unknown";
     const count = conv.requestCount;
     const suffixParts: string[] = [];
 
@@ -790,6 +792,10 @@ export function DashboardPage() {
                         <p className="text-sm text-muted-foreground">
                           {conversationSummary}
                         </p>
+                      </div>
+                    ) : logPage.costCoverage ? (
+                      <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+                        {formatCoveredCost(logPage.costCoverage.knownCostUsd, logPage.costCoverage)}
                       </div>
                     ) : null}
                     <div className="transition-opacity duration-200">

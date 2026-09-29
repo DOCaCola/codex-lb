@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, Coins, DollarSign, Flame, MessageSquare, type LucideIcon } from "lucide-react";
 
+import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import i18n from "@/i18n";
 import type {
   AccountSummary,
@@ -742,6 +743,9 @@ export function buildDashboardView(
   const secondaryWindow = overview.windows.secondary;
   const metrics = overview.summary.metrics;
   const cost = overview.summary.cost.totalUsd;
+  const costCoverage = overview.summary.cost.costCoverage;
+  const costComplete = isCostCoverageComplete(costCoverage);
+  const costLabel = formatCoveredCost(cost, costCoverage);
   const timeframeLabel = (() => {
     const formatted = formatWindowMinutes(overview.timeframe.windowMinutes);
     return formatted === "--" ? overview.timeframe.key : formatted;
@@ -756,7 +760,9 @@ export function buildDashboardView(
     timeframeHours <= 24
       ? t("dashboard.stats.avgPerHour", { value: formatCurrency(avgPerUnit(cost, timeframeHours)) })
       : t("dashboard.stats.avgPerDay", { value: formatCurrency(avgPerUnit(cost, timeframeDays)) });
-  const costMeta = costAverage;
+  // An average or period-over-period delta of an incomplete subtotal would
+  // imply total spend, so incomplete coverage shows its label instead.
+  const costMeta = costComplete ? costAverage : costLabel;
   const trends = overview.trends;
   const primaryBurnLabel = formatBurnWindowLabel("primary", overview.summary.primaryWindow.windowMinutes);
   const secondaryBurnLabel = formatBurnWindowLabel("secondary", overview.summary.secondaryWindow?.windowMinutes);
@@ -790,9 +796,13 @@ export function buildDashboardView(
     },
     {
       label: t("dashboard.stats.estimatedCost", { timeframe: timeframeLabel }),
-      value: formatCurrency(cost),
+      value: costLabel === "Unknown" ? costLabel : formatCurrency(cost),
       meta: costMeta,
-      comparison: buildStatComparison(cost, comparison?.previous.costUsd ?? 0, canCompare),
+      comparison: buildStatComparison(
+        cost,
+        comparison?.previous.costUsd ?? 0,
+        canCompare && costComplete && !!comparison && isCostCoverageComplete(comparison.previous.costCoverage),
+      ),
       icon: DollarSign,
       trend: trendPointsToValues(trends.cost),
       trendColor: TREND_COLORS[2],

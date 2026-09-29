@@ -60,8 +60,8 @@ class UsageService:
             secondary_rows=secondary_rows,
             monthly_rows=monthly_rows_raw,
             logs_secondary=[],
+            cost=build_usage_cost_from_aggregate(logs_aggregate),
             metrics_override=build_usage_metrics_from_aggregate(logs_aggregate),
-            cost_override=build_usage_cost_from_aggregate(logs_aggregate),
         )
 
     async def get_usage_history(self, hours: int) -> UsageHistoryResponse:

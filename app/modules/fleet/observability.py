@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config.settings_cache import get_settings_cache
+from app.core.usage.coverage import request_cost_expressions
 from app.core.usage.logs import CANCELLED_STATUS, NON_ERROR_STATUSES
 from app.core.utils.time import utcnow
 from app.db.models import Account, RequestKind, RequestLog, StickySession, StickySessionKind
@@ -23,6 +24,7 @@ from app.modules.fleet.schemas import (
     FleetStickyKindBreakdown,
     FleetStickyObservability,
 )
+from app.modules.shared.schemas import RequestCostCoverage
 
 _PRESSURE_WINDOWS = (("30m", "30m", 30 * 60), ("2h", "2h", 2 * 60 * 60))
 _BREAKDOWN_LIMIT = 10
@@ -110,6 +112,7 @@ async def _build_pressure_window(
         cached_input_tokens=totals.cached_input_tokens,
         output_tokens=totals.output_tokens,
         cost_usd=totals.cost_usd,
+        cost_coverage=totals.cost_coverage,
         truncated=accounts_truncated or kinds_truncated or clients_truncated,
         top_error_code=await _top_error_code(session, conditions),
         by_account=by_account,
@@ -148,7 +151,7 @@ def _metric_columns():
         func.coalesce(func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)), 0).label(
             "output_tokens"
         ),
-        func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+        *request_cost_expressions(RequestLog),
     )
 
 
@@ -160,7 +163,13 @@ def _metric_from_row(row) -> FleetPressureMetric:
         input_tokens=int(row.input_tokens or 0),
         cached_input_tokens=int(row.cached_input_tokens or 0),
         output_tokens=int(row.output_tokens or 0),
-        cost_usd=float(row.cost_usd or 0.0),
+        cost_usd=float(row.known_cost_usd or 0.0),
+        cost_coverage=RequestCostCoverage(
+            known_cost_usd=float(row.known_cost_usd or 0.0),
+            priced_requests=int(row.priced_requests or 0),
+            unpriced_requests=int(row.unpriced_requests or 0),
+            unmetered_requests=int(row.unmetered_requests or 0),
+        ),
     )
 
 

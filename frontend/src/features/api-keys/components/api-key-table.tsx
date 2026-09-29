@@ -20,8 +20,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ApiKey, LimitRule, LimitType } from "@/features/api-keys/schemas";
+import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
 import { useDateDisplayFormatStore, type DateDisplayFormat } from "@/hooks/use-date-format";
-import { formatCompactNumber, formatCurrency, formatTimeLong } from "@/utils/formatters";
+import { formatCompactNumber, formatTimeLong } from "@/utils/formatters";
 
 function formatExpiry(value: string | null, neverLabel: string, displayFormat: DateDisplayFormat): string {
   if (!value) {
@@ -62,13 +63,12 @@ function formatUsageSummary(
   requestCount: number,
   totalTokens: number,
   cachedInputTokens: number,
-  totalCostUsd: number,
+  cost: string,
   t: ReturnType<typeof useTranslation>["t"],
 ): string {
   const total = formatCompactNumber(totalTokens);
   const cached = formatCompactNumber(cachedInputTokens);
   const requests = formatCompactNumber(requestCount);
-  const cost = formatCurrency(totalCostUsd);
   return t("apiKeys.table.usageSummary", { total, cached, requests, cost });
 }
 
@@ -81,7 +81,7 @@ function getUsageValue(apiKey: ApiKey, t: ReturnType<typeof useTranslation>["t"]
     apiKey.usageSummary.requestCount,
     apiKey.usageSummary.totalTokens,
     apiKey.usageSummary.cachedInputTokens,
-    apiKey.usageSummary.totalCostUsd,
+    formatCoveredCost(apiKey.usageSummary.totalCostUsd, apiKey.usageSummary),
     t,
   );
 }

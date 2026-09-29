@@ -11,6 +11,16 @@ from app.db.session import SessionLocal
 pytestmark = pytest.mark.integration
 
 
+def _legacy_report(value):
+    """Keep pre-coverage report assertions focused on their original fields."""
+    coverage_fields = {"pricedRequests", "unpricedRequests", "unmeteredRequests", "coverageUnknown"}
+    if isinstance(value, dict):
+        return {key: _legacy_report(item) for key, item in value.items() if key not in coverage_fields}
+    if isinstance(value, list):
+        return [_legacy_report(item) for item in value]
+    return value
+
+
 def _make_account(account_id: str, email: str) -> Account:
     encryptor = TokenEncryptor()
     return Account(
@@ -71,7 +81,7 @@ async def test_reports_api_returns_null_account_bucket(async_client, db_setup):
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["daily"] == [
         {
             "activeAccounts": 1,
@@ -191,7 +201,7 @@ async def test_reports_api_aggregates_reasoning_tokens_for_unfiltered_window(asy
     )
 
     assert response.status_code == 200
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalReasoningTokens"] == 105
     assert payload["summary"]["reasoningUsageKnownRequests"] == 4
     assert payload["summary"]["totalOutputTokens"] == 175
@@ -286,7 +296,7 @@ async def test_reports_api_reasoning_tokens_honor_filters_without_double_countin
     )
 
     assert response.status_code == 200
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalReasoningTokens"] == 30
     assert payload["summary"]["reasoningUsageKnownRequests"] == 1
     assert payload["summary"]["totalOutputTokens"] == 40
@@ -360,7 +370,7 @@ async def test_reports_api_returns_distinct_nonblank_conversation_counts(async_c
     )
 
     assert response.status_code == 200
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalConversations"] == 1
     assert [(row["date"], row["conversations"]) for row in payload["daily"]] == [
         ("2026-06-01", 1),
@@ -478,7 +488,7 @@ async def test_reports_api_includes_preserved_deleted_account_history(async_clie
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalInputTokens"] == 13
     assert payload["summary"]["totalOutputTokens"] == 7
@@ -551,7 +561,7 @@ async def test_reports_api_includes_end_date_until_next_midnight(async_client, d
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalCostUsd"] == 0.5
     assert payload["daily"][0]["date"] == "2026-06-01"
@@ -624,7 +634,7 @@ async def test_reports_api_interprets_dates_in_requested_timezone(async_client, 
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 2
     assert payload["summary"]["totalInputTokens"] == 5
     assert payload["summary"]["totalCostUsd"] == 0.5
@@ -691,7 +701,7 @@ async def test_reports_api_falls_back_to_utc_for_invalid_timezone(async_client, 
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalInputTokens"] == 7
     assert payload["summary"]["totalCostUsd"] == 0.7
@@ -741,7 +751,7 @@ async def test_reports_api_falls_back_to_utc_for_malformed_timezone(async_client
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalInputTokens"] == 7
     assert payload["summary"]["totalCostUsd"] == 0.7
@@ -806,7 +816,7 @@ async def test_reports_api_default_range_uses_last_seven_calendar_days(async_cli
     response = await async_client.get("/api/reports")
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 2
     assert payload["summary"]["avgRequestsPerDay"] == 0.29
     assert payload["daily"][0]["date"] == "2026-06-02"
@@ -876,7 +886,7 @@ async def test_reports_api_default_range_uses_last_seven_calendar_days_in_reques
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 2
     assert payload["summary"]["avgRequestsPerDay"] == 0.29
     assert payload["summary"]["totalCostUsd"] == 2.1
@@ -983,7 +993,7 @@ async def test_reports_api_uses_dst_aware_boundaries_for_requested_timezone(asyn
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 2
     assert payload["summary"]["totalInputTokens"] == 5
     assert payload["summary"]["totalCostUsd"] == 0.5
@@ -1048,7 +1058,7 @@ async def test_reports_api_returns_previous_window_comparison_for_complete_histo
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["comparison"] == {
         "canCompare": True,
         "previous": {
@@ -1100,7 +1110,7 @@ async def test_reports_api_suppresses_comparison_when_previous_window_is_incompl
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["comparison"] == {
         "canCompare": False,
         "previous": {
@@ -1152,7 +1162,7 @@ async def test_reports_api_comparison_uses_requested_timezone_boundaries(async_c
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["comparison"] == {
         "canCompare": True,
         "previous": {
@@ -1233,7 +1243,7 @@ async def test_reports_api_comparison_completeness_honors_active_filters(async_c
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["comparison"] == {
         "canCompare": False,
         "previous": {
@@ -1299,7 +1309,7 @@ async def test_reports_api_comparison_ignores_warmup_traffic_for_coverage(async_
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["comparison"] == {
         "canCompare": False,
         "previous": {
@@ -1376,7 +1386,7 @@ async def test_reports_api_excludes_warmup_logs(async_client, db_setup):
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalInputTokens"] == 6
     assert payload["summary"]["totalCostUsd"] == 0.4
@@ -1450,7 +1460,7 @@ async def test_reports_api_applies_account_and_model_filters(async_client, db_se
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalCostUsd"] == 0.8
     assert payload["byAccount"] == [
@@ -1502,12 +1512,15 @@ async def test_reports_api_includes_unpriced_models_in_model_breakdown(async_cli
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 2
     assert payload["byModel"] == [
-        {"model": "gpt-priced", "costUsd": 0.8, "requests": 1, "percentage": 100.0},
-        {"model": "gpt-unpriced", "costUsd": 0.0, "requests": 1, "percentage": 0.0},
+        {"model": "gpt-priced", "costUsd": 0.8, "requests": 1, "percentage": None},
+        {"model": "gpt-unpriced", "costUsd": 0.0, "requests": 1, "percentage": None},
     ]
+    assert response.json()["summary"]["pricedRequests"] == 1
+    assert response.json()["summary"]["unpricedRequests"] == 1
+    assert response.json()["summary"]["coverageUnknown"] is False
     assert payload["byAccount"] == [
         {
             "accountId": "acc_reports_unpriced",
@@ -1560,7 +1573,7 @@ async def test_reports_api_summary_counts_range_accounts_and_calendar_days(async
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["activeAccounts"] == 2
     assert payload["summary"]["avgCostPerDay"] == 0.5
     assert payload["summary"]["avgRequestsPerDay"] == 0.67
@@ -1642,7 +1655,7 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["byUseragent"] == [
         {"useragent": "opencode", "costUsd": 0.8, "requests": 1, "percentage": 33.3},
         {"useragent": "CodexCLI", "costUsd": 0.7, "requests": 1, "percentage": 29.2},
@@ -1660,7 +1673,7 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     )
     assert filtered_response.status_code == 200
 
-    filtered_payload = filtered_response.json()
+    filtered_payload = _legacy_report(filtered_response.json())
     assert filtered_payload["summary"]["totalRequests"] == 1
     assert filtered_payload["summary"]["totalCostUsd"] == 0.8
     assert filtered_payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.8, "requests": 1, "percentage": 100.0}]
@@ -1678,7 +1691,7 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     )
     assert unknown_filtered_response.status_code == 200
 
-    unknown_filtered_payload = unknown_filtered_response.json()
+    unknown_filtered_payload = _legacy_report(unknown_filtered_response.json())
     assert unknown_filtered_payload["summary"]["totalRequests"] == 1
     assert unknown_filtered_payload["summary"]["totalCostUsd"] == 0.4
     assert unknown_filtered_payload["byModel"] == [
@@ -1698,7 +1711,7 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     )
     assert missing_useragent_filtered_response.status_code == 200
 
-    missing_useragent_filtered_payload = missing_useragent_filtered_response.json()
+    missing_useragent_filtered_payload = _legacy_report(missing_useragent_filtered_response.json())
     assert missing_useragent_filtered_payload["summary"]["totalRequests"] == 1
     assert missing_useragent_filtered_payload["summary"]["totalCostUsd"] == 0.5
     assert missing_useragent_filtered_payload["byModel"] == [
@@ -1757,7 +1770,7 @@ async def test_reports_api_summary_uses_sql_range_totals_not_rounded_daily_rows(
     )
     assert response.status_code == 200
 
-    payload = response.json()
+    payload = _legacy_report(response.json())
     assert payload["summary"]["totalCostUsd"] == 0.0001
     assert payload["summary"]["avgCostPerDay"] == 0.0
     assert payload["daily"] == [

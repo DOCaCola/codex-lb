@@ -43,6 +43,10 @@ class DailyReportAggregateRow:
     median_queue_ms: float
     conversation_count: int = 0
     cancelled_count: int = 0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,10 @@ class SummaryAggregateRow:
     active_accounts: int
     conversation_count: int = 0
     total_cancelled: int = 0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,10 @@ class ModelAggregateRow:
     model: str
     cost_usd: float
     request_count: int
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,10 @@ class AccountAggregateRow:
     alias: str | None
     cost_usd: float
     request_count: int
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +96,10 @@ class UserAgentAggregateRow:
     useragent_group: str
     cost_usd: float
     request_count: int
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 class ReportsRepository:
@@ -132,6 +152,10 @@ class ReportsRepository:
                         reasoning_tokens=int(row.reasoning_tokens) if row.reasoning_usage_known_requests else None,
                         cached_input_tokens=int(row.cached_input_tokens),
                         cost_usd=float(row.cost_usd),
+                        priced_requests=int(row.priced_requests),
+                        unpriced_requests=int(row.unpriced_requests),
+                        unmetered_requests=int(row.unmetered_requests),
+                        coverage_unknown=bool(row.coverage_unknown),
                         active_accounts=int(row.active_accounts),
                         error_count=int(row.error_count),
                         cancelled_count=int(row.cancelled_count),
@@ -158,6 +182,10 @@ class ReportsRepository:
         row = (await self._session.execute(select(*_aggregate_columns(source)))).one()
         return SummaryAggregateRow(
             total_cost_usd=float(row.cost_usd),
+            priced_requests=int(row.priced_requests),
+            unpriced_requests=int(row.unpriced_requests),
+            unmetered_requests=int(row.unmetered_requests),
+            coverage_unknown=bool(row.coverage_unknown),
             total_input_tokens=int(row.input_tokens),
             total_output_tokens=int(row.output_tokens),
             total_reasoning_tokens=int(row.reasoning_tokens),
@@ -187,11 +215,26 @@ class ReportsRepository:
                 source.c.model,
                 func.sum(source.c.cost_usd).label("cost_usd"),
                 func.sum(source.c.request_count).label("request_count"),
+                *(
+                    func.sum(getattr(source.c, name)).label(name)
+                    for name in ("priced_requests", "unpriced_requests", "unmetered_requests", "coverage_unknown")
+                ),
             )
             .group_by(source.c.model)
             .order_by(func.sum(source.c.cost_usd).desc(), source.c.model)
         )
-        return [ModelAggregateRow(row.model, float(row.cost_usd), int(row.request_count)) for row in result]
+        return [
+            ModelAggregateRow(
+                row.model,
+                float(row.cost_usd),
+                int(row.request_count),
+                int(row.priced_requests),
+                int(row.unpriced_requests),
+                int(row.unmetered_requests),
+                bool(row.coverage_unknown),
+            )
+            for row in result
+        ]
 
     async def aggregate_by_account(
         self,
@@ -211,13 +254,26 @@ class ReportsRepository:
                 Account.alias,
                 func.sum(source.c.cost_usd).label("cost_usd"),
                 func.sum(source.c.request_count).label("request_count"),
+                *(
+                    func.sum(getattr(source.c, name)).label(name)
+                    for name in ("priced_requests", "unpriced_requests", "unmetered_requests", "coverage_unknown")
+                ),
             )
             .outerjoin(Account, Account.id == source.c.account_id)
             .group_by(source.c.account_id, Account.alias)
             .order_by(func.sum(source.c.cost_usd).desc(), source.c.account_id)
         )
         return [
-            AccountAggregateRow(row.account_id, row.alias, float(row.cost_usd), int(row.request_count))
+            AccountAggregateRow(
+                row.account_id,
+                row.alias,
+                float(row.cost_usd),
+                int(row.request_count),
+                int(row.priced_requests),
+                int(row.unpriced_requests),
+                int(row.unmetered_requests),
+                bool(row.coverage_unknown),
+            )
             for row in result
         ]
 
@@ -239,13 +295,26 @@ class ReportsRepository:
                 group.label("useragent_group"),
                 func.sum(source.c.cost_usd).label("cost_usd"),
                 func.sum(source.c.request_count).label("request_count"),
+                *(
+                    func.sum(getattr(source.c, name)).label(name)
+                    for name in ("priced_requests", "unpriced_requests", "unmetered_requests", "coverage_unknown")
+                ),
             )
             .where(or_(source.c.useragent_group.is_(None), func.trim(source.c.useragent_group) != ""))
             .group_by(group)
             .order_by(func.sum(source.c.cost_usd).desc(), group)
         )
         return [
-            UserAgentAggregateRow(row.useragent_group, float(row.cost_usd), int(row.request_count)) for row in result
+            UserAgentAggregateRow(
+                row.useragent_group,
+                float(row.cost_usd),
+                int(row.request_count),
+                int(row.priced_requests),
+                int(row.unpriced_requests),
+                int(row.unmetered_requests),
+                bool(row.coverage_unknown),
+            )
+            for row in result
         ]
 
     async def count_active_accounts(

@@ -742,7 +742,7 @@ describe("DashboardPage", () => {
           requests: [],
           total: 0,
           hasMore: false,
-          conversation: { requestCount: 42, aggregatedCostUsd: 3.14 },
+          conversation: { requestCount: 42, aggregatedCostUsd: 3.14, costCoverage: { knownCostUsd: 3.14, pricedRequests: 42, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false } },
         },
         isFetching: false,
         error: null,

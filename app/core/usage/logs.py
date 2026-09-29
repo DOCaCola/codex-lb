@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.core.usage.pricing import (
+    ClaudeUsageTokens,
     UsageCostBreakdown,
     UsageTokens,
+    calculate_claude_cost_breakdown,
     calculate_cost_breakdown_from_usage,
     calculate_cost_from_usage,
     get_pricing_for_model,
@@ -26,6 +28,9 @@ CLIENT_DISCONNECT_ERROR_CODE = "client_disconnected"
 
 class RequestLogLike(Protocol):
     @property
+    def model_source_kind(self) -> str | None: ...
+
+    @property
     def model(self) -> str | None: ...
 
     @property
@@ -41,10 +46,22 @@ class RequestLogLike(Protocol):
     def cached_input_tokens(self) -> int | None: ...
 
     @property
+    def cache_creation_tokens(self) -> int | None: ...
+
+    @property
+    def cache_creation_5m_tokens(self) -> int | None: ...
+
+    @property
+    def cache_creation_1h_tokens(self) -> int | None: ...
+
+    @property
     def reasoning_tokens(self) -> int | None: ...
 
     @property
     def cost_usd(self) -> float | None: ...
+
+    @property
+    def cost_provenance(self) -> str | None: ...
 
 
 def cached_input_tokens_from_log(log: RequestLogLike) -> int | None:
@@ -86,6 +103,10 @@ def output_tokens_from_log(log: RequestLogLike) -> int | None:
 def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = None) -> float | None:
     if not log.model:
         return None
+    if log.model_source_kind == "claude":
+        # Historical Claude rows lack cache-write detail. Only the dispatch's
+        # persisted estimate may price a Claude request; never backfill a guess.
+        return None
     usage = usage_tokens_from_log(log)
     if not usage:
         return None
@@ -102,6 +123,8 @@ def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = Non
 
 
 def cost_from_log(log: RequestLogLike, *, precision: int | None = None) -> float | None:
+    if log.model_source_kind == "claude" and log.cost_provenance is None and log.cost_usd == 0:
+        return None
     cost = log.cost_usd
     if cost is None:
         return None
@@ -119,6 +142,8 @@ def _totals_match(left: float | None, right: float | None, *, precision: int | N
 
 
 def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None) -> UsageCostBreakdown:
+    if log.model_source_kind == "claude":
+        return _claude_cost_breakdown_from_log(log, precision=precision)
     full_breakdown: UsageCostBreakdown | None = None
     input_usd: float | None = None
     cached_input_usd: float | None = None
@@ -201,6 +226,59 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
         cached_input_usd=cached_input_usd,
         output_usd=output_usd,
         total_usd=None,
+    )
+
+
+def _claude_cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None) -> UsageCostBreakdown:
+    total = cost_from_log(log, precision=precision)
+    unknown_parts = UsageCostBreakdown(None, None, None, total)
+    if total is None or log.model is None:
+        return unknown_parts
+    if (
+        log.input_tokens is None
+        or log.output_tokens is None
+        or log.cached_input_tokens is None
+        or log.cache_creation_tokens is None
+        or log.cache_creation_5m_tokens is None
+        or log.cache_creation_1h_tokens is None
+    ):
+        return unknown_parts
+    resolved = get_pricing_for_model(log.model)
+    if resolved is None:
+        return unknown_parts
+    breakdown = calculate_claude_cost_breakdown(
+        ClaudeUsageTokens(
+            input_tokens=log.input_tokens,
+            output_tokens=log.output_tokens,
+            cached_input_tokens=log.cached_input_tokens,
+            cache_creation_tokens=log.cache_creation_tokens,
+            cache_creation_5m_tokens=log.cache_creation_5m_tokens,
+            cache_creation_1h_tokens=log.cache_creation_1h_tokens,
+        ),
+        resolved[1],
+    )
+    if breakdown is None or not _totals_match(cost_from_log(log), breakdown.total_usd, precision=6):
+        return unknown_parts
+    if precision is not None:
+        breakdown = calculate_claude_cost_breakdown(
+            ClaudeUsageTokens(
+                input_tokens=log.input_tokens,
+                output_tokens=log.output_tokens,
+                cached_input_tokens=log.cached_input_tokens,
+                cache_creation_tokens=log.cache_creation_tokens,
+                cache_creation_5m_tokens=log.cache_creation_5m_tokens,
+                cache_creation_1h_tokens=log.cache_creation_1h_tokens,
+            ),
+            resolved[1],
+            precision=precision,
+        )
+        assert breakdown is not None
+    return UsageCostBreakdown(
+        input_usd=breakdown.input_usd,
+        cached_input_usd=breakdown.cached_input_usd,
+        output_usd=breakdown.output_usd,
+        total_usd=total,
+        cache_write_usd=breakdown.cache_write_usd,
     )
 
 

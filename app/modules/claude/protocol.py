@@ -321,15 +321,21 @@ def project_responses(
         effort = reasoning.get("effort")
         if effort not in ("low", "medium", "high", "max"):
             raise invalid("Unsupported Claude reasoning effort", "reasoning")
-        if policy is None or not policy.adaptive_reasoning:
-            raise invalid("This Claude model has no configured adaptive reasoning policy", "reasoning")
+        if policy is None or not policy.supports_reasoning:
+            raise invalid("This Claude model has no configured reasoning policy", "reasoning")
         display = reasoning.get("display")
         if display not in (None, "summarized", "omitted"):
             raise invalid("Unsupported Claude thinking display", "reasoning")
-        body["thinking"] = {"type": "adaptive"}
-        if display == "summarized":
-            body["thinking"]["display"] = "summarized"
-        body["output_config"] = {"effort": effort}
+        if policy.adaptive_reasoning:
+            body["thinking"] = {"type": "adaptive"}
+            if display == "summarized":
+                body["thinking"]["display"] = "summarized"
+            body["output_config"] = {"effort": effort}
+        else:
+            budget = {"low": 4096, "medium": 8192, "high": 16384, "max": 32000}[effort]
+            if budget < 1024 or budget >= limit:
+                raise invalid("Claude thinking budget must be below max_output_tokens", "max_output_tokens")
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
         if choice == "required" or isinstance(choice, dict):
             raise invalid("Claude thinking cannot be combined with a forced tool choice", "tool_choice")
     text = payload.get("text")
@@ -349,7 +355,10 @@ def project_responses(
                 "Claude has no Responses verbosity control; specify verbosity in instructions", "text.verbosity"
             )
     for field in ("temperature", "top_p"):
-        if field in payload:
+        # An explicit null means "unset"; forwarding it would send ``null`` upstream.
+        if payload.get(field) is not None:
+            if "thinking" in body and (field == "top_p" or payload[field] != 1):
+                raise invalid(f"Claude thinking cannot be combined with {field}", field)
             body[field] = payload[field]
     return MessagesProjection(
         body, tools, any(isinstance(t, dict) and t.get("type") == "web_search_20250305" for t in declarations)

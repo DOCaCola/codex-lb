@@ -12,16 +12,21 @@ from dataclasses import dataclass
 class ModelPolicy:
     mid_system: bool = False
     adaptive_reasoning: bool = False
+    budget_reasoning: bool = False
     structured_output: bool = False
+
+    @property
+    def supports_reasoning(self) -> bool:
+        return self.adaptive_reasoning or self.budget_reasoning
 
 
 _POLICIES = {
-    "claude-opus-5": ModelPolicy(True, True, True),
-    "claude-sonnet-5": ModelPolicy(True, True, True),
-    "claude-opus-4-6": ModelPolicy(False, True, True),
-    "claude-sonnet-4-6": ModelPolicy(False, True, True),
-    "claude-sonnet-4-5": ModelPolicy(False, False, True),
-    "claude-haiku-4-5": ModelPolicy(False, False, True),
+    "claude-opus-5": ModelPolicy(mid_system=True, adaptive_reasoning=True, structured_output=True),
+    "claude-sonnet-5": ModelPolicy(mid_system=True, adaptive_reasoning=True, structured_output=True),
+    "claude-opus-4-6": ModelPolicy(adaptive_reasoning=True, structured_output=True),
+    "claude-sonnet-4-6": ModelPolicy(adaptive_reasoning=True, structured_output=True),
+    "claude-sonnet-4-5": ModelPolicy(budget_reasoning=True, structured_output=True),
+    "claude-haiku-4-5": ModelPolicy(budget_reasoning=True, structured_output=True),
 }
 
 

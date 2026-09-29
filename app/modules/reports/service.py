@@ -92,6 +92,10 @@ class ReportsService:
                 reasoning_tokens=row.reasoning_tokens,
                 cached_input_tokens=row.cached_input_tokens,
                 cost_usd=round(row.cost_usd, 4),
+                priced_requests=row.priced_requests,
+                unpriced_requests=row.unpriced_requests,
+                unmetered_requests=row.unmetered_requests,
+                coverage_unknown=row.coverage_unknown,
                 active_accounts=row.active_accounts,
                 conversations=row.conversation_count,
                 error_count=row.error_count,
@@ -123,6 +127,10 @@ class ReportsService:
             can_compare=earliest_activity_at is not None and earliest_activity_at <= previous_start_at,
             previous=ReportComparisonPrevious(
                 total_cost_usd=round(previous_summary.total_cost_usd, 4),
+                priced_requests=previous_summary.priced_requests,
+                unpriced_requests=previous_summary.unpriced_requests,
+                unmetered_requests=previous_summary.unmetered_requests,
+                coverage_unknown=previous_summary.coverage_unknown,
                 total_tokens=previous_summary.total_input_tokens + previous_summary.total_output_tokens,
                 total_requests=previous_summary.total_requests,
             ),
@@ -133,6 +141,10 @@ class ReportsService:
             speed_metrics_max_days=MAX_SPEED_REPORT_DAYS,
             summary=ReportSummary(
                 total_cost_usd=round(summary.total_cost_usd, 4),
+                priced_requests=summary.priced_requests,
+                unpriced_requests=summary.unpriced_requests,
+                unmetered_requests=summary.unmetered_requests,
+                coverage_unknown=summary.coverage_unknown,
                 total_input_tokens=summary.total_input_tokens,
                 total_output_tokens=summary.total_output_tokens,
                 total_reasoning_tokens=summary.total_reasoning_tokens,
@@ -143,7 +155,9 @@ class ReportsService:
                 total_cancelled=summary.total_cancelled,
                 active_accounts=summary.active_accounts,
                 total_conversations=summary.conversation_count,
-                avg_cost_per_day=round(summary.total_cost_usd / window_days, 4),
+                avg_cost_per_day=round(summary.total_cost_usd / window_days, 4)
+                if not (summary.unpriced_requests or summary.unmetered_requests or summary.coverage_unknown)
+                else None,
                 avg_requests_per_day=round(summary.total_requests / window_days, 2),
             ),
             comparison=comparison,
@@ -153,7 +167,14 @@ class ReportsService:
                     model=m.model,
                     cost_usd=round(m.cost_usd, 4),
                     requests=m.request_count,
-                    percentage=round((m.cost_usd / model_total * 100), 1) if model_total > 0 else 0,
+                    percentage=round((m.cost_usd / model_total * 100), 1)
+                    if model_total > 0
+                    and not (summary.unpriced_requests or summary.unmetered_requests or summary.coverage_unknown)
+                    else None,
+                    priced_requests=m.priced_requests,
+                    unpriced_requests=m.unpriced_requests,
+                    unmetered_requests=m.unmetered_requests,
+                    coverage_unknown=m.coverage_unknown,
                 )
                 for m in by_model
             ],
@@ -163,6 +184,10 @@ class ReportsService:
                     alias=a.alias,
                     cost_usd=round(a.cost_usd, 4),
                     requests=a.request_count,
+                    priced_requests=a.priced_requests,
+                    unpriced_requests=a.unpriced_requests,
+                    unmetered_requests=a.unmetered_requests,
+                    coverage_unknown=a.coverage_unknown,
                 )
                 for a in by_account
             ],
@@ -171,7 +196,14 @@ class ReportsService:
                     useragent=u.useragent_group,
                     cost_usd=round(u.cost_usd, 4),
                     requests=u.request_count,
-                    percentage=round((u.cost_usd / useragent_total * 100), 1) if useragent_total > 0 else 0,
+                    percentage=round((u.cost_usd / useragent_total * 100), 1)
+                    if useragent_total > 0
+                    and not (summary.unpriced_requests or summary.unmetered_requests or summary.coverage_unknown)
+                    else None,
+                    priced_requests=u.priced_requests,
+                    unpriced_requests=u.unpriced_requests,
+                    unmetered_requests=u.unmetered_requests,
+                    coverage_unknown=u.coverage_unknown,
                 )
                 for u in by_useragent
             ],

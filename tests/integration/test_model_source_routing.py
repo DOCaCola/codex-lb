@@ -1288,7 +1288,9 @@ async def test_source_usage_settles_cost_from_source_pricing(async_client, sourc
 
 
 @pytest.mark.asyncio
-async def test_unpriced_source_usage_settles_zero_cost_for_priced_slug(async_client, source_upstream):
+async def test_unpriced_source_usage_keeps_reserve_debit_and_unknown_cost(async_client, source_upstream):
+    """A priced slug served by an unpriced source is unknown cost, not free: the
+    cost limit keeps its admission reserve estimate and the log stores NULL."""
     await _enable_api_key_auth(async_client)
 
     async def completion(_request: web.Request) -> web.Response:
@@ -1344,13 +1346,13 @@ async def test_unpriced_source_usage_settles_zero_cost_for_priced_slug(async_cli
     async with SessionLocal() as session:
         limits = await ApiKeysRepository(session).get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 0
+        assert limits[0].current_value > 0
 
         result = await session.execute(select(RequestLog).order_by(RequestLog.requested_at.desc()))
         latest_log = result.scalars().first()
         assert latest_log is not None
         assert latest_log.model_source_id == source_id
-        assert latest_log.cost_usd == 0.0
+        assert latest_log.cost_usd is None
 
 
 @pytest.mark.asyncio

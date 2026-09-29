@@ -32,6 +32,7 @@ from app.modules.model_sources.forwarding import (
     SourceResponsesStream,
     SourceStreamTransport,
     SourceStreamUsageParser,
+    SourceTimings,
     SourceUsage,
     SourceUsageHolder,
     _open_source_stream,
@@ -95,6 +96,9 @@ async def _open_responses(
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     requested_at = datetime.now(UTC)
     prepared.budget.requested_at = requested_at
+    started_at = clock.monotonic()
+    holder = SourceUsageHolder()
+    native_timing = SourceStreamUsageParser(holder, response_shape="claude", clock=clock, started_at=started_at)
     try:
         stack, response, _ = await _open_source_stream(
             prepared.source,
@@ -122,7 +126,6 @@ async def _open_responses(
             upstream_headers=exc.upstream_headers,
         ) from None
     transport = SourceStreamTransport(stack, scheduler=scheduler)
-    holder = SourceUsageHolder()
     native_observer = NativeObserver(holder)
     observer = SourceStreamUsageParser(holder, response_shape="responses")
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
@@ -135,6 +138,7 @@ async def _open_responses(
             startup_bytes = 0
             while True:
                 frame = await anext(events)
+                native_timing.feed(frame.encode())
                 if holder.first_frame_at is None:
                     holder.first_frame_at = clock.monotonic()
                 startup_bytes += len(frame.encode())
@@ -187,8 +191,13 @@ async def _open_responses(
                 yield frame
 
         try:
+            startup_remaining = len(startup)
             async with contextlib.aclosing(native_frames()) as native:
                 async for frame in native:
+                    if startup_remaining:
+                        startup_remaining -= 1
+                    else:
+                        native_timing.feed(frame.encode())
                     event = parse_sse_data_json(frame)
                     if event is None:
                         yield b": keepalive\n\n"
@@ -231,6 +240,7 @@ async def _open_responses(
         except (aiohttp.ClientError, TimeoutError) as exc:
             raise _failure("model_source_unreachable", "Claude transport failed before completion") from exc
         finally:
+            native_timing.end_timing()
             try:
                 await events.aclose()
             finally:
@@ -242,6 +252,7 @@ async def _open_responses(
         upstream_status_code=response.status,
         transport=transport,
         upstream_headers=public_headers(response.headers),
+        timing_observer=native_timing,
     )
 
 
@@ -275,6 +286,7 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     requested_at = datetime.now(UTC)
     prepared.budget.requested_at = requested_at
+    started_at = REAL_CLOCK.monotonic()
     try:
         async with lease_model_source_session() as session:
             async with session.post(
@@ -309,6 +321,21 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                 ):
                     raise _failure("invalid_upstream_response", "Claude returned an invalid Messages response")
                 usage = SourceUsage(0, 0) if count_tokens else usage_totals(Usage.model_validate(data.get("usage", {})))
+                duration_ms = round((REAL_CLOCK.monotonic() - started_at) * 1000)
+                content = data.get("content")
+                generated = (
+                    not count_tokens
+                    and isinstance(content, list)
+                    and any(
+                        isinstance(block, dict)
+                        and (
+                            bool(block.get("text"))
+                            or bool(block.get("thinking"))
+                            or (block.get("type") == "tool_use" and bool(block.get("name")))
+                        )
+                        for block in content
+                    )
+                )
                 if not count_tokens and prepared.native_binding is not None:
                     from pydantic import JsonValue as PydanticJsonValue
 
@@ -318,7 +345,11 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                         cast(dict[str, PydanticJsonValue], data),
                     )
                 return SourceResponsesCompletion(
-                    data, usage, None, response.status, upstream_headers=public_headers(response.headers)
+                    data,
+                    usage,
+                    SourceTimings(duration_ms if generated else None, duration_ms),
+                    response.status,
+                    upstream_headers=public_headers(response.headers),
                 )
     except ValidationError as exc:
         raise _failure("invalid_upstream_response", "Claude returned invalid usage metadata") from exc

@@ -134,6 +134,7 @@ async def test_warmup_request_logs_are_excluded_from_dashboard_api_key_and_accou
                 account_id="acc-warmup-exclusion",
                 email="warmup-exclusion@example.com",
                 cost_usd=key_usage_7d.total_cost_usd,
+                priced_requests=1,
                 is_deleted=False,
             )
         ]

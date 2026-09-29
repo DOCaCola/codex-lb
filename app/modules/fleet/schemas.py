@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.modules.shared.schemas import DashboardModel
+from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 
 
 class FleetWindowSummary(DashboardModel):
@@ -49,6 +49,7 @@ class FleetPressureMetric(DashboardModel):
     cached_input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class FleetPressureAccountBreakdown(FleetPressureMetric):

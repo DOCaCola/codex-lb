@@ -1,11 +1,11 @@
 import { useTranslation } from "react-i18next";
 
 import type { ApiKey, LimitType } from "@/features/api-keys/schemas";
+import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
 import { useDateDisplayFormatStore, type DateDisplayFormat } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
 import {
 	formatCompactNumber,
-	formatCurrency,
 	formatTimeLong,
 } from "@/utils/formatters";
 
@@ -121,7 +121,7 @@ export function ApiKeyInfo({
 								</span>
 								<span className="mx-1 text-muted-foreground/40">|</span>
 								<span className="font-medium">
-									{formatCurrency(usage.totalCostUsd)}
+									{formatCoveredCost(usage.totalCostUsd, usage)}
 								</span>
 							</span>
 						) : (

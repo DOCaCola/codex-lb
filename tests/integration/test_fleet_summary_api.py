@@ -702,6 +702,13 @@ async def test_fleet_observability_reports_pressure_and_sticky_without_sensitive
             "cachedInputTokens": 70,
             "outputTokens": 35,
             "costUsd": 1.75,
+            "costCoverage": {
+                "knownCostUsd": 1.75,
+                "pricedRequests": 3,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
+                "coverageUnknown": False,
+            },
             "lastSelectedAt": thirty["byAccount"][0]["lastSelectedAt"],
         }
     ]

@@ -17,6 +17,7 @@ from app.modules.usage.builders import (
     ActivityCostSummary,
     ActivityMetricsSummary,
     build_usage_window_summary_model,
+    cost_coverage_response,
 )
 
 
@@ -89,6 +90,7 @@ def build_dashboard_overview_summary(
         cost=DashboardUsageCost(
             currency=activity_cost.currency,
             totalUsd=activity_cost.total_usd,
+            cost_coverage=cost_coverage_response(activity_cost.cost_coverage),
         ),
         metrics=DashboardUsageMetrics.model_validate(
             {

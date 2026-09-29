@@ -341,6 +341,7 @@ class TestImagePricingPresent:
 
         class _Log:
             model = "gpt-image-2"
+            model_source_kind = None
             service_tier = None
             input_tokens = 1000
             output_tokens = 500

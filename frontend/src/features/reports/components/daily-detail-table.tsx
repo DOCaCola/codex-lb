@@ -3,11 +3,11 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Download } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { buildContinuousDailyRows } from "../daily-series";
 import type { DailyReportRow } from "../schemas";
 import { formatReportBucketDate } from "../date";
-import { formatCurrency } from "@/utils/formatters";
 
 export type DailyDetailTableProps = {
   startDate: string;
@@ -157,7 +157,7 @@ export function DailyDetailTable({ startDate, endDate, data }: DailyDetailTableP
                   {row.reasoningTokens == null ? "—" : formatTokens(row.reasoningTokens)}
                 </td>
                 <td className="py-2.5 pr-4 text-right font-medium text-emerald-600 dark:text-emerald-400">
-                  {formatCurrency(row.costUsd)}
+                  {formatCoveredCost(row.costUsd, row)}
                 </td>
                 <td className="py-2.5 pr-4 text-right text-muted-foreground">
                   {row.activeAccounts}
@@ -272,13 +272,17 @@ function exportCSV(rows: DailyReportRow[], t: TFunction) {
     t("reports.dailyBreakdown.csvColumns.outputTokens"),
     t("reports.dailyBreakdown.csvColumns.reasoningTokens"),
     t("reports.dailyBreakdown.csvColumns.cachedTokens"),
-    t("reports.dailyBreakdown.csvColumns.costUsd"),
+    `${t("reports.dailyBreakdown.csvColumns.costUsd")} (known subtotal)`,
+    "Priced requests",
+    "Unpriced requests",
+    "Unmetered requests",
+    "Historical coverage unknown",
     t("reports.dailyBreakdown.csvColumns.activeAccounts"),
     t("reports.dailyBreakdown.csvColumns.cancelled"),
     t("reports.dailyBreakdown.csvColumns.errors"),
   ];
   const lines = rows.map((r) =>
-    [r.date, r.requests, r.conversations, r.inputTokens, r.outputTokens, r.reasoningTokens ?? "", r.cachedInputTokens, r.costUsd.toFixed(4), r.activeAccounts, r.cancelledCount, r.errorCount].join(","),
+    [r.date, r.requests, r.conversations, r.inputTokens, r.outputTokens, r.reasoningTokens ?? "", r.cachedInputTokens, r.costUsd.toFixed(4), r.pricedRequests ?? 0, r.unpricedRequests ?? 0, r.unmeteredRequests ?? 0, r.coverageUnknown ? "true" : "false", r.activeAccounts, r.cancelledCount, r.errorCount].join(","),
   );
   const csv = [headers.join(","), ...lines].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

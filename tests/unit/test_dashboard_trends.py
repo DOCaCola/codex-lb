@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.core.usage.coverage import CostCoverage
 from app.core.usage.types import BucketConversationAggregate, BucketModelAggregate
 from app.modules.usage.builders import align_bucket_window_start, build_trends_from_buckets
 
@@ -36,8 +37,8 @@ def _make_row(
         output_tokens=output_tokens,
         cached_input_tokens=cached_input_tokens,
         reasoning_tokens=reasoning_tokens,
-        cost_usd=cost_usd,
         cancelled_count=cancelled_count,
+        cost_coverage=CostCoverage(known_cost_usd=cost_usd, priced_requests=request_count),
     )
 
 
@@ -171,7 +172,7 @@ class TestBuildTrendsFromBuckets:
                 output_tokens=0,
                 cached_input_tokens=0,
                 reasoning_tokens=0,
-                cost_usd=123.0,
+                cost_coverage=CostCoverage(known_cost_usd=123.0, priced_requests=999),
             ),
         ]
         trends, metrics, _ = build_trends_from_buckets(rows, SINCE)

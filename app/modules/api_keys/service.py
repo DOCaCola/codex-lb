@@ -372,6 +372,10 @@ class ApiKeyUsageSummaryData:
     total_tokens: int
     cached_input_tokens: int
     total_cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1034,6 +1038,7 @@ class ApiKeysService:
         cached_input_tokens: int = 0,
         service_tier: str | None = None,
         cost_microdollars: int | None = None,
+        cost_unknown: bool = False,
     ) -> None:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
             try:
@@ -1046,6 +1051,7 @@ class ApiKeysService:
                     service_tier=service_tier,
                     status="finalized",
                     cost_microdollars_override=cost_microdollars,
+                    cost_unknown=cost_unknown,
                 )
                 return
             except OperationalError as exc:
@@ -1107,6 +1113,7 @@ class ApiKeysService:
         service_tier: str | None,
         status: str,
         cost_microdollars_override: int | None = None,
+        cost_unknown: bool = False,
     ) -> None:
         async with sqlite_writer_section():
             reservation = await self._repository.get_usage_reservation(reservation_id)
@@ -1128,6 +1135,11 @@ class ApiKeysService:
             cost_microdollars = (
                 cost_microdollars_override
                 if cost_microdollars_override is not None
+                else max(
+                    (item.reserved_delta for item in reservation.items if item.limit_type == LimitType.COST_USD),
+                    default=0,
+                )
+                if cost_unknown
                 else _calculate_cost_microdollars(
                     model,
                     effective_input_tokens,
@@ -1341,6 +1353,9 @@ class ApiKeysService:
             key_id=key_id,
             total_tokens=data.total_tokens,
             total_cost_usd=data.total_cost_usd,
+            priced_requests=data.priced_requests,
+            unpriced_requests=data.unpriced_requests,
+            unmetered_requests=data.unmetered_requests,
             total_requests=data.total_requests,
             cached_input_tokens=data.cached_input_tokens,
             account_costs=[
@@ -1348,6 +1363,9 @@ class ApiKeysService:
                     account_id=ac.account_id,
                     email=ac.email,
                     cost_usd=ac.cost_usd,
+                    priced_requests=ac.priced_requests,
+                    unpriced_requests=ac.unpriced_requests,
+                    unmetered_requests=ac.unmetered_requests,
                     is_deleted=ac.is_deleted,
                 )
                 for ac in data.account_costs
@@ -1359,6 +1377,10 @@ class ApiKeysService:
 class ApiKeyTrendsPoint:
     t: datetime
     v: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1373,6 +1395,9 @@ class ApiKeyAccountCostData:
     account_id: str | None
     email: str | None
     cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
     is_deleted: bool = False
 
 
@@ -1381,6 +1406,9 @@ class ApiKeyUsage7DayData:
     key_id: str
     total_tokens: int = 0
     total_cost_usd: float = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
     total_requests: int = 0
     cached_input_tokens: int = 0
     account_costs: list[ApiKeyAccountCostData] = field(default_factory=list)
@@ -1812,18 +1840,19 @@ def _reserve_cost_budget_microdollars(
 ) -> int:
     if not model:
         return _unknown_model_reserve_cost_budget_microdollars(input_tokens=input_tokens, output_tokens=output_tokens)
-    cost_microdollars = _calculate_cost_microdollars(
-        model,
-        input_tokens,
-        output_tokens,
-        0,
-        service_tier,
+    resolved = get_pricing_for_model(model)
+    if resolved is None:
+        return _unknown_model_reserve_cost_budget_microdollars(input_tokens=input_tokens, output_tokens=output_tokens)
+    cost_usd = calculate_cost_from_usage(
+        UsageTokens(input_tokens=float(input_tokens), output_tokens=float(output_tokens)),
+        resolved[1],
+        service_tier=service_tier,
     )
-    return (
-        cost_microdollars
-        if cost_microdollars > 0
-        else _unknown_model_reserve_cost_budget_microdollars(input_tokens=input_tokens, output_tokens=output_tokens)
-    )
+    if cost_usd is None:
+        return _unknown_model_reserve_cost_budget_microdollars(input_tokens=input_tokens, output_tokens=output_tokens)
+    if cost_usd == 0:
+        return 0
+    return max(1, int(cost_usd * 1_000_000))
 
 
 def _unknown_model_reserve_cost_budget_microdollars(*, input_tokens: int, output_tokens: int) -> int:
@@ -1941,6 +1970,10 @@ def _to_usage_summary_data(summary: ApiKeyUsageSummary | None) -> ApiKeyUsageSum
         total_tokens=summary.total_tokens,
         cached_input_tokens=summary.cached_input_tokens,
         total_cost_usd=summary.total_cost_usd,
+        priced_requests=summary.priced_requests,
+        unpriced_requests=summary.unpriced_requests,
+        unmetered_requests=summary.unmetered_requests,
+        coverage_unknown=summary.coverage_unknown,
     )
 
 
@@ -2108,16 +2141,28 @@ def _build_api_key_trends(
     time_grid = [start_epoch + i * bucket_seconds for i in range(bucket_count)]
 
     cost_by_bucket: dict[int, float] = {}
+    coverage_by_bucket: dict[int, ApiKeyTrendBucket] = {}
     tokens_by_bucket: dict[int, int] = {}
     for b in buckets:
         cost_by_bucket[b.bucket_epoch] = b.total_cost_usd
+        coverage_by_bucket[b.bucket_epoch] = b
         tokens_by_bucket[b.bucket_epoch] = b.total_tokens
 
     cost_points: list[ApiKeyTrendsPoint] = []
     tokens_points: list[ApiKeyTrendsPoint] = []
     for epoch in time_grid:
         dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
-        cost_points.append(ApiKeyTrendsPoint(t=dt, v=round(cost_by_bucket.get(epoch, 0.0), 6)))
+        bucket = coverage_by_bucket.get(epoch)
+        cost_points.append(
+            ApiKeyTrendsPoint(
+                t=dt,
+                v=round(cost_by_bucket.get(epoch, 0.0), 6),
+                priced_requests=bucket.priced_requests if bucket else 0,
+                unpriced_requests=bucket.unpriced_requests if bucket else 0,
+                unmetered_requests=bucket.unmetered_requests if bucket else 0,
+                coverage_unknown=bucket.coverage_unknown if bucket else False,
+            )
+        )
         tokens_points.append(ApiKeyTrendsPoint(t=dt, v=float(tokens_by_bucket.get(epoch, 0))))
 
     return ApiKeyTrendsData(key_id=key_id, cost=cost_points, tokens=tokens_points)

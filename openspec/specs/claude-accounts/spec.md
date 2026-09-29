@@ -486,6 +486,20 @@ Last successful observations and timestamps SHALL survive failures. HTTP errors 
 - **WHEN** catalog is cooling down but usage is due
 - **THEN** usage still refreshes and catalog retains its last successful data
 
+### Requirement: Claude request usage and timing
+Claude native and adapted request logs SHALL preserve inclusive input/output tokens, separately reported cache reads and writes, and only provider-reported reasoning tokens. The gateway SHALL measure upstream-attempt duration and time to first nonempty generated text, thinking or tool payload from a monotonic pre-open anchor. Metadata, pings and empty deltas MUST NOT establish first-token latency. Error, cancellation and truncated streams SHALL finalize duration without inventing first-token latency.
+
+#### Scenario: Cached thinking stream
+- **WHEN** a stream reports uncached input, cache reads, cache writes and output but no reasoning token count
+- **THEN** its inclusive totals and cache breakdown persist, while reasoning tokens remain unknown
+
+### Requirement: Claude reasoning policies
+Known budget-thinking models SHALL advertise reasoning separately from adaptive-thinking models. Requested efforts SHALL map to a documented budget below the effective output cap, and impossible explicit caps SHALL fail before upstream dispatch. Omitted/off reasoning SHALL not enable thinking. Request logs SHALL distinguish requested effort from the actual upstream thinking mode and budget when applicable.
+
+#### Scenario: Haiku reasoning cap
+- **WHEN** Haiku 4.5 receives high reasoning with an explicit output cap below the mapped budget
+- **THEN** the request fails before dispatch rather than enlarging the cap
+
 ### Requirement: Faithful translated Claude tool schemas
 Translated function tools SHALL expose an object input_schema without root oneOf, anyOf or allOf. Ordinary object schemas and nested composition SHALL retain their constraints. Root compositions SHALL use a reversible upstream-only arguments object envelope rather than lossy property merging. Local JSON-pointer references SHALL remain bound to the original schema after relocation. Schemas requiring relocation with unsupported reference scopes, malformed structure or exhausted adaptation budgets SHALL fail before dispatch with the caller-visible tool identity and tools parameter path, without omitting tools or replacing their schema with an unconstrained object.
 

@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
 } from "@/components/lazy-recharts";
 import type { DailyReportRow } from "../schemas";
+import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { buildContinuousDailyRows } from "../daily-series";
 import { formatCurrency } from "@/utils/formatters";
 import { ChartTooltip } from "./chart-tooltip";
@@ -26,10 +27,12 @@ export function CostPerDayChart({ startDate, endDate, data }: CostPerDayChartPro
   const chartData = buildContinuousDailyRows(startDate, endDate, data).map((d) => ({
     date: d.date.slice(5),
     cost: d.costUsd,
+    costLabel: formatCoveredCost(d.costUsd, d),
   }));
+  const incomplete = data.some((row) => !isCostCoverageComplete(row));
 
   return (
-    <ReportChartCard title={t("reports.charts.costByDay")} empty={data.length === 0}>
+    <ReportChartCard title={`${t("reports.charts.costByDay")}${incomplete ? " · known subtotal" : ""}`} empty={data.length === 0}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
             <defs>
@@ -52,7 +55,7 @@ export function CostPerDayChart({ startDate, endDate, data }: CostPerDayChartPro
               tickFormatter={formatCurrency}
             />
             <Tooltip
-              content={<ChartTooltip names={{ cost: t("reports.dailyBreakdown.columns.cost") }} formatValue={formatCurrency} />}
+              content={<ChartTooltip names={{ cost: t("reports.dailyBreakdown.columns.cost") }} formatValue={(value, _key, row) => (row as { costLabel?: string } | undefined)?.costLabel ?? formatCurrency(value)} />}
             />
             <Area
               type="monotone"

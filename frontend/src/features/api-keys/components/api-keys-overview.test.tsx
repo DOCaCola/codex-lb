@@ -20,6 +20,10 @@ describe("ApiKeysOverview", () => {
               totalTokens: 80_000,
               cachedInputTokens: 12_000,
               totalCostUsd: 2.5,
+              pricedRequests: 300,
+              unpricedRequests: 0,
+              unmeteredRequests: 0,
+              coverageUnknown: false,
             },
           }),
           createApiKey({
@@ -32,6 +36,10 @@ describe("ApiKeysOverview", () => {
               totalTokens: 20_000,
               cachedInputTokens: 2_000,
               totalCostUsd: 1.0,
+              pricedRequests: 120,
+              unpricedRequests: 0,
+              unmeteredRequests: 0,
+              coverageUnknown: false,
             },
           }),
         ]}

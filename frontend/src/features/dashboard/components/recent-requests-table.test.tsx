@@ -87,8 +87,15 @@ const LAYOUT_REQUEST = {
   latencyFirstTokenMs: 200,
   latencyQueueMs: null,
   cachedInputTokens: 0,
+  cacheCreationTokens: null,
+  cacheCreation5mTokens: null,
+  cacheCreation1hTokens: null,
   reasoningEffort: null,
+  upstreamReasoningEffort: null,
+  upstreamThinkingMode: null,
+  upstreamThinkingBudgetTokens: null,
   costUsd: 0.01,
+  costProvenance: null,
   costBreakdown: null,
   latencyMs: 1000,
 } satisfies RequestLog;
@@ -126,6 +133,37 @@ describe("OpenRouter gateway metrics", () => {
     />);
     expect(screen.getByText("Up HTTP")).toBeInTheDocument();
     expect(screen.queryByText(/openai_compatible_http/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Claude accounting presentation", () => {
+  it("keeps cache-write tokens and thinking mode visible with unknown price", () => {
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[{
+      ...LAYOUT_REQUEST,
+      model: "anthropic/claude-haiku-4-5-20251001",
+      modelSourceKind: "claude",
+      inputTokens: 1000,
+      outputTokens: 100,
+      tokens: 1100,
+      cachedInputTokens: 200,
+      cacheCreationTokens: 300,
+      cacheCreation5mTokens: 200,
+      cacheCreation1hTokens: 100,
+      reasoningTokens: null,
+      reasoningEffort: "medium",
+      upstreamThinkingMode: "enabled",
+      upstreamThinkingBudgetTokens: 8192,
+      costUsd: null,
+    }]} />);
+    expect(screen.getByText("--")).toBeInTheDocument();
+    const dialog = openRequestDetails();
+    expect(dialog).toHaveTextContent("500 Input");
+    expect(dialog).toHaveTextContent("200 Cached");
+    expect(dialog).toHaveTextContent("300 cache write");
+    expect(dialog).toHaveTextContent("Cache write (5m)");
+    expect(dialog).toHaveTextContent("Cache write (1h)");
+    expect(dialog).toHaveTextContent("enabled (8192 tokens)");
+    expect(dialog).toHaveTextContent("Unknown (unpriced or historical)");
   });
 });
 
@@ -1346,7 +1384,7 @@ describe("RecentRequestsTable", () => {
     expect(within(dialog).getByText("1 ms")).toBeInTheDocument();
   });
 
-  it("hides the cost section for total-only cost breakdown rows", () => {
+  it("shows token counts even when component prices are unavailable", () => {
     render(
       <RecentRequestsTable
         {...PAGINATION_PROPS}
@@ -1397,7 +1435,9 @@ describe("RecentRequestsTable", () => {
 
     const dialog = openRequestDetails();
 
-    expect(within(dialog).queryByText("Cost")).not.toBeInTheDocument();
+    const costSection = within(dialog).getByText("Cost").closest("div.space-y-2");
+    expect(costSection).toHaveTextContent("1K Input");
+    expect(costSection).toHaveTextContent("500 Output");
   });
 
   it("closes the dialog when conversation ID button is clicked and fires handler", () => {

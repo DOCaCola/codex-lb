@@ -237,37 +237,30 @@ function formatRequestCostSummary(request: RequestLog | null, t: ReturnType<type
   const totalUsd = request.costBreakdown?.totalUsd ?? request.costUsd;
   const segments: string[] = [];
   const cachedInputTokens = request.cachedInputTokens ?? 0;
+  const cacheCreationTokens = request.cacheCreationTokens ?? 0;
   const nonCachedInputTokens =
-    request.inputTokens == null ? null : Math.max(0, request.inputTokens - cachedInputTokens);
+    request.inputTokens == null ? null : Math.max(0, request.inputTokens - cachedInputTokens - cacheCreationTokens);
 
-  if (nonCachedInputTokens != null && request.costBreakdown?.inputUsd != null) {
-    segments.push(
-      t("dashboard.requestDetails.costSegment", {
-        count: formatCompactNumber(nonCachedInputTokens),
-        label: t("common.units.input"),
-        cost: formatCurrency(request.costBreakdown.inputUsd),
-      }),
-    );
+  const segment = (count: number, label: string, cost: number | null | undefined) =>
+    cost == null
+      ? `${formatCompactNumber(count)} ${label}`
+      : t("dashboard.requestDetails.costSegment", {
+          count: formatCompactNumber(count), label, cost: formatCurrency(cost),
+        });
+
+  if (nonCachedInputTokens != null) {
+    segments.push(segment(nonCachedInputTokens, t("common.units.input"), request.costBreakdown?.inputUsd));
   }
 
-  if (request.cachedInputTokens != null && request.costBreakdown?.cachedInputUsd != null) {
-    segments.push(
-      t("dashboard.requestDetails.costSegment", {
-        count: formatCompactNumber(request.cachedInputTokens),
-        label: t("common.units.cached"),
-        cost: formatCurrency(request.costBreakdown.cachedInputUsd),
-      }),
-    );
+  if (request.cachedInputTokens != null) {
+    segments.push(segment(request.cachedInputTokens, t("common.units.cached"), request.costBreakdown?.cachedInputUsd));
+  }
+  if (request.cacheCreationTokens != null) {
+    segments.push(segment(request.cacheCreationTokens, t("dashboard.requests.cacheWrite", "cache write"), request.costBreakdown?.cacheWriteUsd));
   }
 
-  if (request.outputTokens != null && request.costBreakdown?.outputUsd != null) {
-    segments.push(
-      t("dashboard.requestDetails.costSegment", {
-        count: formatCompactNumber(request.outputTokens),
-        label: t("common.units.output"),
-        cost: formatCurrency(request.costBreakdown.outputUsd),
-      }),
-    );
+  if (request.outputTokens != null) {
+    segments.push(segment(request.outputTokens, t("common.units.output"), request.costBreakdown?.outputUsd));
   }
 
   if (segments.length === 0) {
@@ -277,7 +270,6 @@ function formatRequestCostSummary(request: RequestLog | null, t: ReturnType<type
   if (totalUsd == null) {
     return segments.join(" + ");
   }
-
   return `${formatCurrency(totalUsd)} = ${segments.join(" + ")}`;
 }
 
@@ -511,6 +503,11 @@ export function RecentRequestsTable({
                           {t("common.units.cachedShort", { count: formatCompactNumber(request.cachedInputTokens) })}
                         </div>
                       )}
+                      {request.cacheCreationTokens != null && request.cacheCreationTokens > 0 && (
+                        <div className="text-[11px] text-muted-foreground">
+                          {formatCompactNumber(request.cacheCreationTokens)} {t("dashboard.requests.cacheWrite", "cache write")}
+                        </div>
+                      )}
                       {request.reasoningTokens != null ? (
                         <div className="text-[11px] text-muted-foreground">
                           {t("dashboard.requests.reasoningTokensShort", {
@@ -520,7 +517,8 @@ export function RecentRequestsTable({
                       ) : null}
                     </div>
                   </TableCell> : null}
-                  {isColumnVisible("cost") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums">
+                  {isColumnVisible("cost") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums"
+                    title={request.modelSourceKind === "claude" && request.costProvenance === "api_equivalent_estimate" ? t("dashboard.requests.claudeCostBasis", "API-equivalent estimate; not a subscription charge") : undefined}>
                     {formatCurrency(request.costUsd)}
                   </TableCell> : null}
                   {isColumnVisible("details") ? <TableCell className="pr-4 align-top whitespace-normal">
@@ -603,6 +601,27 @@ export function RecentRequestsTable({
                 <RequestDetailField label={t("dashboard.requests.columns.plan")} value={selectedRequest?.planType ? formatSlug(selectedRequest.planType) : "—"} />
                 <RequestDetailField label={t("dashboard.requestDetails.elapsed")} value={formatElapsed(selectedRequest?.latencyMs ?? null)} />
                 <RequestDetailField label="TTFT" value={formatElapsed(selectedRequest?.latencyFirstTokenMs ?? null)} />
+                {selectedRequest?.modelSourceKind === "claude" ? (
+                  <RequestDetailField label={t("dashboard.requests.costBasis", "Cost basis")}
+                    value={selectedRequest.costProvenance === "api_equivalent_estimate"
+                      ? t("dashboard.requests.claudeCostBasis", "API-equivalent estimate; not a subscription charge")
+                      : t("dashboard.requests.unknownCost", "Unknown (unpriced or historical)")} />
+                ) : null}
+                {selectedRequest?.cacheCreation5mTokens != null ? (
+                  <RequestDetailField label={t("dashboard.requests.cacheWrite5m", "Cache write (5m)")} value={formatCompactNumber(selectedRequest.cacheCreation5mTokens)} />
+                ) : null}
+                {selectedRequest?.cacheCreation1hTokens != null ? (
+                  <RequestDetailField label={t("dashboard.requests.cacheWrite1h", "Cache write (1h)")} value={formatCompactNumber(selectedRequest.cacheCreation1hTokens)} />
+                ) : null}
+                {selectedRequest?.upstreamThinkingMode ? (
+                  <RequestDetailField label={t("dashboard.requests.upstreamThinking", "Upstream thinking")} value={`${selectedRequest.upstreamThinkingMode}${selectedRequest.upstreamThinkingBudgetTokens != null ? ` (${selectedRequest.upstreamThinkingBudgetTokens} tokens)` : ""}`} />
+                ) : null}
+                {selectedRequest?.modelSourceKind === "claude" ? (
+                  <RequestDetailField label={t("dashboard.requests.requestedEffort", "Requested effort")} value={selectedRequest.reasoningEffort ?? "—"} />
+                ) : null}
+                {selectedRequest?.upstreamReasoningEffort ? (
+                  <RequestDetailField label={t("dashboard.requests.upstreamEffort", "Upstream effort")} value={selectedRequest.upstreamReasoningEffort} />
+                ) : null}
                 <RequestDetailField label={t("dashboard.requestDetails.queue")} value={formatElapsed(selectedRequest?.latencyQueueMs ?? null)} />
                 <RequestDetailField label="TPS" value={selectedRequest ? (formatGenerationSpeed(selectedRequest) ?? "—") : "—"} />
                 {selectedRequest?.reasoningTokens != null ? (

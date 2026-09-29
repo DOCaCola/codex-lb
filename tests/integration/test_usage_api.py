@@ -233,9 +233,9 @@ async def test_usage_window_invalid_query_returns_validation_error(async_client)
 async def test_usage_summary_sql_aggregate_matches_legacy_python_summation(async_client, db_setup):
     """The SQL window aggregate must reproduce the legacy per-row Python
     summation exactly, including the reasoning-token fallback, per-row
-    cached<=input clamp, NULL-cost model exclusion, and top-error pick."""
+    cached<=input clamp and top-error pick; cost follows request coverage."""
     from app.modules.request_logs.repository import RequestLogsRepository
-    from app.modules.usage.builders import _cost_summary_from_logs, _usage_metrics
+    from app.modules.usage.builders import _usage_metrics
 
     now = utcnow()
     async with SessionLocal() as session:
@@ -300,7 +300,6 @@ async def test_usage_summary_sql_aggregate_matches_legacy_python_summation(async
         logs_repo = RequestLogsRepository(session)
         legacy_rows = await logs_repo.list_since(now - timedelta(minutes=10080))
         legacy_metrics = _usage_metrics(legacy_rows)
-        legacy_cost = _cost_summary_from_logs(legacy_rows)
         aggregate = await logs_repo.aggregate_usage_metrics_since(now - timedelta(minutes=10080))
 
     response = await async_client.get("/api/usage/summary")
@@ -315,14 +314,24 @@ async def test_usage_summary_sql_aggregate_matches_legacy_python_summation(async
     assert metrics["topError"] == legacy_metrics.top_error == "rate_limit_exceeded"
     assert metrics["cancelled7d"] == legacy_metrics.cancelled_7d == 3
 
+    # Six priced rows (0.5 + 0.25 + 0.125 + 3 x 0.01); the two NULL-cost rows
+    # observed usage, so they are unpriced rather than silently $0.
     cost = payload["cost"]
-    assert cost["totalUsd7d"] == pytest.approx(legacy_cost.total_usd_7d)
+    assert cost["totalUsd7d"] == pytest.approx(0.905)
+    assert cost["costCoverage"] == {
+        "knownCostUsd": pytest.approx(0.905),
+        "pricedRequests": 6,
+        "unpricedRequests": 2,
+        "unmeteredRequests": 0,
+        "coverageUnknown": False,
+    }
 
-    # The response schema only exposes the total; compare the per-model
+    # The response schema only exposes the total; check the per-model
     # breakdown at the builder level.
     from app.modules.usage.builders import build_usage_cost_from_aggregate
 
     aggregate_cost = build_usage_cost_from_aggregate(aggregate)
     assert [(entry.model, entry.usd) for entry in aggregate_cost.by_model] == [
-        (entry.model, entry.usd) for entry in legacy_cost.by_model
+        ("gpt-eq-0", pytest.approx(0.885)),
+        ("gpt-eq-1", pytest.approx(0.02)),
     ]

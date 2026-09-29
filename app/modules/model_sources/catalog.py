@@ -252,6 +252,9 @@ def source_model_cost_usd(
     input_tokens: int,
     output_tokens: int,
     cached_input_tokens: int = 0,
+    cache_creation_tokens: int | None = None,
+    cache_creation_5m_tokens: int | None = None,
+    cache_creation_1h_tokens: int | None = None,
 ) -> float | None:
     """Price usage against the source's per-model rates.
 
@@ -266,16 +269,40 @@ def source_model_cost_usd(
     )
     if entry is None:
         return None
-    if entry.input_per_1m is None and entry.cached_input_per_1m is None and entry.output_per_1m is None:
-        return None
-    input_rate = entry.input_per_1m or 0.0
+    if source.kind == "claude":
+        from app.core.usage.pricing import ClaudeUsageTokens, calculate_claude_cost_breakdown, get_pricing_for_model
+
+        resolved = get_pricing_for_model(model.removeprefix("anthropic/"))
+        if resolved is None:
+            return None
+        breakdown = calculate_claude_cost_breakdown(
+            ClaudeUsageTokens(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_creation_5m_tokens=cache_creation_5m_tokens,
+                cache_creation_1h_tokens=cache_creation_1h_tokens,
+            ),
+            resolved[1],
+        )
+        return breakdown.total_usd if breakdown is not None else None
+    input_rate = entry.input_per_1m
     cached_rate = entry.cached_input_per_1m if entry.cached_input_per_1m is not None else input_rate
-    output_rate = entry.output_per_1m or 0.0
+    output_rate = entry.output_per_1m
     billable_input = max(0, input_tokens - cached_input_tokens)
+    if any(
+        (
+            billable_input and input_rate is None,
+            cached_input_tokens and cached_rate is None,
+            output_tokens and output_rate is None,
+        )
+    ):
+        return None
     return (
-        (billable_input / 1_000_000) * input_rate
-        + (cached_input_tokens / 1_000_000) * cached_rate
-        + (output_tokens / 1_000_000) * output_rate
+        (billable_input / 1_000_000) * (input_rate or 0)
+        + (cached_input_tokens / 1_000_000) * (cached_rate or 0)
+        + (output_tokens / 1_000_000) * (output_rate or 0)
     )
 
 

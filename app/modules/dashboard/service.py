@@ -32,6 +32,7 @@ from app.modules.usage.builders import (
     build_activity_summaries,
     build_trends_from_buckets,
     build_usage_window_response,
+    cost_coverage_response,
 )
 from app.modules.usage.depletion_service import (
     compute_aggregate_depletion,
@@ -159,6 +160,7 @@ class DashboardService:
                 requests=previous_metrics.requests or 0,
                 tokens=previous_metrics.tokens or 0,
                 costUsd=previous_cost.total_usd,
+                cost_coverage=cost_coverage_response(previous_cost.cost_coverage),
             ),
         )
 

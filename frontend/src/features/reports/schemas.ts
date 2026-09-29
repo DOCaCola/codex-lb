@@ -1,6 +1,14 @@
 import { z } from "zod";
 
+const CostCoverageFields = {
+  pricedRequests: z.number().int().nonnegative().optional().default(0),
+  unpricedRequests: z.number().int().nonnegative().optional().default(0),
+  unmeteredRequests: z.number().int().nonnegative().optional().default(0),
+  coverageUnknown: z.boolean().optional().default(false),
+};
+
 const DailyReportRowSchema = z.object({
+  ...CostCoverageFields,
   date: z.string(),
   requests: z.number(),
   conversations: z.number(),
@@ -18,20 +26,23 @@ const DailyReportRowSchema = z.object({
 });
 
 const ModelCostEntrySchema = z.object({
+  ...CostCoverageFields,
   model: z.string(),
   costUsd: z.number(),
   requests: z.number(),
-  percentage: z.number(),
+  percentage: z.number().nullable(),
 });
 
 const UseragentCostEntrySchema = z.object({
+  ...CostCoverageFields,
   useragent: z.string(),
   costUsd: z.number(),
   requests: z.number(),
-  percentage: z.number(),
+  percentage: z.number().nullable(),
 });
 
 const AccountCostEntrySchema = z.object({
+  ...CostCoverageFields,
   accountId: z.string().nullable(),
   alias: z.string().nullable(),
   costUsd: z.number(),
@@ -39,6 +50,7 @@ const AccountCostEntrySchema = z.object({
 });
 
 const ReportSummarySchema = z.object({
+  ...CostCoverageFields,
   totalCostUsd: z.number(),
   totalInputTokens: z.number(),
   totalOutputTokens: z.number(),
@@ -50,11 +62,12 @@ const ReportSummarySchema = z.object({
   totalErrors: z.number(),
   totalConversations: z.number(),
   activeAccounts: z.number(),
-  avgCostPerDay: z.number(),
+  avgCostPerDay: z.number().nullable(),
   avgRequestsPerDay: z.number(),
 });
 
 const ReportComparisonPreviousSchema = z.object({
+  ...CostCoverageFields,
   totalCostUsd: z.number(),
   totalTokens: z.number(),
   totalRequests: z.number(),
@@ -111,11 +124,11 @@ export const ThreadIdentityResponseSchema = z.object({
 });
 
 export type DailyReportRow = z.input<typeof DailyReportRowSchema>;
-export type ModelCostEntry = z.infer<typeof ModelCostEntrySchema>;
-export type UseragentCostEntry = z.infer<typeof UseragentCostEntrySchema>;
-export type AccountCostEntry = z.infer<typeof AccountCostEntrySchema>;
-export type ReportSummary = z.infer<typeof ReportSummarySchema>;
-export type ReportComparison = z.infer<typeof ReportComparisonSchema>;
+export type ModelCostEntry = z.input<typeof ModelCostEntrySchema>;
+export type UseragentCostEntry = z.input<typeof UseragentCostEntrySchema>;
+export type AccountCostEntry = z.input<typeof AccountCostEntrySchema>;
+export type ReportSummary = z.input<typeof ReportSummarySchema>;
+export type ReportComparison = z.input<typeof ReportComparisonSchema>;
 export type ReportsResponse = z.infer<typeof ReportsResponseSchema>;
 export type ThreadIdentityFacet = z.infer<typeof ThreadIdentityFacetSchema>;
 export type ThreadIdentityResponse = z.infer<typeof ThreadIdentityResponseSchema>;

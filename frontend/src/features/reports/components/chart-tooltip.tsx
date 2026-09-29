@@ -1,7 +1,7 @@
 import type { TooltipContentProps } from "recharts";
 
 export type ChartTooltipProps = Partial<TooltipContentProps<number, string>> & {
-  formatValue?: (value: number, dataKey: string) => string;
+  formatValue?: (value: number, dataKey: string, row?: unknown) => string;
   names?: Record<string, string>;
 };
 
@@ -29,7 +29,7 @@ export function ChartTooltip({
           const value =
             typeof entry.value === "number"
               ? formatValue
-                ? formatValue(entry.value, String(entry.dataKey))
+                ? formatValue(entry.value, String(entry.dataKey), entry.payload)
                 : String(entry.value)
               : String(entry.value);
 

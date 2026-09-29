@@ -170,6 +170,10 @@ class AccountsService:
                 total_tokens=row.total_tokens,
                 cached_input_tokens=row.cached_input_tokens,
                 total_cost_usd=row.total_cost_usd,
+                priced_requests=row.priced_requests,
+                unpriced_requests=row.unpriced_requests,
+                unmetered_requests=row.unmetered_requests,
+                coverage_unknown=row.coverage_unknown,
             )
             for account_id, row in request_usage_rows.items()
         }

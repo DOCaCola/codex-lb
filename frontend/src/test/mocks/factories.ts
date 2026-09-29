@@ -20,6 +20,7 @@ import {
 import type {
 	ApiKeyTrendsResponse,
 	ApiKeyUsage7DayResponse,
+	ApiKeyUsage7DayInput,
 } from "@/features/apis/schemas";
 import {
 	ApiKeyTrendsResponseSchema,
@@ -293,6 +294,13 @@ export function createDashboardOverview(
 			cost: {
 				currency: "USD",
 				totalUsd: 1.82,
+				costCoverage: {
+					knownCostUsd: 1.82,
+					pricedRequests: 228,
+					unpricedRequests: 0,
+					unmeteredRequests: 0,
+					coverageUnknown: false,
+				},
 			},
 			metrics: {
 				requests: 228,
@@ -1272,6 +1280,10 @@ export function createApiKey(overrides: Partial<ApiKey> = {}): ApiKey {
 			totalTokens: 50_000,
 			cachedInputTokens: 10_000,
 			totalCostUsd: 1.23,
+			pricedRequests: 150,
+			unpricedRequests: 0,
+			unmeteredRequests: 0,
+			coverageUnknown: false,
 		},
 		limits: [
 			{
@@ -1314,6 +1326,10 @@ export function createDefaultApiKeys(): ApiKey[] {
 				totalTokens: 12_500,
 				cachedInputTokens: 2_200,
 				totalCostUsd: 0.42,
+				pricedRequests: 42,
+				unpricedRequests: 0,
+				unmeteredRequests: 0,
+				coverageUnknown: false,
 			},
 			limits: [],
 		}),
@@ -1364,7 +1380,7 @@ export function createApiKeyTrends(
 }
 
 export function createApiKeyUsage7Day(
-	overrides: Partial<ApiKeyUsage7DayResponse> = {},
+	overrides: Partial<ApiKeyUsage7DayInput> = {},
 ): ApiKeyUsage7DayResponse {
 	return ApiKeyUsage7DayResponseSchema.parse({
 		keyId: "key_1",
@@ -1372,6 +1388,9 @@ export function createApiKeyUsage7Day(
 		cachedInputTokens: 45_000,
 		totalRequests: 350,
 		totalCostUsd: 2.47,
+		pricedRequests: 350,
+		unpricedRequests: 0,
+		unmeteredRequests: 0,
 		...overrides,
 	});
 }
@@ -1393,6 +1412,7 @@ export function createConversationEntry(
 		totalTokens: 1800,
 		cachedInputTokens: 320,
 		totalCostUsd: 0.0132,
+		costCoverage: { knownCostUsd: 0.0132, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
 		...overrides,
 	});
 }
@@ -1439,6 +1459,7 @@ export function createConversationModelStat(
 		cachedInputTokens: 200,
 		totalOutputTokens: 300,
 		totalCostUsd: 0.05,
+		costCoverage: { knownCostUsd: 0.05, pricedRequests: 4, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
 		...overrides,
 	});
 }

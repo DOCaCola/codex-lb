@@ -56,6 +56,8 @@ def _lifespan_scheduler_builders() -> set[str]:
 
 def test_background_loop_seam_is_explicit_and_complete() -> None:
     assert BACKGROUND_LOOP_BUILDERS == (
+        "build_quota_webhook_scheduler",
+        "build_claude_refresh_scheduler",
         "build_metadata_refresh_scheduler",
         "build_usage_refresh_scheduler",
         "build_model_refresh_scheduler",

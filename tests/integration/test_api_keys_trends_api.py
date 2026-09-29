@@ -630,6 +630,9 @@ async def test_usage_7d_sums_only_recent_request_logs(async_client):
         "keyId": key_id,
         "totalTokens": 174,
         "totalCostUsd": 0.53,
+        "pricedRequests": 3,
+        "unpricedRequests": 0,
+        "unmeteredRequests": 0,
         "totalRequests": 3,
         "cachedInputTokens": 21,
         "accountCosts": [
@@ -637,6 +640,9 @@ async def test_usage_7d_sums_only_recent_request_logs(async_client):
                 "accountId": None,
                 "email": None,
                 "costUsd": 0.53,
+                "pricedRequests": 3,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
                 "isDeleted": False,
             }
         ],
@@ -682,6 +688,9 @@ async def test_usage_7d_clamps_cached_input_tokens_to_total_input(async_client):
         "keyId": key_id,
         "totalTokens": 19,
         "totalCostUsd": 0.15,
+        "pricedRequests": 2,
+        "unpricedRequests": 0,
+        "unmeteredRequests": 0,
         "totalRequests": 2,
         "cachedInputTokens": 14,
         "accountCosts": [
@@ -689,6 +698,9 @@ async def test_usage_7d_clamps_cached_input_tokens_to_total_input(async_client):
                 "accountId": None,
                 "email": None,
                 "costUsd": 0.15,
+                "pricedRequests": 2,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
                 "isDeleted": False,
             }
         ],
@@ -735,12 +747,81 @@ async def test_usage_7d_keeps_unknown_account_usage_separate_from_deleted_accoun
             "accountId": None,
             "email": None,
             "costUsd": 0.29,
+            "pricedRequests": 1,
+            "unpricedRequests": 0,
+            "unmeteredRequests": 0,
             "isDeleted": True,
         },
         {
             "accountId": None,
             "email": None,
             "costUsd": 0.11,
+            "pricedRequests": 1,
+            "unpricedRequests": 0,
+            "unmeteredRequests": 0,
             "isDeleted": False,
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_usage_7d_separates_known_unpriced_unmetered_and_excluded_rows(async_client):
+    key_id = await _create_api_key(async_client, name="usage-key-coverage")
+    now = utcnow()
+    await _insert_request_logs(
+        RequestLog(
+            api_key_id=key_id,
+            request_id="coverage-priced-zero",
+            requested_at=now,
+            model="gpt-5.1",
+            status="success",
+            input_tokens=1,
+            cost_usd=0,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            request_id="coverage-unpriced",
+            requested_at=now,
+            model="gpt-5.1",
+            status="success",
+            input_tokens=1,
+            cost_usd=None,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            request_id="coverage-unmetered",
+            requested_at=now,
+            model="gpt-5.1",
+            status="error",
+            latency_ms=10,
+            cost_usd=None,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            request_id="coverage-local-refusal",
+            requested_at=now,
+            model="gpt-5.1",
+            status="error",
+            cost_usd=None,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            request_id="coverage-count-tokens",
+            requested_at=now,
+            model="gpt-5.1",
+            status="success",
+            request_kind="count_tokens",
+            input_tokens=1,
+            cost_usd=None,
+        ),
+    )
+
+    response = await async_client.get(f"/api/api-keys/{key_id}/usage-7d")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["totalRequests"] == 5
+    assert payload["totalCostUsd"] == 0
+    assert (payload["pricedRequests"], payload["unpricedRequests"], payload["unmeteredRequests"]) == (1, 1, 1)
+    assert len(payload["accountCosts"]) == 1
+    account = payload["accountCosts"][0]
+    assert (account["pricedRequests"], account["unpricedRequests"], account["unmeteredRequests"]) == (1, 1, 1)

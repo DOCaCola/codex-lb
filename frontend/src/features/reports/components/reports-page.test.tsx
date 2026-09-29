@@ -59,6 +59,10 @@ vi.mock("recharts", async (importOriginal) => {
 
 const EMPTY_REPORT: ReportsResponse = {
   summary: {
+    pricedRequests: 0,
+    unpricedRequests: 0,
+    unmeteredRequests: 0,
+    coverageUnknown: false,
     totalCostUsd: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -76,6 +80,10 @@ const EMPTY_REPORT: ReportsResponse = {
   comparison: {
     canCompare: false,
     previous: {
+      pricedRequests: 0,
+      unpricedRequests: 0,
+      unmeteredRequests: 0,
+      coverageUnknown: false,
       totalCostUsd: 0,
       totalTokens: 0,
       totalRequests: 0,
@@ -389,16 +397,16 @@ describe("ReportsPage", () => {
         data: {
           ...EMPTY_REPORT,
           byModel: filters.model
-            ? [{ model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 100 }]
+            ? [{ model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 100, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false }]
               : [
-                  { model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 50 },
-                  { model: "gpt-5.2", costUsd: 1, requests: 1, percentage: 50 },
+                  { model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 50, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
+                  { model: "gpt-5.2", costUsd: 1, requests: 1, percentage: 50, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
                 ],
           byUseragent: filters.model
-            ? [{ useragent: "CLI", costUsd: 1, requests: 1, percentage: 100 }]
+            ? [{ useragent: "CLI", costUsd: 1, requests: 1, percentage: 100, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false }]
             : [
-                { useragent: "CLI", costUsd: 1, requests: 1, percentage: 50 },
-                { useragent: "SDK", costUsd: 1, requests: 1, percentage: 50 },
+                { useragent: "CLI", costUsd: 1, requests: 1, percentage: 50, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
+                { useragent: "SDK", costUsd: 1, requests: 1, percentage: 50, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               ],
         },
         isLoading: false,
@@ -423,13 +431,13 @@ describe("ReportsPage", () => {
         data: {
           ...EMPTY_REPORT,
           byModel: [
-            { model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 100 },
+            { model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 100, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
           ],
           byUseragent: filters.useragent
-            ? [{ useragent: "CLI", costUsd: 1, requests: 1, percentage: 100 }]
+            ? [{ useragent: "CLI", costUsd: 1, requests: 1, percentage: 100, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false }]
             : [
-                { useragent: "CLI", costUsd: 1, requests: 1, percentage: 50 },
-                { useragent: "SDK", costUsd: 1, requests: 1, percentage: 50 },
+                { useragent: "CLI", costUsd: 1, requests: 1, percentage: 50, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
+                { useragent: "SDK", costUsd: 1, requests: 1, percentage: 50, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               ],
         },
         isLoading: false,
@@ -528,10 +536,10 @@ describe("ReportsPage", () => {
             data: {
               ...EMPTY_REPORT,
               byModel: [
-                { model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 100 },
+                { model: "gpt-5.1", costUsd: 1, requests: 1, percentage: 100, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               ],
               byUseragent: [
-                { useragent: "CLI", costUsd: 1, requests: 1, percentage: 100 },
+                { useragent: "CLI", costUsd: 1, requests: 1, percentage: 100, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               ],
             },
             isLoading: false,
@@ -575,9 +583,9 @@ describe("ReportsPage", () => {
       asUseReportsResult({
         data: {
           ...EMPTY_REPORT,
-          byModel: [{ model: "gpt-5.1", costUsd: 12, requests: 3, percentage: 100 }],
+          byModel: [{ model: "gpt-5.1", costUsd: 12, requests: 3, percentage: 100, pricedRequests: 3, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false }],
           byUseragent: [
-            { useragent: "CLI", costUsd: 10, requests: 2, percentage: 100 },
+            { useragent: "CLI", costUsd: 10, requests: 2, percentage: 100, pricedRequests: 2, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
           ],
         },
         isLoading: false,
@@ -770,10 +778,10 @@ describe("ReportsPage", () => {
         data: {
           ...EMPTY_REPORT,
           byModel: [
-            { model: "gpt-5.1", costUsd: 12, requests: 3, percentage: 100 },
+            { model: "gpt-5.1", costUsd: 12, requests: 3, percentage: 100, pricedRequests: 3, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
           ],
           byUseragent: [
-            { useragent: "CLI", costUsd: 10, requests: 2, percentage: 100 },
+            { useragent: "CLI", costUsd: 10, requests: 2, percentage: 100, pricedRequests: 2, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
           ],
         },
         isLoading: false,
@@ -957,6 +965,10 @@ describe("ReportsPage", () => {
               reasoningTokens: 0,
               cachedInputTokens: 50,
               costUsd: 0.15,
+              pricedRequests: 42,
+              unpricedRequests: 0,
+              unmeteredRequests: 0,
+              coverageUnknown: false,
               activeAccounts: 1,
               cancelledCount: 0,
               errorCount: 0,
@@ -986,7 +998,7 @@ describe("ReportsPage", () => {
 
     expect(createObjectURL).toHaveBeenCalledOnce();
     const csvContent = await blobText();
-    expect(csvContent).toContain("2030-01-15,42,2,1000,200,0,50,0.1500,1,0,0");
+    expect(csvContent).toContain("2030-01-15,42,2,1000,200,0,50,0.1500,42,0,0,false,1,0,0");
   });
 });
 

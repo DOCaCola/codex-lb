@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 import app.modules.accounts.usage_time_rollup as time_rollup_module
 from app.core.crypto import TokenEncryptor
@@ -1012,6 +1012,74 @@ async def test_upgrade_repair_marker_covers_multi_slice_legacy_advance(db_setup)
             await session.execute(select(AccountUsageRollupState).where(AccountUsageRollupState.id == 1))
         ).scalar_one()
         assert state.upgrade_repair_from is None
+
+
+@pytest.mark.asyncio
+async def test_upgrade_repair_restores_coverage_only_for_retained_buckets(db_setup):
+    """The coverage migration marks every existing hourly rollup
+    `coverage_unknown`. The post-upgrade refold must rebuild coverage for
+    buckets whose raw rows survive, while a bucket whose rows were pruned keeps
+    its known cost and stays unknown: its coverage cannot be proven."""
+    now = utcnow()
+    hour_pruned = floor_to_hour(now - timedelta(hours=40))
+    hour_retained = floor_to_hour(now - timedelta(hours=20))
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(_make_account("acc_cov", "coverage-fix@example.com"))
+        logs = RequestLogsRepository(session)
+        for label, hour in (("pruned", hour_pruned), ("retained", hour_retained)):
+            await _add_log(logs, account_id="acc_cov", request_id=f"r_cov_{label}_priced", requested_at=hour)
+            await _add_log(
+                logs,
+                account_id="acc_cov",
+                request_id=f"r_cov_{label}_unpriced",
+                requested_at=hour + timedelta(seconds=30),
+                cost_usd=None,
+                model="no-catalog-price",
+            )
+
+    time_rollup_module._upgrade_repair_done = True
+    assert await run_hourly_fold_pass(now=now) >= 1
+
+    # Simulate the migration (every folded bucket unknown, counts zeroed),
+    # then retention pruning the older bucket's raw rows.
+    async with SessionLocal() as session:
+        await session.execute(
+            update(RequestUsageHourlyRollup).values(
+                coverage_unknown=1, priced_requests=0, unpriced_requests=0, unmetered_requests=0
+            )
+        )
+        await session.execute(delete(RequestLog).where(RequestLog.requested_at < hour_pruned + timedelta(hours=1)))
+        await session.execute(update(AccountUsageRollupState).values(upgrade_repair_from=_EPOCH))
+        await session.commit()
+
+    time_rollup_module._upgrade_repair_done = False
+    await run_hourly_fold_pass(now=now)
+    time_rollup_module._upgrade_repair_done = True
+
+    hourly, _errors, _demand, _watermark = await _dump_all_rollups()
+
+    def _bucket(hour: datetime) -> tuple[int, int, int, float]:
+        # ``model`` is a rollup dimension: one bucket spans several rows.
+        rows = [r for r in hourly if r.bucket_epoch == epoch_seconds(hour)]
+        return (
+            max(r.coverage_unknown for r in rows),
+            sum(r.priced_requests for r in rows),
+            sum(r.unpriced_requests for r in rows),
+            sum(r.cost_usd for r in rows),
+        )
+
+    assert _bucket(hour_pruned) == (1, 0, 0, pytest.approx(0.01))
+    assert _bucket(hour_retained) == (0, 1, 1, pytest.approx(0.01))
+
+    # The dashboard reader carries the surviving uncertainty forward.
+    async with SessionLocal() as session:
+        activity = await RequestLogsRepository(session).aggregate_activity_between(
+            hour_pruned - timedelta(hours=1), now
+        )
+    assert activity.cost_coverage.coverage_unknown is True
+    assert activity.cost_coverage.known_cost_usd == pytest.approx(0.02)
+    assert activity.cost_coverage.priced_requests == 1
+    assert activity.cost_coverage.unpriced_requests == 1
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,7 @@ describe("ConversationDetailsDialog", () => {
                 cachedInputTokens: 3,
                 totalOutputTokens: 300,
                 totalCostUsd: 0.3,
+                costCoverage: { knownCostUsd: 0.3, pricedRequests: 3, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               },
               {
                 modelEffort: { model: "gpt-a", reasoningEffort: "low" },
@@ -89,6 +90,7 @@ describe("ConversationDetailsDialog", () => {
                 cachedInputTokens: 2,
                 totalOutputTokens: 200,
                 totalCostUsd: 0.2,
+                costCoverage: { knownCostUsd: 0.2, pricedRequests: 3, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               },
               {
                 modelEffort: { model: "gpt-m", reasoningEffort: "medium" },
@@ -98,6 +100,7 @@ describe("ConversationDetailsDialog", () => {
                 cachedInputTokens: 1,
                 totalOutputTokens: 100,
                 totalCostUsd: 0.1,
+                costCoverage: { knownCostUsd: 0.1, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
               },
             ],
           }),

@@ -80,6 +80,10 @@ describe("ApiKeyInfo", () => {
 						totalTokens: 0,
 						cachedInputTokens: 0,
 						totalCostUsd: 0,
+						pricedRequests: 0,
+						unpricedRequests: 0,
+						unmeteredRequests: 0,
+						coverageUnknown: false,
 					},
 				})}
 			/>,
@@ -97,6 +101,10 @@ describe("ApiKeyInfo", () => {
 						totalTokens: 50_000,
 						cachedInputTokens: 10_000,
 						totalCostUsd: 1.23,
+						pricedRequests: 150,
+						unpricedRequests: 0,
+						unmeteredRequests: 0,
+						coverageUnknown: false,
 					},
 				})}
 			/>,

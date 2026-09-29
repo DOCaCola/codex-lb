@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
@@ -86,7 +86,17 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
                 .where(
                     ApiKeyUsageRollup.api_key_id == log.api_key_id,
                 )
-                .values(total_cost_usd=ApiKeyUsageRollup.total_cost_usd + cost)
+                .values(
+                    total_cost_usd=ApiKeyUsageRollup.total_cost_usd + cost,
+                    priced_requests=case(
+                        (ApiKeyUsageRollup.coverage_unknown == 0, ApiKeyUsageRollup.priced_requests + 1),
+                        else_=ApiKeyUsageRollup.priced_requests,
+                    ),
+                    unpriced_requests=case(
+                        (ApiKeyUsageRollup.coverage_unknown == 0, ApiKeyUsageRollup.unpriced_requests - 1),
+                        else_=ApiKeyUsageRollup.unpriced_requests,
+                    ),
+                )
             )
         if log.account_id is not None and log.deleted_at is None:
             # Only the latest visible duplicate contributes to account lifetime sums.
@@ -105,7 +115,17 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
                     .where(
                         AccountUsageRollup.account_id == log.account_id,
                     )
-                    .values(total_cost_usd=AccountUsageRollup.total_cost_usd + cost)
+                    .values(
+                        total_cost_usd=AccountUsageRollup.total_cost_usd + cost,
+                        priced_requests=case(
+                            (AccountUsageRollup.coverage_unknown == 0, AccountUsageRollup.priced_requests + 1),
+                            else_=AccountUsageRollup.priced_requests,
+                        ),
+                        unpriced_requests=case(
+                            (AccountUsageRollup.coverage_unknown == 0, AccountUsageRollup.unpriced_requests - 1),
+                            else_=AccountUsageRollup.unpriced_requests,
+                        ),
+                    )
                 )
     epoch = epoch_seconds(log.requested_at)
     if log.requested_at < state.hourly_folded_through:
@@ -121,7 +141,16 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
                 RequestUsageHourlyRollup.is_deleted == (log.deleted_at is not None),
             )
             .values(
-                cost_usd=RequestUsageHourlyRollup.cost_usd + cost, cost_count=RequestUsageHourlyRollup.cost_count + 1
+                cost_usd=RequestUsageHourlyRollup.cost_usd + cost,
+                cost_count=RequestUsageHourlyRollup.cost_count + 1,
+                priced_requests=case(
+                    (RequestUsageHourlyRollup.coverage_unknown == 0, RequestUsageHourlyRollup.priced_requests + 1),
+                    else_=RequestUsageHourlyRollup.priced_requests,
+                ),
+                unpriced_requests=case(
+                    (RequestUsageHourlyRollup.coverage_unknown == 0, RequestUsageHourlyRollup.unpriced_requests - 1),
+                    else_=RequestUsageHourlyRollup.unpriced_requests,
+                ),
             )
         )
         await session.execute(
@@ -136,7 +165,20 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
                 RequestDemandQuarterRollup.status == log.status,
                 RequestDemandQuarterRollup.is_deleted == (log.deleted_at is not None),
             )
-            .values(cost_usd=RequestDemandQuarterRollup.cost_usd + cost)
+            .values(
+                cost_usd=RequestDemandQuarterRollup.cost_usd + cost,
+                priced_requests=case(
+                    (RequestDemandQuarterRollup.coverage_unknown == 0, RequestDemandQuarterRollup.priced_requests + 1),
+                    else_=RequestDemandQuarterRollup.priced_requests,
+                ),
+                unpriced_requests=case(
+                    (
+                        RequestDemandQuarterRollup.coverage_unknown == 0,
+                        RequestDemandQuarterRollup.unpriced_requests - 1,
+                    ),
+                    else_=RequestDemandQuarterRollup.unpriced_requests,
+                ),
+            )
         )
     if log.requested_at < state.reports_folded_through and normal and log.source != "limit_warmup":
         conversation = (log.conversation_id or "").strip(CONVERSATION_WHITESPACE) or None
@@ -150,5 +192,15 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
                 RequestReportHourlyRollup.useragent_group == to_dimension(log.useragent_group),
                 RequestReportHourlyRollup.conversation_id == to_dimension(conversation),
             )
-            .values(cost_usd=RequestReportHourlyRollup.cost_usd + cost)
+            .values(
+                cost_usd=RequestReportHourlyRollup.cost_usd + cost,
+                priced_requests=case(
+                    (RequestReportHourlyRollup.coverage_unknown == 0, RequestReportHourlyRollup.priced_requests + 1),
+                    else_=RequestReportHourlyRollup.priced_requests,
+                ),
+                unpriced_requests=case(
+                    (RequestReportHourlyRollup.coverage_unknown == 0, RequestReportHourlyRollup.unpriced_requests - 1),
+                    else_=RequestReportHourlyRollup.unpriced_requests,
+                ),
+            )
         )

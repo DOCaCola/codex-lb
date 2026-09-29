@@ -363,11 +363,12 @@ async def test_success_with_usage_settles_at_source_usage_and_cost(recorder: _Re
 
     assert len(recorder.settle_calls) == 1
     assert recorder.settle_calls[0]["usage"] == usage
-    # Unpriced catalog entry -> 0.0, never None for known usage.
-    assert recorder.settle_calls[0]["cost_usd_override"] == 0.0
+    # Missing price remains unknown; explicit zero rates alone mean free.
+    assert recorder.settle_calls[0]["cost_usd_override"] is None
     row = recorder.rows[0]
     assert row["input_tokens"] == 100 and row["output_tokens"] == 20 and row["cached_input_tokens"] == 5
-    assert row["cost_usd"] == 0.0
+    assert row["cost_usd"] is None
+    assert row["preserve_unknown_cost"] is True
 
 
 @pytest.mark.asyncio

@@ -13,11 +13,13 @@ import {
 import { useChartColors } from "@/hooks/use-chart-colors";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import type { ApiKeyTrendPoint } from "@/features/apis/schemas";
+import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { formatChartDateTime, formatCompactNumber, formatCurrency } from "@/utils/formatters";
 
 type MergedPoint = {
   t: string;
   cost: number;
+  costCoverage: ApiKeyTrendPoint | undefined;
   tokens: number;
 };
 
@@ -25,7 +27,7 @@ function mergePoints(
   cost: ApiKeyTrendPoint[],
   tokens: ApiKeyTrendPoint[],
 ): MergedPoint[] {
-  const costMap = new Map(cost.map((p) => [p.t, p.v]));
+  const costMap = new Map(cost.map((p) => [p.t, p]));
   const tokensMap = new Map(tokens.map((p) => [p.t, p.v]));
 
   const allTimes = new Set([...costMap.keys(), ...tokensMap.keys()]);
@@ -35,7 +37,8 @@ function mergePoints(
     .sort()
     .map((t) => ({
       t,
-      cost: costMap.get(t) ?? 0,
+      cost: costMap.get(t)?.v ?? 0,
+      costCoverage: costMap.get(t),
       tokens: tokensMap.get(t) ?? 0,
     }));
 }
@@ -67,6 +70,7 @@ type ChartTooltipPayloadEntry = {
   dataKey?: string | number;
   value?: number;
   color?: string;
+  payload?: MergedPoint;
 };
 
 type ChartTooltipProps = {
@@ -92,7 +96,9 @@ function CustomTooltip({ active, payload, label }: ChartTooltipProps) {
             />
             <span className="text-muted-foreground">{meta ? t(`apis.trend.series.${entry.dataKey}`, { defaultValue: meta.label }) : ""}</span>
             <span className="ml-auto tabular-nums font-medium">
-              {meta?.formatter(entry.value ?? 0)}
+              {entry.dataKey === "cost" && entry.payload?.costCoverage
+                ? formatCoveredCost(entry.value ?? 0, entry.payload.costCoverage)
+                : meta?.formatter(entry.value ?? 0)}
             </span>
           </div>
         );
@@ -115,6 +121,7 @@ export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
   const c1 = chartColors[0];
   const c2 = chartColors[1];
   const data = useMemo(() => mergePoints(cost, tokens), [cost, tokens]);
+  const incomplete = cost.some((point) => !isCostCoverageComplete(point));
 
   const maxTokens = useMemo(() => Math.max(...data.map((d) => d.tokens), 1), [data]);
   const maxCost = useMemo(() => Math.max(...data.map((d) => d.cost), 0.01), [data]);
@@ -131,6 +138,7 @@ export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
   const costTicks = [0, maxCost * 0.5, maxCost];
 
   return (
+    <div aria-label={incomplete ? "Cost chart shows a known subtotal; coverage is incomplete" : undefined}>
     <ResponsiveContainer width="100%" height={280}>
       <AreaChart data={data} margin={CHART_MARGIN}>
         <defs>
@@ -206,5 +214,7 @@ export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
         />
       </AreaChart>
     </ResponsiveContainer>
+    {incomplete ? <p className="text-xs text-muted-foreground">Cost trend is a known subtotal; some requests are unpriced, unmetered, or historically unknown.</p> : null}
+    </div>
   );
 }

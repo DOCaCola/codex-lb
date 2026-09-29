@@ -50,6 +50,7 @@ describe("DashboardOverviewSchema", () => {
         cost: {
           currency: "USD",
           totalUsd: 12.5,
+          costCoverage: { knownCostUsd: 12.5, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
         metrics: {
           requests: 500,
@@ -66,6 +67,7 @@ describe("DashboardOverviewSchema", () => {
             requests: 250,
             tokens: 1000,
             costUsd: 6.25,
+            costCoverage: { knownCostUsd: 6.25, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
           },
         },
       },
@@ -108,6 +110,7 @@ describe("DashboardOverviewSchema", () => {
         cost: {
           currency: "USD",
           totalUsd: 0,
+          costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
         metrics: null,
       },
@@ -148,6 +151,7 @@ describe("DashboardOverviewSchema", () => {
         cost: {
           currency: "USD",
           totalUsd: 0,
+          costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
         metrics: null,
       },
@@ -802,6 +806,7 @@ describe("DashboardOverviewSchema with additional quotas", () => {
         cost: {
           currency: "USD",
           totalUsd: 12.5,
+          costCoverage: { knownCostUsd: 12.5, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
         metrics: null,
       },
@@ -867,6 +872,7 @@ describe("DashboardOverviewSchema with additional quotas", () => {
         cost: {
           currency: "USD",
           totalUsd: 12.5,
+          costCoverage: { knownCostUsd: 12.5, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
         metrics: null,
       },
@@ -903,6 +909,7 @@ describe("ConversationsResponseSchema", () => {
           totalTokens: 1800,
           cachedInputTokens: 320,
           totalCostUsd: 0.0132,
+          costCoverage: { knownCostUsd: 0.0132, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
       total: 1,
@@ -942,6 +949,7 @@ describe("ConversationsResponseSchema", () => {
           totalTokens: 100,
           cachedInputTokens: 0,
           totalCostUsd: 0,
+          costCoverage: { knownCostUsd: 0, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
       total: 1,
@@ -970,6 +978,7 @@ describe("ConversationEntrySchema", () => {
       totalTokens: 0,
       cachedInputTokens: 0,
       totalCostUsd: 0,
+      costCoverage: { knownCostUsd: 0, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
     });
 
     expect(parsed.representativeAccount).toBeNull();
@@ -992,6 +1001,7 @@ describe("ConversationEntrySchema", () => {
       totalTokens: 0,
       cachedInputTokens: null,
       totalCostUsd: 0,
+      costCoverage: { knownCostUsd: 0, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
     });
 
     expect(parsed.cachedInputTokens).toBeNull();
@@ -1016,6 +1026,7 @@ describe("ConversationDetailsSchema", () => {
           cachedInputTokens: 200,
           totalOutputTokens: 300,
           totalCostUsd: 0.05,
+          costCoverage: { knownCostUsd: 0.05, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
     });
@@ -1046,6 +1057,7 @@ describe("ConversationDetailsSchema", () => {
           cachedInputTokens: 0,
           totalOutputTokens: 0,
           totalCostUsd: 0,
+          costCoverage: { knownCostUsd: 0, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
     });
@@ -1071,6 +1083,7 @@ describe("ConversationDetailsSchema", () => {
           cachedInputTokens: null,
           totalOutputTokens: 0,
           totalCostUsd: 0,
+          costCoverage: { knownCostUsd: 0, pricedRequests: 1, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
     });

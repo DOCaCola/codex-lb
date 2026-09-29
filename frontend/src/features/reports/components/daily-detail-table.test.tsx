@@ -26,7 +26,7 @@ function DailyDetailTable({
   return (
     <DailyDetailTableImpl
       {...props}
-      data={data.map((row) => ({ cancelledCount: 0, reasoningTokens: 0, ...row }))}
+      data={data.map((row) => ({ cancelledCount: 0, reasoningTokens: 0, pricedRequests: row.requests, ...row }))}
     />
   );
 }
@@ -116,7 +116,7 @@ describe("DailyDetailTable", () => {
     expect(
       within(zeroRow).getByText(formatReportBucketDate("2026-06-06", "default")),
     ).toBeInTheDocument();
-    expect(within(zeroRow).getByText("$0.00")).toBeInTheDocument();
+    expect(within(zeroRow).getByText("No usage")).toBeInTheDocument();
     expect(zeroRow.className).toBe(filledRow.className);
     expect(screen.getByTestId("daily-breakdown-scroll-body")).toHaveClass(
       "overflow-y-auto",
@@ -379,9 +379,9 @@ describe("DailyDetailTable", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:daily-breakdown");
     await expect(blobText()).resolves.toBe(
       [
-        "Date,Requests,Conversations,Input Tokens,Output Tokens,Reported Reasoning Tokens,Cached Tokens,Cost USD,Active Accounts,Cancelled,Errors",
-        "2026-06-05,4,0,100,20,12,1,1.0000,3,2,1",
-        "2026-06-06,0,0,0,0,0,0,0.0000,0,0,0",
+        "Date,Requests,Conversations,Input Tokens,Output Tokens,Reported Reasoning Tokens,Cached Tokens,Cost USD (known subtotal),Priced requests,Unpriced requests,Unmetered requests,Historical coverage unknown,Active Accounts,Cancelled,Errors",
+        "2026-06-05,4,0,100,20,12,1,1.0000,4,0,0,false,3,2,1",
+        "2026-06-06,0,0,0,0,0,0,0.0000,0,0,0,false,0,0,0",
       ].join("\n"),
     );
   });
@@ -708,9 +708,9 @@ describe("DailyDetailTable", () => {
     await user.click(screen.getByRole("button", { name: /csv/i }));
     const csv = await blobText();
     const csvLines = csv.split("\n");
-    expect(csvLines[0]).toBe("Date,Requests,Conversations,Input Tokens,Output Tokens,Reported Reasoning Tokens,Cached Tokens,Cost USD,Active Accounts,Cancelled,Errors");
+    expect(csvLines[0]).toBe("Date,Requests,Conversations,Input Tokens,Output Tokens,Reported Reasoning Tokens,Cached Tokens,Cost USD (known subtotal),Priced requests,Unpriced requests,Unmetered requests,Historical coverage unknown,Active Accounts,Cancelled,Errors");
     // First data row in CSV (chronological: 06-05 first, conversations=1)
-    expect(csvLines[1]).toMatch(/2026-06-05,8,1,100,20,0,0,1\.0000,1,0,0/);
+    expect(csvLines[1]).toMatch(/2026-06-05,8,1,100,20,0,0,1\.0000,8,0,0,false,1,0,0/);
   });
 
   it("zero-filled gap rows have conversations=0 in column 2", () => {

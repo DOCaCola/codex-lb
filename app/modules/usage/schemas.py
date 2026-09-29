@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.modules.shared.schemas import DashboardModel
+from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 
 
 class UsageWindow(DashboardModel):
@@ -18,6 +18,7 @@ class UsageWindow(DashboardModel):
 class UsageCost(DashboardModel):
     currency: str
     total_usd_7d: float = Field(alias="totalUsd7d")
+    cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 
 class UsageMetrics(DashboardModel):
@@ -58,6 +59,8 @@ class UsageWindowResponse(DashboardModel):
 class TrendPoint(DashboardModel):
     t: datetime
     v: float
+    # Set on cost points only: ``v`` is then the bucket's known-cost subtotal.
+    coverage: RequestCostCoverage | None = None
 
 
 class MetricsTrends(DashboardModel):

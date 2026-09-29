@@ -1417,6 +1417,13 @@ async def test_dashboard_overview_includes_previous_window_summary_when_history_
             "requests": 1,
             "tokens": 300,
             "costUsd": pytest.approx(0.00125),
+            "costCoverage": {
+                "knownCostUsd": pytest.approx(0.00125),
+                "pricedRequests": 1,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
+                "coverageUnknown": False,
+            },
         },
     }
 
@@ -1538,5 +1545,12 @@ async def test_dashboard_overview_exposes_zero_previous_window_totals_when_full_
             "requests": 0,
             "tokens": 0,
             "costUsd": 0.0,
+            "costCoverage": {
+                "knownCostUsd": 0.0,
+                "pricedRequests": 0,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
+                "coverageUnknown": False,
+            },
         },
     }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Cell, Pie, PieChart, ResponsiveContainer, Sector, type PieSectorShapeProps } from "@/components/lazy-recharts";
 import type { ModelCostEntry } from "../schemas";
+import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { DistributionMetricToggle, type DistributionMetric } from "./distribution-metric-toggle";
 import { formatDistributionMetricValue } from "./distribution-metric-format";
 
@@ -18,7 +19,7 @@ type ChartDatum = ModelCostEntry & {
   id: string;
   fill: string;
   metricLabel: string;
-  metricPercentage: number;
+  metricPercentage: number | null;
 };
 
 export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
@@ -28,6 +29,12 @@ export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
   const legendRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const totalCost = data.reduce((sum, entry) => sum + entry.costUsd, 0);
   const totalRequests = data.reduce((sum, entry) => sum + entry.requests, 0);
+  const coverage = {
+    pricedRequests: data.reduce((sum, entry) => sum + (entry.pricedRequests ?? entry.requests), 0),
+    unpricedRequests: data.reduce((sum, entry) => sum + (entry.unpricedRequests ?? 0), 0),
+    unmeteredRequests: data.reduce((sum, entry) => sum + (entry.unmeteredRequests ?? 0), 0),
+    coverageUnknown: data.some((entry) => entry.coverageUnknown),
+  };
   const isCostMetric = metric === "cost";
   const totalMetricLabel = formatDistributionMetricValue(
     isCostMetric ? totalCost : totalRequests,
@@ -37,10 +44,9 @@ export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
     ...entry,
     id: entry.model,
     fill: COLORS[index % COLORS.length],
-    metricLabel: formatDistributionMetricValue(
-      isCostMetric ? entry.costUsd : entry.requests,
-      metric,
-    ),
+    metricLabel: isCostMetric && !isCostCoverageComplete(entry)
+      ? formatCoveredCost(entry.costUsd, { ...entry, pricedRequests: entry.pricedRequests ?? entry.requests })
+      : formatDistributionMetricValue(isCostMetric ? entry.costUsd : entry.requests, metric),
     metricPercentage: isCostMetric
       ? entry.percentage
       : totalRequests > 0
@@ -97,7 +103,7 @@ export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
               className="max-w-[76px] text-sm font-semibold leading-tight tabular-nums text-foreground"
               data-testid="model-distribution-center-value"
             >
-              {totalMetricLabel}
+              {isCostMetric && !isCostCoverageComplete(coverage) ? formatCoveredCost(totalCost, coverage) : totalMetricLabel}
             </span>
           </div>
           <ResponsiveContainer width="100%" height="100%">
@@ -151,7 +157,7 @@ export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
                 <span className="text-foreground">{entry.model}</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="tabular-nums text-muted-foreground">{entry.metricPercentage.toFixed(1)}%</span>
+                <span className="tabular-nums text-muted-foreground">{entry.metricPercentage == null ? "—" : `${entry.metricPercentage.toFixed(1)}%`}</span>
                 <span
                   className="inline-block text-right font-medium tabular-nums text-foreground"
                   style={{ minWidth: `${maxMetricLabelLength}ch` }}

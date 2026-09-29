@@ -16,6 +16,10 @@ const AccountRequestUsageSchema = z.object({
   totalTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative(),
   totalCostUsd: z.number().nonnegative(),
+  pricedRequests: z.number().int().nonnegative(),
+  unpricedRequests: z.number().int().nonnegative(),
+  unmeteredRequests: z.number().int().nonnegative(),
+  coverageUnknown: z.boolean(),
 });
 
 export const AccountUsageResetCreditsSchema = z.object({

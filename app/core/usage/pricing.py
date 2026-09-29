@@ -15,6 +15,8 @@ class ModelPrice:
     input_per_1m: float
     output_per_1m: float
     cached_input_per_1m: float | None = None
+    cache_write_5m_per_1m: float | None = None
+    cache_write_1h_per_1m: float | None = None
     priority_multiplier: float | None = None
     priority_input_per_1m: float | None = None
     priority_output_per_1m: float | None = None
@@ -26,6 +28,8 @@ class ModelPrice:
     long_context_input_per_1m: float | None = None
     long_context_output_per_1m: float | None = None
     long_context_cached_input_per_1m: float | None = None
+    long_context_cache_write_5m_per_1m: float | None = None
+    long_context_cache_write_1h_per_1m: float | None = None
     priority_long_context_input_per_1m: float | None = None
     priority_long_context_output_per_1m: float | None = None
     priority_long_context_cached_input_per_1m: float | None = None
@@ -47,6 +51,19 @@ class UsageCostBreakdown:
     cached_input_usd: float | None
     output_usd: float | None
     total_usd: float | None
+    cache_write_usd: float | None = None
+
+
+@dataclass(frozen=True)
+class ClaudeUsageTokens:
+    """Claude input is inclusive of cache reads and cache creation."""
+
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0
+    cache_creation_tokens: int | None = None
+    cache_creation_5m_tokens: int | None = None
+    cache_creation_1h_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +112,14 @@ def _normalize_usage(usage: UsageTokens | ResponseUsage | None) -> UsageTokens |
 
 
 DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
+    # Anthropic API-equivalent list rates, USD/1M. Verified against the
+    # 2026-09-29 OpenCodex generated metadata snapshot (8a005dd98ff1).
+    "claude-haiku-4-5": ModelPrice(1, 5, 0.1, 1.25, 2),
+    "claude-sonnet-4-5": ModelPrice(3, 15, 0.3, 3.75, 6),
+    "claude-sonnet-4-6": ModelPrice(3, 15, 0.3, 3.75, 6),
+    "claude-opus-4-6": ModelPrice(5, 25, 0.5, 6.25, 10),
+    "claude-sonnet-5": ModelPrice(2, 10, 0.2, 2.5, 4),
+    "claude-opus-5": ModelPrice(5, 25, 0.5, 6.25, 10),
     "gpt-6-astra": ModelPrice(
         input_per_1m=10.0,
         cached_input_per_1m=1.0,
@@ -403,10 +428,14 @@ def get_pricing_for_model(
         pricing = get_active_prices()
     aliases = aliases or DEFAULT_MODEL_ALIASES
 
-    normalized = model.lower()
+    normalized = model.lower().removeprefix("anthropic/")
     for key, value in pricing.items():
         if key.lower() == normalized:
             return key, value
+
+    claude_dated = re.fullmatch(r"(claude-(?:haiku|sonnet|opus)-\d(?:-\d)?)-\d{8}", normalized)
+    if claude_dated and claude_dated[1] in pricing:
+        return claude_dated[1], pricing[claude_dated[1]]
 
     dated = re.fullmatch(r"(.+)-\d{4}-\d{2}-\d{2}", normalized)
     if dated and dated[1] in pricing:
@@ -555,6 +584,58 @@ def calculate_cost_breakdown_from_usage(
         output_usd=output_usd,
         total_usd=total_usd,
     )
+
+
+def calculate_claude_cost_breakdown(
+    usage: ClaudeUsageTokens,
+    price: ModelPrice,
+    *,
+    precision: int | None = None,
+) -> UsageCostBreakdown | None:
+    """Price one Claude request using the selected whole-request context tier."""
+
+    writes = usage.cache_creation_tokens or 0
+    writes_5m = usage.cache_creation_5m_tokens or 0
+    writes_1h = usage.cache_creation_1h_tokens or 0
+    if (
+        min(usage.input_tokens, usage.output_tokens, usage.cached_input_tokens, writes, writes_5m, writes_1h) < 0
+        or (writes and (usage.cache_creation_5m_tokens is None or usage.cache_creation_1h_tokens is None))
+        or writes_5m + writes_1h != writes
+        or usage.cached_input_tokens + writes > usage.input_tokens
+    ):
+        return None
+    long_context = (
+        price.long_context_threshold_tokens is not None and usage.input_tokens > price.long_context_threshold_tokens
+    )
+    prefix = "long_context_" if long_context else ""
+    input_rate = getattr(price, prefix + "input_per_1m")
+    output_rate = getattr(price, prefix + "output_per_1m")
+    cached_rate = getattr(price, prefix + "cached_input_per_1m")
+    write_5m_rate = getattr(price, prefix + "cache_write_5m_per_1m")
+    write_1h_rate = getattr(price, prefix + "cache_write_1h_per_1m")
+    uncached = usage.input_tokens - usage.cached_input_tokens - writes
+    if any(
+        (
+            uncached and input_rate is None,
+            usage.cached_input_tokens and cached_rate is None,
+            usage.output_tokens and output_rate is None,
+            writes_5m and write_5m_rate is None,
+            writes_1h and write_1h_rate is None,
+        )
+    ):
+        return None
+    input_usd = uncached * (input_rate or 0) / 1_000_000
+    cached_usd = usage.cached_input_tokens * (cached_rate or 0) / 1_000_000
+    write_usd = (writes_5m * (write_5m_rate or 0) + writes_1h * (write_1h_rate or 0)) / 1_000_000
+    output_usd = usage.output_tokens * (output_rate or 0) / 1_000_000
+    total_usd = input_usd + cached_usd + write_usd + output_usd
+    if precision is not None:
+        input_usd = round(input_usd, precision)
+        cached_usd = round(cached_usd, precision)
+        write_usd = round(write_usd, precision)
+        output_usd = round(output_usd, precision)
+        total_usd = round(total_usd, precision)
+    return UsageCostBreakdown(input_usd, cached_usd, output_usd, total_usd, write_usd)
 
 
 def calculate_costs(

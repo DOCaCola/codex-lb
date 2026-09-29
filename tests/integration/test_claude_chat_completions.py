@@ -101,6 +101,23 @@ async def test_claude_chat_rejects_unsupported_controls_before_send(async_client
     assert not captured
 
 
+@pytest.mark.parametrize("sampling", [{"temperature": 0.2}, {"top_p": 0.9}])
+async def test_claude_chat_rejects_thinking_sampling_conflicts(async_client, pool, monkeypatch, sampling):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "reasoning_effort": "medium",
+            **sampling,
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == next(iter(sampling))
+    assert captured == []
+
+
 async def test_claude_chat_tool_followup_reconstructs_portable_history(async_client, pool, monkeypatch):
     from app.modules.claude.protocol import ToolIdentity
 
@@ -153,6 +170,11 @@ async def test_claude_chat_tool_followup_reconstructs_portable_history(async_cli
 
 
 async def test_claude_chat_reasoning_is_visible_without_replaying_a_signature(async_client, pool, monkeypatch):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
     install_upstream(
         monkeypatch,
         content=[
@@ -173,6 +195,12 @@ async def test_claude_chat_reasoning_is_visible_without_replaying_a_signature(as
     assert message["reasoning_content"] == "Check the premise"
     assert message["content"] == "Answer"
     assert "signed-by-claude" not in response.text
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
+        assert row.reasoning_effort == "medium"
+        assert row.upstream_thinking_mode == "adaptive"
+        assert row.upstream_thinking_budget_tokens is None
+        assert row.reasoning_tokens is None
 
 
 async def test_claude_chat_preserves_completed_plaintext_reasoning_as_text(async_client, pool, monkeypatch):

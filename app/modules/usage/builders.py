@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 
 from app.core import usage as usage_core
+from app.core.usage.coverage import CostCoverage
 from app.core.usage.logs import (
     CANCELLED_STATUS,
     NON_ERROR_STATUSES,
     cached_input_tokens_from_log,
-    cost_from_log,
     total_tokens_from_log,
 )
 from app.core.usage.types import (
@@ -26,6 +26,7 @@ from app.core.usage.types import (
 )
 from app.core.utils.time import from_epoch_seconds
 from app.db.models import Account, AdditionalUsageHistory, RequestLog
+from app.modules.shared.schemas import RequestCostCoverage
 from app.modules.usage.schemas import (
     MetricsTrends,
     TrendPoint,
@@ -47,6 +48,12 @@ class ActivityCostSummary:
     currency: str
     total_usd: float
     by_model: list[UsageCostByModel]
+    cost_coverage: CostCoverage = field(default_factory=CostCoverage)
+
+
+def cost_coverage_response(coverage: CostCoverage) -> RequestCostCoverage:
+    # Rounded like the sibling ``total_usd`` so the two never disagree in JSON.
+    return RequestCostCoverage(**asdict(replace(coverage, known_cost_usd=round(coverage.known_cost_usd, 6))))
 
 
 @dataclass(frozen=True)
@@ -101,16 +108,16 @@ def build_trends_from_buckets(
     bucket_requests: dict[int, int] = defaultdict(int)
     bucket_errors: dict[int, int] = defaultdict(int)
     bucket_tokens: dict[int, int] = defaultdict(int)
-    bucket_costs: dict[int, float] = defaultdict(float)
+    bucket_costs: dict[int, CostCoverage] = defaultdict(CostCoverage)
     bucket_conversations: dict[int, int] = defaultdict(int)
-    total_costs_by_model: dict[str, float] = defaultdict(float)
+    total_costs_by_model: dict[str, CostCoverage] = defaultdict(CostCoverage)
 
     total_requests = 0
     total_errors = 0
     total_cancelled = 0
     total_tokens = 0
     total_cached_tokens = 0
-    total_cost_usd = 0.0
+    total_cost = CostCoverage()
 
     for row in rows:
         epoch = row.bucket_epoch
@@ -119,15 +126,15 @@ def build_trends_from_buckets(
         bucket_requests[epoch] += row.request_count
         bucket_errors[epoch] += row.error_count
         bucket_tokens[epoch] += row.input_tokens + row.output_tokens
-        bucket_costs[epoch] += float(row.cost_usd)
-        total_costs_by_model[row.model] += float(row.cost_usd)
+        bucket_costs[epoch] += row.cost_coverage
+        total_costs_by_model[row.model] += row.cost_coverage
 
         total_requests += row.request_count
         total_errors += row.error_count
         total_cancelled += row.cancelled_count
         total_tokens += row.input_tokens + row.output_tokens
         total_cached_tokens += row.cached_input_tokens
-        total_cost_usd += float(row.cost_usd)
+        total_cost += row.cost_coverage
 
     for row in conversation_rows or []:
         if row.bucket_epoch in slot_set:
@@ -144,14 +151,16 @@ def build_trends_from_buckets(
         req = bucket_requests.get(epoch, 0)
         err = bucket_errors.get(epoch, 0)
         tok = bucket_tokens.get(epoch, 0)
-        cost_value = bucket_costs.get(epoch, 0.0)
+        cost_value = bucket_costs.get(epoch, CostCoverage())
         conversations = bucket_conversations.get(epoch, 0)
 
         err_rate = (err / req) if req > 0 else 0.0
 
         requests_points.append(TrendPoint(t=t, v=float(req)))
         tokens_points.append(TrendPoint(t=t, v=float(tok)))
-        cost_points.append(TrendPoint(t=t, v=round(cost_value, 6)))
+        cost_points.append(
+            TrendPoint(t=t, v=round(cost_value.known_cost_usd, 6), coverage=cost_coverage_response(cost_value))
+        )
         error_rate_points.append(TrendPoint(t=t, v=round(err_rate, 4)))
         conversations_points.append(TrendPoint(t=t, v=float(conversations)))
 
@@ -177,15 +186,18 @@ def build_trends_from_buckets(
         top_error=top_error,
     )
 
-    total_cost = ActivityCostSummary(
+    cost_summary = ActivityCostSummary(
         currency="USD",
-        total_usd=round(total_cost_usd, 6),
+        total_usd=round(total_cost.known_cost_usd, 6),
         by_model=[
-            UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(total_costs_by_model.items())
+            UsageCostByModel(model=model, usd=round(cost.known_cost_usd, 6))
+            for model, cost in sorted(total_costs_by_model.items())
+            if cost.priced_requests > 0
         ],
+        cost_coverage=total_cost,
     )
 
-    return trends, metrics, total_cost
+    return trends, metrics, cost_summary
 
 
 def build_activity_summaries(
@@ -213,8 +225,9 @@ def build_activity_summaries(
         ),
         ActivityCostSummary(
             currency="USD",
-            total_usd=round(aggregate.cost_usd, 6),
+            total_usd=round(aggregate.cost_coverage.known_cost_usd, 6),
             by_model=[],
+            cost_coverage=aggregate.cost_coverage,
         ),
     )
 
@@ -226,18 +239,13 @@ def build_usage_summary_response(
     secondary_rows: list[UsageWindowRow],
     monthly_rows: list[UsageWindowRow],
     logs_secondary: list[RequestLog],
+    cost: UsageCostSummary,
     metrics_override: UsageMetricsSummary | None = None,
-    cost_override: UsageCostSummary | None = None,
 ) -> UsageSummaryResponse:
     account_map = {account.id: account for account in accounts}
     primary_window = usage_core.summarize_usage_window(primary_rows, account_map, "primary")
     secondary_window = usage_core.summarize_usage_window(secondary_rows, account_map, "secondary")
     monthly_window = usage_core.summarize_usage_window(monthly_rows, account_map, "monthly") if monthly_rows else None
-
-    if cost_override is not None:
-        cost = cost_override
-    else:
-        cost = _cost_summary_from_logs(logs_secondary)
 
     metrics = metrics_override if metrics_override is not None else _usage_metrics(logs_secondary)
 
@@ -338,28 +346,13 @@ def build_usage_metrics_from_aggregate(aggregate: UsageSummaryLogsAggregate | No
 
 
 def build_usage_cost_from_aggregate(aggregate: UsageSummaryLogsAggregate | None) -> UsageCostSummary:
-    """SQL-aggregate twin of `_cost_summary_from_logs`."""
-    by_model = aggregate.cost_by_model if aggregate else []
+    if aggregate is None:
+        return UsageCostSummary(currency="USD", total_usd_7d=0.0, by_model=[])
     return UsageCostSummary(
         currency="USD",
-        total_usd_7d=round(sum(cost for _, cost in by_model), 6),
-        by_model=[UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(by_model)],
-    )
-
-
-def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
-    total = 0.0
-    by_model: dict[str, float] = defaultdict(float)
-    for log in logs:
-        cost = cost_from_log(log)
-        if cost is None:
-            continue
-        total += cost
-        by_model[log.model] += cost
-    return UsageCostSummary(
-        currency="USD",
-        total_usd_7d=round(total, 6),
-        by_model=[UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(by_model.items())],
+        total_usd_7d=round(aggregate.cost_coverage.known_cost_usd, 6),
+        by_model=[UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(aggregate.cost_by_model)],
+        cost_coverage=aggregate.cost_coverage,
     )
 
 
@@ -441,6 +434,7 @@ def _cost_summary_to_model(cost: UsageCostSummary) -> UsageCost:
     return UsageCost(
         currency=cost.currency,
         totalUsd7d=cost.total_usd_7d,
+        cost_coverage=cost_coverage_response(cost.cost_coverage),
     )
 
 

@@ -60,10 +60,25 @@ from collections.abc import Iterable, Sequence
 from dataclasses import astuple, dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import BigInteger, ColumnElement, Integer, and_, case, cast, delete, func, insert, select, true, update
+from sqlalchemy import (
+    BigInteger,
+    ColumnElement,
+    Integer,
+    and_,
+    case,
+    cast,
+    delete,
+    func,
+    insert,
+    literal,
+    select,
+    true,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import SQLCoreOperations
 
+from app.core.usage.coverage import request_cost_expressions
 from app.core.usage.logs import CANCELLED_STATUS, NON_ERROR_STATUSES
 from app.core.utils.time import utcnow
 from app.db.models import (
@@ -216,6 +231,10 @@ class HourlyUsageRollupRow:
     cached_input_tokens_clamped: int = 0
     cost_usd: float = 0.0
     cost_count: int = 0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +260,10 @@ class QuarterDemandRollupRow:
     output_or_reasoning_tokens: int = 0
     cached_input_tokens: int = 0
     cost_usd: float = 0.0
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +296,10 @@ _HOURLY_MEASURE_COLUMNS = (
     "cached_input_tokens_clamped",
     "cost_usd",
     "cost_count",
+    "priced_requests",
+    "unpriced_requests",
+    "unmetered_requests",
+    "coverage_unknown",
 )
 _ERROR_KEY_COLUMNS = ("bucket_epoch", "account_id", "error_code")
 _ERROR_MEASURE_COLUMNS = ("error_count",)
@@ -292,6 +319,10 @@ _QUARTER_MEASURE_COLUMNS = (
     "output_or_reasoning_tokens",
     "cached_input_tokens",
     "cost_usd",
+    "priced_requests",
+    "unpriced_requests",
+    "unmetered_requests",
+    "coverage_unknown",
 )
 _CONVERSATION_KEY_COLUMNS = ("bucket_epoch", "conversation_id", "account_id", "is_deleted")
 _CONVERSATION_MEASURE_COLUMNS = ("request_count",)
@@ -519,6 +550,7 @@ def _hourly_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
         (RequestLog.input_tokens.is_(None), greatest(0, RequestLog.cached_input_tokens)),
         else_=greatest(0, least(RequestLog.cached_input_tokens, RequestLog.input_tokens)),
     )
+    cost, priced, unpriced, unmetered = request_cost_expressions(RequestLog)
     stmt = (
         select(
             bucket,
@@ -537,8 +569,14 @@ def _hourly_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
             func.coalesce(func.sum(output_or_reasoning), 0),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0),
             func.coalesce(func.sum(cached_clamped), 0),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0),
-            func.coalesce(func.sum(case((RequestLog.cost_usd.is_not(None), 1), else_=0)), 0),
+            cost,
+            # Preserve the historical nullable-cost measure; priced_requests
+            # below carries the stricter coverage classification.
+            func.count(RequestLog.cost_usd),
+            priced,
+            unpriced,
+            unmetered,
+            literal(0),
         )
         .where(*window)
         .group_by(bucket, account_id, api_key_id, RequestLog.model, service_tier, RequestLog.request_kind, is_deleted)
@@ -578,6 +616,7 @@ def _demand_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
     reasoning_effort = _dimension_expr(RequestLog.reasoning_effort).label("reasoning_effort")
     is_deleted = RequestLog.deleted_at.is_not(None).label("is_deleted")
     output_or_reasoning = func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)
+    cost, priced, unpriced, unmetered = request_cost_expressions(RequestLog)
     stmt = (
         select(
             slot,
@@ -592,7 +631,11 @@ def _demand_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
             func.coalesce(func.sum(RequestLog.input_tokens), 0),
             func.coalesce(func.sum(output_or_reasoning), 0),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0),
+            cost,
+            priced,
+            unpriced,
+            unmetered,
+            literal(0),
         )
         .where(*window)
         .group_by(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 from app.modules.request_logs.mappers import (
@@ -19,6 +19,7 @@ from app.modules.request_logs.schemas import (
     ConversationEntry,
     ConversationModelEffort,
     ConversationModelStat,
+    RequestCostCoverage,
     RequestLogConversation,
     RequestLogEntry,
 )
@@ -61,6 +62,7 @@ class RequestLogsPage:
     total: int
     has_more: bool
     conversation: RequestLogConversation | None
+    cost_coverage: RequestCostCoverage = field(default_factory=RequestCostCoverage)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +143,7 @@ class RequestLogsService:
             conversation = RequestLogConversation(
                 request_count=total,
                 aggregated_cost_usd=result.aggregated_cost_usd,
+                cost_coverage=RequestCostCoverage(**asdict(result.cost_coverage)),
             )
         api_key_ids = [log.api_key_id for log in logs if log.api_key_id] if include_api_key_identity else []
         api_key_name_by_id = await self._repo.get_api_key_names_by_ids(api_key_ids) if api_key_ids else {}
@@ -165,6 +168,7 @@ class RequestLogsService:
             total=total,
             has_more=offset + limit < total,
             conversation=conversation,
+            cost_coverage=RequestCostCoverage(**asdict(result.cost_coverage)),
         )
 
     async def list_filter_options(
@@ -331,6 +335,7 @@ def _to_conversations(result: ConversationListResult, api_key_names: dict[str, s
                 total_tokens=summary.total_tokens,
                 cached_input_tokens=summary.cached_input_tokens,
                 total_cost_usd=summary.cost_usd,
+                cost_coverage=RequestCostCoverage(**asdict(summary.cost_coverage)),
             )
         )
     return entries
@@ -353,6 +358,7 @@ def _to_conversation_details(result: ConversationDetailsResult) -> ConversationD
                 cached_input_tokens=row.cached_input_tokens,
                 total_output_tokens=row.output_tokens,
                 total_cost_usd=row.cost_usd,
+                cost_coverage=RequestCostCoverage(**asdict(row.cost_coverage)),
             )
             for row in result.model_stats
         ],

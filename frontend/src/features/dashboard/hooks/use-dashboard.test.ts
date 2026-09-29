@@ -62,7 +62,7 @@ describe("useDashboard", () => {
               windowMinutes: 300,
             },
             secondaryWindow: null,
-            cost: { currency: "USD", totalUsd: 0 },
+            cost: { currency: "USD", totalUsd: 0, costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false } },
             metrics: null,
           },
           windows: {

@@ -82,6 +82,16 @@ def test_missing_fields_use_only_exact_maintained_models():
     assert not project_models(state)[0].is_enabled
 
 
+def test_haiku_budget_reasoning_is_advertised_with_dated_api_price():
+    model = CatalogModel(id="claude-haiku-4-5-20251001", display_name="Haiku")
+    projected = project_models(AccountState(catalog=[model], selections=[ModelSelection(model=model.id)]))[0]
+    assert projected.input_per_1m == 1
+    assert projected.cached_input_per_1m == 0.1
+    metadata = json.loads(projected.raw_metadata_json)
+    assert metadata["supports_reasoning"] is True
+    assert metadata["supported_reasoning_levels"] == ["low", "medium", "high", "max"]
+
+
 @pytest.mark.parametrize("value", [0, -1, True, "64000", 1.5])
 def test_invalid_discovered_limits_are_rejected(value):
     with pytest.raises(ValidationError):

@@ -94,6 +94,10 @@ export function ApiDetail({
 			totalTokens: usage7Day.totalTokens,
 			cachedInputTokens: usage7Day.cachedInputTokens,
 			totalCostUsd: usage7Day.totalCostUsd,
+			pricedRequests: usage7Day.pricedRequests,
+			unpricedRequests: usage7Day.unpricedRequests,
+			unmeteredRequests: usage7Day.unmeteredRequests,
+			coverageUnknown: false,
 		};
 	}, [usage7Day]);
 
@@ -168,6 +172,7 @@ export function ApiDetail({
 								<AccountCostDonut
 									accountCosts={usage7Day.accountCosts}
 									totalCostUsd={usage7Day.totalCostUsd}
+									totalCoverage={usage7Day}
 								/>
 							</Suspense>
 						</div>
