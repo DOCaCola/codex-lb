@@ -283,14 +283,17 @@ describe("Claude shared account surfaces", () => {
       "reauth_required",
     );
     expect(claudeStatus({ ...account, isEnabled: false })).toBe("paused");
-    expect(
-      claudeStatus({
-        ...account,
-        quota: {
-          ...account.quota,
-          models: [{ model: "test", blocked: true, retryAt: null }],
-        },
-      }),
-    ).toBe("quota_exceeded");
+    const blocked = (drained: string) => ({
+      ...account,
+      quota: {
+        ...account.quota,
+        models: [{ model: "test", blocked: true, retryAt: null }],
+        windows: account.quota.windows.map((window) => ({ ...window, exhausted: window.name === drained })),
+      },
+    });
+    // Same distinction as Codex: 5-hour drain is rate limited, weekly is exceeded.
+    expect(claudeStatus(blocked("five_hour"))).toBe("rate_limited");
+    expect(claudeStatus(blocked("seven_day"))).toBe("quota_exceeded");
+    expect(claudeStatus(blocked("none"))).toBe("rate_limited");
   });
 });
