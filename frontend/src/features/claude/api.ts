@@ -3,11 +3,10 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 export const SelectionSchema = z.object({
   model: z.string(),
-  contextWindow: z.number().int().positive(),
-  maxOutputTokens: z.number().int().positive(),
 });
 export type ClaudeSelection = z.infer<typeof SelectionSchema>;
 export const ClaudeAccountSchema = z.object({
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
   maxConcurrency: z.number().int().positive().nullable(),
   id: z.string(),
   name: z.string(),
@@ -16,7 +15,11 @@ export const ClaudeAccountSchema = z.object({
   expiresAt: z.string(),
   state: z.object({
     selections: z.array(SelectionSchema),
-    catalog: z.array(z.object({ id: z.string(), display_name: z.string() })),
+    catalog: z.array(z.object({
+      id: z.string(), display_name: z.string(),
+      max_input_tokens: z.number().int().positive().nullable(),
+      max_tokens: z.number().int().positive().nullable(),
+    })),
     catalog_updated_at: z.string().nullable(),
     catalog_error: z.string().nullable(),
     usage_updated_at: z.string().nullable(),
@@ -49,6 +52,7 @@ export const ClaudeAccountSchema = z.object({
 });
 export type ClaudeAccount = z.infer<typeof ClaudeAccountSchema>;
 export type ClaudeUpdate = {
+  routingPolicy?: "normal" | "burn_first" | "preserve";
   maxConcurrency?: number | null;
   name?: string;
   isEnabled?: boolean;

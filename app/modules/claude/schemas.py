@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from app.db.models import AccountRoutingPolicy
+from app.modules.claude.model_limits import ModelTokenLimits, resolve_token_limits
 from app.modules.shared.schemas import DashboardModel
 
 CLAUDE_KIND = "claude"
@@ -88,15 +90,28 @@ class TokenResponse(BaseModel):
 
 
 class ModelSelection(DashboardModel):
+    model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1, max_length=255)
-    context_window: int = Field(default=200_000, gt=0, le=262_144)
-    max_output_tokens: int = Field(default=8192, gt=0)
 
 
 class CatalogModel(BaseModel):
     id: str = Field(min_length=1)
     display_name: str
     created_at: datetime | None = None
+    max_input_tokens: int | None = Field(default=None, strict=True, gt=0)
+    max_tokens: int | None = Field(default=None, strict=True, gt=0)
+
+    @model_validator(mode="after")
+    def resolve_limits(self) -> CatalogModel:
+        limits = self.token_limits
+        if limits is not None:
+            self.max_input_tokens = limits.context_window
+            self.max_tokens = limits.max_output_tokens
+        return self
+
+    @property
+    def token_limits(self) -> ModelTokenLimits | None:
+        return resolve_token_limits(self.id, self.max_input_tokens, self.max_tokens)
 
 
 class CatalogPage(BaseModel):
@@ -180,6 +195,7 @@ class ClaudeImport(DashboardModel):
 
 
 class ClaudeUpdate(DashboardModel):
+    routing_policy: AccountRoutingPolicy | None = None
     max_concurrency: int | None = Field(default=None, gt=0, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=128)
     is_enabled: bool | None = None
@@ -187,6 +203,7 @@ class ClaudeUpdate(DashboardModel):
 
 
 class ClaudeAccountResponse(DashboardModel):
+    routing_policy: AccountRoutingPolicy
     max_concurrency: int | None
     id: str
     name: str

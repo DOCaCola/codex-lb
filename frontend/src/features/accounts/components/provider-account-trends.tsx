@@ -10,7 +10,7 @@ const schema = z.object({ series: z.array(z.object({
   key: z.string(), label: z.string(), points: z.array(z.object({ t: z.string(), v: z.number().nullable() })),
 })) });
 
-export function ProviderAccountTrends({ provider, accountId }: { provider: "openrouter" | "claude"; accountId: string }) {
+export function ProviderAccountTrends({ provider, accountId, embedded = false }: { provider: "openrouter" | "claude"; accountId: string; embedded?: boolean }) {
   const colors = useChartColors();
   const query = useQuery({
     queryKey: ["provider-account-trends", provider, accountId],
@@ -18,7 +18,7 @@ export function ProviderAccountTrends({ provider, accountId }: { provider: "open
     refetchInterval: 60000,
   });
   const quota = provider === "claude";
-  return <section className="rounded-xl border bg-card p-5" aria-label={quota ? "Claude quota history" : "OpenRouter activity"}>
+  return <section className={embedded ? "min-w-0" : "rounded-xl border bg-card p-5"} aria-label={quota ? "Claude quota history" : "OpenRouter activity"}>
     <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {quota ? "Quota remaining · 7 days" : "Request activity · 7 days"}

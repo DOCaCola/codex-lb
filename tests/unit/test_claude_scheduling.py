@@ -24,7 +24,17 @@ def account(identifier, *, used=20, hours=24, stale=False, family=None):
         ),
         usage_updated_at=NOW - timedelta(minutes=10 if stale else 1),
     )
-    return ClaudeAccount(source_id=identifier, state_json=state.model_dump_json())
+    return ClaudeAccount(source_id=identifier, state_json=state.model_dump_json(), routing_policy="normal")
+
+
+@pytest.mark.parametrize("strategy", ["round_robin", "capacity_weighted", "usage_weighted", "relative_availability"])
+def test_account_policy_is_applied_by_shared_scheduler(strategy):
+    normal, burn, preserve = account("normal"), account("burn"), account("preserve")
+    burn.routing_policy = "burn_first"
+    preserve.routing_policy = "preserve"
+    assert choose([normal, burn, preserve], strategy) is burn
+    assert choose([normal, preserve], strategy) is normal
+    assert choose([preserve], strategy) is preserve
 
 
 def settings(strategy):

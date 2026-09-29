@@ -152,7 +152,7 @@ describe("AccountsPage", () => {
     render(<MemoryRouter><AccountsPage /></MemoryRouter>);
     expect(screen.queryByRole("button", { name: "Add OpenRouter account" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add account" }));
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /OpenRouter/ }));
+    await userEvent.click(within(screen.getByRole("group", { name: "OpenRouter" })).getByRole("button", { name: /API key/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Add OpenRouter account" })).toBeVisible());
     expect(screen.getByLabelText("Inference API key")).toHaveAttribute("type", "password");
   });

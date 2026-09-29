@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
 import type { ClaudeAccount } from "@/features/claude/api";
-import { ClaudeName, ClaudeQuota } from "@/features/claude/account-display";
+import { ClaudeName } from "@/features/claude/account-display";
 import { claudeStatus } from "@/features/claude/display-values";
 import { OpenRouterName, OpenRouterTier } from "@/features/openrouter/account-display";
 import {
@@ -336,7 +336,6 @@ function SortHeader({
 }
 
 function AccountQuotaCells({ account }: { account: AccountSummary }) {
-  const { t } = useTranslation();
   const primaryState = useSmoothPercent(
     account.usage?.primaryRemainingPercent ?? null,
   );
@@ -367,6 +366,13 @@ function AccountQuotaCells({ account }: { account: AccountSummary }) {
             account.resetAtSecondary,
           ),
         ];
+  return <QuotaCells quotas={quotas} />;
+}
+
+function QuotaCells({ quotas }: {
+  quotas: (ReturnType<typeof quotaLabel> & { diagnostic?: string })[];
+}) {
+  const { t } = useTranslation();
   return (
     <div className="grid gap-1.5 text-xs">
       {quotas.map((quota) => (
@@ -383,7 +389,7 @@ function AccountQuotaCells({ account }: { account: AccountSummary }) {
           <QuotaMeter percent={quota.percent} />
           <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
             <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{quota.resetLabel}</span>
+            <span className="truncate" title={quota.diagnostic}>{quota.resetLabel}{quota.diagnostic ? ` · ${quota.diagnostic}` : ""}</span>
           </span>
         </div>
       ))}
@@ -791,17 +797,32 @@ function ClaudeRow({ account }: { account: ClaudeAccount }) {
       </div>
       <StatusBadge status={normalizeStatus(claudeStatus(account))} />
       <span className="text-xs text-muted-foreground">Claude</span>
-      <ClaudeQuota account={account} />
+      <QuotaCells quotas={account.quota.windows
+        .filter((window) => window.name === "five_hour" || window.name === "seven_day")
+        .map((window) => ({
+          ...quotaLabel(
+            window.name === "five_hour" ? "5h" : "Weekly",
+            window.utilization === null ? null : Math.max(0, 100 - window.utilization),
+            window.resetsAt,
+          ),
+          diagnostic: [
+            window.utilization === null ? "Unknown" : window.utilization > 100 ? `${formatPercentNullable(window.utilization, 1)} used` : "",
+            window.freshness === "stale" ? "stale" : "",
+          ].filter(Boolean).join(" · "),
+        }))} />
       <span className="text-xs text-muted-foreground">Not applicable</span>
       <span className="text-xs text-muted-foreground">Not reported</span>
       <span className="text-xs text-muted-foreground">
-        {account.credentialStatus}
+        {formatSlug(account.credentialStatus)}
       </span>
-      <Button asChild size="sm" variant="ghost">
-        <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
-          Details
-        </Link>
-      </Button>
+      <div className="flex justify-end">
+        <Button asChild size="sm" variant="ghost"
+          className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground">
+          <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`} aria-label="Details">
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
+        </Button>
+      </div>
     </div>
   );
 }

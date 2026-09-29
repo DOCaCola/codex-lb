@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { Pause, Play, RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
+import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,156 +14,15 @@ import {
 import { ClaudeName, ClaudeQuota } from "./account-display";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { useClaude } from "./use-claude";
-import type { ClaudeAccount, ClaudeSelection, OAuthStarted } from "./api";
+import type { ClaudeAccount, OAuthStarted } from "./api";
 import { ClaudeVersionControls } from "./version-controls";
 import { ClaudeCapacitySettings } from "./capacity-settings";
 import { ClaudeResetGrants } from "./reset-grants";
-
-function ModelSelection({
-  account,
-  readOnly,
-  onSave,
-}: {
-  account: ClaudeAccount;
-  readOnly: boolean;
-  onSave: (selections: ClaudeSelection[]) => Promise<unknown>;
-}) {
-  const [selections, setSelections] = useState(account.state.selections);
-  const [search, setSearch] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const catalog = [...account.state.catalog];
-  for (const selection of selections) {
-    if (!catalog.some((model) => model.id === selection.model))
-      catalog.push({
-        id: selection.model,
-        display_name: `${selection.model} (unavailable)`,
-      });
-  }
-  return (
-    <section className="space-y-3">
-      <h3 className="font-medium">Models available to clients</h3>
-      <Input
-        aria-label="Search Claude models"
-        placeholder="Search models"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-      />
-      <div className="max-h-96 space-y-3 overflow-y-auto">
-        {catalog
-          .filter((model) =>
-            `${model.id} ${model.display_name}`
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          )
-          .map((model) => {
-            const selected = selections.find((item) => item.model === model.id);
-            return (
-              <div key={model.id} className="space-y-2 rounded-lg border p-3">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    disabled={readOnly || busy}
-                    checked={!!selected}
-                    onChange={(event) =>
-                      setSelections((current) =>
-                        event.target.checked
-                          ? [
-                              ...current,
-                              {
-                                model: model.id,
-                                contextWindow: 200000,
-                                maxOutputTokens: 8192,
-                              },
-                            ]
-                          : current.filter((item) => item.model !== model.id),
-                      )
-                    }
-                  />
-                  {model.display_name}
-                </label>
-                {selected && (
-                  <div className="grid grid-cols-2 gap-3">
-                    {(["contextWindow", "maxOutputTokens"] as const).map(
-                      (field) => (
-                        <label
-                          key={field}
-                          className="space-y-1 text-xs text-muted-foreground"
-                        >
-                          {field === "contextWindow"
-                            ? "Context tokens"
-                            : "Maximum output tokens"}
-                          <Input
-                            type="number"
-                            min={1}
-                            max={field === "contextWindow" ? 262144 : undefined}
-                            value={selected[field]}
-                            disabled={readOnly || busy}
-                            onChange={(event) =>
-                              setSelections((current) =>
-                                current.map((item) =>
-                                  item.model === model.id
-                                    ? {
-                                        ...item,
-                                        [field]: Number(event.target.value),
-                                      }
-                                    : item,
-                                ),
-                              )
-                            }
-                          />
-                        </label>
-                      ),
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-      </div>
-      {!catalog.length && (
-        <p className="text-sm text-muted-foreground">
-          Refresh the account to discover its catalog. Models remain disabled
-          until selected.
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      <Button
-        disabled={
-          readOnly ||
-          busy ||
-          selections.some(
-            (item) =>
-              !Number.isInteger(item.contextWindow) ||
-              item.contextWindow < 1 ||
-              item.contextWindow > 262144 ||
-              !Number.isInteger(item.maxOutputTokens) ||
-              item.maxOutputTokens < 1,
-          )
-        }
-        onClick={async () => {
-          setBusy(true);
-          setError(null);
-          try {
-            await onSave(selections);
-          } catch (cause) {
-            setError(
-              cause instanceof Error ? cause.message : "Could not save models",
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        Save models
-      </Button>
-    </section>
-  );
-}
+import { ModelSelection } from "./model-selection";
+import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
+import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
+import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
+import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 
 export function ClaudeAccountControls({
   account,
@@ -176,6 +36,7 @@ export function ClaudeAccountControls({
   children: (controls: { onAdd: () => void; detail: ReactNode }) => ReactNode;
 }) {
   const api = useClaude();
+  const dateFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
   const [open, setOpen] = useState(false);
   const [reconnectId, setReconnectId] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -212,11 +73,41 @@ export function ClaudeAccountControls({
     onCreated(result.id);
   }
   const detail = account && (
-    <section className="space-y-5 rounded-xl border bg-card p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">
-          <ClaudeName account={account} />
-        </h2>
+    <section className="animate-fade-in-up min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
+      <div>
+        <h2 className="min-w-0 truncate text-base font-semibold"><ClaudeName account={account} /></h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">Claude OAuth | {account.state.selections.length} models selected</p>
+      </div>
+      <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
+        <ClaudeQuota account={account} detailed />
+        <ClaudeResetGrants key={account.id} accountId={account.id} readOnly={readOnly} />
+        <ProviderAccountTrends provider="claude" accountId={account.id} embedded />
+      </section>
+      <p className="text-xs text-muted-foreground">
+        Quota observations are provider-reported. Recorded API-equivalent costs
+        are not subscription charges. OAuth acceptance and included-plan billing
+        require live qualification.
+      </p>
+      {[error, account.state.catalog_error, account.state.usage_error]
+        .filter(Boolean)
+        .map((message, index) => (
+          <p key={index} role="alert" className="text-sm text-destructive">
+            {message}
+          </p>
+        ))}
+      <AccountInfoPanel title="Credentials" rows={[
+        { label: "Status", value: formatSlug(account.credentialStatus) },
+        { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
+        { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
+        { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
+      ]} />
+      <div className="space-y-3 border-t pt-4">
+        <AccountRoutingPolicyControl
+          policy={account.routingPolicy}
+          disabled={readOnly || busy}
+          onChange={(routingPolicy) => void run(() => api.update.mutateAsync({ id: account.id, body: { routingPolicy } }))}
+        />
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
@@ -231,26 +122,14 @@ export function ClaudeAccountControls({
           >
             Reconnect
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
+          <AccountPauseButton
+            paused={!account.isEnabled}
             disabled={readOnly || busy}
-            onClick={() =>
-              void run(() =>
-                api.update.mutateAsync({
-                  id: account.id,
-                  body: { isEnabled: !account.isEnabled },
-                }),
-              )
-            }
-          >
-            {account.isEnabled ? (
-              <Pause className="h-4 w-4" />
-            ) : (
-              <Play className="h-4 w-4" />
-            )}
-            {account.isEnabled ? "Pause" : "Resume"}
-          </Button>
+            onClick={() => void run(() => api.update.mutateAsync({
+              id: account.id,
+              body: { isEnabled: !account.isEnabled },
+            }))}
+          />
           <Button
             size="sm"
             variant="outline"
@@ -271,25 +150,6 @@ export function ClaudeAccountControls({
           </Button>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Claude OAuth · Credentials: {account.credentialStatus}. Token expiry:{" "}
-        {new Date(account.expiresAt).toLocaleString()}.
-      </p>
-      <ClaudeQuota account={account} detailed />
-      <ClaudeResetGrants key={account.id} accountId={account.id} readOnly={readOnly} />
-      <ProviderAccountTrends provider="claude" accountId={account.id} />
-      <p className="text-xs text-muted-foreground">
-        Quota observations are provider-reported. Recorded API-equivalent costs
-        are not subscription charges. OAuth acceptance and included-plan billing
-        require live qualification.
-      </p>
-      {[error, account.state.catalog_error, account.state.usage_error]
-        .filter(Boolean)
-        .map((message, index) => (
-          <p key={index} role="alert" className="text-sm text-destructive">
-            {message}
-          </p>
-        ))}
       <ClaudeCapacitySettings
         key={`${account.id}:${account.maxConcurrency}`}
         value={account.maxConcurrency}

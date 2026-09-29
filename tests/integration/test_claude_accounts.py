@@ -116,6 +116,41 @@ async def test_catalog_refresh_preserves_snapshot_on_failure(async_client, monke
     assert response.json()["state"]["catalog_error"] == "Discovery unavailable"
 
 
+async def test_automatic_catalog_limits_and_rejected_override_api(async_client, monkeypatch):
+    monkeypatch.setattr(
+        ClaudeClient,
+        "catalog",
+        AsyncMock(
+            return_value=[
+                CatalogModel(id="claude-opus-5", display_name="Opus", max_input_tokens=1000000, max_tokens=128000),
+                CatalogModel(id="claude-future", display_name="Future"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=UsageSnapshot()))
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    path = f"/api/claude-accounts/{source_id}"
+    await async_client.post(path + "/refresh")
+    bad = await async_client.patch(path, json={"selections": [{"model": "claude-opus-5", "contextWindow": 200000}]})
+    assert bad.status_code == 422
+    unknown = await async_client.patch(path, json={"selections": [{"model": "claude-future"}]})
+    assert unknown.status_code == 400
+    good = await async_client.patch(
+        path, json={"selections": [{"model": "claude-opus-5"}], "routingPolicy": "preserve"}
+    )
+    assert good.status_code == 200, good.text
+    assert good.json()["routingPolicy"] == "preserve"
+    assert good.json()["state"]["selections"] == [{"model": "claude-opus-5"}]
+    catalog = (await async_client.get("/backend-api/codex/models")).json()["models"]
+    model = next(item for item in catalog if item["slug"] == "anthropic/claude-opus-5")
+    assert model["context_window"] == 1000000
+    assert model["max_context_window"] == 1000000
+    assert model["max_output_tokens"] == 128000
+    assert model["auto_compact_token_limit"] == 900000
+    assert model["effective_context_window_percent"] == 95
+    assert (await async_client.patch(path, json={"routingPolicy": "invalid"})).status_code == 422
+
+
 @pytest.mark.parametrize(
     "failure,status",
     [

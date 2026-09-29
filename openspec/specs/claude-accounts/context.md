@@ -346,3 +346,57 @@ OpenRouter routing is unchanged. Round-robin uses durable admission recency as a
 hint, not an atomic cross-worker scheduling lock; existing concurrency admission
 remains authoritative. RPM/session caps and automatic Claude plan multipliers are
 not part of this policy.
+
+## Automatic model capabilities and account parity (2026-09-29)
+
+Authenticated read-only Models API discovery on the connected account returned
+HTTP 200 with token limits on every listed model, including Opus 5 at
+1,000,000 input / 128,000 output and Haiku 4.5 at 200,000 / 64,000.
+This establishes that account's catalog response, not generation quality or
+every account's entitlement. No inference or token refresh was performed.
+
+Discovery fields win; explicitly maintained known-model entries fill absent
+fields. Unknown incomplete models stay unavailable. Selection stores identifiers
+only. The migration removes old manual fields, invalidates catalog freshness,
+and disables old projections until refresh. Downgrade drops routing policy but
+does not recreate discarded operator limits. The existing scheduler refreshes
+invalidated catalogs; a failed refresh remains visible.
+
+A model ceiling and a default request budget are different contracts. The
+translated default is min(64,000, output maximum); valid explicit budgets survive.
+Codex metadata preserves full context with 90% auto-compaction and 95% effective
+context. Neither threshold is a Claude quality benchmark. No arbitrary 350k cap
+or provider-specific token override editor is retained. The existing global
+model-context policy is outside this change and remains an operator-level control.
+
+Historical evidence (source/comments inspected at the following revisions):
+
+- OpenCodex `8a005dd98`: [#3332](https://github.com/lidge-jun/opencodex/pull/3332)
+  reported 8k truncation and five client retries; its author's 9,344-token answer
+  succeeded. The change shipped in
+  [#3474](https://github.com/lidge-jun/opencodex/pull/3474),
+  commit `00834d710` (2026-09-04), using a 64k provider default.
+  This is a practical truncation report, not evidence that 64k is universally optimal.
+- OpenCodex [#1905](https://github.com/lidge-jun/opencodex/pull/1905),
+  commit `d659c542f` (2026-08-25), separates lowering-only soft compaction
+  budgets from true context bounds. Its older 350k option was provider-generic,
+  not a measured Claude limit.
+- Sub2API `9a62841`: commit `a25faecad` (2026-04-24),
+  [#1914](https://github.com/Wei-Shaw/sub2api/pull/1914), filled missing
+  max_tokens with 128k to match then-observed CLI traffic. Our isolated Claude
+  Code 2.1.283 capture used 32k, so one observed CLI default is not universal.
+- CLIProxyAPI `d33f63f`:
+  [#3833](https://github.com/router-for-me/CLIProxyAPI/issues/3833)
+  reported missing token-limit fields breaking client interoperability.
+- OmniRoute `c3c540da`:
+  [#14827](https://github.com/diegosouzapw/OmniRoute/pull/14827)
+  preserves authenticated discovery limits/pagination (merged 2026-09-29;
+  reported 12 discovered models and a generation test).
+  These are third-party observations, not independently repeated live generation.
+
+Claude quota bars, list cells, credential rows, pause button and routing selector
+reuse Codex components. Unknown/stale/over-quota observations remain explicit.
+No OpenAI workspace, subscription-credit or warm-up state is invented for Claude.
+Normal/burn-first/preserve is stored per Claude account and supplied to the existing
+shared candidate; hard owners, eligible affinity and strategy-specific exceptions
+remain unchanged.

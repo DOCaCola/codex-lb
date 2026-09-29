@@ -122,13 +122,14 @@ class ClaudeDispatchPreparer:
         if endpoint == "messages":
             limit = logical.get("max_tokens")
             selected_model = next(row for row in account.source.models if row.model == model)
+            assert selected_model.max_output_tokens is not None  # Catalog projection gates eligibility.
             if (
                 not isinstance(limit, int)
                 or isinstance(limit, bool)
                 or limit <= 0
-                or limit > (selected_model.max_output_tokens or 8192)
+                or limit > selected_model.max_output_tokens
             ):
-                raise ClaudeError("Claude max_tokens must be positive and within the configured model output limit")
+                raise ClaudeError("Claude max_tokens must be positive and within the model output capability")
         if native_ownership is not None and endpoint == "messages":
             reason = (
                 "resource_owner"

@@ -3,7 +3,6 @@ import {
   Download,
   RefreshCw,
   RotateCcw,
-  Route,
   ShieldCheck,
   Trash2,
   Zap,
@@ -12,13 +11,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { AccountRoutingPolicyControl } from "./routing-policy";
 import { Switch } from "@/components/ui/switch";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import type {
@@ -88,35 +81,11 @@ export function AccountActions({
   return (
     <div className="space-y-3 border-t pt-4">
       {!showOperatorRecoveryAction ? (
-        <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3 sm:flex-row sm:items-center sm:gap-3">
-          <div className="flex min-w-0 items-center gap-2 text-sm font-medium sm:min-w-36">
-            <Route className="h-4 w-4 text-muted-foreground" />
-            {t("accounts.actions.routingPolicy")}
-          </div>
-          <Select
-            value={account.routingPolicy ?? "normal"}
-            onValueChange={(value) =>
-              onRoutingPolicyChange(
-                account.accountId,
-                value as AccountRoutingPolicy,
-              )
-            }
-            disabled={busy || readOnly}
-          >
-            <SelectTrigger
-              aria-label={t("accounts.actions.routingPolicy")}
-              size="sm"
-              className="h-8 w-full min-w-0 text-xs sm:min-w-32 sm:flex-1"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="burn_first">{t("common.routingPolicies.burnFirst")}</SelectItem>
-              <SelectItem value="normal">{t("common.routingPolicies.normal")}</SelectItem>
-              <SelectItem value="preserve">{t("common.routingPolicies.preserve")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <AccountRoutingPolicyControl
+          policy={account.routingPolicy ?? "normal"}
+          disabled={busy || readOnly}
+          onChange={(policy) => onRoutingPolicyChange(account.accountId, policy)}
+        />
       ) : null}
 
       <label

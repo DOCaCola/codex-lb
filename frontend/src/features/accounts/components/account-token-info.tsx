@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { AccountInfoPanel } from "./account-info-panel";
 
 import type { AccountSummary } from "@/features/accounts/schemas";
 import {
@@ -13,23 +14,9 @@ export type AccountTokenInfoProps = {
 
 export function AccountTokenInfo({ account }: AccountTokenInfoProps) {
   const { t } = useTranslation();
-  return (
-    <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("accounts.tokenInfo.title")}</h3>
-      <dl className="space-y-2 text-xs">
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <dt className="text-muted-foreground">{t("accounts.tokenInfo.access")}</dt>
-          <dd className="min-w-0 break-words text-right font-medium">{formatAccessTokenLabel(account.auth)}</dd>
-        </div>
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <dt className="text-muted-foreground">{t("accounts.tokenInfo.refresh")}</dt>
-          <dd className="min-w-0 break-words text-right font-medium">{formatRefreshTokenLabel(account.auth)}</dd>
-        </div>
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <dt className="text-muted-foreground">{t("accounts.tokenInfo.idToken")}</dt>
-          <dd className="min-w-0 break-words text-right font-medium">{formatIdTokenLabel(account.auth)}</dd>
-        </div>
-      </dl>
-    </div>
-  );
+  return <AccountInfoPanel title={t("accounts.tokenInfo.title")} rows={[
+    { label: t("accounts.tokenInfo.access"), value: formatAccessTokenLabel(account.auth) },
+    { label: t("accounts.tokenInfo.refresh"), value: formatRefreshTokenLabel(account.auth) },
+    { label: t("accounts.tokenInfo.idToken"), value: formatIdTokenLabel(account.auth) },
+  ]} />;
 }

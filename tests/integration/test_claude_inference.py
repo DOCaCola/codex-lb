@@ -131,6 +131,34 @@ async def test_pause_turn_not_reported_as_completed(async_client, pool, monkeypa
     assert response.json()["incomplete_details"]["reason"] == "pause_turn"
 
 
+@pytest.mark.parametrize("requested,expected", [(None, 64000), (100000, 100000)])
+async def test_translated_output_budget_reaches_upstream(async_client, pool, monkeypatch, requested, expected):
+    captured, _ = install_upstream(monkeypatch)
+    body = {"model": MODEL, "input": "Hello", "stream": False}
+    if requested is not None:
+        body["max_output_tokens"] = requested
+    response = await async_client.post("/v1/responses", json=body)
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["max_tokens"] == expected
+
+
+async def test_native_large_budget_preserved_and_ceiling_enforced(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch)
+    body = {
+        "model": "claude-opus-5",
+        "max_tokens": 100000,
+        "stream": True,
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=body)
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["max_tokens"] == 100000
+    body["max_tokens"] = 128001
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=body)
+    assert response.status_code == 400
+    assert len(captured) == 1
+
+
 async def test_malformed_input_never_dispatches(async_client, pool, monkeypatch):
     captured, closed = install_upstream(monkeypatch)
     response = await async_client.post(
@@ -505,7 +533,7 @@ async def test_native_helper_route_does_not_relocate_or_enable_features(async_cl
     selected = await async_client.patch(
         f"/api/claude-accounts/{pool[0]}",
         json={
-            "selections": [{"model": model, "max_output_tokens": 32768}],
+            "selections": [{"model": model}],
         },
     )
     assert selected.status_code == 200

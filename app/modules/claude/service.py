@@ -11,7 +11,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ModelSource, ModelSourceModel
+from app.db.models import AccountRoutingPolicy, ClaudeAccount, ClaudeOAuthFlow, ModelSource, ModelSourceModel
 from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.capabilities import model_policy
 from app.modules.claude.client import ClaudeClient
@@ -186,6 +186,8 @@ class ClaudeService:
             row.source.name = payload.name.strip()
         if payload.is_enabled is not None:
             row.source.is_enabled = payload.is_enabled
+        if payload.routing_policy is not None:
+            row.routing_policy = payload.routing_policy.value
         if "max_concurrency" in payload.model_fields_set:
             row.source.max_concurrency = payload.max_concurrency
         if payload.selections is not None:
@@ -193,6 +195,9 @@ class ClaudeService:
             known = {item.id for item in state.catalog} | {item.model for item in state.selections}
             if len(selected) != len(set(selected)) or set(selected) - known:
                 raise ClaudeError("Select each model once from the synchronized catalog")
+            newly_selected = set(selected) - {item.model for item in state.selections}
+            if any(item.id in newly_selected and item.token_limits is None for item in state.catalog):
+                raise ClaudeError("Model token limits are unavailable; refresh the catalog before selecting this model")
             state.selections = payload.selections
         await self._save(row, state, project=payload.selections is not None)
         return self._response(row)
@@ -294,6 +299,7 @@ class ClaudeService:
         if row.refresh_intent and row.refresh_started_at and row.refresh_started_at < utcnow() - timedelta(minutes=1):
             status = "uncertain"
         return ClaudeAccountResponse(
+            routing_policy=AccountRoutingPolicy(row.routing_policy),
             max_concurrency=row.source.max_concurrency,
             id=row.source_id,
             name=row.source.name,
@@ -307,26 +313,39 @@ class ClaudeService:
 
 def project_models(state: AccountState) -> list[ModelSourceModel]:
     catalog = {model.id: model for model in state.catalog}
-    return [
-        ModelSourceModel(
-            model=f"anthropic/{selection.model}",
-            display_name=catalog[selection.model].display_name if selection.model in catalog else selection.model,
-            context_window=selection.context_window,
-            max_output_tokens=selection.max_output_tokens,
-            is_enabled=selection.model in catalog,
-            supports_streaming=True,
-            supports_tools=True,
-            supports_vision=True,
-            raw_metadata_json=json.dumps(
-                {
-                    "upstream_model": selection.model,
-                    "supports_reasoning": bool((policy := model_policy(selection.model)) and policy.adaptive_reasoning),
-                    "supported_reasoning_levels": ["low", "medium", "high", "max"]
-                    if policy and policy.adaptive_reasoning
-                    else [],
-                    "default_reasoning_level": "medium" if policy and policy.adaptive_reasoning else None,
-                }
-            ),
+    result: list[ModelSourceModel] = []
+    for selection in state.selections:
+        model = catalog.get(selection.model)
+        limits = model.token_limits if model else None
+        policy = model_policy(selection.model)
+        result.append(
+            ModelSourceModel(
+                model=f"anthropic/{selection.model}",
+                display_name=model.display_name if model else selection.model,
+                context_window=limits.context_window if limits else None,
+                max_output_tokens=limits.max_output_tokens if limits else None,
+                is_enabled=limits is not None,
+                supports_streaming=True,
+                supports_tools=True,
+                supports_vision=True,
+                raw_metadata_json=json.dumps(
+                    {
+                        **(
+                            {
+                                "auto_compact_token_limit": limits.context_window * 9 // 10,
+                                "effective_context_window_percent": 95,
+                            }
+                            if limits
+                            else {}
+                        ),
+                        "upstream_model": selection.model,
+                        "supports_reasoning": bool(policy and policy.adaptive_reasoning),
+                        "supported_reasoning_levels": ["low", "medium", "high", "max"]
+                        if policy and policy.adaptive_reasoning
+                        else [],
+                        "default_reasoning_level": "medium" if policy and policy.adaptive_reasoning else None,
+                    }
+                ),
+            )
         )
-        for selection in state.selections
-    ]
+    return result

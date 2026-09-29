@@ -65,9 +65,10 @@ async def prepare_responses(
             excluded_source_ids=excluded_source_ids,
         )
         selected = next(row for row in account.source.models if row.model == model)
+        assert selected.max_output_tokens is not None  # Only resolved catalog models are eligible.
         projection = project_responses(
             replay.project(logical, source_id=account.source_id, model=model),
-            max_output_tokens=selected.max_output_tokens or 8192,
+            max_output_tokens=selected.max_output_tokens,
             restore_reasoning=lambda token: (
                 opaque.decode(token, model=model, client_scope=client_scope, conversation_id=conversation_id).block
             ),

@@ -19,6 +19,17 @@ def request(**overrides):
     return {"model": "anthropic/claude-opus-5", "input": "Hello", **overrides}
 
 
+@pytest.mark.parametrize("maximum,expected", [(128000, 64000), (64000, 64000), (32000, 32000)])
+def test_default_output_budget_is_distinct_from_capability(maximum, expected):
+    assert project_responses(request(), max_output_tokens=maximum).body["max_tokens"] == expected
+
+
+def test_explicit_output_budget_can_exceed_default_but_not_capability():
+    assert project_responses(request(max_output_tokens=100000), max_output_tokens=128000).body["max_tokens"] == 100000
+    with pytest.raises(ClientPayloadError):
+        project_responses(request(max_output_tokens=128001), max_output_tokens=128000)
+
+
 def test_structured_output_and_reasoning_share_output_configuration():
     schema = {
         "type": "object",

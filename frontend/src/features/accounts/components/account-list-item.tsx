@@ -1,7 +1,8 @@
-import { Flame, Shield, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
+import { MiniQuotaRow } from "./quota-display";
+import { RoutingPolicyBadge } from "./routing-policy";
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
 import { AccountSelectionSurface } from "@/components/account-surfaces";
 import { cn } from "@/lib/utils";
 import { isEmailLabel } from "@/components/blur-email";
@@ -10,7 +11,6 @@ import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { useSmoothPercent } from "@/hooks/use-smooth-percent";
 import { StatusBadge } from "@/components/status-badge";
-import { MiniQuotaBar } from "@/components/mini-quota-bar";
 import type {
   AccountRoutingPolicy,
   AccountSummary,
@@ -19,8 +19,6 @@ import { normalizeStatus } from "@/utils/account-status";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import {
   formatDateTimeInline,
-  formatPercentNullable,
-  formatQuotaResetLabel,
   formatSlug,
 } from "@/utils/formatters";
 
@@ -164,77 +162,4 @@ export function AccountListItem({
       </div>
     </AccountSelectionSurface>
   );
-}
-
-function RoutingPolicyBadge({
-  policy,
-}: {
-  policy: AccountRoutingPolicy | undefined;
-}) {
-  const { t } = useTranslation();
-  if (policy === "burn_first") {
-    return (
-      <Badge
-        variant="outline"
-        className="shrink-0 gap-1 border-amber-300 bg-amber-50 px-1.5 text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-      >
-        <Flame className="h-3 w-3" aria-hidden="true" />
-        {t("common.routingPolicies.burnFirst")}
-      </Badge>
-    );
-  }
-  if (policy === "preserve") {
-    return (
-      <Badge
-        variant="outline"
-        className="shrink-0 gap-1 border-sky-300 bg-sky-50 px-1.5 text-[11px] text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
-      >
-        <Shield className="h-3 w-3" aria-hidden="true" />
-        {t("common.routingPolicies.preserve")}
-      </Badge>
-    );
-  }
-  return (
-    <Badge
-      variant="outline"
-      className="shrink-0 px-1.5 text-[11px] text-muted-foreground"
-    >
-      {t("common.routingPolicies.normal")}
-    </Badge>
-  );
-}
-
-function MiniQuotaRow({
-  label,
-  percent,
-  resetAt,
-}: {
-  label: string;
-  percent: number | null;
-  resetAt: string | null | undefined;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="tabular-nums font-medium">
-          {formatPercentNullable(percent, 1)}
-        </span>
-      </div>
-      <MiniQuotaBar
-        aria-label={t("accounts.listItem.quotaRemainingAria", { label })}
-        percent={percent}
-        testId={`mini-quota-track-${label.toLowerCase()}`}
-      />
-      <div className="text-[10px] text-muted-foreground">
-        {formatMiniQuotaResetLabel(resetAt ?? null, t)}
-      </div>
-    </div>
-  );
-}
-
-function formatMiniQuotaResetLabel(resetAt: string | null, t: ReturnType<typeof useTranslation>["t"]): string {
-  const label = formatQuotaResetLabel(resetAt);
-  return label.startsWith("Reset ") ? label : t("accounts.listItem.resetAt", { label });
 }

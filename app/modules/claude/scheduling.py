@@ -35,6 +35,7 @@ def choose(
         candidates.append(
             Candidate(
                 account_id=account.source_id,
+                routing_policy=account.routing_policy,
                 status=AccountStatus.ACTIVE,
                 used_percent=primary.utilization if primary else None,
                 primary_reset_at=int(primary.resets_at.timestamp()) if primary and primary.resets_at else None,

@@ -1955,6 +1955,7 @@ class QuotaWebhookRedemption(Base):
 class ClaudeAccount(Base):
     __tablename__ = "claude_accounts"
 
+    routing_policy: Mapped[str] = mapped_column(String, nullable=False, default="normal", server_default="normal")
     source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
     credentials_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     grant_fingerprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)

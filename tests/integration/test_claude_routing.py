@@ -112,6 +112,14 @@ async def test_bound_owner_not_replaced_when_paused(pool, async_client):
     assert error.value.code == "previous_response_owner_unavailable"
 
 
+async def test_routing_policy_does_not_override_owner_or_affinity(pool, async_client):
+    for source_id, policy in zip(pool, ["preserve", "burn_first"], strict=True):
+        response = await async_client.patch(f"/api/claude-accounts/{source_id}", json={"routingPolicy": policy})
+        assert response.status_code == 200
+    assert await choose(owner_source_id=pool[0]) == pool[0]
+    assert await choose(preferred_source_id=pool[0]) == pool[0]
+
+
 @pytest.mark.parametrize("condition", ["reauth", "uncertain", "refresh", "backoff", "quota"])
 async def test_unavailable_owner_cannot_cross_account(pool, condition):
     async with SessionLocal() as session:

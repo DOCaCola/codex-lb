@@ -1,6 +1,8 @@
+import json
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
@@ -55,3 +57,38 @@ def test_projection_only_selected_models_and_retains_missing_selection():
     assert projected[0].model == "anthropic/missing"
     assert not projected[0].is_enabled
     assert observed.selections[0].model == "missing"
+
+
+def test_discovery_limits_override_registry_and_project_compaction_separately():
+    model = CatalogModel(id="claude-opus-5", display_name="Opus", max_input_tokens=750000, max_tokens=96000)
+    state = AccountState(catalog=[model], selections=[ModelSelection(model=model.id)])
+    projected = project_models(state)[0]
+    assert projected.context_window == 750000
+    assert projected.max_output_tokens == 96000
+    assert projected.is_enabled
+    assert projected.raw_metadata_json is not None
+    metadata = json.loads(projected.raw_metadata_json)
+    assert metadata["auto_compact_token_limit"] == 675000
+    assert metadata["effective_context_window_percent"] == 95
+    assert state.model_dump()["selections"] == [{"model": "claude-opus-5"}]
+
+
+def test_missing_fields_use_only_exact_maintained_models():
+    known = CatalogModel(id="claude-haiku-4-5-20251001", display_name="Haiku", max_tokens=32000)
+    assert known.max_input_tokens == 200000 and known.max_tokens == 32000
+    unknown = CatalogModel(id="claude-opus-5-99", display_name="Unknown", max_input_tokens=1000000)
+    assert unknown.token_limits is None
+    state = AccountState(catalog=[unknown], selections=[ModelSelection(model=unknown.id)])
+    assert not project_models(state)[0].is_enabled
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "64000", 1.5])
+def test_invalid_discovered_limits_are_rejected(value):
+    with pytest.raises(ValidationError):
+        CatalogModel(id="claude-opus-5", display_name="Opus", max_tokens=value)
+
+
+@pytest.mark.parametrize("field", ["contextWindow", "context_window", "maxOutputTokens", "max_output_tokens"])
+def test_manual_limits_are_not_accepted(field):
+    with pytest.raises(ValidationError):
+        ModelSelection.model_validate({"model": "claude-opus-5", field: 10000})

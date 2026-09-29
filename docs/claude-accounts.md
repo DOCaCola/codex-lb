@@ -8,8 +8,10 @@ Operational details: [implementation context](../openspec/specs/claude-accounts/
 1. Open **Accounts → Add account → Claude**.
 2. Acknowledge that this gateway will be the sole refresh consumer for the grant.
 3. Complete OAuth sign-in, or explicitly upload your Claude Code credential JSON.
-4. Refresh the account, select models, and save context/output limits. New models
-   stay disabled until selected. The default context cap is 200,000 tokens.
+4. Refresh the account, select models, and save. Context and output capabilities
+   are discovered automatically; there are no manual token-limit editors.
+   New models stay disabled until selected. Models with unresolved limits cannot
+   be enabled until discovery or maintained metadata supplies both limits.
 5. Grant source-restricted client API keys access to the Claude account source.
 
 Codex clients use `anthropic/<model-id>` over Responses HTTP or WebSocket. Native
@@ -18,10 +20,28 @@ Messages clients can use the upstream model ID or its `anthropic/` prefix on
 is required. OpenAI models remain first in the Codex list, then native Anthropic,
 then other provider sources.
 
+## Model budgets
+
+Codex receives the full discovered context capacity, a 95% effective-context
+percentage and a separate auto-compaction threshold at 90% of capacity. These are
+client hints, not a guarantee about quality at maximum context. For example,
+a 1,000,000-token context advertises a 900,000-token compaction threshold.
+
+Translated requests without an output budget use the smaller of 64,000 tokens and
+the model's maximum output. Explicit native or translated budgets remain accepted
+up to that maximum. A 128,000-token output capability therefore does not force every
+request to reserve 128,000 tokens.
+
+Upgrading preserves selected model IDs and removes former manual budgets.
+Existing projections stay disabled until a successful catalog refresh resolves
+their limits. Discovery errors remain visible; no guessed generic limits are used.
+
 ## Operate and recover
 
 Pause/resume, quota monitoring, model selection and reconnect are in the shared
-account detail. Unknown quota is not zero usage. Model-specific exhaustion only
+account detail. Routing policy offers Normal, Burn first and Preserve within the
+Claude pool, using the same strategy-specific semantics as Codex. Hard owners and
+eligible conversation affinity still take precedence. Unknown quota is not zero usage. Model-specific exhaustion only
 blocks applicable models. API-equivalent costs are not subscription charges.
 
 An uncertain rotating refresh requires reconnect with a fresh grant. Reconnect

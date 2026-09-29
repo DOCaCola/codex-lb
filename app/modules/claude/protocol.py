@@ -13,6 +13,7 @@ from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.capabilities import model_policy
+from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
 
 
@@ -261,9 +262,9 @@ def project_responses(
         raise invalid("Claude tool calls require their outputs before continuing")
     if not messages:
         raise invalid("Claude requests require at least one message")
-    limit = payload.get("max_output_tokens", max_output_tokens)
+    limit = payload.get("max_output_tokens", default_output_tokens(max_output_tokens))
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit > max_output_tokens:
-        raise invalid("Requested output limit exceeds the configured Claude model limit", "max_output_tokens")
+        raise invalid("Requested output limit exceeds the Claude model capability", "max_output_tokens")
     body: dict[str, JsonValue] = {
         "model": payload.get("model"),
         "messages": messages,
