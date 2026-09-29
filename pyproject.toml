@@ -68,6 +68,7 @@ dependencies = [
     "websockets>=16.0",
     "zstandard>=0.25.0",
     "aiohttp-socks>=0.10.1",
+    "jsonschema>=4.23,<5",
 ]
 
 [project.optional-dependencies]

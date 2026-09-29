@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 from pydantic import JsonValue
@@ -15,6 +15,7 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.capabilities import model_policy
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
+from app.modules.claude.tool_schema import ToolArguments, adapt_tool_schema
 
 
 def invalid(message: str, param: str = "input") -> ClientPayloadError:
@@ -26,6 +27,7 @@ class ToolIdentity:
     name: str
     namespace: str | None
     custom: bool
+    arguments: ToolArguments | None = None
 
     @property
     def wire_name(self) -> str:
@@ -100,7 +102,7 @@ def project_responses(
     tools: dict[str, ToolIdentity] = {}
     declarations: list[JsonValue] = []
 
-    def declare(tool: JsonValue, namespace: str | None = None) -> None:
+    def declare(tool: JsonValue, namespace: str | None = None, *, param: str) -> None:
         if not isinstance(tool, dict):
             raise invalid("Invalid Claude tool declaration", "tools")
         kind = tool.get("type")
@@ -120,8 +122,8 @@ def project_responses(
             nested = tool.get("tools")
             if namespace is not None or not isinstance(nested, list):
                 raise invalid("Invalid tool namespace", "tools")
-            for child in nested:
-                declare(child, name)
+            for index, child in enumerate(nested):
+                declare(child, name, param=f"{param}.tools[{index}]")
             return
         if kind not in ("function", "custom"):
             raise invalid(f"Unsupported Claude tool type: {kind}", "tools")
@@ -135,8 +137,7 @@ def project_responses(
         identity = ToolIdentity(name, namespace, kind == "custom")
         if identity.wire_name in tools:
             raise invalid("Duplicate tool identity", "tools")
-        tools[identity.wire_name] = identity
-        schema = (
+        schema: JsonValue = (
             tool.get("parameters")
             if kind == "function"
             else {
@@ -147,7 +148,15 @@ def project_responses(
             }
         )
         if not isinstance(schema, dict):
-            raise invalid("Function tools require a JSON object schema", "tools")
+            raise invalid(f"Tool '{name}' requires a JSON object schema", f"{param}.parameters")
+        if kind == "function":
+            schema, arguments = adapt_tool_schema(
+                schema,
+                tool_name=f"{namespace}.{name}" if namespace else name,
+                param=f"{param}.parameters",
+            )
+            identity = replace(identity, arguments=arguments)
+        tools[identity.wire_name] = identity
         declarations.append(
             {"name": identity.wire_name, "description": tool.get("description", ""), "input_schema": schema}
         )
@@ -155,8 +164,8 @@ def project_responses(
     raw_tools = payload.get("tools", [])
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
-    for tool in raw_tools:
-        declare(tool)
+    for index, tool in enumerate(raw_tools):
+        declare(tool, param=f"tools[{index}]")
     messages: list[JsonValue] = []
 
     def append(role: str, content: list[JsonValue]) -> None:
@@ -202,7 +211,7 @@ def project_responses(
             if call_id in seen_calls:
                 raise invalid("Duplicate tool call_id")
             identity = ToolIdentity(name, namespace, kind == "custom_tool_call")
-            tools.setdefault(identity.wire_name, identity)
+            identity = tools.setdefault(identity.wire_name, identity)
             if identity.custom:
                 arguments: JsonValue = {"input": item.get("input")}
                 if not isinstance(item.get("input"), str):
@@ -217,6 +226,8 @@ def project_responses(
                     raise invalid("Invalid function arguments") from exc
                 if not isinstance(arguments, dict):
                     raise invalid("Function arguments must encode an object")
+                if identity.arguments is not None:
+                    arguments = identity.arguments.encode(arguments)
             append("assistant", [{"type": "tool_use", "id": call_id, "name": identity.wire_name, "input": arguments}])
             pending.add(call_id)
             seen_calls.add(call_id)

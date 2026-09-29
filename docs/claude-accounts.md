@@ -93,3 +93,18 @@ the failing endpoint, HTTP status and retry deadline. The gateway honors
 and restarts. Last good readings retain their original timestamps and show as stale;
 fresh inference headers can still update their own quota windows. Catalog and usage
 cooldowns are independent. No account pause or reactive token refresh is triggered.
+
+## Codex function-tool schemas
+
+Root `oneOf`, `anyOf`, and `allOf` declarations are adapted automatically for
+Claude without merging away their constraints. The upstream request uses a private
+`arguments` wrapper; Codex sees the original tool arguments and result pairing.
+Wrapped arguments arrive as one validated delta at tool completion rather than
+incrementally. Ordinary tools and native `/v1/messages` schemas are unchanged.
+
+Unrelocatable references or excessive schema complexity return a named tool error
+before dispatch. Invalid generated arguments fail the response, never complete a
+tool call successfully. This is specified in
+[Claude accounts](../openspec/specs/claude-accounts/spec.md#requirement-faithful-translated-claude-tool-schemas).
+Mock HTTP/WebSocket tests cover the roundtrip; live upstream acceptance is separate
+qualification.

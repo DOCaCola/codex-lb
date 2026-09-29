@@ -13,6 +13,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import ToolIdentity
 from app.modules.claude.search import url_citations
+from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
 
 
 class Usage(BaseModel):
@@ -46,6 +47,7 @@ class ResponsesProjection:
     blocks: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     outputs: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     partial_json: dict[int, str] = field(default_factory=dict)
+    partial_json_bytes: dict[int, int] = field(default_factory=dict)
     search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
     usage: Usage = field(default_factory=Usage)
     stop_reason: str | None = None
@@ -148,6 +150,8 @@ class ResponsesProjection:
                     raise ClaudeError("Claude custom tool input must be text")
                 result["input"] = value
             else:
+                if final and identity.arguments is not None:
+                    arguments = identity.arguments.decode(arguments)
                 result["arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":")) if final else ""
             return result
         raise ClaudeError("Claude returned an unsupported content block")
@@ -246,7 +250,16 @@ class ResponsesProjection:
                 piece = delta.get("partial_json")
                 if not isinstance(piece, str):
                     raise ClaudeError("Invalid Claude tool JSON delta")
+                identity = self.tools.get(str(block.get("name")))
+                wrapped = identity is not None and identity.arguments is not None
+                if wrapped:
+                    size = self.partial_json_bytes.get(index, 0) + len(piece.encode())
+                    if size > MAX_TOOL_ARGUMENT_BYTES:
+                        raise ClaudeError("Claude wrapped tool arguments exceeded the size limit")
+                    self.partial_json_bytes[index] = size
                 self.partial_json[index] = self.partial_json.get(index, "") + piece
+                if wrapped:
+                    return []  # The private envelope must never reach client deltas.
                 item = self.outputs[index]
                 if item["type"] in ("custom_tool_call", "web_search_call"):
                     return []  # JSON escapes must be decoded before emitting free-form input.
@@ -278,8 +291,15 @@ class ResponsesProjection:
         if kind != "content_block_stop":
             raise ClaudeError("Unsupported Claude stream event")
         if index in self.partial_json:
+            self.partial_json_bytes.pop(index, None)
             try:
-                block["input"] = json.loads(self.partial_json.pop(index))
+                raw = self.partial_json.pop(index)
+                identity = self.tools.get(str(block.get("name")))
+                block["input"] = (
+                    identity.arguments.parse(raw)
+                    if identity is not None and identity.arguments is not None
+                    else json.loads(raw)
+                )
             except ValueError as exc:
                 raise ClaudeError("Claude returned invalid tool JSON") from exc
         item = self._item(index, self.blocks.pop(index), final=True)
@@ -323,6 +343,16 @@ class ResponsesProjection:
                 ]
             )
         elif item["type"] == "function_call":
+            identity = self.tools[str(block["name"])]
+            if identity.arguments is not None:
+                events.append(
+                    self.event(
+                        "response.function_call_arguments.delta",
+                        item_id=item["id"],
+                        output_index=index,
+                        delta=item["arguments"],
+                    )
+                )
             events.append(
                 self.event(
                     "response.function_call_arguments.done",

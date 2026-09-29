@@ -439,3 +439,37 @@ cooldown. CLIProxyAPI `d33f63f8` had no equivalent core OAuth usage poller.
 Durable cross-worker claims and honoring Retry-After are our additions.
 No legacy endpoint fallback or third-party source was copied. Mock tests establish
 local coordination/protocol behavior, not universal live Anthropic limits.
+
+## Translated tool-schema adaptation
+
+Anthropic rejects root oneOf/anyOf/allOf on function input_schema. Responses
+tools using those keywords or a root local reference receive an upstream-only
+object with one required `arguments` property containing the original schema.
+For example, mode-specific view/id and update/prompt alternatives keep their
+required fields and closed-object constraints. Claude returns
+`{"arguments":{"mode":"view","id":"item"}}`; Codex receives only
+`{"mode":"view","id":"item"}`. Ordinary schemas and native Messages
+tools retain their existing representation.
+
+Local JSON-pointer references move with the schema. Unsupported reference scopes
+are named client errors, not relaxed schemas or dropped tools. Adaptation is
+bounded to 64 levels/4096 visited nodes and wrapped arguments to 2 MiB UTF-8.
+Wrapped deltas are buffered until complete, parsed and validated against the
+original schema before publishing executable arguments. Failure terminates the
+response without successful tool completion. Logical replay stores original
+arguments; each attempt encodes history using its current declaration.
+
+Reference inspection on 2026-09-29: OpenCodex `8a005dd98` (PR76, cherry-pick
+`070839a64`), CLIProxyAPI `d33f63f8` (issue4428, fix `59aa35a4`), OmniRoute
+`113de57b` (PR13561), Sub2API `9a62841fd` (PR7345). Sub2API's report reproduces
+Codex desktop automation_update rejection and success after normalization.
+These Claude normalizers merge branches lossily: our OpenCodex/OmniRoute probes
+showed lost valid modes and accepted invalid arguments; Sub2API retains property
+alternatives but loses cross-field requirements. The reversible envelope avoids
+that loss. No third-party source was copied.
+
+HTTP/WS mock roundtrips verify declaration, fragmented arguments, result pairing,
+continuation and cleanup. Third-party nested-schema acceptance informs this
+design but does not establish live acceptance of our exact envelope. Production
+qualification still requires a real Claude tool request. Chat Completions routing
+to Claude is a separate gap and is not added by this change.
