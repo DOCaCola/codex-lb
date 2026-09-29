@@ -9,6 +9,7 @@ from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
+from app.modules.claude.task_input import is_external_task_input
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +57,17 @@ def authenticate_replay(
     items = payload.get("input")
     if not isinstance(items, list):
         return ClaudeReplay((), None, None)
-    # Only a new explicit user turn completes earlier thinking. Tool outputs,
-    # including parallel results, are still part of the preceding assistant turn.
+    # Canonical task envelopes are user turns, not paired tool outputs. Actual
+    # tool results, including parallel results, remain in the assistant turn.
     last_user = max(
         (
             index
             for index, item in enumerate(items)
-            if isinstance(item, dict) and item.get("role") == "user" and item.get("type", "message") == "message"
+            if isinstance(item, dict)
+            and (
+                (item.get("role") == "user" and item.get("type", "message") == "message")
+                or is_external_task_input(item)
+            )
         ),
         default=-1,
     )

@@ -17,24 +17,28 @@ from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, model_policy
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
+from app.modules.claude.task_input import is_external_task_input, task_metadata_complete
 from app.modules.claude.tool_schema import ToolArguments, adapt_tool_schema
 
 logger = logging.getLogger(__name__)
 
 
 def _tool_output_error(
-    reason: str, *, index: int, kind: str, call_id: JsonValue, pending_count: int
+    reason: str, *, index: int, kind: str, item: dict[str, JsonValue], pending_count: int
 ) -> ClientPayloadError:
+    call_id = item.get("call_id")
     fingerprint = hashlib.sha256(call_id.encode()).hexdigest()[:12] if isinstance(call_id, str) else None
     logger.warning(
         "claude_tool_output_rejected request_id=%s reason=%s item_index=%d output_kind=%s "
-        "call_id_hash=%s pending_count=%d",
+        "call_id_hash=%s pending_count=%d call_id_type=%s task_metadata_complete=%s",
         get_request_id(),
         reason,
         index,
         kind,
         fingerprint,
         pending_count,
+        type(call_id).__name__ if "call_id" in item else "missing",
+        task_metadata_complete(item),
     )
     return invalid(f"Invalid Claude tool output: {reason}", f"input[{index}].call_id")
 
@@ -198,10 +202,12 @@ def project_responses(
         else:
             messages.append({"role": role, "content": content})
 
-    items = payload.get("input", [])
-    if isinstance(items, str):
-        items = [{"role": "user", "content": items}]
-    if not isinstance(items, list):
+    raw_input = payload.get("input", [])
+    if isinstance(raw_input, str):
+        items: list[JsonValue] = [{"role": "user", "content": raw_input}]
+    elif isinstance(raw_input, list):
+        items = raw_input
+    else:
         raise invalid("Responses input must be text or an array")
     call_ids = {
         call_id
@@ -261,10 +267,17 @@ def project_responses(
             pending.add(call_id)
             seen_calls.add(call_id)
         elif kind in ("function_call_output", "custom_tool_call_output"):
+            if is_external_task_input(item):
+                if pending:
+                    raise _tool_output_error(
+                        "interrupted_tool_cycle", index=index, kind=str(kind), item=item, pending_count=len(pending)
+                    )
+                append("user", _content(item["output"]))
+                continue
             call_id = item.get("call_id")
-            if not isinstance(call_id, str) or not call_id:
+            if not isinstance(call_id, str) or not call_id.strip():
                 raise _tool_output_error(
-                    "invalid_call_id", index=index, kind=str(kind), call_id=call_id, pending_count=len(pending)
+                    "invalid_call_id", index=index, kind=str(kind), item=item, pending_count=len(pending)
                 )
             reason = None
             if call_id in seen_calls and call_id not in pending:
@@ -274,9 +287,7 @@ def project_responses(
             elif call_id not in call_ids and pending:
                 reason = "interrupted_tool_cycle"
             if reason is not None:
-                raise _tool_output_error(
-                    reason, index=index, kind=str(kind), call_id=call_id, pending_count=len(pending)
-                )
+                raise _tool_output_error(reason, index=index, kind=str(kind), item=item, pending_count=len(pending))
             content = _content(item.get("output"))
             if call_id in pending:
                 append("user", [{"type": "tool_result", "tool_use_id": call_id, "content": content}])

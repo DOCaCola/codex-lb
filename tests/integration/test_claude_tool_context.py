@@ -14,13 +14,29 @@ pool = routing_fixtures.pool
 pytestmark = pytest.mark.integration
 
 SEED = {"type": "function_call_output", "call_id": "delegation-seed", "output": "Delegated task context"}
+TASK = {
+    "type": "function_call_output",
+    "id": "fc_task",
+    "name": "create_thread",
+    "namespace": "codex",
+    "output": "New task",
+}
+TASKS = [TASK, {**TASK, "call_id": None}, {**TASK, "call_id": ""}, {**TASK, "call_id": " \t"}]
 CALL = {"type": "function_call", "call_id": "active-call", "name": "run", "arguments": "{}"}
 RESULT = {"type": "function_call_output", "call_id": "active-call", "output": "Actual tool result"}
 PATHS = ["/v1/responses", "/backend-api/codex/responses"]
 
 
-def assert_seed(body, *, last=False):
+def assert_seed(body, *, last=False, seed=SEED):
     blocks = body["messages"][0]["content"]
+    if seed != SEED:
+        assert blocks[0] == {
+            "type": "text",
+            "text": seed["output"],
+            **({"cache_control": {"type": "ephemeral"}} if last else {}),
+        }
+        assert all(block["type"] != "tool_result" for block in blocks)
+        return
     assert blocks[0] == {"type": "text", "text": "[Standalone function_call_output: call_id=delegation-seed]"}
     assert blocks[1] == {
         "type": "text",
@@ -32,21 +48,22 @@ def assert_seed(body, *, last=False):
 
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("stream", [False, True])
-async def test_http_delegation_seed_is_context(async_client, pool, monkeypatch, path, stream):
+@pytest.mark.parametrize("seed", [SEED, *TASKS])
+async def test_http_delegation_seed_is_context(async_client, pool, monkeypatch, path, stream, seed):
     captured, closed = install_upstream(monkeypatch)
     response = await async_client.post(
         path,
         json={
             "model": MODEL,
-            "input": [SEED, {"role": "user", "content": "Continue"}],
+            "input": [seed, {"role": "user", "content": "Continue"}],
             "stream": stream,
         },
     )
     assert response.status_code == 200, response.text
     assert "Hello from Claude" in response.text
     assert len(captured) == 1 and len(closed) == 1
-    assert_seed(captured[0][2])
-    assert captured[0][2]["messages"][0]["content"][2] == {
+    assert_seed(captured[0][2], seed=seed)
+    assert captured[0][2]["messages"][0]["content"][-1] == {
         "type": "text",
         "text": "Continue",
         "cache_control": {"type": "ephemeral"},
@@ -61,6 +78,11 @@ async def test_http_delegation_seed_is_context(async_client, pool, monkeypatch, 
         ([RESULT, CALL], "out_of_order_result"),
         ([CALL, SEED], "interrupted_tool_cycle"),
         ([{**RESULT, "call_id": ""}], "invalid_call_id"),
+        ([{**TASK, "call_id": 1}], "invalid_call_id"),
+        ([{**TASK, "namespace": None}], "invalid_call_id"),
+        ([{**TASK, "output": " "}], "invalid_call_id"),
+        ([{**TASK, "output": [{"type": "text", "text": "keep"}, {"type": "unknown"}]}], "invalid_call_id"),
+        ([CALL, TASK], "interrupted_tool_cycle"),
     ],
 )
 async def test_http_invalid_tool_cycles_never_dispatch(async_client, pool, monkeypatch, caplog, path, items, reason):
@@ -111,7 +133,53 @@ async def test_http_standalone_image_and_text_are_preserved(async_client, pool, 
 
 
 @pytest.mark.parametrize("path", PATHS)
-async def test_http_continuation_restores_real_tool_pair_after_seed(async_client, pool, monkeypatch, path):
+@pytest.mark.parametrize("stream", [False, True])
+async def test_http_external_task_preserves_text_images_in_established_history(
+    async_client, pool, monkeypatch, path, stream
+):
+    from app.core.config.settings import get_settings
+    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+
+    captured, closed = install_upstream(monkeypatch)
+    headers = {"session_id": "established-task"}
+    first = await async_client.post(path, headers=headers, json={"model": MODEL, "input": "Before", "stream": True})
+    assert first.status_code == 200, first.text
+    events = [
+        json.loads(line[6:]) for line in first.text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"
+    ]
+    response_id = next(event["response"]["id"] for event in events if event["type"] == "response.completed")
+    task = {
+        **TASK,
+        "call_id": None,
+        "output": [
+            {"type": "output_text", "text": "Before image"},
+            {"type": "input_image", "image_url": "https://example.com/task.png", "detail": "high"},
+            {"type": "input_text", "text": "After image"},
+        ],
+    }
+    second = await async_client.post(
+        path,
+        headers=headers,
+        json={"model": MODEL, "previous_response_id": response_id, "input": [task], "stream": stream},
+    )
+    assert second.status_code == 200, second.text
+    assert len(captured) == len(closed) == 2
+    messages = captured[-1][2]["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+    assert messages[-1]["content"] == [
+        {"type": "text", "text": "Before image"},
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/task.png"}},
+        {"type": "text", "text": "After image", "cache_control": {"type": "ephemeral"}},
+    ]
+    store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
+    retained = await store.load(ReplayScope(None, "established-task"), response_id)
+    assert retained is not None
+    assert retained.input[-1] == task
+
+
+@pytest.mark.parametrize("path", PATHS)
+@pytest.mark.parametrize("seed", [SEED, *TASKS])
+async def test_http_continuation_restores_real_tool_pair_after_seed(async_client, pool, monkeypatch, path, seed):
     from app.core.config.settings import get_settings
     from app.modules.claude.protocol import ToolIdentity
     from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
@@ -131,7 +199,7 @@ async def test_http_continuation_restores_real_tool_pair_after_seed(async_client
     tools = [{"type": "function", "name": "run", "parameters": {"type": "object", "properties": {}}}]
     headers = {"session_id": "tool-context"}
     first = await async_client.post(
-        path, headers=headers, json={"model": MODEL, "input": [SEED], "tools": tools, "stream": True}
+        path, headers=headers, json={"model": MODEL, "input": [seed], "tools": tools, "stream": True}
     )
     assert first.status_code == 200, first.text
     events = [
@@ -141,7 +209,7 @@ async def test_http_continuation_restores_real_tool_pair_after_seed(async_client
     store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
     retained = await store.load(ReplayScope(None, "tool-context"), response_id)
     assert retained is not None
-    assert retained.input == [SEED]
+    assert retained.input == [seed]
     assert isinstance(retained.output[0], dict)
     assert retained.output[0]["call_id"] == "active-call"
     second_captured, _ = install_upstream(monkeypatch)
@@ -158,7 +226,7 @@ async def test_http_continuation_restores_real_tool_pair_after_seed(async_client
     )
     assert second.status_code == 200, second.text
     assert len(captured) == 1 and len(second_captured) == 1
-    assert_seed(second_captured[0][2], last=True)
+    assert_seed(second_captured[0][2], last=True, seed=seed)
     messages = second_captured[0][2]["messages"]
     assert messages[1]["content"][0]["type"] == "tool_use"
     assert messages[1]["content"][0]["id"] == "active-call"
@@ -189,8 +257,14 @@ async def test_missing_explicit_continuation_is_not_standalone_context(async_cli
 
 
 @pytest.mark.parametrize("path", PATHS)
-@pytest.mark.parametrize("reject", [False, True])
-async def test_websocket_standalone_context_and_strict_pairing(async_client, pool, monkeypatch, caplog, path, reject):
+@pytest.mark.parametrize(
+    "seed,reason",
+    [(seed, None) for seed in [SEED, *TASKS]]
+    + [(TASK, reason) for reason in ("duplicate_result", "invalid_call_id", "interrupted_tool_cycle")],
+)
+async def test_websocket_standalone_context_and_strict_pairing(
+    async_client, pool, monkeypatch, caplog, path, reason, seed
+):
     captured, closed = install_upstream(monkeypatch)
     incoming, outgoing = asyncio.Queue(), asyncio.Queue()
     scope = {
@@ -211,11 +285,16 @@ async def test_websocket_standalone_context_and_strict_pairing(async_client, poo
         await incoming.put({"type": "websocket.connect"})
         assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
         previous = None
-        for turn in range(1 if reject else 2):
+        rejected_input = {
+            "duplicate_result": [CALL, RESULT, RESULT],
+            "invalid_call_id": [{**TASK, "call_id": 1}],
+            "interrupted_tool_cycle": [CALL, TASK],
+        }
+        for turn in range(1 if reason else 2):
             payload = {
                 "type": "response.create",
                 "model": MODEL,
-                "input": [CALL, RESULT, RESULT] if reject else [SEED] if turn == 0 else "Continue",
+                "input": rejected_input[reason] if reason else [seed] if turn == 0 else [TASK],
             }
             if previous:
                 payload["previous_response_id"] = previous
@@ -224,15 +303,15 @@ async def test_websocket_standalone_context_and_strict_pairing(async_client, poo
                 frame = await asyncio.wait_for(outgoing.get(), 5)
                 assert frame["type"] == "websocket.send", frame
                 event = json.loads(frame["text"])
-                if reject:
+                if reason:
                     assert event["type"] == "error", event
-                    assert "duplicate_result" in event["error"]["message"]
+                    assert reason in event["error"]["message"]
                     break
                 assert event["type"] != "error", event
                 if event["type"] == "response.completed":
                     previous = event["response"]["id"]
                     break
-        if reject:
+        if reason:
             assert not captured and not closed
             diagnostic = next(
                 record.getMessage() for record in caplog.records if "claude_tool_output_rejected" in record.message
@@ -240,9 +319,11 @@ async def test_websocket_standalone_context_and_strict_pairing(async_client, poo
             assert "request_id=None" not in diagnostic
         else:
             assert len(captured) == 2
-            assert_seed(captured[0][2], last=True)
-            assert_seed(captured[1][2], last=True)
-            assert captured[1][2]["messages"][-1]["content"][0]["text"] == "Continue"
+            assert_seed(captured[0][2], last=True, seed=seed)
+            assert_seed(captured[1][2], last=True, seed=seed)
+            assert captured[1][2]["messages"][-1]["content"] == [
+                {"type": "text", "text": TASK["output"], "cache_control": {"type": "ephemeral"}}
+            ]
     finally:
         await incoming.put({"type": "websocket.disconnect", "code": 1000})
         try:
@@ -251,4 +332,4 @@ async def test_websocket_standalone_context_and_strict_pairing(async_client, poo
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-    assert len(closed) == (0 if reject else 2)
+    assert len(closed) == (0 if reason else 2)

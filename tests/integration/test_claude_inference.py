@@ -927,7 +927,23 @@ async def test_translated_disabled_thinking_does_not_enable_thinking_beta(async_
 
 
 @pytest.mark.parametrize("switch", ["account", "model", "none"])
-async def test_completed_thinking_recovery_through_responses(async_client, pool, monkeypatch, switch):
+@pytest.mark.parametrize(
+    "user_input",
+    [
+        "Continue",
+        [
+            {
+                "type": "function_call_output",
+                "id": "fc_task",
+                "name": "create_thread",
+                "namespace": "codex",
+                "call_id": None,
+                "output": "Continue",
+            }
+        ],
+    ],
+)
+async def test_completed_thinking_recovery_through_responses(async_client, pool, monkeypatch, switch, user_input):
     captured, _ = install_upstream(
         monkeypatch,
         content=[
@@ -954,7 +970,7 @@ async def test_completed_thinking_recovery_through_responses(async_client, pool,
         headers=headers,
         json={
             "model": "anthropic/claude-sonnet-5" if switch == "model" else MODEL,
-            "input": "Continue",
+            "input": user_input,
             "stream": False,
             "previous_response_id": first.json()["id"],
         },

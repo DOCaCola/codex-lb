@@ -382,3 +382,115 @@ def test_standalone_output_does_not_complete_a_pending_call():
             ),
             max_output_tokens=8192,
         )
+
+
+TASK_INPUT = {
+    "type": "function_call_output",
+    "id": "fc_task",
+    "name": "create_thread",
+    "namespace": "codex",
+    "output": "Delegated task context",
+}
+
+
+@pytest.mark.parametrize("pairing", [{}, {"call_id": None}, {"call_id": ""}, {"call_id": " \t"}])
+@pytest.mark.parametrize("established", [False, True])
+def test_external_task_input_is_user_content_without_mutating_history(pairing, established):
+    items = [{"role": "assistant", "content": "Earlier answer"}] if established else []
+    payload = request(input=[*items, {**TASK_INPUT, **pairing}])
+    original = deepcopy(payload)
+    messages = project(payload, max_output_tokens=8192).body["messages"]
+    assert messages[-1] == {"role": "user", "content": [{"type": "text", "text": TASK_INPUT["output"]}]}
+    assert payload == original
+
+
+def test_external_task_preserves_every_text_and_image_block_in_order():
+    task = {
+        **TASK_INPUT,
+        "call_id": None,
+        "output": [
+            {"type": "output_text", "text": "before"},
+            {"type": "text", "text": ""},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "original"},
+            {"type": "input_text", "text": "after"},
+        ],
+    }
+    original = deepcopy(task)
+    messages = project(request(input=[task]), max_output_tokens=8192).body["messages"]
+    assert messages == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "before"},
+                {"type": "text", "text": ""},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="}},
+                {"type": "text", "text": "after"},
+            ],
+        }
+    ]
+    assert task == original
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"call_id": 1},
+        {"call_id": {}},
+        {"call_id": False},
+        {"type": "custom_tool_call_output"},
+        {"id": None},
+        {"name": ""},
+        {"namespace": " "},
+        {"output": "\t"},
+        {"output": []},
+        {"output": [{"type": "text", "text": " "}]},
+        {"output": [{"type": "text", "text": 1}]},
+        {"output": [{"type": "text", "text": "keep"}, {"type": "unknown", "text": "do not drop"}]},
+        {"output": [{"type": "input_image", "image_url": ""}]},
+        {"output": [{"type": "input_image", "image_url": "https://example.com/a.png", "detail": None}]},
+        {"output": [{"type": "input_image", "image_url": "https://example.com/a.png", "detail": "invalid"}]},
+    ],
+)
+def test_incomplete_or_malformed_task_is_not_a_repaired_tool_result(overrides, caplog):
+    with pytest.raises(ClientPayloadError, match="invalid_call_id"):
+        project(request(input=[{**TASK_INPUT, **overrides}]), max_output_tokens=8192)
+    assert "call_id_type=" in caplog.text and "task_metadata_complete=" in caplog.text
+    for private in ("fc_task", "create_thread", "Delegated task context", "do not drop"):
+        assert private not in caplog.text
+
+
+@pytest.mark.parametrize("field", ["id", "name", "namespace"])
+def test_external_task_requires_all_metadata_fields(field):
+    task = {key: value for key, value in TASK_INPUT.items() if key != field}
+    with pytest.raises(ClientPayloadError, match="invalid_call_id"):
+        project(request(input=[task]), max_output_tokens=8192)
+
+
+@pytest.mark.parametrize(
+    "url", ["file:///private/image.png", "data:image/png;base64,invalid!", "data:image/svg+xml;base64,aW1hZ2U="]
+)
+def test_external_task_still_requires_valid_claude_images(url):
+    task = {**TASK_INPUT, "output": [{"type": "input_image", "image_url": url}]}
+    with pytest.raises(ClientPayloadError):
+        project(request(input=[task]), max_output_tokens=8192)
+
+
+def test_external_task_cannot_interrupt_a_pending_tool_cycle():
+    call = {"type": "function_call", "call_id": "active", "name": "run", "arguments": "{}"}
+    with pytest.raises(ClientPayloadError, match="interrupted_tool_cycle"):
+        project(request(input=[call, TASK_INPUT]), max_output_tokens=8192)
+    result = {"type": "function_call_output", "call_id": "active", "output": "result"}
+    messages = project(request(input=[call, result, TASK_INPUT]), max_output_tokens=8192).body["messages"]
+    assert messages[-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "active", "content": [{"type": "text", "text": "result"}]},
+        {"type": "text", "text": TASK_INPUT["output"]},
+    ]
+
+
+def test_real_pairing_key_does_not_become_external_task_input():
+    call = {"type": "function_call", "call_id": "active", "name": "run", "arguments": "{}"}
+    result = {**TASK_INPUT, "call_id": "active"}
+    messages = project(request(input=[call, result]), max_output_tokens=8192).body["messages"]
+    assert messages[-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "active", "content": [{"type": "text", "text": TASK_INPUT["output"]}]}
+    ]

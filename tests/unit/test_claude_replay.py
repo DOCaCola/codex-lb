@@ -5,7 +5,7 @@ import pytest
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.opaque import OpaqueScope
 from app.modules.claude.replay import authenticate_replay
-from tests.unit.test_claude_protocol import codec, scope
+from tests.unit.test_claude_protocol import TASK_INPUT, codec, scope
 
 pytestmark = pytest.mark.unit
 
@@ -95,3 +95,43 @@ def test_conflicting_active_owners_fail():
     payload["input"].append({"type": "reasoning", "encrypted_content": other})
     with pytest.raises(ClientPayloadError):
         read(payload, opaque)
+
+
+@pytest.mark.parametrize("pairing", [{}, {"call_id": None}, {"call_id": ""}, {"call_id": " \t"}])
+def test_external_task_completes_prior_thinking_without_mutating_replay(pairing):
+    opaque = codec()
+    payload = history(opaque, completed=False)
+    payload["input"].append({**TASK_INPUT, **pairing})
+    original = deepcopy(payload)
+    replay = read(payload, opaque, model="other")
+    assert replay.owner_source_id is None
+    assert replay.project(payload, source_id="source-b", model="other")["input"] == payload["input"][1:]
+    assert payload == original
+
+
+@pytest.mark.parametrize("overrides", [{"call_id": "real"}, {"call_id": 1}, {"namespace": None}, {"output": ""}])
+def test_unrecognized_task_does_not_complete_thinking(overrides):
+    opaque = codec()
+    payload = history(opaque, completed=False)
+    payload["input"].append({**TASK_INPUT, **overrides})
+    assert read(payload, opaque).owner_source_id == "source-a"
+    with pytest.raises(ClientPayloadError):
+        read(payload, opaque, model="other")
+
+
+def test_external_task_does_not_relax_search_ownership():
+    opaque = codec()
+    payload = history(opaque, kind="web_search", completed=False)
+    payload["input"].append(TASK_INPUT)
+    replay = read(payload, opaque)
+    assert replay.owner_source_id == "source-a"
+    with pytest.raises(ClientPayloadError):
+        replay.project(payload, source_id="source-b", model=scope().model)
+
+
+def test_external_task_does_not_skip_signed_history_authentication():
+    opaque = codec()
+    payload = history(opaque, completed=False)
+    payload["input"].append(TASK_INPUT)
+    with pytest.raises(ClientPayloadError):
+        read(payload, opaque, client_scope="other", model="other")

@@ -111,6 +111,15 @@ their calls, and interrupted or incomplete tool cycles fail before dispatch.
 Native `/v1/messages` is unchanged. See
 [standalone tool context](../openspec/specs/claude-accounts/spec.md#requirement-portable-standalone-tool-output-context).
 
+Codex external task envelopes are a separate case: a `function_call_output`
+with omitted/null/blank `call_id`, complete `id`/`name`/`namespace` metadata and
+valid nonblank text/image output is ordinary user input, not a tool result.
+Responses preserves its entire content without an orphan label and retains the
+original envelope for replay. It counts as a new user turn for completed thinking,
+but cannot interrupt pending calls or relax search-resource ownership. Malformed
+or incomplete envelopes still fail. See
+[external task input](../openspec/specs/claude-accounts/spec.md#requirement-canonical-codex-external-task-input).
+
 Tests cover local mock and loopback paths, not live OAuth eligibility or included
 subscription usage. Qualify both before production use. Upstream eligibility errors
 are returned without hidden paid fallback or repeated account hopping.

@@ -525,3 +525,40 @@ count and the first 12 hex characters of the call-ID SHA-256. They never record
 output, arguments, images, raw call IDs or credentials. There is no per-item success
 logging. Local HTTP/WS mocks cover context, continuation and strict failure paths;
 live OAuth acceptance is a separate qualification step.
+
+### Canonical external task envelopes
+
+A subsequent production rejection at 2026-09-29T21:10:15Z had reason
+invalid_call_id, item_index=38, call_id_hash=None and pending_count=0. This confirms
+a missing/null/non-string identifier reached our guard; the metadata shape was
+not captured, so the precise failed envelope is not retrospectively established.
+The previous fix was incomplete: not all function_call_output history items are
+paired results. Current Codex ResponseItem allows optional call_id/name/namespace.
+
+OpenCodex issue #3807 (reported September 6, closed by merged #4058 September 8 UTC)
+documents Codex desktop sub-agent envelopes with id/name/namespace/output and
+omitted/null/blank call_id, including later occurrences within existing history.
+Inspected revision 8a005dd98 has an explicit complete-envelope classifier in
+src/responses/task-input.ts plus initial/established-history tests. It lowers
+these items as ordinary user input, distinct from labeled generic orphan results.
+CLIProxyAPI d33f63f8 converts ID-less/unmatched outputs more broadly. Sub2API
+9a62841fd drops orphan tool_results during pairing normalization; OmniRoute
+113de57b filters orphan outputs on Responses-to-Chat. Those data-dropping or
+heuristic pairing approaches are not adopted. These are source/test/report
+observations, not independent live verification.
+
+Our shared task classifier requires nonblank string id/name/namespace, no usable
+pairing key (omitted/null/blank string), and nonblank supported text/image output.
+Wrong-typed keys, incomplete envelopes and unknown blocks are not repaired.
+For example, {type: function_call_output, id: fc_seed, name: create_thread,
+namespace: codex, call_id: null, output: "Continue the delegated task"} becomes
+ordinary user text without a fake call or orphan label. All blocks stay ordered;
+Claude's existing image media/transport validation still applies. Original
+logical items remain retained, so later replay repeats neither labels nor roles.
+
+Canonical tasks count as new user turns for completed-thinking replay policy.
+All opaque blocks are still authenticated, active tool cycles cannot be
+interrupted, and server search/resource history remains owner/model-bound.
+Logs add identifier presence/type and task-metadata completeness only; they do
+not expose metadata values, content or credentials. HTTP/WS and retained genuine
+tool-continuation mocks exercise this behavior; live acceptance is unverified.
