@@ -4,6 +4,14 @@
 
 Define migration, drift detection, and Alembic governance contracts so deployments fail closed on schema mismatch.
 ## Requirements
+
+### Requirement: Fork and upstream migration convergence
+The fork SHALL preserve published upstream and fork migration identities and
+join their current heads through a new no-op merge revision.
+#### Scenario: Existing fork database
+- **WHEN** a database at the deployed fork routing revision upgrades
+- **THEN** it reaches one common head without reapplying shared ancestor migrations
+
 ### Requirement: Published SCIM and overflow retirement heads converge
 The graph SHALL join the published SCIM and overflow-retirement revisions through a new empty merge revision without modifying either parent. Upgrade from the common parent, either branch or both branches MUST converge on one head and preserve data except for changes required by the existing parent migrations. Downgrading only the merge MUST preserve both parent schemas and stamps.
 

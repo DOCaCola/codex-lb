@@ -339,3 +339,11 @@ An item_reference ID is its payload, unlike a lookup-only ID attached to a fully
 Replay input is independently snapshotted after successful history expansion and before normalization, whose passthrough objects may share nested structures. For example, mutating a normalized additional_tools definition must not alter the stored original. The existing depth budget is checked before recursive copying; unresolved anchored deltas do not seed complete history.
 
 Bridge size tests distinguish the upstream WebSocket frame threshold (choose same-account HTTP, preserving history) from the expanded HTTP budget (reject before dispatch, including synthetic output and metadata). An idle WebSocket may already be allocated; no oversized frame may be sent over it. Oversized-error dump publication, deduplication and orphan repair are tested independently of the obsolete WebSocket-size rejection path.
+
+## Routed file transport failover
+
+File operations follow the existing pre-visible unary retry policy. The file client carries typed dispatch provenance through its service adapter so a refused account-proxy connection can retry another eligible account even though credential-safe transport messages omit low-level details. Typed replay eligibility takes precedence over message text: a proxy endpoint named `timeout-primary` must not turn a TLS verification failure into a retry.
+
+For example, an unpinned upload whose account A cannot connect to its proxy can complete through account B, and the resulting file owner pin belongs to B. Finalization of a file pinned to A remains on A. Ambiguous request delivery, body-read failures, and host-wide network failures do not permit cross-account retries.
+
+Finalization may issue several upstream polls within one downstream call. A refused connection on its first poll can still use an eligible fallback account. After a poll has returned `retry` from A, however, a later refused connection must fail the operation on A: the pre-dispatch status of the later request does not undo the earlier poll's account-local progress. This applies even when no file owner pin was found; direct transport polling retains its existing behavior.

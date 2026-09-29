@@ -1,0 +1,3 @@
+- [x] Resolve chart/documentation conflicts preserving both contracts.
+- [x] Add migration convergence and verify upgrade paths.
+- [x] Run affected backend/frontend tests and lint; commit merge.

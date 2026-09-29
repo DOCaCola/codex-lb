@@ -22,12 +22,38 @@ export type AccountChartSeries = {
   points: { t: string; v: number | null }[];
   dashed?: boolean;
   colorIndex?: number;
+  interpolate?: boolean;
 };
 
 function mergeSeries(series: AccountChartSeries[]) {
-  const times = [...new Set(series.flatMap((s) => s.points.map((p) => p.t)))].sort();
-  const maps = series.map((s) => new Map(s.points.map((p) => [p.t, p.v])));
-  return times.map((t) => Object.assign({ t }, ...series.map((s, i) => ({ [s.key]: maps[i].get(t) ?? null }))));
+  const times = [...new Set(series.flatMap((s) => s.points.map((p) => Date.parse(p.t))))].sort((a, b) => a - b);
+  const values = series.map((s) => {
+    if (s.interpolate) return interpolatePoints(s.points, times);
+    const points = new Map(s.points.map((p) => [Date.parse(p.t), p.v]));
+    return times.map((time) => points.get(time) ?? (s.dashed ? undefined : null));
+  });
+  return times.map((time, index) => Object.assign(
+    { t: new Date(time).toISOString() },
+    ...series.map((s, i) => ({ [s.key]: values[i][index] })),
+  ));
+}
+
+/** Fill gaps between observations while leaving time before the first sample unknown. */
+function interpolatePoints(points: AccountChartSeries["points"], timestamps: number[]): (number | null)[] {
+  const sorted = [...points].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+  let nextIndex = 0;
+  return timestamps.map((time) => {
+    while (nextIndex < sorted.length && Date.parse(sorted[nextIndex].t) <= time) {
+      nextIndex += 1;
+    }
+    const previous = sorted[nextIndex - 1];
+    const next = sorted[nextIndex];
+    if (!previous) return null;
+    if (!next) return previous.v;
+    if (previous.v === null || next.v === null) return null;
+    const fraction = (time - Date.parse(previous.t)) / (Date.parse(next.t) - Date.parse(previous.t));
+    return previous.v + fraction * (next.v - previous.v);
+  });
 }
 
 function formatXTick(isoStr: string): string {
@@ -77,20 +103,23 @@ export type AccountTrendChartProps = {
   primary: UsageTrendPoint[];
   secondary: UsageTrendPoint[];
   secondaryScheduled?: UsageTrendPoint[];
+  monthly?: boolean;
 };
 
 const EMPTY_TREND_POINTS: UsageTrendPoint[] = [];
 
+/** Plot merged account quota observations and any scheduled quota values. */
 export function AccountTrendChart({
   primary,
   secondary,
   secondaryScheduled = EMPTY_TREND_POINTS,
+  monthly = false,
 }: AccountTrendChartProps) {
   const { t } = useTranslation();
   return <AccountSeriesChart series={[
-    { key: "primary", label: t("accounts.trend.series.primary", "Primary"), points: primary, colorIndex: 0 },
-    { key: "secondary", label: t("accounts.trend.series.secondary", "Secondary"), points: secondary, colorIndex: 1 },
-    { key: "secondaryScheduled", label: t("accounts.trend.series.secondaryScheduled", "Weekly plan"), points: secondaryScheduled, dashed: true, colorIndex: 1 },
+    { key: "primary", label: t("accounts.trend.series.primary", "Primary"), points: primary, colorIndex: 0, interpolate: true },
+    { key: "secondary", label: monthly ? t("common.quota.monthly") : t("accounts.trend.series.secondary", "Secondary"), points: secondary, colorIndex: 1, interpolate: true },
+    { key: "secondaryScheduled", label: monthly ? t("accounts.usage.monthlyPlan") : t("accounts.trend.series.secondaryScheduled", "Weekly plan"), points: secondaryScheduled, dashed: true, colorIndex: 1 },
   ]} />;
 }
 
