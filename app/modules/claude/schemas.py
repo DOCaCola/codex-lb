@@ -147,7 +147,17 @@ class HeaderQuotaObservation(BaseModel):
     observed_at: datetime
 
 
+MetadataEndpoint = Literal["catalog", "usage"]
+
+
+class MetadataRefreshState(BaseModel):
+    operation_id: str | None = None
+    lease_until: datetime | None = None
+    retry_at: datetime | None = None
+
+
 class AccountState(BaseModel):
+    metadata_refresh: dict[MetadataEndpoint, MetadataRefreshState] = Field(default_factory=dict)
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
     catalog_updated_at: datetime | None = None

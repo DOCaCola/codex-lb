@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.clients.http import lease_model_source_session
 from app.modules.claude.credentials import CLIENT_ID, PKCE, TOKEN_URL, ClaudeError
+from app.modules.claude.metadata import MetadataHTTPError
 from app.modules.claude.profile import management_headers
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
@@ -96,6 +97,7 @@ class ClaudeClient:
         )
 
     async def _get(self, path: str, token: str, version: str, schema: type[T]) -> T:
+        endpoint = path.partition("?")[0]
         try:
             async with lease_model_source_session() as session:
                 async with session.get(
@@ -105,10 +107,10 @@ class ClaudeClient:
                     allow_redirects=False,
                 ) as response:
                     if response.status != 200:
-                        raise ClaudeError(f"Claude metadata returned HTTP {response.status}")
+                        raise MetadataHTTPError(endpoint, response.status, response.headers.get("Retry-After"))
                     return schema.model_validate_json(await bounded_body(response))
         except (aiohttp.ClientError, TimeoutError, ValidationError) as exc:
-            raise ClaudeError("Claude metadata could not be loaded") from exc
+            raise ClaudeError(f"Claude {endpoint} metadata could not be loaded") from exc
 
     async def catalog(self, token: str, version: str) -> list[CatalogModel]:
         from urllib.parse import urlencode

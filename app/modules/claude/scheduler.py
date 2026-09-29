@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -11,7 +10,6 @@ from app.core.scheduling.leader_election import get_leader_election
 from app.db.models import ClaudeAccount, ModelSource
 from app.db.session import get_background_session
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.schemas import AccountState
 from app.modules.claude.service import ClaudeService
 from app.modules.claude.version import ClaudeVersionService
 
@@ -48,14 +46,7 @@ class ClaudeRefreshScheduler:
         for source_id in ids:
             try:
                 async with get_background_session() as session:
-                    row = await session.get(ClaudeAccount, source_id)
-                    if row is None:
-                        continue
-                    state = AccountState.model_validate_json(row.state_json)
-                    catalog_due = state.catalog_updated_at is None or datetime.now(
-                        UTC
-                    ) - state.catalog_updated_at >= timedelta(hours=6)
-                    await ClaudeService(ClaudeRepository(session)).refresh(source_id, catalog=catalog_due)
+                    await ClaudeService(ClaudeRepository(session)).refresh(source_id, force=False)
             except Exception:
                 # Never emit exception bodies from credential-bearing operations.
                 logger.warning("claude_metadata_refresh_failed source_id=%s", source_id)

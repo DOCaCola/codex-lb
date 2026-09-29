@@ -80,3 +80,16 @@ explicitly. A client that requests these must remove or adapt those controls.
 Tests cover local mock and loopback paths, not live OAuth eligibility or included
 subscription usage. Qualify both before production use. Upstream eligibility errors
 are returned without hidden paid fallback or repeated account hopping.
+
+## Metadata refresh and rate limits
+
+Usage is polled every three minutes and the model catalog every six hours.
+Refresh can update successful cached readings sooner, but cannot bypass a running
+refresh or an upstream-error cooldown. Concurrent refreshes share stored results.
+
+A metadata 429 does not mean inference is unavailable. The account detail identifies
+the failing endpoint, HTTP status and retry deadline. The gateway honors
+`Retry-After`, or waits three minutes when no valid hint is present, across workers
+and restarts. Last good readings retain their original timestamps and show as stale;
+fresh inference headers can still update their own quota windows. Catalog and usage
+cooldowns are independent. No account pause or reactive token refresh is triggered.

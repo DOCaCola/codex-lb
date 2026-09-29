@@ -63,7 +63,7 @@ Accounts appear in shared dashboard cards/table, account selection, and Add acco
 Controls include pause/resume, refresh, reconnect, selected models, context/output
 caps and the global advertised-version pin. Privacy blur and read-only permissions
 apply. Missing quota windows show unknown; stale data is labeled, not reset to zero.
-Enabled accounts trigger leader-owned quota refresh every minute, catalog refresh
+Enabled accounts trigger leader-owned quota refresh every three minutes, catalog refresh
 every six hours, and stable version discovery at startup when stale/every 24 hours.
 Pinning affects advertised CLI version, not SDK/runtime baselines or profile revision.
 
@@ -159,6 +159,7 @@ After native account rebinding, observed resources resolve independently: old
 resources still belong to the old account and new resources to their issuing
 account. Mixed or unknown origins fail rather than borrowing session affinity.
 Translated Responses envelopes and their ownership checks remain unchanged.
+
 Reference evidence: OmniRoute PR #7906, OpenCodex native versus translated replay,
 CLIProxyAPI parent affinity. These are source/mock checks, not live OAuth acceptance.
 
@@ -400,3 +401,41 @@ No OpenAI workspace, subscription-credit or warm-up state is invented for Claude
 Normal/burn-first/preserve is stored per Claude account and supplied to the existing
 shared candidate; hard owners, eligible affinity and strategy-specific exceptions
 remain unchanged.
+
+## Metadata endpoint backoff (2026-09-29)
+
+Usage and model catalog requests have separate persisted claims/cooldowns in
+account state. The leader ticks every minute, but successful usage is cached for
+three minutes and catalog for six hours. Manual refresh bypasses successful-cache
+cadence only. Concurrent callers reuse retained state; a caller does not repeat
+an endpoint another worker completed since that caller began.
+
+A logical fetch is bounded to 60 seconds with a 90-second durable lease.
+Completion requires both the owning operation UUID and credential generation.
+Claims commit before network I/O; successful projection/history commits with
+state. Cancellation or process loss leaves a lease that expires, not an unsafe
+authentication retry. Settings and newer inference observations merge independently.
+
+HTTP failures identify the endpoint/status and next retry deadline. Retry-After
+seconds and HTTP dates are honored; absent or malformed hints use three minutes.
+Other metadata failures also cool down for three minutes. On expiry a failed
+endpoint becomes due even if its last successful reading is within normal cadence.
+For example, usage HTTP 429 with Retry-After: 600 leaves the last readings/timestamps intact,
+marks poll data stale and blocks both manual and scheduled usage calls for ten
+minutes. Catalog and inference continue independently. Newer inference headers
+can refresh their own quota windows without clearing the polling error.
+
+This applies to scheduled/manual usage and catalog reads, not rotating OAuth token
+exchanges or grant redemption. Profile enrollment uses endpoint-specific errors,
+but is not a scheduled poll and has no account-level metadata claim before enrollment.
+No metadata failure pauses an account or causes an inference-health penalty or
+reactive token refresh. Normal expiry-based credential refresh remains unchanged.
+
+Reference evidence inspected 2026-09-29: Sub2API `9a62841fd` uses three-minute caching,
+singleflight and short jitter (history `3ebebef95` documents 429 stampedes);
+OpenCodex `8a005dd98` coalesces probes and negatively caches preserved readings;
+OmniRoute `113de57b` separates usage throttling from Messages with a three-minute
+cooldown. CLIProxyAPI `d33f63f8` had no equivalent core OAuth usage poller.
+Durable cross-worker claims and honoring Retry-After are our additions.
+No legacy endpoint fallback or third-party source was copied. Mock tests establish
+local coordination/protocol behavior, not universal live Anthropic limits.

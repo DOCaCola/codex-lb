@@ -32,7 +32,8 @@ async def test_scheduler_isolates_account_failure_and_sessions(async_client, mon
     version = AsyncMock()
     seen = []
 
-    async def refresh(self, source_id, *, catalog):
+    async def refresh(self, source_id, *, catalog=True, force):
+        assert force is False
         seen.append((source_id, self.repository.session, catalog))
         if len(seen) == 1:
             raise RuntimeError("credential-bearing exception must not be logged")

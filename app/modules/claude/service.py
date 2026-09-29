@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -17,17 +18,27 @@ from app.modules.claude.capabilities import model_policy
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
 from app.modules.claude.identity import authenticated_identity
+from app.modules.claude.metadata import (
+    CLAIM_LEASE,
+    FETCH_TIMEOUT_SECONDS,
+    USAGE_INTERVAL,
+    MetadataHTTPError,
+    refresh_due,
+)
 from app.modules.claude.quota import quota_status
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
     CLAUDE_KIND,
     AccountState,
+    CatalogModel,
     ClaudeAccountResponse,
     ClaudeImport,
     ClaudeReconnect,
     ClaudeUpdate,
     Credentials,
+    MetadataEndpoint,
+    MetadataRefreshState,
     OAuthComplete,
     OAuthStart,
     OAuthStarted,
@@ -202,64 +213,125 @@ class ClaudeService:
         await self._save(row, state, project=payload.selections is not None)
         return self._response(row)
 
-    async def refresh(self, source_id: str, *, catalog: bool = True) -> ClaudeAccountResponse:
-        snapshot = await self.auth.snapshot(source_id)
-        credentials = snapshot.credentials
+    async def refresh(self, source_id: str, *, catalog: bool = True, force: bool = True) -> ClaudeAccountResponse:
         row = await self._get(source_id)
-        if row.generation != snapshot.generation:
-            raise ClaudeError("Claude credentials changed before metadata refresh")
         state = AccountState.model_validate_json(row.state_json)
+        endpoints: list[MetadataEndpoint] = ["catalog", "usage"] if catalog else ["usage"]
+        refresh_started_at = datetime.now(UTC)
+        if not any(refresh_due(state, endpoint, refresh_started_at, force=force) for endpoint in endpoints):
+            return self._response(row)
+        snapshot = await self.auth.snapshot(source_id)
         identity = await ClaudeVersionService(self.repository.session).snapshot()
-        token = credentials.access_token.get_secret_value()
-        changed = False
-        if catalog:
-            state.catalog_requested_at = datetime.now(UTC)
-            try:
-                state.catalog = await self.client.catalog(token, identity.version)
-                state.catalog_updated_at = datetime.now(UTC)
-                state.catalog_error = None
-                changed = True
-            except ClaudeError as exc:
-                state.catalog_error = str(exc)
+        for endpoint in endpoints:
+            await self._refresh_endpoint(
+                source_id,
+                snapshot.generation,
+                endpoint,
+                snapshot.credentials.access_token.get_secret_value(),
+                identity.version,
+                force=force,
+                refresh_started_at=refresh_started_at,
+            )
+        return self._response(await self._get(source_id))
+
+    async def _refresh_endpoint(
+        self,
+        source_id: str,
+        generation: int,
+        endpoint: MetadataEndpoint,
+        token: str,
+        version: str,
+        *,
+        force: bool,
+        refresh_started_at: datetime,
+    ) -> None:
+        operation_id = uuid.uuid4().hex
         requested_at = datetime.now(UTC)
-        state.usage_check_started_at = requested_at
+
+        def claim(state: AccountState) -> AccountState | None:
+            updated = state.catalog_updated_at if endpoint == "catalog" else state.usage_updated_at
+            if updated is not None and updated >= refresh_started_at:
+                return None
+            if not refresh_due(state, endpoint, requested_at, force=force):
+                return None
+            state.metadata_refresh[endpoint] = MetadataRefreshState(
+                operation_id=operation_id,
+                lease_until=requested_at + CLAIM_LEASE,
+            )
+            return state
+
+        claimed = await self.repository.mutate_state(source_id, generation, claim)
+        # Release the transaction before any network I/O, including on a no-op.
+        await self.repository.session.commit()
+        if claimed is None:
+            return
+        result: list[CatalogModel] | UsageSnapshot | None = None
+        error: str | None = None
+        retry_at: datetime | None = None
         try:
-            state.usage = await self.client.usage(token, identity.version)
-            state.usage_updated_at = datetime.now(UTC)
-            state.usage_requested_at = requested_at
-            state.usage_error = None
-        except ClaudeError as exc:
-            state.usage_error = str(exc)
-        await self._save(row, state, project=changed)
-        return self._response(row)
+            async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
+                result = (
+                    await self.client.catalog(token, version)
+                    if endpoint == "catalog"
+                    else await self.client.usage(token, version)
+                )
+        except (ClaudeError, TimeoutError) as exc:
+            error = str(exc) if isinstance(exc, ClaudeError) else f"Claude {endpoint} metadata timed out"
+            retry_at = exc.retry_at if isinstance(exc, MetadataHTTPError) else datetime.now(UTC) + USAGE_INTERVAL
+        completed_at = datetime.now(UTC)
+
+        def finish(state: AccountState) -> AccountState | None:
+            refresh = state.metadata_refresh.get(endpoint)
+            if (
+                refresh is None
+                or refresh.operation_id != operation_id
+                or refresh.lease_until is None
+                or refresh.lease_until <= completed_at
+            ):
+                return None
+            state.metadata_refresh[endpoint] = MetadataRefreshState(retry_at=retry_at)
+            if endpoint == "catalog":
+                state.catalog_requested_at = requested_at
+                state.catalog_error = error
+                if error is None:
+                    assert isinstance(result, list)
+                    state.catalog = result
+                    state.catalog_updated_at = completed_at
+            else:
+                state.usage_check_started_at = requested_at
+                state.usage_error = error
+                if error is None:
+                    assert isinstance(result, UsageSnapshot)
+                    state.usage = result
+                    state.usage_requested_at = requested_at
+                    state.usage_updated_at = completed_at
+            return state
+
+        merged = await self.repository.mutate_state(source_id, generation, finish)
+        if merged is not None and error is None:
+            if endpoint == "catalog":
+                row = await self._get(source_id)
+                await self.repository.sources.replace_models(row.source, project_models(merged), commit=False)
+            else:
+                effective = quota_status(merged, now=completed_at)
+                sample = UsageSnapshot.model_validate(
+                    {
+                        window.name: {"utilization": window.utilization, "resets_at": window.resets_at}
+                        for window in effective.windows
+                        if window.provenance == "usage_api"
+                        and window.observed_at == completed_at
+                        and window.freshness == "fresh"
+                    }
+                )
+                await self.repository.record_quota(source_id, sample, completed_at, sample_seconds=60)
+        await self.repository.session.commit()
 
     async def _save(self, row: ClaudeAccount, state: AccountState, *, project: bool) -> None:
         baseline = AccountState.model_validate_json(row.state_json).model_dump()
         changes = {key: value for key, value in state.model_dump().items() if value != baseline[key]}
-        poll_fields = ("usage", "usage_updated_at", "usage_requested_at", "usage_error", "usage_check_started_at")
-        catalog_fields = ("catalog", "catalog_updated_at", "catalog_error", "catalog_requested_at")
-        desired = state.model_dump()
-        for marker, fields in (("usage_check_started_at", poll_fields), ("catalog_requested_at", catalog_fields)):
-            if marker in changes:
-                changes.update({key: desired[key] for key in fields})
 
         def merge(current: AccountState) -> AccountState:
-            updates = dict(changes)
-            if (
-                current.usage_check_started_at is not None
-                and state.usage_check_started_at is not None
-                and current.usage_check_started_at > state.usage_check_started_at
-            ):
-                for key in poll_fields:
-                    updates.pop(key, None)
-            if (
-                current.catalog_requested_at is not None
-                and state.catalog_requested_at is not None
-                and current.catalog_requested_at > state.catalog_requested_at
-            ):
-                for key in catalog_fields:
-                    updates.pop(key, None)
-            return AccountState.model_validate({**current.model_dump(), **updates})
+            return AccountState.model_validate({**current.model_dump(), **changes})
 
         try:
             await self.repository.session.flush()
@@ -268,18 +340,6 @@ class ClaudeService:
                 raise ClaudeError("Claude credentials changed during update; reload and retry")
             if project:
                 await self.repository.sources.replace_models(row.source, project_models(merged), commit=False)
-            if "usage" in changes and merged.usage is not None and merged.usage_updated_at is not None:
-                effective = quota_status(merged, now=datetime.now(UTC))
-                sample = UsageSnapshot.model_validate(
-                    {
-                        window.name: {"utilization": window.utilization, "resets_at": window.resets_at}
-                        for window in effective.windows
-                        if window.provenance == "usage_api"
-                        and window.observed_at == state.usage_updated_at
-                        and window.freshness == "fresh"
-                    }
-                )
-                await self.repository.record_quota(row.source_id, sample, merged.usage_updated_at, sample_seconds=60)
             await self.repository.session.commit()
             await self.repository.session.refresh(row)
         except StaleDataError as exc:
