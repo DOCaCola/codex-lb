@@ -424,7 +424,17 @@ export const overview = createDashboardOverview({
       resetAt: offsetIso(3 * 24 * 60),
       windowMinutes: 10_080,
     },
-    cost: { currency: "USD", totalUsd: 486.72 },
+    cost: {
+      currency: "USD",
+      totalUsd: 486.72,
+      costCoverage: {
+        knownCostUsd: 486.72,
+        pricedRequests: 22_480,
+        unpricedRequests: 0,
+        unmeteredRequests: 0,
+        coverageUnknown: false,
+      },
+    },
     metrics: {
       requests: 22_480,
       tokens: 1_918_000_000,

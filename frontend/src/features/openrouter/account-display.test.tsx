@@ -58,6 +58,7 @@ describe("Unified provider accounts", () => {
       onImageModels: vi.fn(),
       onRefresh: vi.fn(),
       onDelete: vi.fn(),
+      onRename: vi.fn(),
       onToggle,
     };
     const view = render(
@@ -96,6 +97,31 @@ describe("Unified provider accounts", () => {
       screen.getByRole("button", { name: "Image models (0)" }),
     ).toBeDisabled();
   });
+  it("renames inline from the detail heading like Codex accounts", async () => {
+    const onRename = vi.fn().mockResolvedValue(undefined);
+    render(
+      <OpenRouterAccountDetail
+        account={createOpenRouterAccount({ name: "Research" })}
+        readOnly={false}
+        busy={false}
+        onEdit={vi.fn()}
+        onRename={onRename}
+        onModels={vi.fn()}
+        onImageModels={vi.fn()}
+        onRefresh={vi.fn()}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Rename account" }));
+    const input = screen.getByRole("textbox", { name: "Account name" });
+    await userEvent.clear(input);
+    expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+    await userEvent.type(input, "Team key{Enter}");
+    expect(onRename).toHaveBeenCalledWith("Team key");
+    expect(screen.queryByRole("textbox", { name: "Account name" })).not.toBeInTheDocument();
+  });
+
   it("sorts provider balances numerically in dashboard list view", async () => {
     const low = createOpenRouterAccount({ id: "low", name: "Zulu" });
     const high = createOpenRouterAccount({ id: "high", name: "Alpha" });

@@ -1,13 +1,11 @@
-import { Check, Pencil, User, X } from "lucide-react";
-import { useState } from "react";
+import { User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { isEmailLabel } from "@/components/blur-email";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountActions } from "@/features/accounts/components/account-actions";
+import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
@@ -216,100 +214,24 @@ function AccountNameField({
   onSetAlias,
 }: AccountNameFieldProps) {
   const { t } = useTranslation();
-  const [isEditing, setIsEditing] = useState(false);
-  const [aliasDraft, setAliasDraft] = useState(alias ?? "");
-
-  const handleSave = async () => {
-    const trimmed = aliasDraft.trim();
-    await onSetAlias(accountId, trimmed === "" ? null : trimmed);
-    setIsEditing(false);
-  };
-
-  const handleCancel = () => {
-    setAliasDraft(alias ?? "");
-    setIsEditing(false);
-  };
-
-  if (isEditing) {
-    return (
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-1.5">
-          <Input
-            id="account-alias"
-            aria-label={t("accounts.detail.aliasLabel")}
-            className="h-8 text-sm"
-            maxLength={255}
-            placeholder={t("accounts.detail.aliasPlaceholder")}
-            value={aliasDraft}
-            autoFocus
-            disabled={busy || readOnly}
-            onChange={(event) => setAliasDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void handleSave();
-              } else if (event.key === "Escape") {
-                event.preventDefault();
-                handleCancel();
-              }
-            }}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("accounts.detail.saveAlias")}
-            disabled={busy || readOnly}
-            onClick={() => void handleSave()}
-          >
-            <Check className="size-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("common.cancel")}
-            onClick={handleCancel}
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {t("accounts.detail.aliasHelp")}
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <h2 className="min-w-0 truncate text-base font-semibold">
-        {labelIsEmail ? (
-          <>
-            <span className={cn(blurred && "privacy-blur")}>{localLabel}</span>
-            {idSuffix}
-          </>
-        ) : (
-          <>
-            {localLabel}
-            {idSuffix}
-          </>
-        )}
-      </h2>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t("accounts.detail.editAlias")}
-        title={t("accounts.detail.aliasHelp")}
-        disabled={busy || readOnly}
-        onClick={() => {
-          setAliasDraft(alias ?? "");
-          setIsEditing(true);
-        }}
-      >
-        <Pencil className="size-3.5" />
-      </Button>
-    </div>
+    <AccountNameEditor
+      value={alias ?? ""}
+      inputId="account-alias"
+      labels={{
+        edit: t("accounts.detail.editAlias"),
+        input: t("accounts.detail.aliasLabel"),
+        save: t("accounts.detail.saveAlias"),
+        cancel: t("common.cancel"),
+      }}
+      placeholder={t("accounts.detail.aliasPlaceholder")}
+      help={t("accounts.detail.aliasHelp")}
+      allowEmpty
+      disabled={busy || readOnly}
+      onSave={(value) => onSetAlias(accountId, value)}
+    >
+      {labelIsEmail ? <span className={cn(blurred && "privacy-blur")}>{localLabel}</span> : localLabel}
+      {idSuffix}
+    </AccountNameEditor>
   );
 }

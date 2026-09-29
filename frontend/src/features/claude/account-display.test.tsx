@@ -159,6 +159,30 @@ describe("Claude shared account surfaces", () => {
     ])
       expect(screen.getByRole("button", { name })).toBeDisabled();
   });
+  it("renames the account inline through the account API", async () => {
+    const changes: unknown[] = [];
+    server.use(
+      http.patch("/api/claude-accounts/claude-test", async ({ request }) => {
+        const body = await request.json();
+        changes.push(body);
+        return HttpResponse.json({ ...account, name: "Team Claude" });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ClaudeAccountControls account={account} readOnly={false} onCreated={vi.fn()}>
+          {({ detail }) => detail}
+        </ClaudeAccountControls>
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Rename account" }));
+    const input = screen.getByRole("textbox", { name: "Account name" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Team Claude");
+    await userEvent.click(screen.getByRole("button", { name: "Save name" }));
+    expect(changes).toEqual([{ name: "Team Claude" }]);
+  });
   it("uses the Codex list quota preference", () => {
     useAccountQuotaDisplayStore.setState({ quotaDisplay: "weekly" });
     render(<ClaudeQuota account={account} />);

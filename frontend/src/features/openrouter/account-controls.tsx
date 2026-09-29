@@ -66,6 +66,7 @@ export function OpenRouterAccountControls({
             busy={busy}
             error={error?.message}
             onEdit={() => openEditor(account)}
+            onRename={(name) => update.mutateAsync({ id: account.id, body: { name } })}
             onModels={() => {
               setModelKind("models");
               setModels(account);
@@ -107,7 +108,7 @@ export function OpenRouterAccountControls({
             <DialogTitle>
               {editing === "new"
                 ? "Add OpenRouter account"
-                : "Edit OpenRouter account"}
+                : "OpenRouter API keys"}
             </DialogTitle>
             <DialogDescription>
               Credentials are encrypted. Inference and credit monitoring use

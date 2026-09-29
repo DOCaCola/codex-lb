@@ -576,7 +576,7 @@ for (const width of [1440, 390]) {
         key_updated_at: "2026-09-25T12:00:00Z", key_error: null,
         credits_updated_at: "2026-09-25T12:00:00Z", credits_error: null,
         credits: {total_credits: 100, total_usage: 24.50},
-        key: {limit: 50, limit_remaining: 42.25, limit_reset: "monthly", usage: 7.75,
+        key: {limit: 50, limit_remaining: 42.25, limit_reset: "monthly", usage: 7.75, is_free_tier: false,
           usage_daily: 1.25, usage_weekly: 4.50, usage_monthly: 7.75,
           free_model_daily_requests: {used: 12, limit: 1000, remaining: 988}},
         selections: [{model: "vendor/coder", contextWindow: 262144, maxOutputTokens: null, displayName: null}],

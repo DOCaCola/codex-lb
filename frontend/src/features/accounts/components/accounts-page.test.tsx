@@ -162,7 +162,7 @@ describe("AccountsPage", () => {
     openRouterMocks.accounts = [createOpenRouterAccount()];
     mockAccountsQuery([]);
     render(<MemoryRouter><AccountsPage /></MemoryRouter>);
-    for (const name of ["Edit", "Delete", "Refresh", "Models (0)"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    for (const name of ["API keys", "Rename account", "Delete", "Refresh", "Models (0)"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });

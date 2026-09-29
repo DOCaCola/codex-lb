@@ -1,18 +1,15 @@
-import { Image, Layers, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { Image, KeyRound, Layers, RefreshCw, Trash2 } from "lucide-react";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
+import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
+import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { useTranslation } from "react-i18next";
-import { StatusBadge } from "@/components/status-badge";
 import { AlertMessage } from "@/components/alert-message";
+import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
+import { formatDateTimeInline } from "@/utils/formatters";
 import type { OpenRouterAccount } from "./api";
-import {
-  OpenRouterName,
-  OpenRouterTier,
-  OpenRouterMetrics,
-  OpenRouterFreshness,
-} from "./account-display";
-import { openRouterStatus } from "./display-values";
+import { OpenRouterName, OpenRouterTier, OpenRouterMetrics } from "./account-display";
 import { modelSelectionKind } from "./model-selection";
 
 export function OpenRouterAccountDetail({
@@ -21,6 +18,7 @@ export function OpenRouterAccountDetail({
   busy,
   error,
   onEdit,
+  onRename,
   onModels,
   onImageModels,
   onRefresh,
@@ -32,6 +30,7 @@ export function OpenRouterAccountDetail({
   busy: boolean;
   error?: string;
   onEdit: () => void;
+  onRename: (name: string) => Promise<unknown>;
   onModels: () => void;
   onImageModels: () => void;
   onRefresh: () => void;
@@ -39,95 +38,86 @@ export function OpenRouterAccountDetail({
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
-  const catalog = new Map(
-    account.state.catalog.map((model) => [model.id, model]),
-  );
-  const imageCount = account.state.selections.filter(
-    (selection) =>
-      modelSelectionKind(catalog.get(selection.model)) === "images",
+  const dateFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
+  const { state } = account;
+  const catalog = new Map(state.catalog.map((model) => [model.id, model]));
+  const imageCount = state.selections.filter(
+    (selection) => modelSelectionKind(catalog.get(selection.model)) === "images",
   ).length;
+  const monitoringErrors = [...new Set([state.catalog_error, state.key_error, state.credits_error].filter(Boolean))];
+  const updated = (value: string | null) => (value ? formatDateTimeInline(value, dateFormat) : "Never");
   return (
-    <div className="min-w-0 space-y-4" data-testid="openrouter-account-detail">
-      <div className="rounded-xl border bg-card p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="break-words text-lg font-semibold">
-              <OpenRouterName account={account} />
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">OpenRouter · <OpenRouterTier account={account} /></p>
-          </div>
-          <StatusBadge status={openRouterStatus(account)} />
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-          <AccountPauseButton
-            paused={!account.isEnabled}
-            disabled={readOnly || busy}
-            onClick={() => onToggle(!account.isEnabled)}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={onModels}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            Models ({account.state.selections.length - imageCount})
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={onImageModels}
-          >
-            <Image className="h-3.5 w-3.5" />
-            Image models ({imageCount})
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={readOnly || busy}
-            onClick={onRefresh}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={readOnly || busy}
-            onClick={onEdit}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-            {t("common.actions.edit")}
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={onDelete}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t("common.actions.delete")}
-          </Button>
-        </div>
+    <section
+      className="animate-fade-in-up min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5"
+      data-testid="openrouter-account-detail"
+    >
+      <div>
+        <AccountNameEditor
+          key={account.id}
+          value={account.name}
+          labels={{ edit: "Rename account", input: "Account name", save: "Save name", cancel: t("common.cancel") }}
+          disabled={readOnly || busy}
+          onSave={(name) => onRename(name ?? account.name)}
+        >
+          <OpenRouterName account={account} />
+        </AccountNameEditor>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          OpenRouter | <OpenRouterTier account={account} /> | {state.selections.length} models selected
+        </p>
       </div>
       {error && <AlertMessage variant="error">{error}</AlertMessage>}
+      {monitoringErrors.map((message) => (
+        <p key={message} role="alert" className="break-words text-sm text-destructive">
+          {message}
+        </p>
+      ))}
       <section
-        className="space-y-5 rounded-xl border bg-card p-5"
+        className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4"
         aria-label="OpenRouter usage"
       >
-        <h3 className="text-sm font-semibold">Usage &amp; balance</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
         <OpenRouterMetrics account={account} detailed />
-        <div className="border-t pt-4">
-          <OpenRouterFreshness account={account} />
-        </div>
+        {!account.hasManagementKey && (
+          <p className="text-xs text-muted-foreground">
+            Add a management key to display account credits. Key allowance is separate from balance.
+          </p>
+        )}
+        <ProviderAccountTrends provider="openrouter" accountId={account.id} embedded />
       </section>
-      <ProviderAccountTrends provider="openrouter" accountId={account.id} />
-    </div>
+      <AccountInfoPanel title="Monitoring" rows={[
+        { label: "Management key", value: account.hasManagementKey ? "Configured" : "Not configured" },
+        { label: "Usage updated", value: updated(state.key_updated_at) },
+        { label: "Credits updated", value: updated(state.credits_updated_at) },
+        { label: "Catalog updated", value: updated(state.catalog_updated_at) },
+      ]} />
+      {/* Actions last, matching the Codex account detail. */}
+      <div className="flex flex-wrap gap-2 border-t pt-4">
+        <AccountPauseButton
+          paused={!account.isEnabled}
+          disabled={readOnly || busy}
+          onClick={() => onToggle(!account.isEnabled)}
+        />
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onModels}>
+          <Layers className="h-3.5 w-3.5" />
+          Models ({state.selections.length - imageCount})
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onImageModels}>
+          <Image className="h-3.5 w-3.5" />
+          Image models ({imageCount})
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onRefresh}>
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onEdit}>
+          <KeyRound className="h-3.5 w-3.5" />
+          API keys
+        </Button>
+        <Button size="sm" variant="destructive" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onDelete}>
+          <Trash2 className="h-3.5 w-3.5" />
+          {t("common.actions.delete")}
+        </Button>
+      </div>
+    </section>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { LogIn, RefreshCw, Trash2 } from "lucide-react";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { ClaudeCapacitySettings } from "./capacity-settings";
 import { ClaudeResetGrants } from "./reset-grants";
 import { ModelSelection } from "./model-selection";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
+import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -75,9 +76,24 @@ export function ClaudeAccountControls({
   const detail = account && (
     <section className="animate-fade-in-up min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
       <div>
-        <h2 className="min-w-0 truncate text-base font-semibold"><ClaudeName account={account} /></h2>
+        <AccountNameEditor
+          key={account.id}
+          value={account.name}
+          labels={{ edit: "Rename account", input: "Account name", save: "Save name", cancel: "Cancel" }}
+          disabled={readOnly || busy}
+          onSave={(name) => run(() => api.update.mutateAsync({ id: account.id, body: { name: name ?? account.name } }))}
+        >
+          <ClaudeName account={account} />
+        </AccountNameEditor>
         <p className="mt-0.5 text-xs text-muted-foreground">Claude OAuth | {account.state.selections.length} models selected</p>
       </div>
+      {[error, account.state.catalog_error, account.state.usage_error]
+        .filter(Boolean)
+        .map((message, index) => (
+          <p key={index} role="alert" className="text-sm text-destructive">
+            {message}
+          </p>
+        ))}
       <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
         <ClaudeQuota account={account} detailed />
@@ -89,19 +105,30 @@ export function ClaudeAccountControls({
         are not subscription charges. OAuth acceptance and included-plan billing
         require live qualification.
       </p>
-      {[error, account.state.catalog_error, account.state.usage_error]
-        .filter(Boolean)
-        .map((message, index) => (
-          <p key={index} role="alert" className="text-sm text-destructive">
-            {message}
-          </p>
-        ))}
       <AccountInfoPanel title="Credentials" rows={[
         { label: "Status", value: formatSlug(account.credentialStatus) },
         { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
         { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
         { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
       ]} />
+      <ModelSelection
+        key={account.id + JSON.stringify(account.state.selections)}
+        account={account}
+        readOnly={readOnly}
+        onSave={(selections) =>
+          api.update.mutateAsync({ id: account.id, body: { selections } })
+        }
+      />
+      <ClaudeCapacitySettings
+        key={`${account.id}:${account.maxConcurrency}`}
+        value={account.maxConcurrency}
+        readOnly={readOnly}
+        onSave={(maxConcurrency) =>
+          api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })
+        }
+      />
+      <ClaudeVersionControls readOnly={readOnly} />
+      {/* Actions last, matching the Codex account detail. */}
       <div className="space-y-3 border-t pt-4">
         <AccountRoutingPolicyControl
           policy={account.routingPolicy}
@@ -109,19 +136,6 @@ export function ClaudeAccountControls({
           onChange={(routingPolicy) => void run(() => api.update.mutateAsync({ id: account.id, body: { routingPolicy } }))}
         />
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={readOnly || busy}
-            onClick={() => {
-              setReconnectId(account.id);
-              setName(account.name);
-              setError(null);
-              setOpen(true);
-            }}
-          >
-            Reconnect
-          </Button>
           <AccountPauseButton
             paused={!account.isEnabled}
             disabled={readOnly || busy}
@@ -133,40 +147,41 @@ export function ClaudeAccountControls({
           <Button
             size="sm"
             variant="outline"
+            className="h-8 gap-1.5 text-xs"
             disabled={readOnly || busy}
             onClick={() => void run(() => api.refresh.mutateAsync(account.id))}
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </Button>
           <Button
             size="sm"
             variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={readOnly || busy}
+            onClick={() => {
+              setReconnectId(account.id);
+              setName(account.name);
+              setError(null);
+              setOpen(true);
+            }}
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            Reconnect
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-8 gap-1.5 text-xs"
             aria-label="Delete Claude account"
             disabled={readOnly || busy}
             onClick={() => setDeleteOpen(true)}
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
           </Button>
         </div>
       </div>
-      <ClaudeCapacitySettings
-        key={`${account.id}:${account.maxConcurrency}`}
-        value={account.maxConcurrency}
-        readOnly={readOnly}
-        onSave={(maxConcurrency) =>
-          api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })
-        }
-      />
-      <ModelSelection
-        key={account.id + JSON.stringify(account.state.selections)}
-        account={account}
-        readOnly={readOnly}
-        onSave={(selections) =>
-          api.update.mutateAsync({ id: account.id, body: { selections } })
-        }
-      />
-      <ClaudeVersionControls readOnly={readOnly} />
     </section>
   );
   return (

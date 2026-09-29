@@ -62,6 +62,13 @@ function Metric({
   );
 }
 
+function keyAllowancePercent(account: OpenRouterAccount): number | null {
+  const { key } = account.state;
+  return key && key.limit !== null && key.limit > 0 && key.limit_remaining !== null
+    ? (key.limit_remaining / key.limit) * 100
+    : null;
+}
+
 export function OpenRouterMetrics({
   account,
   detailed = false,
@@ -70,10 +77,7 @@ export function OpenRouterMetrics({
   detailed?: boolean;
 }) {
   const { key, credits, key_error, credits_error } = account.state;
-  const percent =
-    key && key.limit !== null && key.limit > 0 && key.limit_remaining !== null
-      ? (key.limit_remaining / key.limit) * 100
-      : null;
+  const percent = keyAllowancePercent(account);
   return (
     <>
       <dl className="grid grid-cols-2 gap-3">
@@ -172,6 +176,10 @@ export function OpenRouterListItem({
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
+  // Same row anatomy as the Codex list item: title/subtitle and status, a
+  // compact meter, then a one-line muted footer.
+  const { key, key_error, credits, credits_error } = account.state;
+  const percent = keyAllowancePercent(account);
   return (
     <AccountSelectionSurface
       selected={selected}
@@ -182,14 +190,30 @@ export function OpenRouterListItem({
           <p className="truncate text-sm font-medium">
             <OpenRouterName account={account} />
           </p>
-          <p className="text-xs text-muted-foreground">
-            OpenRouter · <OpenRouterTier account={account} /> · {account.state.selections.length} models selected
+          <p className="truncate text-xs text-muted-foreground">
+            OpenRouter | <OpenRouterTier account={account} /> | {account.state.selections.length} models
           </p>
         </div>
         <StatusBadge status={openRouterStatus(account)} />
       </div>
-      <div className="mt-2">
-        <OpenRouterMetrics account={account} />
+      <div className="mt-2 space-y-1">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted-foreground">Key allowance</span>
+          <span className="tabular-nums font-medium">
+            {keyAllowance(account)}
+            {key && key_error ? <span className="ml-1 text-amber-600 dark:text-amber-400">· stale</span> : null}
+          </span>
+        </div>
+        {percent !== null && (
+          <MiniQuotaBar aria-label="Key allowance remaining" percent={percent} testId="openrouter-list-key-allowance" />
+        )}
+      </div>
+      <div className="mt-2 flex min-w-0 items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <span className="shrink-0 tabular-nums">
+          Balance {money(openRouterBalance(account))}
+          {credits && credits_error ? " · stale" : ""}
+        </span>
+        <span className="min-w-0 truncate tabular-nums">Used today {money(key?.usage_daily)}</span>
       </div>
     </AccountSelectionSurface>
   );
