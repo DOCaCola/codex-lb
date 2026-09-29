@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 from cryptography.fernet import Fernet
@@ -272,11 +273,112 @@ def test_early_stop_is_not_completed():
 @pytest.mark.parametrize(
     "item",
     [
-        {"type": "function_call_output", "call_id": "missing", "output": "result"},
+        {"type": "function_call_output", "call_id": "", "output": "result"},
         {"type": "item_reference", "id": "missing"},
         {"role": "user", "content": [{"type": "input_image", "image_url": "file:///private"}]},
     ],
 )
-def test_unsupported_or_orphaned_history_rejected(item):
+def test_unsupported_or_malformed_history_rejected(item):
     with pytest.raises(ClientPayloadError):
         project(request(input=[item]), max_output_tokens=8192)
+
+
+@pytest.mark.parametrize("kind", ["function_call_output", "custom_tool_call_output"])
+@pytest.mark.parametrize(
+    "output",
+    [
+        "delegated context",
+        "",
+        [
+            {"type": "input_text", "text": "image context"},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U="},
+        ],
+    ],
+)
+def test_standalone_tool_output_is_labeled_context_and_preserves_logical_history(kind, output):
+    payload = request(
+        input=[
+            {"type": kind, "call_id": "delegation-seed", "output": output},
+            {"role": "user", "content": "Continue"},
+        ]
+    )
+    original = deepcopy(payload)
+    body = project(payload, max_output_tokens=8192).body
+    blocks = body["messages"][0]["content"]
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["role"] == "user"
+    assert blocks[0] == {"type": "text", "text": f"[Standalone {kind}: call_id=delegation-seed]"}
+    if isinstance(output, str):
+        assert blocks[1] == {"type": "text", "text": output}
+    else:
+        assert blocks[1:3] == [
+            {"type": "text", "text": "image context"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="}},
+        ]
+    assert blocks[-1] == {"type": "text", "text": "Continue"}
+    assert payload == original
+
+
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("duplicate", "duplicate_result"),
+        ("out_of_order", "out_of_order_result"),
+        ("interrupted", "interrupted_tool_cycle"),
+        ("invalid", "invalid_call_id"),
+    ],
+)
+def test_bad_tool_output_cycles_fail_with_content_free_diagnostics(caplog, case, reason):
+    from app.core.utils.request_id import reset_request_id, set_request_id
+
+    call = {"type": "function_call", "call_id": "private-call-id", "name": "run", "arguments": "{}"}
+    result = {"type": "function_call_output", "call_id": "private-call-id", "output": "private-tool-content"}
+    items = {
+        "duplicate": [call, result, result],
+        "out_of_order": [result, call],
+        "interrupted": [call, {**result, "call_id": "standalone-id"}],
+        "invalid": [{**result, "call_id": None}],
+    }[case]
+    token = set_request_id("request-fixture")
+    try:
+        with pytest.raises(ClientPayloadError, match=reason) as error:
+            project(request(input=items), max_output_tokens=8192)
+    finally:
+        reset_request_id(token)
+    assert error.value.param == f"input[{len(items) - 1 if case != 'out_of_order' else 0}].call_id"
+    assert "request_id=request-fixture" in caplog.text
+    assert f"reason={reason}" in caplog.text
+    assert "item_index=" in caplog.text and "pending_count=" in caplog.text and "call_id_hash=" in caplog.text
+    assert "private-call-id" not in caplog.text
+    assert "private-tool-content" not in caplog.text
+    assert "standalone-id" not in caplog.text
+
+
+def test_standalone_context_does_not_change_subsequent_parallel_tool_pairs():
+    payload = request(
+        input=[
+            {"type": "custom_tool_call_output", "call_id": "seed", "output": "delegation context"},
+            {"type": "function_call", "call_id": "a", "name": "run", "arguments": "{}"},
+            {"type": "function_call", "call_id": "b", "name": "run", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "b", "output": "B"},
+            {"type": "function_call_output", "call_id": "a", "output": "A"},
+        ]
+    )
+    messages = project(payload, max_output_tokens=8192).body["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+    assert [block["id"] for block in messages[1]["content"]] == ["a", "b"]
+    assert [block["tool_use_id"] for block in messages[2]["content"]] == ["b", "a"]
+
+
+def test_standalone_output_does_not_complete_a_pending_call():
+    with pytest.raises(ClientPayloadError, match="Tool results are required"):
+        project(
+            request(
+                input=[
+                    {"type": "function_call_output", "call_id": "seed", "output": "context"},
+                    {"type": "function_call", "call_id": "active", "name": "run", "arguments": "{}"},
+                    {"role": "user", "content": "Continue"},
+                ]
+            ),
+            max_output_tokens=8192,
+        )

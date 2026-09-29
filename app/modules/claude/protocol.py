@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import cast
@@ -12,10 +13,30 @@ from typing import cast
 from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, model_policy
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
 from app.modules.claude.tool_schema import ToolArguments, adapt_tool_schema
+
+logger = logging.getLogger(__name__)
+
+
+def _tool_output_error(
+    reason: str, *, index: int, kind: str, call_id: JsonValue, pending_count: int
+) -> ClientPayloadError:
+    fingerprint = hashlib.sha256(call_id.encode()).hexdigest()[:12] if isinstance(call_id, str) else None
+    logger.warning(
+        "claude_tool_output_rejected request_id=%s reason=%s item_index=%d output_kind=%s "
+        "call_id_hash=%s pending_count=%d",
+        get_request_id(),
+        reason,
+        index,
+        kind,
+        fingerprint,
+        pending_count,
+    )
+    return invalid(f"Invalid Claude tool output: {reason}", f"input[{index}].call_id")
 
 
 def invalid(message: str, param: str = "input") -> ClientPayloadError:
@@ -182,10 +203,17 @@ def project_responses(
         items = [{"role": "user", "content": items}]
     if not isinstance(items, list):
         raise invalid("Responses input must be text or an array")
+    call_ids = {
+        call_id
+        for item in items
+        if isinstance(item, dict)
+        and item.get("type") in ("function_call", "custom_tool_call")
+        and isinstance(call_id := item.get("call_id"), str)
+    }
     pending: set[str] = set()
     seen_calls: set[str] = set()
     search_items: set[str] = set()
-    for item in items:
+    for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise invalid("Invalid Responses input item")
         kind = item.get("type", "message")
@@ -234,10 +262,32 @@ def project_responses(
             seen_calls.add(call_id)
         elif kind in ("function_call_output", "custom_tool_call_output"):
             call_id = item.get("call_id")
-            if not isinstance(call_id, str) or call_id not in pending:
-                raise invalid("No matching Claude tool call for this output")
-            append("user", [{"type": "tool_result", "tool_use_id": call_id, "content": _content(item.get("output"))}])
-            pending.remove(call_id)
+            if not isinstance(call_id, str) or not call_id:
+                raise _tool_output_error(
+                    "invalid_call_id", index=index, kind=str(kind), call_id=call_id, pending_count=len(pending)
+                )
+            reason = None
+            if call_id in seen_calls and call_id not in pending:
+                reason = "duplicate_result"
+            elif call_id in call_ids and call_id not in seen_calls:
+                reason = "out_of_order_result"
+            elif call_id not in call_ids and pending:
+                reason = "interrupted_tool_cycle"
+            if reason is not None:
+                raise _tool_output_error(
+                    reason, index=index, kind=str(kind), call_id=call_id, pending_count=len(pending)
+                )
+            content = _content(item.get("output"))
+            if call_id in pending:
+                append("user", [{"type": "tool_result", "tool_use_id": call_id, "content": content}])
+                pending.remove(call_id)
+            else:
+                # Codex delegation/imported history can contain output without
+                # a call in this conversation. It is context, not a tool cycle.
+                append(
+                    "user",
+                    [{"type": "text", "text": f"[Standalone {kind}: call_id={call_id}]"}, *content],
+                )
         elif kind == "web_search_call":
             item_id = item.get("id")
             if not isinstance(item_id, str) or item_id in search_items:

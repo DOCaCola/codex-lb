@@ -103,6 +103,14 @@ output. Unsupported grammar-constrained decoding, uploaded files, Responses buil
 server tools, verbosity, automatic truncation and paid service-tier semantics fail
 explicitly. A client that requests these must remove or adapt those controls.
 
+Codex delegation or imported history can contain tool output without its call.
+Responses preserves this as labeled user context, including supported images;
+it does not fabricate a tool call or result. A real continuation still restores
+its call from retained history. Duplicate paired results, results preceding
+their calls, and interrupted or incomplete tool cycles fail before dispatch.
+Native `/v1/messages` is unchanged. See
+[standalone tool context](../openspec/specs/claude-accounts/spec.md#requirement-portable-standalone-tool-output-context).
+
 Tests cover local mock and loopback paths, not live OAuth eligibility or included
 subscription usage. Qualify both before production use. Upstream eligibility errors
 are returned without hidden paid fallback or repeated account hopping.

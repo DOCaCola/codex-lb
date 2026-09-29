@@ -491,3 +491,37 @@ continuation and cleanup. Third-party nested-schema acceptance informs this
 design but does not establish live acceptance of our exact envelope. Production
 qualification still requires a real Claude tool request. Chat Completions routing
 to Claude is a separate gap and is not added by this change.
+
+## Standalone Codex tool-output context
+
+The 2026-09-29 production logs show two locally generated "No matching Claude
+tool call for this output" errors, before Anthropic dispatch. The last successful
+Opus history retained complete call/result pairs; the failed input was not stored,
+so its exact cause cannot be established retrospectively. A standalone delegation
+seed reproduces the same rejection in the deployed projector.
+
+Inspected 2026-09-29 snapshots: CLIProxyAPI `d33f63f8` explicitly tests Codex
+create_thread seeds with unmatched function_call_output; it converts these into
+ordinary user content. OpenCodex `8a005dd98` labels orphan tool results and retains
+text/images without fabricating calls. These are source/test observations, not
+live qualification of our route. No reference implementation was copied.
+
+Our projector classifies against the entire expanded input. A result whose call
+appears later is out of order, not standalone context. A second result for a
+consumed real call is a duplicate, not portable context. A standalone output with
+no call becomes labeled user content only outside an unresolved tool cycle. For
+example, a delegation seed and user instruction become one user message containing
+the original output and instruction, with an explicit standalone-output label.
+Text and supported images remain intact; no tool execution or signature is implied.
+
+Existing previous_response_id expansion still occurs first. An unavailable
+explicit previous response still fails, rather than reclassifying its delta as
+context. Signed reasoning and resource ownership checks remain unchanged. Native
+Messages bypasses this policy. Logical replay retains original output items rather
+than the projected labels, avoiding label duplication on later turns.
+
+Rejected output diagnostics record reason, item position/kind, request ID, pending
+count and the first 12 hex characters of the call-ID SHA-256. They never record
+output, arguments, images, raw call IDs or credentials. There is no per-item success
+logging. Local HTTP/WS mocks cover context, continuation and strict failure paths;
+live OAuth acceptance is a separate qualification step.

@@ -421,7 +421,7 @@ async def test_malformed_input_never_dispatches(async_client, pool, monkeypatch)
         json={
             "model": MODEL,
             "input": [
-                {"type": "function_call_output", "call_id": "missing", "output": "result"},
+                {"type": "function_call_output", "call_id": "", "output": "result"},
             ],
             "stream": False,
         },
