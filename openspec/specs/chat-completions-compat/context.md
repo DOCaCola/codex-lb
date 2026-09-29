@@ -6,6 +6,12 @@ This capability aligns `POST /v1/chat/completions` with OpenAI’s expectations 
 
 See `openspec/specs/chat-completions-compat/spec.md` for normative requirements.
 
+Claude OAuth Chat requests use the same Responses-to-Claude source dispatcher as `/v1/responses`. The Chat route projects Messages output into Chat JSON or SSE after the dispatcher has acquired its admission and usage owner. For example, `max_completion_tokens: 17` and `stop: ["END"]` become a 17-token Claude Messages cap and `stop_sequences: ["END"]`; the existing account selection and quota recovery still apply.
+
+Claude Chat `reasoning_content` is caller-visible plaintext, not a Claude signature. Completed plaintext reasoning becomes ordinary assistant text. Signed thinking remains in the private Responses continuation store and is never reconstructed from that text. For an active tool cycle, a keyed client can resend its exact visible Chat history and all tool results; the gateway locates a unique live record under the same key and conversation, authenticates its account/model-bound signed blocks, and restores those blocks before forwarding. If replay is missing, ambiguous, expired, cross-key, model-incompatible, or owned by an unavailable account, the affected cycle becomes ordinary assistant text plus quoted user result data, preserving call identities, arguments, results and supported images. This representation preserves visible information and ordering but is not semantically identical to native Claude tool-use. It neither fabricates a signature nor asks Claude to execute historical calls again. New reasoning requests may declare tools, including `tool_choice: none`. Adaptive-capable models request summarized thinking unless `thinking.display: "omitted"` hides it. `pause_turn` and other unknown incomplete reasons become errors rather than successful Chat stops. Chat usage includes cache reads and cache creation details when Claude reports them.
+
+For both JSON and SSE, retention is attempted before the completion reaches the client. A store failure is logged without failing the completed model response; a subsequent Chat turn reconstructs from visible content because no authenticated record exists. Incomplete or interrupted streams do not seed completed Chat tool replay.
+
 ## Rationale and Decisions
 
 - **Mapping to Responses:** Chat Completions are derived from the Responses stream to keep behavior consistent across endpoints.

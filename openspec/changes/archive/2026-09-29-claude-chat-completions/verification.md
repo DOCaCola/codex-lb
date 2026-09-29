@@ -1,0 +1,6 @@
+# Verification
+
+- Public route regressions cover JSON and SSE text/tool turns, genuine signed and redacted replay, missing/ambiguous/cross-key/model-switched/owner-unavailable reconstruction, later-turn sequential matching, plaintext reasoning, multimodal tool results, streaming completion retention, truncated-stream non-retention, limits, stops, refusals, unsupported controls and one-reservation settlement. Unit regressions cover scoped/restart-safe retention, canonical versus projected input, TTL, and Chat stream closure.
+- `uv run pytest tests/integration/test_claude_chat_completions.py tests/integration/test_claude_inference.py tests/unit/test_http_fallback_replay.py tests/unit/test_chat_response_mapping.py tests/unit/test_chat_request_mapping.py tests/integration/test_proxy_chat_completions.py tests/integration/test_model_source_dispatch.py -q`: 281 passed (one dependency deprecation warning).
+- `make lint` and scoped `uv run ty check` of the changed runtime modules passed. Strict OpenSpec validation passed for this change and all 73 main specs.
+- Verification uses synthetic Claude credentials and mocked upstream metadata/SSE. It does not establish live Anthropic OAuth acceptance, and store-write failure still degrades to visible reconstruction rather than guaranteed signed replay. No deployment, migration, commit, or archive was performed.

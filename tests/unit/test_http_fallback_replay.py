@@ -21,12 +21,38 @@ async def test_replay_survives_restart_and_scopes_content(tmp_path):
     restarted = HTTPFallbackReplayStore(tmp_path)
     retained = await restarted.load(scope, "resp_1")
     assert retained is not None
+    scoped = await restarted.histories(scope)
+    assert [(record.response_id, record.history) for record in scoped] == [("resp_1", retained)]
+    assert await restarted.histories(ReplayScope("key-b", "thread-a")) == []
+    assert await restarted.histories(ReplayScope("key-a", "thread-b")) == []
     assert retained.expand(delta) == [*input_items, *output, *delta]
     assert retained.expand([*input_items, *output, *delta]) == [*input_items, *output, *delta]
     assert retained.expand(input_items) == [*input_items, *output, *input_items]
     assert await restarted.load(ReplayScope("key-b", "thread-a"), "resp_1") is None
     assert await restarted.load(ReplayScope("key-a", "thread-b"), "resp_1") is None
     assert all(path.stat().st_mode & 0o077 == 0 for path in tmp_path.glob("*.replay"))
+
+
+@pytest.mark.asyncio
+async def test_chat_replay_retains_projected_and_canonical_input_separately(tmp_path):
+    store = HTTPFallbackReplayStore(tmp_path)
+    scope = ReplayScope("key-a", "chat-a")
+    projected: list[JsonValue] = [{"role": "assistant", "content": [{"type": "output_text", "text": "prior"}]}]
+    canonical: list[JsonValue] = [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
+    await store.remember(
+        scope,
+        "chat_response",
+        json.dumps({"model": "claude", "input": projected}),
+        [{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"}],
+        "account-a",
+        chat_input=canonical,
+        chat_instructions="Be concise",
+    )
+    history = await HTTPFallbackReplayStore(tmp_path).load(scope, "chat_response")
+    assert history is not None
+    assert history.input == projected
+    assert history.chat_input == canonical
+    assert history.chat_instructions == "Be concise"
 
 
 @pytest.mark.asyncio
@@ -37,9 +63,11 @@ async def test_replay_expires_without_extending_on_read(tmp_path):
     path = next(tmp_path.glob("*.replay"))
     stamp = path.stat().st_mtime
     assert await store.load(scope, "resp") is not None
+    assert len(await store.histories(scope)) == 1
     assert path.stat().st_mtime == stamp
     os.utime(path, (stamp - 3601, stamp - 3601))
     assert await store.load(scope, "resp") is None
+    assert await store.histories(scope) == []
     assert not path.exists()
 
 

@@ -41,6 +41,7 @@ class ResponsesProjection:
     tools: dict[str, ToolIdentity]
     opaque: ClaudeOpaqueState
     search_enabled: bool = False
+    chat_reasoning: bool = False
     response_id: str = ""
     created_at: int = field(default_factory=lambda: int(time.time()))
     sequence: int = 0
@@ -62,7 +63,14 @@ class ResponsesProjection:
     def envelope(self, status: str) -> dict[str, JsonValue]:
         incomplete = None
         if status == "incomplete":
-            incomplete = {"reason": "max_output_tokens" if self.stop_reason == "max_tokens" else self.stop_reason}
+            reason = (
+                "max_output_tokens"
+                if self.stop_reason == "max_tokens"
+                else "content_filter"
+                if self.stop_reason == "refusal"
+                else self.stop_reason
+            )
+            incomplete = {"reason": reason}
         return {
             "id": self.response_id,
             "object": "response",
@@ -124,6 +132,8 @@ class ResponsesProjection:
             return result_item
         if kind in ("thinking", "redacted_thinking"):
             result: dict[str, JsonValue] = {"id": item_id, "type": "reasoning", "summary": []}
+            if final and self.chat_reasoning and kind == "thinking" and isinstance(block.get("thinking"), str):
+                result["summary"] = [{"type": "summary_text", "text": block["thinking"]}]
             if final:
                 result["encrypted_content"] = self.opaque.encode(self.scope, block)
             return result
@@ -194,7 +204,10 @@ class ResponsesProjection:
             if self.stop_reason not in ("end_turn", "stop_sequence", "tool_use", "max_tokens", "pause_turn", "refusal"):
                 raise ClaudeError("Unknown Claude stop reason")
             self.stopped = True
-            status = "incomplete" if self.stop_reason in ("max_tokens", "pause_turn") else "completed"
+            incomplete_reasons = (
+                ("max_tokens", "pause_turn", "refusal") if self.chat_reasoning else ("max_tokens", "pause_turn")
+            )
+            status = "incomplete" if self.stop_reason in incomplete_reasons else "completed"
             return [self.event(f"response.{status}", response=self.envelope(status))]
         index = event.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
@@ -284,6 +297,16 @@ class ResponsesProjection:
                         item_id=self.outputs[index]["id"],
                         output_index=index,
                         content_index=0,
+                        delta=delta[field_name],
+                    )
+                ]
+            if field_name == "thinking" and self.chat_reasoning:
+                return [
+                    self.event(
+                        "response.reasoning_summary_text.delta",
+                        item_id=self.outputs[index]["id"],
+                        output_index=index,
+                        summary_index=0,
                         delta=delta[field_name],
                     )
                 ]

@@ -33,6 +33,8 @@ class SourceContinuation:
         self.store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
         self.source_id = source_id
         self.payload: dict[str, JsonValue] = {}
+        self.chat_input: list[JsonValue] | None = None
+        self.chat_instructions: str | None = None
         self.retain_incomplete = retain_incomplete
 
     async def expand(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -63,7 +65,15 @@ class SourceContinuation:
         statuses = {"completed", "incomplete"} if self.retain_incomplete else {"completed"}
         if response.get("status") not in statuses or not isinstance(response_id, str) or not isinstance(items, list):
             return
-        await self.store.remember(self.scope, response_id, json.dumps(self.payload), items, self.source_id)
+        await self.store.remember(
+            self.scope,
+            response_id,
+            json.dumps(self.payload),
+            items,
+            self.source_id,
+            chat_input=self.chat_input,
+            chat_instructions=self.chat_instructions,
+        )
 
     async def stream(self, body: AsyncIterator[str]) -> AsyncIterator[str]:
         output = ReplayOutputCollector()

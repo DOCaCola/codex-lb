@@ -36,6 +36,7 @@ def coerce_messages(
     messages: Sequence[JsonValue],
     *,
     preserve_instruction_roles: bool = False,
+    allow_nontext_tool_content: bool = False,
 ) -> tuple[str, list[JsonValue]]:
     instruction_parts: list[str] = []
     input_messages: list[JsonValue] = []
@@ -59,7 +60,15 @@ def coerce_messages(
                 instruction_parts.append(content_text)
             continue
         if role == "tool":
-            input_messages.append(cast(JsonValue, _convert_tool_message(cast(OpenAIMessage, message_dict))))
+            input_messages.append(
+                cast(
+                    JsonValue,
+                    _convert_tool_message(
+                        cast(OpenAIMessage, message_dict),
+                        allow_nontext_content=allow_nontext_tool_content,
+                    ),
+                )
+            )
             continue
         if role == "assistant":
             tool_calls = message_dict.get("tool_calls")
@@ -181,7 +190,9 @@ def _decompose_assistant_tool_calls(message: OpenAIMessage) -> list[JsonValue]:
     return items
 
 
-def _convert_tool_message(message: OpenAIMessage) -> FunctionCallOutputInputItem:
+def _convert_tool_message(
+    message: OpenAIMessage, *, allow_nontext_content: bool = False
+) -> FunctionCallOutputInputItem:
     tool_call_id = message.get("tool_call_id")
     tool_call_id_camel = message.get("toolCallId")
     call_id = message.get("call_id")
@@ -197,7 +208,7 @@ def _convert_tool_message(message: OpenAIMessage) -> FunctionCallOutputInputItem
         output = content
     elif is_json_list(content):
         output = _concat_text_parts(content)
-        if not output and content:
+        if not output and content and not allow_nontext_content:
             raise ClientPayloadError(
                 "tool message content array contains no valid text parts.",
                 param="messages",

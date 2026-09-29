@@ -14,7 +14,9 @@ pool = routing_fixtures.pool
 pytestmark = pytest.mark.integration
 
 
-def install_upstream(monkeypatch, *, stop="end_turn", truncate=False, content=None, rejections=0):
+def install_upstream(
+    monkeypatch, *, stop="end_turn", truncate=False, content=None, rejections=0, message_id="msg_fixture"
+):
     from app.modules.claude import transport
 
     captured, closed = [], []
@@ -32,7 +34,7 @@ def install_upstream(monkeypatch, *, stop="end_turn", truncate=False, content=No
         stack = AsyncExitStack()
         stack.callback(lambda: closed.append(source.id))
         events = [
-            {"type": "message_start", "message": {"id": "msg_fixture", "usage": {"input_tokens": 10}}},
+            {"type": "message_start", "message": {"id": message_id, "usage": {"input_tokens": 10}}},
             {"type": "ping"},
             {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello from Claude"}},

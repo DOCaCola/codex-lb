@@ -14,13 +14,14 @@ from app.core.types import JsonValue
 from app.core.utils.sse import parse_sse_data_json
 from app.db.session import detach_session_objects, get_background_session
 from app.modules.api_keys.service import ApiKeyData
+from app.modules.claude.chat_replay import ChatHistory, plan_chat_replay
 from app.modules.claude.dispatch import ClaudeDispatchPreparer, PreparedClaudeRequest
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.replay import authenticate_replay
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.responses import ResponsesProjection
-from app.modules.claude.routing import select_account
+from app.modules.claude.routing import ClaudePoolUnavailable, select_account
 from app.modules.model_sources.continuation import SourceContinuation
 from app.modules.model_sources.forwarding import (
     ModelSourceForwardingError,
@@ -43,6 +44,8 @@ async def prepare_responses(
     *,
     excluded_source_ids: frozenset[str] = frozenset(),
     retry_source_id: str | None = None,
+    chat_reasoning: bool = False,
+    chat_history: ChatHistory | None = None,
 ) -> ClaudeAttempt:
     model = payload.get("model")
     if not isinstance(model, str):
@@ -51,23 +54,73 @@ async def prepare_responses(
     client_scope = api_key.id if api_key else "anonymous"
     opaque = ClaudeOpaqueState(TokenEncryptor())
     logical = cast(dict[str, PydanticJsonValue], payload)
-    replay = authenticate_replay(
-        logical, opaque, model=model, client_scope=client_scope, conversation_id=conversation_id
+    raw_instructions = payload.get("instructions")
+    instructions = raw_instructions if isinstance(raw_instructions, str) else ""
+    chat_plan = (
+        await plan_chat_replay(
+            chat_history,
+            store=continuation.store,
+            scope=continuation.scope,
+            opaque=opaque,
+            model=model,
+            client_scope=client_scope,
+            instructions=instructions,
+        )
+        if chat_history is not None
+        else None
     )
     async with get_background_session() as session:
-        account = await select_account(
-            session,
-            model,
-            api_key,
-            conversation_id=conversation_id,
-            owner_source_id=replay.owner_source_id or retry_source_id,
-            preferred_source_id=replay.preferred_source_id,
-            excluded_source_ids=excluded_source_ids,
-        )
+        if chat_plan is not None:
+            try:
+                account = await select_account(
+                    session,
+                    model,
+                    api_key,
+                    conversation_id=conversation_id,
+                    owner_source_id=chat_plan.active_owner or retry_source_id,
+                    preferred_source_id=chat_plan.preferred_owner,
+                    excluded_source_ids=excluded_source_ids,
+                )
+            except ClaudePoolUnavailable as exc:
+                if exc.code != "previous_response_owner_unavailable" or chat_plan.active_owner is None:
+                    raise
+                account = await select_account(
+                    session,
+                    model,
+                    api_key,
+                    conversation_id=conversation_id,
+                    preferred_source_id=chat_plan.preferred_owner,
+                    excluded_source_ids=excluded_source_ids,
+                )
+            logical = cast(
+                dict[str, PydanticJsonValue],
+                {**payload, "input": chat_plan.project(source_id=account.source_id)},
+            )
+            replay = authenticate_replay(
+                logical, opaque, model=model, client_scope=client_scope, conversation_id=conversation_id
+            )
+        else:
+            replay = authenticate_replay(
+                logical, opaque, model=model, client_scope=client_scope, conversation_id=conversation_id
+            )
+            account = await select_account(
+                session,
+                model,
+                api_key,
+                conversation_id=conversation_id,
+                owner_source_id=replay.owner_source_id or retry_source_id,
+                preferred_source_id=replay.preferred_source_id,
+                excluded_source_ids=excluded_source_ids,
+            )
         selected = next(row for row in account.source.models if row.model == model)
         assert selected.max_output_tokens is not None  # Only resolved catalog models are eligible.
+        projected = replay.project(logical, source_id=account.source_id, model=model)
+        if chat_history is not None:
+            continuation.payload["input"] = cast(JsonValue, projected["input"])
+            continuation.chat_input = chat_history.items
+            continuation.chat_instructions = instructions
         projection = project_responses(
-            replay.project(logical, source_id=account.source_id, model=model),
+            projected,
             max_output_tokens=selected.max_output_tokens,
             restore_reasoning=lambda token: (
                 opaque.decode(token, model=model, client_scope=client_scope, conversation_id=conversation_id).block
@@ -84,6 +137,10 @@ async def prepare_responses(
         )
         detach_session_objects(session)
     continuation.source_id = prepared.source.id
+    reasoning = logical.get("reasoning")
+    visible_chat_reasoning = chat_reasoning and (
+        not isinstance(reasoning, dict) or reasoning.get("display") != "omitted"
+    )
     return ClaudeAttempt(
         prepared,
         ResponsesProjection(
@@ -91,6 +148,7 @@ async def prepare_responses(
             projection.tools,
             opaque,
             search_enabled=projection.search_enabled,
+            chat_reasoning=visible_chat_reasoning,
         ),
     )
 

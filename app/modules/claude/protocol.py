@@ -282,6 +282,11 @@ def project_responses(
         "max_tokens": limit,
         "stream": payload.get("stream", False),
     }
+    if "stop_sequences" in payload:
+        stops = payload["stop_sequences"]
+        if not isinstance(stops, list) or not stops or any(not isinstance(stop, str) or not stop for stop in stops):
+            raise invalid("Claude stop sequences must be a non-empty array of non-empty strings", "stop")
+        body["stop_sequences"] = stops
     if system:
         body["system"] = system
     if declarations:
@@ -318,7 +323,12 @@ def project_responses(
             raise invalid("Unsupported Claude reasoning effort", "reasoning")
         if policy is None or not policy.adaptive_reasoning:
             raise invalid("This Claude model has no configured adaptive reasoning policy", "reasoning")
+        display = reasoning.get("display")
+        if display not in (None, "summarized", "omitted"):
+            raise invalid("Unsupported Claude thinking display", "reasoning")
         body["thinking"] = {"type": "adaptive"}
+        if display == "summarized":
+            body["thinking"]["display"] = "summarized"
         body["output_config"] = {"effort": effort}
         if choice == "required" or isinstance(choice, dict):
             raise invalid("Claude thinking cannot be combined with a forced tool choice", "tool_choice")

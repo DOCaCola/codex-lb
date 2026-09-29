@@ -5,6 +5,18 @@
 Provide separately owned Claude OAuth credentials and faithful native and adapted inference without an intermediate gateway.
 
 ## Requirements
+### Requirement: Claude Chat routing without upstream Chat capability
+
+An enrolled Claude OAuth source SHALL serve authorized `/v1/chat/completions` requests through its Responses capability without being marked as an upstream Chat Completions source. Existing enabled accounts SHALL be eligible without re-enrollment. Disabled, unauthorized and exhausted Claude pools MUST NOT fall back to OpenAI subscription accounts.
+
+#### Scenario: Existing enrolled account
+- **WHEN** an enabled Claude model is requested on the Chat endpoint
+- **THEN** the existing Claude account pool handles the request through its normal owner and transport
+
+#### Scenario: Signed Chat tool replay
+- **WHEN** a keyed client resends complete Chat tool history matching one live record
+- **THEN** Claude receives the original authenticated signed thinking on its original account and model
+- **AND** unavailable or ambiguous replay SHALL reconstruct only caller-visible, representable Chat tool history without copying authenticated opaque state or fabricating signatures
 
 ### Requirement: Shared Claude routing policy
 Claude SHALL use the dashboard routing strategy, earlier-reset preference and
@@ -241,6 +253,11 @@ The gateway SHALL authenticate historical Claude state against client and conver
 #### Scenario: Active tool cycle
 - **WHEN** incompatible reasoning belongs to the active tool turn
 - **THEN** preparation fails rather than dropping required active reasoning
+
+#### Scenario: Authenticated Chat tool cycle
+- **WHEN** a keyed Chat client resends the complete visible history and all tool results for one live Claude tool response
+- **THEN** the gateway restores only that response's genuine signed or redacted thinking under the same conversation, model and account owner
+- **AND** unavailable or ambiguous replay SHALL reconstruct only caller-visible, representable Chat tool history without copying authenticated opaque state or fabricating signatures
 
 #### Scenario: Authentication boundary
 - **WHEN** an envelope is tampered or belongs to another client or conversation

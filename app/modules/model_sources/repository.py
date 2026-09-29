@@ -47,6 +47,15 @@ class ModelSourcesRepository:
         )
         return result.scalar_one_or_none()
 
+    async def has_claude_model(self, model: str) -> bool:
+        result = await self._session.execute(
+            select(ModelSource.id)
+            .join(ModelSourceModel, ModelSourceModel.source_id == ModelSource.id)
+            .where(ModelSource.kind == "claude", ModelSourceModel.model == model)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def find_chat_source_for_model(
         self,
         model: str,
@@ -59,8 +68,15 @@ class ModelSourcesRepository:
             select(ModelSource)
             .options(selectinload(ModelSource.models))
             .join(ModelSourceModel, ModelSourceModel.source_id == ModelSource.id)
-            .where(ModelSource.kind.in_(("openai_compatible", "openrouter")))
-            .where(ModelSource.supports_chat_completions.is_(True))
+            .where(
+                or_(
+                    and_(
+                        ModelSource.kind.in_(("openai_compatible", "openrouter")),
+                        ModelSource.supports_chat_completions.is_(True),
+                    ),
+                    and_(ModelSource.kind == "claude", ModelSource.supports_responses.is_(True)),
+                )
+            )
             .where(ModelSourceModel.model == model)
             .where(_enablement_filter(only_disabled))
             .order_by(ModelSource.name, ModelSource.id)

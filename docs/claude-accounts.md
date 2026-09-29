@@ -20,6 +20,21 @@ Messages clients can use the upstream model ID or its `anthropic/` prefix on
 is required. OpenAI models remain first in the Codex list, then native Anthropic,
 then other provider sources.
 
+OpenAI Chat clients can use an enabled `anthropic/<model-id>` on
+`/v1/chat/completions` with either JSON or SSE streaming. The same Claude account
+pool handles these requests. Chat `max_completion_tokens` (or `max_tokens`) and
+`stop` apply to Claude output; unsupported controls return an error. Function tool
+calls and tool results can be resent as ordinary Chat history. Claude reasoning
+appears as plaintext `reasoning_content`; it is never treated as a signature.
+When a keyed, complete tool follow-up uniquely matches a live same-key conversation
+record, genuine signed thinking is replayed on its original account. Otherwise
+the affected historical tool cycle is reconstructed from visible Chat content as
+ordinary conversation, preserving supported results without claiming native tool
+semantics or inventing a signature. New reasoning and tool requests remain enabled.
+Use Responses or native Messages when exact native tool-continuation semantics matter.
+Adaptive Claude requests ask for summarized thinking by default; use
+`thinking: {"type": "adaptive", "display": "omitted"}` to hide it.
+
 ## Model budgets
 
 Codex receives the full discovered context capacity, a 95% effective-context

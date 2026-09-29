@@ -6,10 +6,12 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, SkipValidation, field_validator, model_validator
 
 from app.core.openai.contracts import OpenAIMessage
+from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.message_coercion import _content_parts, coerce_messages
 from app.core.openai.requests import (
     PassthroughJsonList,
     PassthroughJsonValue,
+    ResponsesReasoning,
     ResponsesRequest,
     ResponsesTextControls,
     ResponsesTextFormat,
@@ -143,7 +145,7 @@ class ChatCompletionsRequest(BaseModel):
             self.tools = validated
         return self
 
-    def to_responses_request(self) -> ResponsesRequest:
+    def to_responses_request(self, *, allow_nontext_tool_content: bool = False) -> ResponsesRequest:
         # The passthrough fields are already plain JSON (shape-checked by the
         # validators above), so attach them directly instead of deep-copying
         # them through ``model_dump``.
@@ -191,6 +193,7 @@ class ChatCompletionsRequest(BaseModel):
             str(existing_instructions),
             cast(list[JsonValue], messages),
             preserve_instruction_roles=preserve_instruction_roles,
+            allow_nontext_tool_content=allow_nontext_tool_content,
         )
         data["instructions"] = instructions
         data["input"] = input_items
@@ -199,6 +202,103 @@ class ChatCompletionsRequest(BaseModel):
         if tool_choice is not None:
             data["tool_choice"] = tool_choice
         return ResponsesRequest.model_validate(data)
+
+    def apply_claude_controls(self, responses: ResponsesRequest) -> None:
+        """Apply Chat-only controls after routing selects the Claude Responses wire."""
+
+        if self.seed is not None:
+            raise ClientPayloadError("Claude Chat does not support seed", param="seed")
+        for field in ("presence_penalty", "frequency_penalty"):
+            if getattr(self, field) not in (None, 0):
+                raise ClientPayloadError(f"Claude Chat does not support {field}", param=field)
+        if self.logprobs not in (None, False):
+            raise ClientPayloadError("Claude Chat does not support logprobs", param="logprobs")
+        if self.top_logprobs not in (None, 0):
+            raise ClientPayloadError("Claude Chat does not support top_logprobs", param="top_logprobs")
+        permitted_extras = {
+            "reasoning",
+            "reasoning_effort",
+            "reasoningEffort",
+            "enable_thinking",
+            "thinking",
+        }
+        for field in self.model_extra or {}:
+            if field not in permitted_extras:
+                raise ClientPayloadError(f"Claude Chat does not support {field}", param=field)
+        if self.stream_options is not None and self.stream_options.include_obfuscation:
+            raise ClientPayloadError("Claude Chat does not support stream obfuscation", param="stream_options")
+        if self.stream_options is not None and self.stream_options.model_extra:
+            raise ClientPayloadError("Claude Chat does not support extra stream options", param="stream_options")
+        if self.store:
+            raise ClientPayloadError("Claude Chat does not support stored completions", param="store")
+        if _is_json_object_response_format(self.response_format):
+            raise ClientPayloadError(
+                "Claude Chat requires a JSON schema for structured output", param="response_format"
+            )
+        if responses.reasoning is not None and responses.reasoning.summary is not None:
+            raise ClientPayloadError("Claude Chat does not support reasoning summaries", param="reasoning")
+        thinking = (self.model_extra or {}).get("thinking")
+        reasoning_extras = responses.reasoning.model_extra if responses.reasoning is not None else None
+        if reasoning_extras and set(reasoning_extras) - {"display"}:
+            raise ClientPayloadError("Claude Chat does not support this reasoning control", param="reasoning")
+        reasoning_display = reasoning_extras.get("display") if reasoning_extras else None
+        if reasoning_display not in (None, "summarized", "omitted"):
+            raise ClientPayloadError("Unsupported Claude thinking display", param="reasoning.display")
+        display = reasoning_display or "summarized"
+        if is_json_mapping(thinking):
+            if "budget_tokens" in thinking:
+                raise ClientPayloadError("Claude Chat does not support a thinking token budget", param="thinking")
+            unsupported_thinking = set(thinking) - {"type", "display", "effort", "enabled"}
+            if unsupported_thinking:
+                raise ClientPayloadError("Claude Chat does not support this thinking control", param="thinking")
+            thinking_type = thinking.get("type")
+            if thinking_type is not None and thinking_type not in ("adaptive", "enabled", "disabled"):
+                raise ClientPayloadError("Unsupported Claude thinking type", param="thinking.type")
+            enabled = thinking.get("enabled")
+            if enabled is not None and not isinstance(enabled, bool):
+                raise ClientPayloadError("Claude thinking.enabled must be a boolean", param="thinking.enabled")
+            if (enabled is False and thinking_type in ("adaptive", "enabled")) or (
+                enabled is True and thinking_type == "disabled"
+            ):
+                raise ClientPayloadError("Conflicting Claude thinking controls", param="thinking")
+            if (thinking_type in ("adaptive", "enabled") or enabled is True) and (
+                responses.reasoning is not None and responses.reasoning.effort == "none"
+            ):
+                raise ClientPayloadError("Conflicting Claude thinking controls", param="thinking")
+            requested_display = thinking.get("display")
+            if requested_display is not None:
+                if requested_display not in ("summarized", "omitted"):
+                    raise ClientPayloadError("Unsupported Claude thinking display", param="thinking.display")
+                if reasoning_display is not None and reasoning_display != requested_display:
+                    raise ClientPayloadError("Conflicting Claude thinking display controls", param="thinking.display")
+                display = requested_display
+            if thinking_type == "disabled":
+                if responses.reasoning is not None and responses.reasoning.effort not in (None, "none"):
+                    raise ClientPayloadError(
+                        "Disabled thinking conflicts with requested reasoning", param="thinking.type"
+                    )
+                responses.reasoning = ResponsesReasoning(effort="none")
+            elif thinking_type == "adaptive" and (responses.reasoning is None or responses.reasoning.effort is None):
+                responses.reasoning = ResponsesReasoning(effort="medium")
+        if (reasoning_display is not None or (is_json_mapping(thinking) and thinking.get("display") is not None)) and (
+            responses.reasoning is None or responses.reasoning.effort in (None, "none")
+        ):
+            raise ClientPayloadError("Thinking display requires enabled reasoning", param="thinking.display")
+        if responses.reasoning is not None and responses.reasoning.effort not in (None, "none"):
+            assert responses.reasoning.model_extra is not None
+            responses.reasoning.model_extra["display"] = display
+        limit = self.max_completion_tokens if self.max_completion_tokens is not None else self.max_tokens
+        extra = responses.model_extra
+        assert extra is not None  # ResponsesRequest allows projection controls as extras.
+        if limit is not None:
+            if limit <= 0:
+                raise ClientPayloadError("Output token limit must be positive", param="max_completion_tokens")
+            extra["max_output_tokens"] = limit
+        if self.stop is not None:
+            stops = [self.stop] if isinstance(self.stop, str) else self.stop
+            if not stops or any(not stop for stop in stops):
+                raise ClientPayloadError("Stop sequences must be non-empty strings", param="stop")
+            extra["stop_sequences"] = stops
 
 
 class ChatResponseFormatJsonSchema(BaseModel):

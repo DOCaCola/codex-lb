@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ class ChatChunkDelta(BaseModel):
 
     role: str | None = None
     content: str | None = None
+    reasoning_content: str | None = None
     refusal: str | None = None
     tool_calls: list[ChatToolCallDelta] | None = None
 
@@ -77,6 +79,7 @@ class ChatCompletionMessage(BaseModel):
 
     role: str
     content: str | None = None
+    reasoning_content: str | None = None
     refusal: str | None = None
     tool_calls: list[ChatMessageToolCall] | None = None
 
@@ -103,6 +106,7 @@ class ChatPromptTokensDetails(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cached_tokens: int | None = None
+    cache_creation_tokens: int | None = None
 
 
 class ChatCompletionTokensDetails(BaseModel):
@@ -183,6 +187,7 @@ class _ChatChunkState:
     tool_calls: list["ToolCallState"] = field(default_factory=list)
     saw_tool_call: bool = False
     sent_role: bool = False
+    response_id: str = "chatcmpl_temp"
 
 
 @dataclass
@@ -288,7 +293,15 @@ def iter_chat_chunks(
         if not payload:
             continue
         event_type = classify_event_type(payload)
-        if event_type in ("response.output_text.delta", "response.refusal.delta"):
+        if event_type == "response.created":
+            response = payload.get("response")
+            if is_json_mapping(response) and isinstance(response.get("id"), str):
+                state.response_id = cast(str, response["id"])
+        if event_type in (
+            "response.output_text.delta",
+            "response.refusal.delta",
+            "response.reasoning_summary_text.delta",
+        ):
             delta_text = payload.get("delta")
             role = None
             if not state.sent_role:
@@ -298,13 +311,18 @@ def iter_chat_chunks(
                     role=role,
                     refusal=delta_text if isinstance(delta_text, str) else None,
                 )
+            elif event_type == "response.reasoning_summary_text.delta":
+                delta_obj = ChatChunkDelta(
+                    role=role,
+                    reasoning_content=delta_text if isinstance(delta_text, str) else None,
+                )
             else:
                 delta_obj = ChatChunkDelta(
                     role=role,
                     content=delta_text if isinstance(delta_text, str) else None,
                 )
             chunk = ChatCompletionChunk(
-                id="chatcmpl_temp",
+                id=state.response_id,
                 created=created,
                 model=model,
                 choices=[
@@ -328,7 +346,7 @@ def iter_chat_chunks(
                 if not state.sent_role:
                     role = "assistant"
                 chunk = ChatCompletionChunk(
-                    id="chatcmpl_temp",
+                    id=state.response_id,
                     created=created,
                     model=model,
                     choices=[
@@ -386,7 +404,7 @@ def iter_chat_chunks(
                 if not state.sent_role:
                     role = "assistant"
                 chunk = ChatCompletionChunk(
-                    id="chatcmpl_temp",
+                    id=state.response_id,
                     created=created,
                     model=model,
                     choices=[
@@ -409,10 +427,15 @@ def iter_chat_chunks(
                 if isinstance(response, dict):
                     usage = _map_usage(_parse_usage(response.get("usage")))
             finish_reason = "tool_calls" if state.saw_tool_call else "stop"
-            if event_type == "response.incomplete" and not state.saw_tool_call:
-                finish_reason = _finish_reason_from_incomplete(payload.get("response"))
+            if event_type == "response.incomplete":
+                incomplete_reason = _finish_reason_from_incomplete(payload.get("response"))
+                if incomplete_reason is None:
+                    yield _dump_sse(_unknown_incomplete_error_payload())
+                    yield "data: [DONE]\n\n"
+                    return
+                finish_reason = incomplete_reason
             done = ChatCompletionChunk(
-                id="chatcmpl_temp",
+                id=state.response_id,
                 created=created,
                 model=model,
                 choices=[
@@ -426,7 +449,7 @@ def iter_chat_chunks(
             yield _dump_chunk(done, include_usage=include_usage)
             if include_usage:
                 usage_chunk = ChatCompletionChunk(
-                    id="chatcmpl_temp",
+                    id=state.response_id,
                     created=created,
                     model=model,
                     choices=[],
@@ -446,32 +469,38 @@ async def stream_chat_chunks(
     created = int(time.time())
     state = _ChatChunkState()
     terminal_chunk_sent = False
-    async for line in stream:
-        if terminal_chunk_sent:
-            continue
-        for chunk in iter_chat_chunks(
-            [line],
-            model=model,
-            created=created,
-            state=state,
-            include_usage=include_usage,
-        ):
-            yield chunk
-            if chunk.strip() == "data: [DONE]":
-                terminal_chunk_sent = True
-                break
-    if not terminal_chunk_sent:
-        yield _dump_sse(_upstream_stream_truncated_error_payload())
-        yield "data: [DONE]\n\n"
+    try:
+        async for line in stream:
+            if terminal_chunk_sent:
+                continue
+            for chunk in iter_chat_chunks(
+                [line],
+                model=model,
+                created=created,
+                state=state,
+                include_usage=include_usage,
+            ):
+                yield chunk
+                if chunk.strip() == "data: [DONE]":
+                    terminal_chunk_sent = True
+                    break
+        if not terminal_chunk_sent:
+            yield _dump_sse(_upstream_stream_truncated_error_payload())
+            yield "data: [DONE]\n\n"
+    finally:
+        if inspect.isasyncgen(stream):
+            await stream.aclose()
 
 
 async def collect_chat_completion(stream: AsyncIterator[str], model: str) -> ChatCompletionResult:
     created = int(time.time())
     content_parts: list[str] = []
     refusal_parts: list[str] = []
+    reasoning_parts: list[str] = []
     response_id: str | None = None
     usage: ResponseUsage | None = None
     incomplete_reason: str | None = None
+    incomplete_event_seen = False
     tool_index = ToolCallIndex()
     tool_calls: list[ToolCallState] = []
     terminal_error: ChatCompletionResult | None = None
@@ -490,6 +519,10 @@ async def collect_chat_completion(stream: AsyncIterator[str], model: str) -> Cha
             delta = payload.get("delta")
             if isinstance(delta, str):
                 refusal_parts.append(delta)
+        if event_type == "response.reasoning_summary_text.delta":
+            delta = payload.get("delta")
+            if isinstance(delta, str):
+                reasoning_parts.append(delta)
         tool_delta = _tool_call_delta_from_payload(payload, tool_index)
         if tool_delta is not None:
             _merge_tool_call_delta(tool_calls, tool_delta)
@@ -534,23 +567,27 @@ async def collect_chat_completion(stream: AsyncIterator[str], model: str) -> Cha
                     response_id = response_id_value
                 usage = _parse_usage(response.get("usage"))
                 if event_type == "response.incomplete":
+                    incomplete_event_seen = True
                     incomplete_reason = _finish_reason_from_incomplete(response)
 
     if terminal_error is not None:
         return terminal_error
     if not terminal_event_seen:
         return _upstream_stream_truncated_error()
+    if incomplete_event_seen and incomplete_reason is None:
+        return OpenAIErrorEnvelope.model_validate(_unknown_incomplete_error_payload())
 
     message_content: str | None = "".join(content_parts)
     message_refusal = "".join(refusal_parts) or None
     message_tool_calls = _compact_tool_calls(tool_calls)
     has_tool_calls = bool(message_tool_calls)
-    finish_reason = "tool_calls" if has_tool_calls else (incomplete_reason or "stop")
+    finish_reason = incomplete_reason if incomplete_event_seen else ("tool_calls" if has_tool_calls else "stop")
     if (has_tool_calls or message_refusal) and not message_content:
         message_content = None
     message = ChatCompletionMessage(
         role="assistant",
         content=message_content,
+        reasoning_content="".join(reasoning_parts) or None,
         refusal=message_refusal,
         tool_calls=message_tool_calls or None,
     )
@@ -579,8 +616,12 @@ def _map_usage(usage: ResponseUsage | None) -> ChatCompletionUsage | None:
         return None
     prompt_details = None
     cached_tokens = usage.input_tokens_details.cached_tokens if usage.input_tokens_details else None
-    if cached_tokens is not None:
-        prompt_details = ChatPromptTokensDetails(cached_tokens=cached_tokens)
+    cache_creation_tokens = usage.input_tokens_details.cache_creation_tokens if usage.input_tokens_details else None
+    if cached_tokens is not None or cache_creation_tokens is not None:
+        prompt_details = ChatPromptTokensDetails(
+            cached_tokens=cached_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        )
 
     completion_details = None
     reasoning_tokens = usage.output_tokens_details.reasoning_tokens if usage.output_tokens_details else None
@@ -592,6 +633,81 @@ def _map_usage(usage: ResponseUsage | None) -> ChatCompletionUsage | None:
         total_tokens=total_tokens,
         prompt_tokens_details=prompt_details,
         completion_tokens_details=completion_details,
+    )
+
+
+def chat_completion_from_response(response: Mapping[str, JsonValue], model: str) -> ChatCompletionResult:
+    """Project a collected Responses result without changing the dispatch owner."""
+
+    status = response.get("status")
+    if status == "incomplete":
+        finish_reason = _finish_reason_from_incomplete(response)
+        if finish_reason is None:
+            return OpenAIErrorEnvelope.model_validate(_unknown_incomplete_error_payload())
+    elif status == "completed":
+        finish_reason = "stop"
+    else:
+        error = response.get("error")
+        if is_json_mapping(error):
+            return _error_envelope_from_payload(error)
+        return _default_error_envelope()
+
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    refusal_parts: list[str] = []
+    tool_calls: list[ChatMessageToolCall] = []
+    output = response.get("output")
+    if not isinstance(output, list):
+        return _default_error_envelope()
+    for item in output:
+        if not is_json_mapping(item):
+            continue
+        kind = item.get("type")
+        if kind == "message":
+            parts = item.get("content")
+            if isinstance(parts, list):
+                for part in parts:
+                    if not is_json_mapping(part):
+                        continue
+                    if part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                        content_parts.append(cast(str, part["text"]))
+                    elif part.get("type") == "refusal" and isinstance(part.get("refusal"), str):
+                        refusal_parts.append(cast(str, part["refusal"]))
+        elif kind == "reasoning":
+            summary = item.get("summary")
+            if isinstance(summary, list):
+                for part in summary:
+                    if is_json_mapping(part) and isinstance(part.get("text"), str):
+                        reasoning_parts.append(cast(str, part["text"]))
+        elif kind == "function_call":
+            call_id, name, arguments = item.get("call_id"), item.get("name"), item.get("arguments")
+            if isinstance(call_id, str) and isinstance(name, str) and isinstance(arguments, str):
+                tool_calls.append(
+                    ChatMessageToolCall(id=call_id, function=ChatToolCallFunction(name=name, arguments=arguments))
+                )
+    if status == "completed" and tool_calls:
+        finish_reason = "tool_calls"
+    content = "".join(content_parts)
+    response_id = response.get("id")
+    created_at = response.get("created_at")
+    return ChatCompletion(
+        id=response_id if isinstance(response_id, str) and response_id else "chatcmpl_temp",
+        created=created_at if isinstance(created_at, int) else int(time.time()),
+        model=model,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content=content if content or not (tool_calls or refusal_parts) else None,
+                    reasoning_content="".join(reasoning_parts) or None,
+                    refusal="".join(refusal_parts) or None,
+                    tool_calls=tool_calls or None,
+                ),
+                finish_reason=finish_reason,
+            )
+        ],
+        usage=_map_usage(_parse_usage(response.get("usage"))),
     )
 
 
@@ -629,10 +745,10 @@ def _upstream_stream_truncated_error() -> OpenAIErrorEnvelope:
     return OpenAIErrorEnvelope.model_validate(_upstream_stream_truncated_error_payload())
 
 
-def _finish_reason_from_incomplete(response: JsonValue | None) -> str:
+def _finish_reason_from_incomplete(response: JsonValue | None) -> str | None:
     response_mapping = _as_mapping(response)
     if response_mapping is None:
-        return "stop"
+        return None
     details = _as_mapping(response_mapping.get("incomplete_details"))
     if details is not None:
         reason = details.get("reason")
@@ -640,7 +756,17 @@ def _finish_reason_from_incomplete(response: JsonValue | None) -> str:
             return "length"
         if reason == "content_filter":
             return "content_filter"
-    return "stop"
+    return None
+
+
+def _unknown_incomplete_error_payload() -> dict[str, JsonValue]:
+    return {
+        "error": {
+            "message": "Upstream response ended with an unsupported incomplete reason",
+            "type": "server_error",
+            "code": "upstream_response_incomplete",
+        }
+    }
 
 
 def _default_error_envelope() -> OpenAIErrorEnvelope:

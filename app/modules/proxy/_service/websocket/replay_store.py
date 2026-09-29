@@ -41,6 +41,8 @@ class ReplayHistory:
     model: str
     input: list[JsonValue]
     output: list[JsonValue]
+    chat_input: list[JsonValue] | None = None
+    chat_instructions: str | None = None
 
     def expand(self, delta: list[JsonValue]) -> list[JsonValue]:
         history = [*self.input, *self.output]
@@ -56,6 +58,12 @@ class ReplayHistory:
         ):
             return delta
         return [*history, *delta]
+
+
+@dataclass(frozen=True)
+class ScopedReplayHistory:
+    response_id: str
+    history: ReplayHistory
 
 
 class HTTPFallbackReplayStore:
@@ -134,6 +142,9 @@ class HTTPFallbackReplayStore:
             self._resident.pop(path, None)
             count -= 1
             total -= size
+        for sidecar in self.directory.glob("*.scope"):
+            if not sidecar.with_suffix(".replay").exists():
+                sidecar.unlink()
 
     async def load(self, scope: ReplayScope, response_id: str) -> ReplayHistory | None:
         try:
@@ -141,6 +152,64 @@ class HTTPFallbackReplayStore:
         except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
             logger.warning("http_fallback_replay_unavailable")
             return None
+
+    async def histories(self, scope: ReplayScope) -> list[ScopedReplayHistory]:
+        """Return only this client's live records for identity-based Chat replay."""
+        try:
+            return await anyio.to_thread.run_sync(self._histories, scope, limiter=self._limiter)
+        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
+            logger.warning("http_fallback_replay_unavailable")
+            return []
+
+    def _histories(self, scope: ReplayScope) -> list[ScopedReplayHistory]:
+        if not self.directory.exists():
+            return []
+        with self._locked():
+            self._prune()
+            result: list[ScopedReplayHistory] = []
+            for sidecar in self.directory.glob("*.scope"):
+                metadata = json.loads(sidecar.read_bytes())
+                if (
+                    not isinstance(metadata, dict)
+                    or metadata.get("api_key_id") != scope.api_key_id
+                    or metadata.get("conversation_id") != scope.conversation_id
+                    or not isinstance(metadata.get("response_id"), str)
+                ):
+                    continue
+                path = self._path(scope, metadata["response_id"])
+                if path != sidecar.with_suffix(".replay"):
+                    continue
+                serialized = path.read_bytes()
+                digest, separator, content = serialized.partition(b"\n")
+                if not separator or digest != hashlib.sha256(content).hexdigest().encode():
+                    continue
+                body = json.loads(content)
+                if (
+                    not isinstance(body, dict)
+                    or not isinstance(body.get("account_id"), str)
+                    or not isinstance(body.get("model"), str)
+                    or not isinstance(body.get("input"), list)
+                    or not isinstance(body.get("output"), list)
+                    or body.get("chat_input") is not None
+                    and not isinstance(body["chat_input"], list)
+                    or body.get("chat_instructions") is not None
+                    and not isinstance(body["chat_instructions"], str)
+                ):
+                    continue
+                result.append(
+                    ScopedReplayHistory(
+                        metadata["response_id"],
+                        ReplayHistory(
+                            body["account_id"],
+                            body["model"],
+                            body["input"],
+                            body["output"],
+                            body.get("chat_input"),
+                            body.get("chat_instructions"),
+                        ),
+                    )
+                )
+            return result
 
     def _load(self, scope: ReplayScope, response_id: str) -> ReplayHistory | None:
         with self._locked():
@@ -168,9 +237,20 @@ class HTTPFallbackReplayStore:
                 or not isinstance(body.get("model"), str)
                 or not isinstance(body.get("input"), list)
                 or not isinstance(body.get("output"), list)
+                or body.get("chat_input") is not None
+                and not isinstance(body["chat_input"], list)
+                or body.get("chat_instructions") is not None
+                and not isinstance(body["chat_instructions"], str)
             ):
                 raise ValueError("Invalid replay entry")
-            return ReplayHistory(body["account_id"], body["model"], body["input"], body["output"])
+            return ReplayHistory(
+                body["account_id"],
+                body["model"],
+                body["input"],
+                body["output"],
+                body.get("chat_input"),
+                body.get("chat_instructions"),
+            )
 
     async def remember(
         self,
@@ -180,6 +260,8 @@ class HTTPFallbackReplayStore:
         output: list[JsonValue],
         account_id: str,
         original_input: JsonValue = None,
+        chat_input: list[JsonValue] | None = None,
+        chat_instructions: str | None = None,
     ) -> None:
         try:
             await anyio.to_thread.run_sync(
@@ -190,6 +272,8 @@ class HTTPFallbackReplayStore:
                 output,
                 account_id,
                 original_input,
+                chat_input,
+                chat_instructions,
                 limiter=self._limiter,
             )
         except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
@@ -205,6 +289,8 @@ class HTTPFallbackReplayStore:
         output: list[JsonValue],
         account_id: str,
         original_input: JsonValue,
+        chat_input: list[JsonValue] | None,
+        chat_instructions: str | None,
     ) -> None:
         request = json.loads(request_text)
         if request.get("previous_response_id"):
@@ -212,15 +298,16 @@ class HTTPFallbackReplayStore:
         input_value = original_input if original_input is not None else request.get("input", [])
         if isinstance(input_value, str):
             input_value = [{"role": "user", "content": input_value}]
-        body = json.dumps(
-            {
-                "account_id": account_id,
-                "model": request["model"],
-                "input": cast(list[JsonValue], input_value),
-                "output": output,
-            },
-            separators=(",", ":"),
-        ).encode()
+        record: dict[str, JsonValue] = {
+            "account_id": account_id,
+            "model": request["model"],
+            "input": cast(list[JsonValue], input_value),
+            "output": output,
+        }
+        if chat_input is not None:
+            record["chat_input"] = chat_input
+            record["chat_instructions"] = chat_instructions
+        body = json.dumps(record, separators=(",", ":")).encode()
         body = hashlib.sha256(body).hexdigest().encode() + b"\n" + body
         if len(body) > min(self.max_entry_bytes, self.max_total_bytes):
             logger.warning("http_fallback_replay_entry_too_large bytes=%d", len(body))
@@ -240,6 +327,26 @@ class HTTPFallbackReplayStore:
                 completed_at = self._clock.time()
                 os.utime(path, (completed_at, completed_at))
                 self._retain(path, path.stat().st_mtime_ns, body)
+                sidecar = path.with_suffix(".scope")
+                sidecar_fd, sidecar_name = tempfile.mkstemp(suffix=".tmp", dir=self.directory)
+                sidecar_temporary = Path(sidecar_name)
+                try:
+                    with os.fdopen(sidecar_fd, "wb") as stream:
+                        stream.write(
+                            json.dumps(
+                                {
+                                    "api_key_id": scope.api_key_id,
+                                    "conversation_id": scope.conversation_id,
+                                    "response_id": response_id,
+                                },
+                                separators=(",", ":"),
+                            ).encode()
+                        )
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    sidecar_temporary.replace(sidecar)
+                finally:
+                    sidecar_temporary.unlink(missing_ok=True)
             finally:
                 temporary.unlink(missing_ok=True)
 

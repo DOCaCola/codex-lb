@@ -1,17 +1,41 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
+from typing import cast
 
 import pytest
 
 from app.core.openai.chat_responses import (
     ChatCompletion,
     ChatMessageToolCall,
+    chat_completion_from_response,
     collect_chat_completion,
     iter_chat_chunks,
     stream_chat_chunks,
 )
 from app.core.openai.models import OpenAIErrorEnvelope
+from app.modules.proxy.api import _chat_source_response_errors
+
+
+@pytest.mark.asyncio
+async def test_closing_chat_stream_cascades_to_its_source():
+    closed: list[str] = []
+
+    async def source():
+        try:
+            yield 'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+            yield 'data: {"type":"response.completed","response":{"id":"r1"}}\n\n'
+        finally:
+            closed.append("source")
+
+    stream = cast(
+        AsyncGenerator[str, None],
+        stream_chat_chunks(_chat_source_response_errors(source()), "anthropic/claude-opus-5"),
+    )
+    await stream.__anext__()
+    await stream.aclose()
+    assert closed == ["source"]
 
 
 def _tool_call_args(tool_call: ChatMessageToolCall) -> str:
@@ -45,6 +69,66 @@ def test_output_text_delta_to_chat_chunk():
     ]
     chunks = list(iter_chat_chunks(lines, model="gpt-5.2"))
     assert any("chat.completion.chunk" in chunk for chunk in chunks)
+
+
+def test_stream_uses_response_id_when_created_event_precedes_content():
+    lines = [
+        'data: {"type":"response.created","response":{"id":"resp_claude_1"}}\n\n',
+        'data: {"type":"response.output_text.delta","delta":"hi"}\n\n',
+        'data: {"type":"response.completed","response":{"id":"resp_claude_1"}}\n\n',
+    ]
+    chunks = list(iter_chat_chunks(lines, model="anthropic/claude-opus-5"))
+    parsed = [json.loads(chunk[6:]) for chunk in chunks if chunk.startswith("data: {")]
+    assert all(chunk["id"] == "resp_claude_1" for chunk in parsed)
+
+
+def test_claude_reasoning_delta_maps_to_chat_without_signed_state():
+    lines = [
+        'data: {"type":"response.reasoning_summary_text.delta","delta":"think"}\n\n',
+        'data: {"type":"response.completed","response":{"id":"r1"}}\n\n',
+    ]
+    chunks = list(iter_chat_chunks(lines, model="anthropic/claude-opus-5"))
+    assert any('"reasoning_content":"think"' in chunk for chunk in chunks)
+
+
+def test_chat_unknown_incomplete_reason_fails_even_after_tool_call():
+    lines = [
+        (
+            'data: {"type":"response.output_item.done","item":{"type":"function_call",'
+            '"call_id":"c1","name":"lookup","arguments":"{}"}}\n\n'
+        ),
+        'data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"pause_turn"}}}\n\n',
+    ]
+    chunks = list(iter_chat_chunks(lines, model="anthropic/claude-opus-5"))
+    assert any('"code":"upstream_response_incomplete"' in chunk for chunk in chunks)
+    assert not any('"finish_reason":"tool_calls"' in chunk for chunk in chunks)
+
+
+def test_collected_claude_response_maps_cache_breakdown_and_reasoning():
+    completion = chat_completion_from_response(
+        {
+            "id": "resp_1",
+            "created_at": 1,
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "think"}]},
+                {"type": "message", "content": [{"type": "output_text", "text": "answer"}]},
+            ],
+            "usage": {
+                "input_tokens": 15,
+                "output_tokens": 4,
+                "total_tokens": 19,
+                "input_tokens_details": {"cached_tokens": 5, "cache_creation_tokens": 3},
+            },
+        },
+        "anthropic/claude-opus-5",
+    )
+    assert isinstance(completion, ChatCompletion)
+    assert completion.choices[0].message.reasoning_content == "think"
+    assert completion.usage is not None
+    assert completion.usage.prompt_tokens_details is not None
+    assert completion.usage.prompt_tokens_details.cached_tokens == 5
+    assert completion.usage.prompt_tokens_details.cache_creation_tokens == 3
 
 
 def test_output_text_delta_emits_role_once():

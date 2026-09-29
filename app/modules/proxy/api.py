@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import math
@@ -17,6 +18,7 @@ from uuid import uuid4
 import anyio
 
 if TYPE_CHECKING:
+    from app.modules.claude.chat_replay import ChatHistory
     from app.modules.claude.dispatch import PreparedClaudeRequest
     from app.modules.claude.failover import FailoverState
     from app.modules.claude.inference import ClaudeAttempt
@@ -135,6 +137,7 @@ from app.core.openai.chat_responses import (
     ChatCompletion,
     ChatCompletionResult,
     ChatCompletionUsage,
+    chat_completion_from_response,
     collect_chat_completion,
     stream_chat_chunks,
 )
@@ -364,6 +367,8 @@ from app.modules.proxy.source_dispatch import (
     SourceDispatch,
     SourceStreamingResponse,
     open_with_disconnect_watch,
+    relayed_frame_delivers_content,
+    relayed_terminal_kind,
     settlement_stream,
 )
 from app.modules.proxy.types import (
@@ -4500,6 +4505,13 @@ async def v1_chat_completions(
     effective_model = _effective_model_for_api_key(api_key, payload.model)
 
     rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
+    tool_media_candidate = any(
+        is_json_mapping(message)
+        and message.get("role") == "tool"
+        and isinstance(content := message.get("content"), list)
+        and any(is_json_mapping(part) and part.get("type") in {"image_url", "input_image"} for part in content)
+        for message in payload.messages or []
+    )
     try:
         responses_shaped_payload = not payload.messages and payload.input is not None
         if not responses_shaped_payload:
@@ -4516,7 +4528,7 @@ async def v1_chat_completions(
                 param_template="tools[{index}].function.parameters",
                 nested=True,
             )
-        responses_payload = payload.to_responses_request()
+        responses_payload = payload.to_responses_request(allow_nontext_tool_content=tool_media_candidate)
         enforce_strict_text_format(responses_payload)
         if responses_shaped_payload:
             enforce_strict_function_tools_format(responses_payload.tools)
@@ -4526,13 +4538,14 @@ async def v1_chat_completions(
     except ValidationError as exc:
         error = openai_validation_error(exc)
         return _logged_error_json_response(request, 400, error, headers=rate_limit_headers)
-    # The replaced effort is discarded: the enforced Responses payload built
-    # here is only ever forwarded to a subscription. This endpoint does
-    # source-route, but that branch forwards the untouched original chat
-    # payload, so there is nothing for a restore to undo.
-    prohibit_fast_mode, service_tier_was_enforced, _ = await _apply_api_key_enforcement_with_fast_mode_policy(
-        responses_payload, api_key
-    )
+    # Claude Chat uses the enforced Responses payload and restores the caller's
+    # source reasoning effort at dispatch; direct Chat sources still shape the
+    # original Chat payload separately.
+    (
+        prohibit_fast_mode,
+        service_tier_was_enforced,
+        pre_normalization_effort,
+    ) = await _apply_api_key_enforcement_with_fast_mode_policy(responses_payload, api_key)
     if prohibit_fast_mode and _is_fast_mode_model_alias(effective_model):
         effective_model = responses_payload.model
     validate_model_access(api_key, responses_payload.model)
@@ -4549,6 +4562,13 @@ async def v1_chat_completions(
     )
     source = source_selection[0] if source_selection is not None else None
     request_model = source_selection[1] if source_selection is not None else responses_payload.model
+    if tool_media_candidate and (source is None or source.kind != "claude"):
+        try:
+            payload.to_responses_request()
+        except ClientPayloadError as exc:
+            return _logged_error_json_response(
+                request, 400, openai_client_payload_error(exc), headers=rate_limit_headers
+            )
     if source is None and source_route_attempted:
         # Before any reservation is taken, so a refusal strands nothing.
         disabled_denial = await _disabled_model_source_denial(
@@ -4562,6 +4582,32 @@ async def v1_chat_completions(
         )
         if disabled_denial is not None:
             return disabled_denial
+        claude_candidates = [
+            candidate
+            for candidate in dict.fromkeys((effective_model, payload.model))
+            if candidate.startswith("anthropic/")
+        ]
+        if claude_candidates:
+            async with get_background_session() as session:
+                repository = ModelSourcesRepository(session)
+                claude_model_exists = False
+                for candidate in claude_candidates:
+                    if await repository.has_claude_model(candidate):
+                        claude_model_exists = True
+                        break
+        else:
+            claude_model_exists = False
+        if claude_model_exists:
+            return _logged_error_json_response(
+                request,
+                403,
+                openai_error(
+                    "model_source_not_allowed",
+                    "No authorized Claude account serves this model for the API key",
+                    error_type="permission_error",
+                ),
+                headers=rate_limit_headers,
+            )
     if source is None:
         apply_enforced_service_tier_model_fallback(
             responses_payload,
@@ -4580,6 +4626,32 @@ async def v1_chat_completions(
         if source is None
         else False
     )
+    if source is not None and source.kind == "claude":
+        try:
+            payload.apply_claude_controls(responses_payload)
+            from app.modules.claude.chat_replay import ChatHistory
+
+            chat_history = ChatHistory.from_messages(payload.messages) if payload.messages else None
+        except ClientPayloadError as exc:
+            return _logged_error_json_response(
+                request, 400, openai_client_payload_error(exc), headers=rate_limit_headers
+            )
+        responses_payload.model = request_model
+        responses_payload.stream = bool(payload.stream)
+        if chat_history is not None:
+            responses_payload.input = chat_history.items
+        return await _source_responses_response(
+            request,
+            responses_payload,
+            source=source,
+            api_key=api_key,
+            rate_limit_headers=rate_limit_headers,
+            pre_normalization_effort=pre_normalization_effort,
+            context=context,
+            chat_projection=True,
+            chat_history=chat_history,
+            chat_include_usage=bool(payload.stream_options and payload.stream_options.include_usage),
+        )
     reservation = await _enforce_request_limits(
         api_key,
         request_model=request_model,
@@ -5316,6 +5388,9 @@ async def _source_responses_response(
     enforce_openai_sdk_contract: bool = True,
     native_codex_heartbeat: bool = False,
     context: ProxyContext | None = None,
+    chat_projection: bool = False,
+    chat_history: ChatHistory | None = None,
+    chat_include_usage: bool = False,
 ) -> Response:
     from app.modules.openrouter.routing import cooldown_remaining, record_failure
 
@@ -5344,6 +5419,9 @@ async def _source_responses_response(
                     enforce_openai_sdk_contract=enforce_openai_sdk_contract,
                     native_codex_heartbeat=native_codex_heartbeat,
                     context=context,
+                    chat_projection=chat_projection,
+                    chat_history=chat_history,
+                    chat_include_usage=chat_include_usage,
                 )
             except ModelSourceForwardingError as exc:
                 error = exc
@@ -5386,6 +5464,9 @@ async def _dispatch_source_responses_response(
     context: ProxyContext | None = None,
     native_request: PreparedClaudeRequest | None = None,
     count_tokens: bool = False,
+    chat_projection: bool = False,
+    chat_history: ChatHistory | None = None,
+    chat_include_usage: bool = False,
 ) -> Response:
     from app.modules.claude.admission import ClaudeCapacityBusy
     from app.modules.claude.failover import (
@@ -5418,6 +5499,9 @@ async def _dispatch_source_responses_response(
                 context=context,
                 native_request=native_request,
                 count_tokens=count_tokens,
+                chat_projection=chat_projection,
+                chat_history=chat_history,
+                chat_include_usage=chat_include_usage,
                 claude_recovery=recovery,
             )
         except ClaudeCapacityBusy as exc:
@@ -5487,6 +5571,9 @@ async def _dispatch_source_responses_attempt(
     native_request: PreparedClaudeRequest | None = None,
     count_tokens: bool = False,
     claude_recovery: FailoverState | None = None,
+    chat_projection: bool = False,
+    chat_history: ChatHistory | None = None,
+    chat_include_usage: bool = False,
 ) -> Response:
     """Serve a Responses request from an OpenAI-compatible model source.
 
@@ -5512,7 +5599,9 @@ async def _dispatch_source_responses_attempt(
 
     claude_attempt = None
     continuation = (
-        SourceContinuation(request, api_key, source.id, retain_incomplete=source.kind == "claude")
+        SourceContinuation(
+            request, api_key, source.id, retain_incomplete=source.kind == "claude" and not chat_projection
+        )
         if source.kind in {"openrouter", "claude"}
         else None
     )
@@ -5560,6 +5649,8 @@ async def _dispatch_source_responses_attempt(
                 continuation,
                 excluded_source_ids=frozenset(claude_recovery.excluded) if claude_recovery else frozenset(),
                 retry_source_id=claude_recovery.retry_source_id if claude_recovery else None,
+                chat_reasoning=chat_projection,
+                chat_history=chat_history,
             )
             source = claude_attempt.prepared.source
         if claude_attempt is not None and claude_recovery is not None:
@@ -5663,6 +5754,16 @@ async def _dispatch_source_responses_attempt(
                 )
             if continuation is not None:
                 public_body = continuation.stream(public_body)
+            if chat_projection:
+                public_body = inject_sse_keepalives(
+                    stream_chat_chunks(
+                        _chat_source_response_errors(public_body),
+                        model=payload.model,
+                        include_usage=chat_include_usage,
+                    ),
+                    with_dashboard_overrides(get_settings()).sse_keepalive_interval_seconds,
+                    on_keepalive=lambda: _record_stream_keepalive("chat_completions"),
+                )
             if native_request is not None:
                 from app.modules.claude.native import delivers_content, native_error_stream, terminal_kind
 
@@ -5672,7 +5773,14 @@ async def _dispatch_source_responses_attempt(
                     )
                 )
             else:
-                body = settlement_stream(owner, public_body)
+                body = settlement_stream(
+                    owner,
+                    public_body,
+                    terminal_classifier=_chat_source_terminal_kind if chat_projection else relayed_terminal_kind,
+                    content_classifier=(
+                        _chat_source_delivers_content if chat_projection else relayed_frame_delivers_content
+                    ),
+                )
             return SourceStreamingResponse(
                 body,
                 owner=owner,
@@ -5703,6 +5811,26 @@ async def _dispatch_source_responses_attempt(
             result = await open_with_disconnect_watch(request, owner, forward_source_responses(source, source_payload))
         if continuation is not None:
             await continuation.remember(result.payload)
+        if chat_projection:
+            completion = chat_completion_from_response(result.payload, payload.model)
+            if isinstance(completion, OpenAIErrorEnvelopeModel):
+                error = completion.error
+                assert error is not None
+                await owner.finish(
+                    status="error",
+                    error_code=error.code,
+                    error_message=error.message,
+                    usage=result.usage,
+                    timings=result.timings,
+                    upstream_status_code=result.upstream_status_code,
+                )
+                return _logged_error_json_response(
+                    request,
+                    502,
+                    completion.model_dump(mode="json", exclude_none=True),
+                    headers=rate_limit_headers,
+                )
+            result = replace(result, payload=completion.model_dump(mode="json", exclude_none=True))
         return await _finish_non_stream_source_dispatch(
             request, owner, result, rate_limit_headers={**rate_limit_headers, **result.upstream_headers}
         )
@@ -5740,6 +5868,58 @@ async def _open_owned_source_stream(
         clock=owner.clock,
     )
     owner.stream = stream
+
+
+def _chat_source_terminal_kind(frame: str | None) -> str | None:
+    if frame is None:
+        return None
+    event = parse_sse_data_json(frame)
+    if event is None:
+        return None
+    if "error" in event:
+        return "error"
+    choices = event.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0]
+        if isinstance(choice, dict) and isinstance(choice.get("finish_reason"), str):
+            return "completed"
+    return None
+
+
+async def _chat_source_response_errors(stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Turn an upstream failure after response start into a Chat SSE error."""
+
+    try:
+        try:
+            async for frame in stream:
+                yield frame
+        except ModelSourceForwardingError as exc:
+            error = exc.payload.get("error")
+            if is_json_mapping(error):
+                error_payload = dict(error)
+            else:
+                error_payload = cast(
+                    dict[str, JsonValue],
+                    openai_error(
+                        _source_error_code(exc.payload) or "upstream_error",
+                        _source_error_message(exc.payload) or "Upstream error",
+                        error_type="upstream_error",
+                    )["error"],
+                )
+            yield format_sse_event(cast(dict[str, JsonValue], {"type": "error", "error": error_payload}))
+    finally:
+        if inspect.isasyncgen(stream):
+            await stream.aclose()
+
+
+def _chat_source_delivers_content(frame: str | None) -> bool:
+    if frame is None:
+        return False
+    event = parse_sse_data_json(frame)
+    if event is None:
+        return False
+    choices = event.get("choices")
+    return isinstance(choices, list) and bool(choices)
 
 
 def _shape_source_responses_payload(

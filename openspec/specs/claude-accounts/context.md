@@ -34,6 +34,9 @@ Responses uses the shared admission/reservation/settlement owner over HTTP and
 downstream WebSocket; Anthropic upstream is HTTPS/SSE. Pings preserve liveness, EOF
 without a terminal event fails, and pause/max-token stops remain incomplete. Native
 streams retain Messages event names and bytes while a separate observer meters them.
+Chat Completions for Claude models passes through the same Responses owner and upstream
+Messages transport. The source's `supports_chat_completions` flag remains false because
+it describes an upstream wire, while downstream Chat adaptation is selected by routing.
 Usage includes uncached input, cache reads and cache creation; cache creation is
 included in total input and exposed separately in Responses usage details. Ledger
 costs use the existing model-source pricing semantics, not subscription charges;
@@ -154,6 +157,17 @@ same-target retry with completed historical thinking omitted. Active tool chains
 stay unchanged; empty-message or server-tool histories refuse recovery. Normal
 traffic is unchanged. No thinking-to-text, tool-to-text or synthetic redaction.
 Count-tokens and errors after output never use this recovery.
+
+Keyed Chat tool follow-ups locate signed thinking only from the bounded Responses
+replay store. The complete canonical visible prefix, instructions and tool-call
+set must match one live response under the same key, conversation, model and
+account; plaintext `reasoning_content` is never promoted into a signature.
+Missing, ambiguous, expired, cross-key and owner-unavailable records reconstruct
+the affected tool cycle as ordinary assistant text and quoted user data. This
+preserves representable visible content but does not preserve native tool-use
+semantics. Unrepresentable media fails explicitly; search/resource state cannot
+be reconstructed from Chat-visible history. Retained projected input and separate
+canonical Chat input support matching on later turns without re-signing text.
 
 After native account rebinding, observed resources resolve independently: old
 resources still belong to the old account and new resources to their issuing
