@@ -4,7 +4,7 @@ import { QuotaRow } from "./quota-display";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import { cn } from "@/lib/utils";
 import type { AccountTrendChartProps } from "@/features/accounts/components/account-trend-chart";
 import type {
@@ -242,7 +242,7 @@ function AccountUsagePanelContent({
               tokens: formatCompactNumber(requestUsage?.totalTokens),
               cached: formatCompactNumber(requestUsage?.cachedInputTokens),
               requests: formatCompactNumber(requestUsage?.requestCount),
-              cost: requestUsage ? formatCoveredCost(requestUsage.totalCostUsd, requestUsage) : "No usage",
+              cost: requestUsage ? formatCoveredCostShort(requestUsage.totalCostUsd, requestUsage) : "No usage",
             })}
           </p>
         ) : (

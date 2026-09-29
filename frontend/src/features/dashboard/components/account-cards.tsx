@@ -14,11 +14,6 @@ import { OpenRouterAccountCard } from "@/features/openrouter/account-display";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeAccountCard } from "@/features/claude/account-display";
 
-const ACCOUNT_CARD_VISIBLE_ROWS = 2;
-// Account cards can grow when the optional email row is rendered.
-const ACCOUNT_CARD_ROW_HEIGHT_REM = 11.5;
-const ACCOUNT_CARD_ROW_GAP_REM = 1;
-
 export type AccountCardsProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
@@ -56,13 +51,8 @@ export function AccountCards({
   }
 
   return (
-    <div
-      data-testid="dashboard-account-cards"
-      className="grid gap-4 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:grid-cols-2 lg:grid-cols-3"
-      style={{
-        maxHeight: `calc(${ACCOUNT_CARD_VISIBLE_ROWS} * ${ACCOUNT_CARD_ROW_HEIGHT_REM}rem + ${(ACCOUNT_CARD_VISIBLE_ROWS - 1) * ACCOUNT_CARD_ROW_GAP_REM}rem)`,
-      }}
-    >
+    // Every account card is shown in full: no height cap or inner scrolling.
+    <div data-testid="dashboard-account-cards" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {accounts.map((account, index) => (
         <div
           key={account.accountId}

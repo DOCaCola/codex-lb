@@ -1330,8 +1330,8 @@ describe("buildDashboardView", () => {
       false,
     );
 
-    expect(view.stats[2]?.value).toBe("$15.00");
-    expect(view.stats[2]?.meta).toBe("$15.00 known · incomplete (3 priced, 2 unpriced)");
+    expect(view.stats[2]?.value).toBe("≥ $15.00");
+    expect(view.stats[2]?.meta).toBe("Known cost only · 2 unpriced");
     expect(view.stats[2]?.comparison).toBeUndefined();
   });
 

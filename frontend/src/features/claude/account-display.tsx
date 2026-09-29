@@ -71,7 +71,8 @@ function Heading({ account, card = false }: { account: ClaudeAccount; card?: boo
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <RoutingPolicyBadge policy={account.routingPolicy} />
+        {/* Like Codex accounts: routing policy shows in the Accounts list, not on dashboard cards. */}
+        {card ? null : <RoutingPolicyBadge policy={account.routingPolicy} />}
         <StatusBadge status={normalizeStatus(claudeStatus(account))} />
       </div>
     </div>

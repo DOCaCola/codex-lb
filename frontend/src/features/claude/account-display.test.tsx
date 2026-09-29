@@ -216,6 +216,27 @@ describe("Claude shared account surfaces", () => {
       );
     },
   );
+  it("keeps the routing policy off the dashboard card but in the Accounts list", () => {
+    const { unmount } = render(
+      <MemoryRouter>
+        <AccountCards accounts={[]} claudeAccounts={[account]} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Normal")).not.toBeInTheDocument();
+    unmount();
+    render(
+      <AccountList
+        accounts={[]}
+        claudeAccounts={[account]}
+        selectedAccountId={account.id}
+        onSelect={vi.fn()}
+        onOpenImport={vi.fn()}
+        onOpenOauth={vi.fn()}
+        onClaude={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Normal")).toBeInTheDocument();
+  });
   it("uses shared privacy and read-only controls", () => {
     usePrivacyStore.setState({ blurred: true });
     render(

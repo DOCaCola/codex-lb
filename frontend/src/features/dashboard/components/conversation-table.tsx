@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaginationControls } from "@/features/dashboard/components/filters/pagination-controls";
-import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import type { AccountSummary, ConversationEntry } from "@/features/dashboard/schemas";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -183,7 +183,7 @@ export function ConversationTable({
                       </div>
                     </TableCell>
                     <TableCell className="text-right align-top font-mono text-xs tabular-nums">
-                      {formatCoveredCost(conversation.totalCostUsd, conversation.costCoverage)}
+                      {formatCoveredCostShort(conversation.totalCostUsd, conversation.costCoverage)}
                     </TableCell>
                     <TableCell className="pr-4 align-top">
                       <Button

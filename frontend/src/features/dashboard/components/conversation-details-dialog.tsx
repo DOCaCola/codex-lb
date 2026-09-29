@@ -21,7 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useConversationDetails } from "@/features/dashboard/hooks/use-conversation-details";
-import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import type { ConversationModelStat } from "@/features/dashboard/schemas";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { formatCompactNumber, formatDateTimeInline, formatElapsed, formatModelLabel } from "@/utils/formatters";
@@ -155,7 +155,7 @@ export function ConversationDetailsDialog({
                             </div>
                           </TableCell>
                           <TableCell className="font-mono text-xs tabular-nums">{formatCompactNumber(stat.totalOutputTokens)}</TableCell>
-                          <TableCell className="font-mono text-xs tabular-nums">{formatCoveredCost(stat.totalCostUsd, stat.costCoverage)}</TableCell>
+                          <TableCell className="font-mono text-xs tabular-nums">{formatCoveredCostShort(stat.totalCostUsd, stat.costCoverage)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

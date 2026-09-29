@@ -4,7 +4,7 @@ import { Cell, Pie, PieChart, Sector, type PieSectorShapeProps } from "@/compone
 
 import { buildDonutPalette } from "@/utils/colors";
 import { formatCurrency } from "@/utils/formatters";
-import { formatCoveredCost, type CostCoverage } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort, type CostCoverage } from "@/features/dashboard/cost-coverage";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useThemeStore } from "@/hooks/use-theme";
@@ -153,7 +153,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
             <div className="absolute inset-[22px] flex items-center justify-center rounded-full text-center pointer-events-none">
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("apis.accountCost.centerLabel")}</p>
-                <p className="text-base font-semibold tabular-nums">{totalCoverage ? formatCoveredCost(totalCostUsd, totalCoverage) : formatCurrency(totalCostUsd)}</p>
+                <p className="text-base font-semibold tabular-nums">{totalCoverage ? formatCoveredCostShort(totalCostUsd, totalCoverage) : formatCurrency(totalCostUsd)}</p>
               </div>
             </div>
           </div>
@@ -200,7 +200,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
                     </span>
                   </div>
                   <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatCoveredCost(item.value, item.coverage)}
+                    {formatCoveredCostShort(item.value, item.coverage)}
                   </span>
                 </button>
               );

@@ -6,7 +6,7 @@ import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { createAccountSummary } from "@/test/mocks/factories";
 
 describe("AccountCards", () => {
-  it("caps the dashboard account grid at two visible rows without clipping taller cards", () => {
+  it("shows every account card in full without an inner scroll area", () => {
     render(
       <AccountCards
         accounts={Array.from({ length: 7 }, (_, index) =>
@@ -20,23 +20,10 @@ describe("AccountCards", () => {
       />,
     );
 
-    // jsdom 30 simplifies calc() during serialization; authored: calc(2 * 11.5rem + 1rem)
-    expect(screen.getByTestId("dashboard-account-cards").style.maxHeight).toBe("calc(24rem)");
-  });
-
-  it("keeps the scrollbar hidden on the dashboard account grid", () => {
-    render(
-      <AccountCards
-        accounts={[createAccountSummary(), createAccountSummary({ accountId: "acc-2", email: "two@example.com" })]}
-        onAction={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId("dashboard-account-cards")).toHaveClass(
-      "overflow-y-auto",
-      "[scrollbar-width:none]",
-      "[&::-webkit-scrollbar]:hidden",
-    );
+    const grid = screen.getByTestId("dashboard-account-cards");
+    expect(grid.style.maxHeight).toBe("");
+    expect(grid).not.toHaveClass("overflow-y-auto");
+    expect(screen.getAllByText(/^Account \d$/)).toHaveLength(7);
   });
 
   it("gives each warm-up toggle a descriptive account-specific name", () => {

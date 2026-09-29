@@ -1,6 +1,6 @@
 import { Activity, AlertTriangle, Coins, DollarSign, Flame, MessageSquare, type LucideIcon } from "lucide-react";
 
-import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import { formatCostCoverageNote, formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import i18n from "@/i18n";
 import type {
   AccountSummary,
@@ -745,7 +745,7 @@ export function buildDashboardView(
   const cost = overview.summary.cost.totalUsd;
   const costCoverage = overview.summary.cost.costCoverage;
   const costComplete = isCostCoverageComplete(costCoverage);
-  const costLabel = formatCoveredCost(cost, costCoverage);
+  const costLabel = formatCoveredCostShort(cost, costCoverage);
   const timeframeLabel = (() => {
     const formatted = formatWindowMinutes(overview.timeframe.windowMinutes);
     return formatted === "--" ? overview.timeframe.key : formatted;
@@ -762,7 +762,7 @@ export function buildDashboardView(
       : t("dashboard.stats.avgPerDay", { value: formatCurrency(avgPerUnit(cost, timeframeDays)) });
   // An average or period-over-period delta of an incomplete subtotal would
   // imply total spend, so incomplete coverage shows its label instead.
-  const costMeta = costComplete ? costAverage : costLabel;
+  const costMeta = costComplete ? costAverage : (formatCostCoverageNote(costCoverage) ?? costAverage);
   const trends = overview.trends;
   const primaryBurnLabel = formatBurnWindowLabel("primary", overview.summary.primaryWindow.windowMinutes);
   const secondaryBurnLabel = formatBurnWindowLabel("secondary", overview.summary.secondaryWindow?.windowMinutes);
@@ -796,7 +796,7 @@ export function buildDashboardView(
     },
     {
       label: t("dashboard.stats.estimatedCost", { timeframe: timeframeLabel }),
-      value: costLabel === "Unknown" ? costLabel : formatCurrency(cost),
+      value: costLabel,
       meta: costMeta,
       comparison: buildStatComparison(
         cost,

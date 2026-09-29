@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ApiKey, LimitRule, LimitType } from "@/features/api-keys/schemas";
-import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import { useDateDisplayFormatStore, type DateDisplayFormat } from "@/hooks/use-date-format";
 import { formatCompactNumber, formatTimeLong } from "@/utils/formatters";
 
@@ -81,7 +81,7 @@ function getUsageValue(apiKey: ApiKey, t: ReturnType<typeof useTranslation>["t"]
     apiKey.usageSummary.requestCount,
     apiKey.usageSummary.totalTokens,
     apiKey.usageSummary.cachedInputTokens,
-    formatCoveredCost(apiKey.usageSummary.totalCostUsd, apiKey.usageSummary),
+    formatCoveredCostShort(apiKey.usageSummary.totalCostUsd, apiKey.usageSummary),
     t,
   );
 }

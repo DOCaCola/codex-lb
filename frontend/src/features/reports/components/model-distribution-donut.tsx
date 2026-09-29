@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Cell, Pie, PieChart, ResponsiveContainer, Sector, type PieSectorShapeProps } from "@/components/lazy-recharts";
 import type { ModelCostEntry } from "../schemas";
-import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { DistributionMetricToggle, type DistributionMetric } from "./distribution-metric-toggle";
 import { formatDistributionMetricValue } from "./distribution-metric-format";
 
@@ -45,7 +45,7 @@ export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
     id: entry.model,
     fill: COLORS[index % COLORS.length],
     metricLabel: isCostMetric && !isCostCoverageComplete(entry)
-      ? formatCoveredCost(entry.costUsd, { ...entry, pricedRequests: entry.pricedRequests ?? entry.requests })
+      ? formatCoveredCostShort(entry.costUsd, { ...entry, pricedRequests: entry.pricedRequests ?? entry.requests })
       : formatDistributionMetricValue(isCostMetric ? entry.costUsd : entry.requests, metric),
     metricPercentage: isCostMetric
       ? entry.percentage
@@ -103,7 +103,7 @@ export function ModelDistributionDonut({ data }: ModelDistributionDonutProps) {
               className="max-w-[76px] text-sm font-semibold leading-tight tabular-nums text-foreground"
               data-testid="model-distribution-center-value"
             >
-              {isCostMetric && !isCostCoverageComplete(coverage) ? formatCoveredCost(totalCost, coverage) : totalMetricLabel}
+              {isCostMetric && !isCostCoverageComplete(coverage) ? formatCoveredCostShort(totalCost, coverage) : totalMetricLabel}
             </span>
           </div>
           <ResponsiveContainer width="100%" height="100%">

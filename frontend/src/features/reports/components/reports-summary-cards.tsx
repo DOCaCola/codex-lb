@@ -1,7 +1,11 @@
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
-import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import {
+  formatCostCoverageNote,
+  formatCoveredCostShort,
+  isCostCoverageComplete,
+} from "@/features/dashboard/cost-coverage";
 import { formatCurrency } from "@/utils/formatters";
 
 import type { ReportComparison, ReportSummary } from "../schemas";
@@ -22,8 +26,13 @@ export function ReportsSummaryCards({ summary, comparison }: ReportsSummaryCards
     {
       id: "total-cost",
       label: t("reports.summary.totalCost"),
-      value: formatCoveredCost(summary.totalCostUsd, summary),
-      sub: t("reports.summary.avgCostPerDay", { cost: summary.avgCostPerDay == null ? "Unknown" : formatCurrency(summary.avgCostPerDay) }),
+      value: formatCoveredCostShort(summary.totalCostUsd, summary),
+      // An average of an incomplete subtotal would understate spend, so the
+      // coverage note replaces it.
+      sub:
+        summary.avgCostPerDay == null
+          ? (formatCostCoverageNote(summary) ?? "")
+          : t("reports.summary.avgCostPerDay", { cost: formatCurrency(summary.avgCostPerDay) }),
       comparison: buildComparison(
         summary.totalCostUsd,
         comparison.previous.totalCostUsd,

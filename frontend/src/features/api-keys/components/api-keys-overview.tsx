@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import type { ApiKey } from "@/features/api-keys/schemas";
-import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCost, formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { formatCompactNumber, formatCurrency } from "@/utils/formatters";
 
 type UsageMetric = "requests" | "tokens" | "cost";
@@ -191,7 +191,7 @@ export function ApiKeysOverview({ apiKeys }: ApiKeysOverviewProps) {
           value={formatCompactNumber(totalRequests)}
           meta={t("apiKeys.overview.tokensMeta", { count: formatCompactNumber(totalTokens) })}
         />
-        <OverviewStat label={t("apiKeys.overview.lifetimeCost")} value={formatCoveredCost(totalCostUsd, costCoverage)} meta={t("apiKeys.overview.lifetimeCostMeta")} />
+        <OverviewStat label={t("apiKeys.overview.lifetimeCost")} value={formatCoveredCostShort(totalCostUsd, costCoverage)} meta={t("apiKeys.overview.lifetimeCostMeta")} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">

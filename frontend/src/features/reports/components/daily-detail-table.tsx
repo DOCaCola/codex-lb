@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Download } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { formatCoveredCost } from "@/features/dashboard/cost-coverage";
+import { CoveredCost } from "@/features/dashboard/components/covered-cost";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { buildContinuousDailyRows } from "../daily-series";
 import type { DailyReportRow } from "../schemas";
@@ -157,7 +157,7 @@ export function DailyDetailTable({ startDate, endDate, data }: DailyDetailTableP
                   {row.reasoningTokens == null ? "—" : formatTokens(row.reasoningTokens)}
                 </td>
                 <td className="py-2.5 pr-4 text-right font-medium text-emerald-600 dark:text-emerald-400">
-                  {formatCoveredCost(row.costUsd, row)}
+                  <CoveredCost costUsd={row.costUsd} coverage={row} />
                 </td>
                 <td className="py-2.5 pr-4 text-right text-muted-foreground">
                   {row.activeAccounts}
