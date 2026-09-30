@@ -14,7 +14,7 @@ client sent.
 
 ## Fork compaction history safety
 
-Source summarization cannot resolve native continuation handles or decrypt native checkpoints. The fallback WebSocket replay store is not a general HTTP history materializer. A request containing such state must supply complete materialized history or use the original native provider; replacing it with a placeholder would falsely report successful compaction. Valid proxy-owned clb1 summaries remain portable. For example, a trigger-only request anchored to resp_old is rejected before provider dispatch instead of summarizing an empty conversation.
+Source summarization cannot itself resolve native continuation handles or decrypt native checkpoints. The fallback WebSocket replay store is not a general HTTP history materializer. Verified checkpoint provenance permits the on-demand native handoff described below; otherwise a request containing such state must supply complete materialized history or use the original native provider. Replacing it with a placeholder would falsely report successful compaction. Valid proxy-owned clb1 summaries remain portable. For example, a trigger-only request anchored to resp_old is rejected before provider dispatch instead of summarizing an empty conversation.
 
 Subscription overflow uses the same source summarization protocol while retaining its original admission claims, dispatch attribution and settlement owner. Rejection before ownership transfer releases the overflow claim without a source call or reservation.
 
@@ -29,7 +29,7 @@ user("Readable summary"), user("Continue")]` sends the two readable messages.
 Native OpenAI requests keep the original marker.
 
 An encrypted native checkpoint is different: it may contain the entire compacted
-conversation. Without a verified readable recovery record it fails explicitly,
+conversation. Without readable recovery or a verified native handoff it fails explicitly,
 as do empty/wrong-typed ciphertext,
 unknown marker payload fields and corrupt `clb1:` summaries. There is no attempt
 to decrypt it, invent a summary, silently discard history or modify client files.
@@ -46,52 +46,67 @@ note for unreadable native checkpoints is not adopted. The production rejection
 at 2026-09-30T16:53:37Z lacked subtype/body diagnostics; it does not prove that
 particular request was marker-only.
 
-## Verified readable checkpoint recovery
+## On-demand native checkpoint handoff
 
-Successful native compact-service calls and full-input native WebSocket compaction
-completions bind the checkpoint's SHA-256 digest to the readable logical input.
-Publication follows usage settlement and precedes returning the compact result.
-This is recovery of visible input, not decryption of native private state.
-An authenticated API key and a real conversation/session identity are required;
-anonymous requests and generic source fallback scopes do not seed shared records.
+Ordinary native compactions now capture only the original account/model and
+native item metadata under a SHA-256 checkpoint digest, authenticated API key and
+conversation/session. Neither the compact input, attachments nor ciphertext is
+copied into this provenance record. Native wire output is unchanged and no summary
+is requested. A successful compact over older opaque history can establish fresh
+provenance because the native backend has processed it successfully.
 
-Messages, original instructions, readable reasoning, direct tool call/result pairs
-and attachments remain intact. Transport IDs/status/telemetry, tool advertisements,
-payload-free local markers and reasoning ciphertext are not retained. Mirrored
-reasoning summary/content is kept once. No old task messages or tool evidence are
-discarded on a guess that they are unimportant. Unknown semantic state, hosted
-resources, unresolved native handles, unpaired outputs and empty readable input
-make the checkpoint ineligible rather than publishing partial recovery.
+Only a source switch that actually needs unreadable checkpoint context requests
+a portable summary. Recovery order is an existing valid readable snapshot, a
+valid cached handoff, then generation on the verified original native account and
+model. Generation uses that exact checkpoint and a task-state handoff prompt,
+without tools, truncation, destination continuation/affinity headers or unrelated
+visible suffix. Current API-key model/account restrictions are rechecked even for
+cache hits. Original account loss or native checkpoint rejection stops generation;
+there is no cross-account failover, placeholder or shortened-history retry.
 
-Records live in the private checkpoint-history namespace and reuse atomic,
-integrity-checked replay storage: one-hour TTL, up to 1000 entries, 256 MiB per
-entry and 1 GiB total, with bounded memory and periodic cleanup. Reads do not
-extend expiry. Native encrypted checkpoints are never stored in the record body;
-the key is a digest, scoped by API key and conversation. A chained compact stores
-its complete materialized readable input, so expiration of its predecessor does
-not invalidate the new record.
+The native auxiliary request has its own handoff request ID, normal reservation,
+admission, usage settlement and request log. It uses the existing tracked detached
+persistence lifecycle; cancellation still owns reservation-release work. Only
+complete, nonempty, nonrefused text becomes a portable summary. Surrounding visible
+messages, tools and images stay ordered and unchanged. Summarization is lossy:
+the prompt requests decisions, constraints, key evidence and unresolved work and
+excludes obsolete plans and protocol chatter; it cannot promise every old fact.
 
-For example, compacting [user(task), tool-call, tool-result] through the native
-compact endpoint returns the unchanged OpenAI checkpoint. Switching to Claude
-with [checkpoint, user(continue)] in the same scope restores the retained visible
-context before policy checks. A v1 preserved-message prefix is replaced only if
-it exactly matches the recorded compact result, preventing duplication without
-heuristic text deduplication. Source continuation then retains the materialized
-input, so later expiry of the native record does not erase that successful switch.
+Private integrity-checked stores retain provenance for 30 days (10,000 entries,
+32 KiB per entry, 16 MiB total) and generated summaries for 30 days (1,000 entries,
+512 KiB per entry, 64 MiB total). Reads do not extend expiry; oldest records can be
+evicted earlier under those bounds. A valid summary can outlive its provenance
+and does not need the old account to generate again. Cross-worker SQLite claims
+prevent simultaneous duplicate generation. Generation has a 300-second budget;
+claims expire after 330 seconds, and are released on success, error or cancellation.
+A concurrent caller receives 503 compaction_handoff_in_progress with Retry-After2.
+Storage coordination failures and unretained summaries fail explicitly.
 
-This does not recover unobserved legacy checkpoints, native handle-only history,
-or provider-private resources. Generic native V1 generation streams remain
-unchanged; their compact endpoint is the capture surface. If recovered history
-exceeds the destination's capacity, its refusal is returned without truncation or
-a silently billed extra summarization call. Logs contain counts and bounded
-reasons, never messages, identifiers or ciphertext.
+The old checkpoint-history namespace remains readable for already-retained
+complete snapshots until its existing one-hour expiry (1,000 entries, 256 MiB per
+entry, 1 GiB total); normal native compactions no longer populate it. Its exact
+recorded preserved-message prefix is deduplicated only directly before its
+checkpoint, never by repeated user-text equality. All three namespaces are swept
+by existing periodic replay maintenance.
 
-Source inspection on 2026-09-30 found omission rather than readable recovery in
-Sub2API 42bc7f6c (#5084 merged July 31; #6397 merged September 5), and warnings plus
-omission in CLIProxyAPI 97f244b8 (#5516 closed without merging). OmniRoute dbe703a0
-rejects unsupported types on the normal translation path and uses a placeholder
-in its ChatGPT-web bridge. None establishes native checkpoint decoding; their
-gateway-owned portable envelopes remain distinct from this retained-input mapping.
+For example, compact [user(task), tool-call, tool-result] natively: only provenance
+is recorded. Later switch to Claude with [checkpoint, user(continue)]: the original
+native account generates one metered handoff, and Claude receives that summary
+plus user(continue). Repeated source turns reuse the summary; source continuation
+retains the already-readable logical input. Remaining with native OpenAI never
+generates a handoff. Unobserved legacy checkpoints without readable recovery or
+verified origin still fail at the original input index. Destination capacity
+refusals do not trigger automatic truncation or additional staged summarization.
+
+References inspected on 2026-10-01: OpenCodex cae9b553e9b882dd13781a7f3ee6f68c0dcc8c4f
+uses routed ocx1 summaries but native-blob placeholders; Sub2API
+42bc7f6cffe24bcb471608e48e66b4a0afa1f882 omits unknown checkpoints; CLIProxyAPI
+97f244b8ddb9cbf564b6e6faab0159102cca8617 warns/omits unmapped items; OmniRoute
+fc5e2bccd4f70fecf5aab94dfb8136c74ab5a21b rejects them on its normal translator.
+None implements this verified native-to-source on-demand handoff. Tests qualify
+local HTTP/WS routing, caching, ownership, cancellation and accounting against
+mock upstreams; real native checkpoint acceptance and summary quality still need
+live qualification. No client changes are required.
 
 ## Complete source compaction input
 

@@ -346,6 +346,7 @@ class _StreamingRetryMixin:
         upstream_stream_transport_override: str | None = None,
         client_ip: str | None = None,
         enforce_openai_sdk_contract: bool = True,
+        required_account_id: str | None = None,
     ) -> AsyncIterator[str]:
         proxy = cast(_StreamingServiceProtocol, self)
         payload = project_native_history(payload, headers, api_key)
@@ -930,7 +931,8 @@ class _StreamingRetryMixin:
             nonlocal affinity, payload, payload_replay_required_account_id
             nonlocal preferred_account_id, require_preferred_account, verified_fresh_replay_payload
             if not (
-                require_preferred_account
+                required_account_id is None
+                and require_preferred_account
                 and preferred_account_id == account_id
                 and verified_fresh_replay_payload is not None
             ):
@@ -1374,11 +1376,14 @@ class _StreamingRetryMixin:
             # be hidden by whichever source happened to run first. A hard turn
             # state is checked against this required owner by the balancer.
             preferred_account_id = resolve_required_account_id(
+                ("checkpoint handoff", required_account_id),
                 ("turn state", turn_state_owner_account_id),
                 ("previous response", preferred_account_id),
                 ("input file", rewritten_file_account_id),
             )
-            require_preferred_account = require_preferred_account or turn_state_owner_account_id is not None
+            require_preferred_account = (
+                require_preferred_account or turn_state_owner_account_id is not None or required_account_id is not None
+            )
             file_required_preferred_account = rewritten_file_account_id is not None
             for attempt in range(max_attempts):
                 remaining_budget = proxy._remaining_budget_seconds(deadline)
@@ -1413,11 +1418,14 @@ class _StreamingRetryMixin:
                     return
                 while True:
                     effective_preferred_account_id = resolve_required_account_id(
+                        ("checkpoint handoff", required_account_id),
                         ("continuation", preferred_account_id),
                         ("dispatched payload", payload_replay_required_account_id),
                     )
                     effective_require_preferred_account = (
-                        require_preferred_account or payload_replay_required_account_id is not None
+                        require_preferred_account
+                        or payload_replay_required_account_id is not None
+                        or required_account_id is not None
                     )
                     try:
                         selection = await proxy._select_account_with_budget_compatible(
@@ -1721,7 +1729,8 @@ class _StreamingRetryMixin:
                         yield format_sse_event(event)
                         return
                     if (
-                        require_preferred_account
+                        required_account_id is None
+                        and require_preferred_account
                         and preferred_account_id is not None
                         and verified_fresh_replay_payload is not None
                     ):
@@ -1911,7 +1920,7 @@ class _StreamingRetryMixin:
                     and preferred_account_id is not None
                     and account.id != preferred_account_id
                 ):
-                    if verified_fresh_replay_payload is not None:
+                    if required_account_id is None and verified_fresh_replay_payload is not None:
                         payload = verified_fresh_replay_payload
                         verified_fresh_replay_payload = None
                         excluded_account_ids.add(preferred_account_id)

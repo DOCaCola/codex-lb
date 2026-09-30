@@ -6,7 +6,6 @@ decode provider-private state, guess history, or shorten semantic content.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from collections.abc import Mapping
@@ -26,6 +25,7 @@ from app.core.utils.request_id import get_request_id
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._service.support import _request_log_client_fields
 from app.modules.proxy.affinity import _owner_lookup_session_id_from_headers
+from app.modules.proxy.checkpoint_handoff import CheckpointResolver, checkpoint_digest, remember_checkpoint_origin
 from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
 logger = logging.getLogger(__name__)
@@ -51,10 +51,6 @@ def checkpoint_scope(headers: Mapping[str, str], api_key: ApiKeyData | None) -> 
 
 def checkpoint_store() -> HTTPFallbackReplayStore:
     return HTTPFallbackReplayStore(get_settings().data_dir / "checkpoint-history")
-
-
-def _checkpoint_key(ciphertext: str) -> str:
-    return "checkpoint:" + hashlib.sha256(ciphertext.encode()).hexdigest()
 
 
 def _readable_parts(value: JsonValue) -> JsonValue:
@@ -186,7 +182,9 @@ class CheckpointHistory:
         self.store = store
         self.scope = scope
 
-    async def materialize(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    async def materialize(
+        self, payload: dict[str, JsonValue], resolve: CheckpointResolver | None = None
+    ) -> dict[str, JsonValue]:
         items = payload.get("input")
         if self.scope is None or not isinstance(items, list):
             return payload
@@ -210,8 +208,14 @@ class CheckpointHistory:
                     project_source_compaction_item(item, index)
                 result.append(item)
                 continue
-            history = await self.store.load(self.scope, _checkpoint_key(ciphertext))
+            history = await self.store.load(self.scope, checkpoint_digest(ciphertext))
             if history is None:
+                if resolve is not None:
+                    handed_off = await resolve(self.scope, item)
+                    if handed_off is not None:
+                        result.extend(handed_off)
+                        recovered += 1
+                        continue
                 project_source_compaction_item(item, index)
                 raise AssertionError("opaque checkpoint projection must reject a cache miss")
             prefix = history.output
@@ -276,7 +280,7 @@ class CheckpointHistory:
             return
         await self.store.remember(
             self.scope,
-            _checkpoint_key(ciphertext),
+            checkpoint_digest(ciphertext),
             json.dumps({"model": request.model, "input": retained}),
             prefix,
             account_id,
@@ -284,9 +288,33 @@ class CheckpointHistory:
 
 
 async def materialize_source_checkpoints(
-    payload: dict[str, JsonValue], headers: Mapping[str, str], api_key: ApiKeyData | None
+    payload: dict[str, JsonValue],
+    headers: Mapping[str, str],
+    api_key: ApiKeyData | None,
+    *,
+    resolve: CheckpointResolver | None = None,
 ) -> dict[str, JsonValue]:
-    return await CheckpointHistory(checkpoint_store(), checkpoint_scope(headers, api_key)).materialize(payload)
+    return await CheckpointHistory(checkpoint_store(), checkpoint_scope(headers, api_key)).materialize(payload, resolve)
+
+
+async def retain_checkpoint_provenance(
+    model: str, response: CompactResponsePayload, scope: ReplayScope | None, account_id: str
+) -> None:
+    if scope is None or response.error is not None or response.status not in (None, "completed"):
+        return
+    output = (response.model_extra or {}).get("output")
+    if not isinstance(output, list):
+        return
+    checkpoints = [item for item in output if isinstance(item, dict) and is_checkpoint_item(item)]
+    if len(checkpoints) != 1 or checkpoints[0] is not output[-1]:
+        return
+    item = checkpoints[0]
+    ciphertext = item.get("encrypted_content")
+    if not isinstance(ciphertext, str) or not ciphertext or ciphertext.startswith(CODEX_LB_COMPACTION_PREFIX):
+        return
+    if item.get("status") not in (None, "completed"):
+        return
+    await remember_checkpoint_origin(scope, model, account_id, item)
 
 
 async def retain_native_checkpoint(
@@ -296,38 +324,22 @@ async def retain_native_checkpoint(
     api_key: ApiKeyData | None,
     account_id: str,
 ) -> None:
-    await CheckpointHistory(checkpoint_store(), checkpoint_scope(headers, api_key)).remember(
-        request, response, account_id
-    )
+    await retain_checkpoint_provenance(request.model, response, checkpoint_scope(headers, api_key), account_id)
 
 
-def is_checkpoint_request(items: JsonValue) -> bool:
-    return (
-        isinstance(items, list)
-        and bool(items)
-        and isinstance(items[-1], dict)
-        and items[-1].get("type") == "compaction_trigger"
-    )
+def is_checkpoint_item(item: JsonValue) -> bool:
+    return isinstance(item, dict) and item.get("type") in ("compaction", "compaction_summary")
 
 
 async def retain_streamed_checkpoint(
     request_text: str,
-    original_input: JsonValue,
     response: dict[str, JsonValue],
     scope: ReplayScope,
     account_id: str,
 ) -> None:
     # The caller owns validated response.create JSON and has completed settlement.
-    # Absence of original input means an unresolved native delta, never full history.
-    if original_input is None:
-        return
+    # Successful native completion establishes provenance even for native deltas.
+    # No readable input or provider ciphertext is retained.
     request = json.loads(request_text)
-    compact = ResponsesCompactRequest.model_validate(
-        {
-            **request,
-            "input": original_input,
-            "instructions": request.get("instructions") or "",
-        }
-    )
     result = CompactResponsePayload.model_validate({**response, "object": "response.compaction"})
-    await CheckpointHistory(checkpoint_store(), scope).remember(compact, result, account_id)
+    await retain_checkpoint_provenance(request["model"], result, scope, account_id)

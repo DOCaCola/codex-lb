@@ -10,9 +10,10 @@ from aiohttp import web
 
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
 from app.core.openai.models import CompactResponsePayload
-from app.modules.proxy import checkpoint_history
+from app.core.openai.requests import ResponsesCompactRequest
+from app.modules.proxy import checkpoint_handoff, checkpoint_history
 from app.modules.proxy import service as proxy_service
-from app.modules.proxy.replay_store import HTTPFallbackReplayStore
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from tests.integration import test_claude_provider_history as provider_fixtures
 from tests.integration.model_source_helpers import _create_model_source, stub_source_upstreams
 from tests.integration.test_claude_inference import install_upstream
@@ -46,6 +47,8 @@ def history():
 @pytest.fixture
 async def recovery_env(async_client, opus_pool, monkeypatch, tmp_path):
     monkeypatch.setattr(checkpoint_history, "checkpoint_store", lambda: HTTPFallbackReplayStore(tmp_path))
+    monkeypatch.setattr(checkpoint_handoff, "origin_store", lambda: HTTPFallbackReplayStore(tmp_path / "origins"))
+    monkeypatch.setattr(checkpoint_handoff, "handoff_store", lambda: HTTPFallbackReplayStore(tmp_path / "handoffs"))
     await _import_synthetic_account(async_client)
     settings = await async_client.put("/api/settings", json={"apiKeyAuthEnabled": True})
     assert settings.status_code == 200, settings.text
@@ -54,8 +57,20 @@ async def recovery_env(async_client, opus_pool, monkeypatch, tmp_path):
     headers = {"authorization": "Bearer " + key.json()["key"], "session_id": "checkpoint-switch"}
     calls = []
 
+    async def seed_existing_snapshot(payload):
+        # These tests exercise already-retained readable snapshots. Production
+        # now records only provenance; on-demand generation has separate tests.
+        await checkpoint_history.CheckpointHistory(
+            HTTPFallbackReplayStore(tmp_path), ReplayScope(key.json()["id"], "checkpoint-switch")
+        ).remember(
+            ResponsesCompactRequest.model_validate({**payload, "instructions": payload.get("instructions") or ""}),
+            CompactResponsePayload.model_validate({"object": "response.compaction", "output": [checkpoint()]}),
+            "existing-snapshot-owner",
+        )
+
     async def native_compact(payload, *args, **kwargs):
         calls.append(deepcopy(payload.model_dump(mode="json")))
+        await seed_existing_snapshot(payload.model_dump(mode="json"))
         return CompactResponsePayload.model_validate({"object": "response.compaction", "output": [checkpoint()]})
 
     monkeypatch.setattr(proxy_service, "core_compact_responses", native_compact)
@@ -64,6 +79,7 @@ async def recovery_env(async_client, opus_pool, monkeypatch, tmp_path):
         async def send_text(self, text):
             request = json.loads(text)
             calls.append(request)
+            await seed_existing_snapshot(request)
             for kind in ("response.created", "response.completed"):
                 self.messages.put_nowait(
                     UpstreamWebSocketMessage(

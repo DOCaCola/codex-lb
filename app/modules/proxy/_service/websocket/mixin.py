@@ -493,7 +493,8 @@ from app.modules.proxy.capability_routing import (
     reject_capability_signal_outside_response_create,
     strip_capability_metadata,
 )
-from app.modules.proxy.checkpoint_history import checkpoint_store, is_checkpoint_request, retain_streamed_checkpoint
+from app.modules.proxy.checkpoint_handoff import handoff_store, origin_store
+from app.modules.proxy.checkpoint_history import checkpoint_store, is_checkpoint_item, retain_streamed_checkpoint
 from app.modules.proxy.continuity import resolve_required_account_id
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
@@ -1378,6 +1379,8 @@ class _WebSocketMixin:
     async def sweep_http_fallback_replay(self) -> None:
         await self._http_fallback_replay_store.sweep()
         await checkpoint_store().sweep()
+        await origin_store().sweep()
+        await handoff_store().sweep()
 
     @cached_property
     def _source_websocket_fallback_registry(self) -> SourceWebSocketFallbackRegistry:
@@ -5728,7 +5731,7 @@ class _WebSocketMixin:
                 if (
                     (
                         (upstream_transport == "http" and request_state.http_replay_conversation_id is not None)
-                        or is_checkpoint_request(request_state.http_replay_input)
+                        or (payload is not None and is_checkpoint_item(payload.get("item")))
                     )
                     and event_type == "response.output_item.done"
                     and payload is not None
@@ -6933,13 +6936,11 @@ class _WebSocketMixin:
             and checkpoint_conversation is not None
             and checkpoint_request_text is not None
             and isinstance(completed_response, dict)
-            and is_checkpoint_request(request_state.http_replay_input)
         ):
             output = request_state.http_replay_output.finish(completed_response.get("output"))
-            if output is not None:
+            if output is not None and any(is_checkpoint_item(item) for item in output):
                 await retain_streamed_checkpoint(
                     checkpoint_request_text,
-                    request_state.http_replay_input,
                     {**completed_response, "output": output},
                     ReplayScope(api_key.id, checkpoint_conversation),
                     account_id_value,

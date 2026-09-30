@@ -295,6 +295,12 @@ from app.modules.proxy._service.support import (
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.capability_routing import required_capability_metadata_values
+from app.modules.proxy.checkpoint_handoff import (
+    HANDOFF_TIMEOUT_SECONDS,
+    CheckpointHandoff,
+    CheckpointResolver,
+    NativeCheckpointOrigin,
+)
 from app.modules.proxy.checkpoint_history import materialize_source_checkpoints
 from app.modules.proxy.downstream_delivery import DeliveryTracedStreamingResponse
 from app.modules.proxy.helpers import _openai_error_param, _parse_openai_error, _rate_limit_details
@@ -5345,19 +5351,27 @@ async def _source_compaction_response(
     streaming: bool,
 ) -> Response:
     try:
+        resolve_checkpoint = _source_checkpoint_resolver(request, api_key, context)
         if source.kind in {"openrouter", "claude"}:
             expanded = await SourceContinuation(request, api_key, source.id).expand(
-                payload.model_dump(mode="json", exclude_none=True)
+                payload.model_dump(mode="json", exclude_none=True), resolve=resolve_checkpoint
             )
             payload = ResponsesCompactRequest.model_validate(expanded)
         else:
             expanded = await materialize_source_checkpoints(
-                payload.model_dump(mode="json", exclude_none=True), request.headers, api_key
+                payload.model_dump(mode="json", exclude_none=True),
+                request.headers,
+                api_key,
+                resolve=resolve_checkpoint,
             )
             payload = ResponsesCompactRequest.model_validate(expanded)
         source_request = build_source_compaction_request(payload)
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
+    except ProxyResponseError as exc:
+        retry_after = _safe_retry_after_header({"Retry-After": exc.retry_after_header})
+        headers = {**rate_limit_headers, **({"Retry-After": retry_after} if retry_after is not None else {})}
+        return _logged_error_json_response(request, exc.status_code, exc.payload, headers=headers)
     source_response = await _source_responses_response(
         request,
         source_request,
@@ -5672,14 +5686,15 @@ async def _dispatch_source_responses_attempt(
     if native_request is not None:
         continuation = None
     try:
+        resolve_checkpoint = _source_checkpoint_resolver(request, api_key, context)
         if continuation is not None:
-            expanded = await continuation.expand(payload.model_dump_for_forwarding())
+            expanded = await continuation.expand(payload.model_dump_for_forwarding(), resolve=resolve_checkpoint)
             payload = payload.model_copy(
                 update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
             )
         elif native_request is None:
             expanded = await materialize_source_checkpoints(
-                payload.model_dump_for_forwarding(), request.headers, api_key
+                payload.model_dump_for_forwarding(), request.headers, api_key, resolve=resolve_checkpoint
             )
             payload = payload.model_copy(update={"input": expanded.get("input")})
         source_payload = (
@@ -5746,6 +5761,10 @@ async def _dispatch_source_responses_attempt(
         project_request(source, source_payload, responses=True)
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
+    except ProxyResponseError as exc:
+        retry_after = _safe_retry_after_header({"Retry-After": exc.retry_after_header})
+        headers = {**rate_limit_headers, **({"Retry-After": retry_after} if retry_after is not None else {})}
+        return _logged_error_json_response(request, exc.status_code, exc.payload, headers=headers)
     except ClaudeError as exc:
         if claude_recovery is not None and claude_recovery.last_error is not None:
             raise claude_recovery.last_error from exc
@@ -7580,6 +7599,74 @@ async def _http_bridge_active_for_request(
     )
 
 
+def _source_checkpoint_resolver(
+    request: Request, api_key: ApiKeyData | None, context: ProxyContext | None
+) -> CheckpointResolver:
+    async def generate(origin: NativeCheckpointOrigin, checkpoint: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        from app.core.openai.compaction import COMPACTION_PROMPT
+        from app.core.utils.request_id import reset_request_id, set_request_id
+
+        native_context = context if context is not None else get_proxy_context(request)
+        # Mutable client affinity/continuation headers belong to the destination
+        # turn, not this auxiliary native request. Ownership comes only from
+        # verified checkpoint provenance and cannot be softened by sticky routing.
+        native_request = Request(
+            {**request.scope, "headers": [(b"content-type", b"application/json")]}, receive=request.receive
+        )
+        native_payload = ResponsesRequest.model_validate(
+            {
+                "model": origin.model,
+                "input": [checkpoint, {"role": "user", "content": COMPACTION_PROMPT}],
+                "instructions": "Prepare a faithful provider-switch handoff. Preserve exact constraints, decisions, "
+                "important evidence and unresolved work. Omit transport details, redundant chatter and obsolete plans. "
+                "Do not invent missing facts or execute tools.",
+                "tools": [],
+                "store": False,
+                "stream": True,
+                "truncation": "disabled",
+                "max_output_tokens": 12000,
+            }
+        )
+        native_request_id = f"handoff_{uuid4().hex}"
+        logger.info(
+            "compaction_handoff_native_request request_id=%s native_request_id=%s", get_request_id(), native_request_id
+        )
+        token = set_request_id(native_request_id)
+        try:
+            try:
+                result = await scheduler_for(native_context.service).wait_for(
+                    _collect_responses(
+                        native_request,
+                        native_payload,
+                        native_context,
+                        api_key,
+                        api_key_policy_already_applied=True,
+                        required_account_id=origin.account_id,
+                    ),
+                    timeout=HANDOFF_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise ProxyResponseError(
+                    504,
+                    openai_error(
+                        "compaction_handoff_timeout",
+                        "The original provider did not complete checkpoint handoff in time.",
+                    ),
+                ) from exc
+            body = json.loads(bytes(result.body))
+            if result.status_code != 200:
+                raise ProxyResponseError(result.status_code, body)
+            if not isinstance(body, dict):
+                raise ProxyResponseError(
+                    502, openai_error("compaction_handoff_invalid", "Invalid native handoff response.")
+                )
+            return body
+        finally:
+            reset_request_id(token)
+
+    return CheckpointHandoff(api_key, generate).resolve
+
+
 async def _collect_responses(
     request: Request,
     payload: ResponsesRequest,
@@ -7593,6 +7680,7 @@ async def _collect_responses(
     api_key_policy_already_applied: bool = False,
     preserve_upstream_stream_mode: bool = False,
     prohibit_fast_mode: bool = False,
+    required_account_id: str | None = None,
 ) -> Response:
     service_tier_was_enforced = False
     if not api_key_policy_already_applied:
@@ -7633,7 +7721,7 @@ async def _collect_responses(
         reservation,
         reservation_cleanup=reservation_cleanup,
     )
-    bridge_active = await _http_bridge_active_for_request(
+    bridge_active = required_account_id is None and await _http_bridge_active_for_request(
         payload,
         request.headers,
         api_key,
@@ -7676,6 +7764,7 @@ async def _collect_responses(
             api_key_reservation=reservation,
             suppress_text_done_events=suppress_text_done_events,
             client_ip=client_ip,
+            **({"required_account_id": required_account_id} if required_account_id is not None else {}),
         )
     captured_turn_state_headers: dict[str, str] = {}
     responses_owner_forward_dispatched_token = _bind_propagated_responses_owner_forward_dispatched(

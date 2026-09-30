@@ -449,13 +449,12 @@ class _StreamingMixin(_StreamingRetryMixin):
         request_transport: str = _REQUEST_TRANSPORT_HTTP,
         client_ip: str | None = None,
         enforce_openai_sdk_contract: bool = True,
+        required_account_id: str | None = None,
     ) -> AsyncIterator[str]:
-        proxy = cast(_StreamingServiceProtocol, self)
         _maybe_log_proxy_request_payload("stream", payload, headers)
-        filtered = _facade().filter_inbound_headers(headers)
-        return proxy._stream_with_retry(
+        return self._stream_with_retry(
             payload,
-            filtered,
+            _facade().filter_inbound_headers(headers),
             codex_session_affinity=codex_session_affinity,
             propagate_http_errors=propagate_http_errors,
             openai_cache_affinity=openai_cache_affinity,
@@ -465,6 +464,7 @@ class _StreamingMixin(_StreamingRetryMixin):
             request_transport=request_transport,
             client_ip=client_ip,
             enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+            required_account_id=required_account_id,
         )
 
     async def _stream_once(
