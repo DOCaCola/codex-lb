@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import base64
+import logging
 from binascii import Error as Base64Error
+from collections.abc import Mapping
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
+from app.core.utils.request_id import get_request_id
+
+logger = logging.getLogger(__name__)
 
 CODEX_LB_COMPACTION_PREFIX = "clb1:"
 COMPACTION_SUMMARY_PREFIX = (
@@ -26,6 +31,7 @@ COMPACTION_PROMPT = (
 )
 
 _COMPACTION_ITEM_TYPES = frozenset({"compaction", "compaction_summary", "context_compaction"})
+_LOCAL_MARKER_KEYS = frozenset({"type", "id", "encrypted_content", "internal_chat_message_metadata_passthrough"})
 
 type MutableJsonObject = dict[str, JsonValue]
 
@@ -56,21 +62,14 @@ def lower_codex_lb_compaction_items(payload: MutableJsonObject) -> None:
         return
     changed = False
     lowered: list[JsonValue] = []
-    for item in input_value:
+    for index, item in enumerate(input_value):
         if not is_json_mapping(item) or item.get("type") not in _COMPACTION_ITEM_TYPES:
             lowered.append(item)
             continue
-        encrypted_content = item.get("encrypted_content")
-        if not isinstance(encrypted_content, str) or not encrypted_content.startswith(CODEX_LB_COMPACTION_PREFIX):
+        summary = _proxy_compaction_summary(item, index)
+        if summary is None:
             lowered.append(item)
             continue
-        summary = decode_codex_lb_compaction_summary(encrypted_content)
-        if summary is None:
-            raise ClientPayloadError(
-                "The proxy compaction checkpoint is corrupt; resend the complete history or a valid checkpoint.",
-                param="input",
-                code="compaction_history_unavailable",
-            )
         lowered.append(_summary_message(summary))
         changed = True
     if changed:
@@ -80,19 +79,73 @@ def lower_codex_lb_compaction_items(payload: MutableJsonObject) -> None:
 def lower_opaque_compaction_items_for_model_source(payload: MutableJsonObject) -> None:
     """Prevent native opaque compaction state from reaching a routed source."""
 
-    lower_codex_lb_compaction_items(payload)
     input_value = payload.get("input")
     if not is_json_list(input_value):
         return
-    for item in input_value:
+    lowered: list[JsonValue] = []
+    omitted = 0
+    changed = False
+    for index, item in enumerate(input_value):
         if not is_json_mapping(item) or item.get("type") not in _COMPACTION_ITEM_TYPES:
+            lowered.append(item)
             continue
-        raise ClientPayloadError(
-            "This model source cannot read the compaction checkpoint; use the original provider or resend "
+        encrypted = item.get("encrypted_content")
+        unsupported_marker = item.get("type") == "context_compaction" and not item.keys() <= _LOCAL_MARKER_KEYS
+        if not unsupported_marker:
+            summary = _proxy_compaction_summary(item, index)
+            if summary is not None:
+                lowered.append(_summary_message(summary))
+                changed = True
+                continue
+        if item.get("type") == "context_compaction" and encrypted is None and not unsupported_marker:
+            # Local summaries are independent ordinary messages, not in this marker.
+            omitted += 1
+            continue
+        reason = "opaque_checkpoint"
+        if unsupported_marker:
+            reason = "unsupported_marker_payload"
+        elif encrypted is not None and (not isinstance(encrypted, str) or not encrypted):
+            reason = "invalid_ciphertext"
+        elif encrypted is None:
+            reason = "missing_checkpoint_payload"
+        raise _checkpoint_error(
+            item,
+            index,
+            reason=reason,
+            message="This model source cannot read the compaction checkpoint; use the original provider or resend "
             "the complete materialized history.",
-            param="input",
-            code="compaction_history_unavailable",
         )
+    if omitted or changed:
+        payload["input"] = lowered
+    if omitted:
+        logger.info("source_compaction_markers_skipped request_id=%s count=%d", get_request_id(), omitted)
+
+
+def _proxy_compaction_summary(item: Mapping[str, JsonValue], index: int) -> str | None:
+    encrypted_content = item.get("encrypted_content")
+    if not isinstance(encrypted_content, str) or not encrypted_content.startswith(CODEX_LB_COMPACTION_PREFIX):
+        return None
+    summary = decode_codex_lb_compaction_summary(encrypted_content)
+    if summary is None:
+        raise _checkpoint_error(
+            item,
+            index,
+            reason="corrupt_proxy_checkpoint",
+            message="The proxy compaction checkpoint is corrupt; resend the complete history or a valid checkpoint.",
+        )
+    return summary
+
+
+def _checkpoint_error(item: Mapping[str, JsonValue], index: int, *, reason: str, message: str) -> ClientPayloadError:
+    logger.warning(
+        "compaction_checkpoint_rejected request_id=%s input_index=%d item_type=%s ciphertext_present=%s reason=%s",
+        get_request_id(),
+        index,
+        item["type"],
+        item.get("encrypted_content") is not None,
+        reason,
+    )
+    return ClientPayloadError(message, param=f"input[{index}]", code="compaction_history_unavailable")
 
 
 def _summary_message(summary: str) -> dict[str, JsonValue]:

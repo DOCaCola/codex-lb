@@ -18,6 +18,33 @@ Source summarization cannot resolve native continuation handles or decrypt nativ
 
 Subscription overflow uses the same source summarization protocol while retaining its original admission claims, dispatch attribution and settlement owner. Rejection before ownership transfer releases the overflow claim without a source call or reservation.
 
+## Local compaction markers versus opaque checkpoints
+
+A local `context_compaction` marker can contain only its type, optional ID and
+internal message metadata, with missing/null `encrypted_content`. Its summary is
+an independent ordinary message. Source projection removes this control marker
+only from wire input: the summary, tools, images and retained logical history
+remain intact. For example, switching to Claude with `[context_compaction,
+user("Readable summary"), user("Continue")]` sends the two readable messages.
+Native OpenAI requests keep the original marker.
+
+An encrypted native checkpoint is different: it may contain the entire compacted
+conversation. It still fails explicitly, as do empty/wrong-typed ciphertext,
+unknown marker payload fields and corrupt `clb1:` summaries. There is no attempt
+to decrypt it, invent a summary, silently discard history or modify client files.
+Projection validates the whole input before replacing it; rejection identifies
+the original `input[N]`. Logs expose only request ID, index, known subtype,
+ciphertext presence and classification reason, or an aggregate skipped count.
+
+Reference inspection on 2026-09-30: OpenAI Codex
+`ed0cc1a4ab30e1e83f1214e7a368c55b83fd089d`, `protocol/src/models.rs`, declares
+optional ciphertext on ContextCompaction. OpenCodex
+`569e3e7dae48bafc54b8a1a7e3a85129befe2d98`, `src/responses/parser.ts`, omits
+local markers because their summary follows as an ordinary message. Its fallback
+note for unreadable native checkpoints is not adopted. The production rejection
+at 2026-09-30T16:53:37Z lacked subtype/body diagnostics; it does not prove that
+particular request was marker-only.
+
 ## Complete source compaction input
 
 Native compact serialization retains its upstream-specific 100k estimated-token

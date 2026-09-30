@@ -50,6 +50,9 @@ def build_source_compaction_request(payload: ResponsesCompactRequest) -> Respons
                 param=handle,
                 code="compaction_history_unavailable",
             )
+    # Validate checkpoints before removing control items so errors identify
+    # their original index in the materialized input.
+    lower_opaque_compaction_items_for_model_source(compact_payload)
     input_value = compact_payload.get("input")
     input_items = input_value if is_json_list(input_value) else [input_value]
     history = [
@@ -76,7 +79,6 @@ def build_source_compaction_request(payload: ResponsesCompactRequest) -> Respons
         source_payload["reasoning"] = payload.reasoning.model_dump(mode="json", exclude_none=True)
     if payload.service_tier is not None:
         source_payload["service_tier"] = payload.service_tier
-    lower_opaque_compaction_items_for_model_source(source_payload)
     return ResponsesRequest.model_validate(source_payload)
 
 
