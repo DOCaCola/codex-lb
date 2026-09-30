@@ -63,31 +63,44 @@ def test_readable_reasoning_channels_are_preserved(summary, content):
 
 
 @pytest.mark.parametrize("summary,content", [(None, None), ("", ""), (" \t", "\n")])
-def test_opaque_only_state_fails_instead_of_deleting_data(summary, content):
+def test_completed_opaque_only_state_has_no_wire_block_but_keeps_original_history(summary, content, caplog):
     payload = history(summary=summary, content=content)
     original = deepcopy(payload)
-    with pytest.raises(ClientPayloadError, match="no readable context") as error:
-        project_foreign_replay(payload)
-    assert error.value.code == "nonportable_provider_history"
-    assert error.value.param == "input[1]"
+    with caplog.at_level("INFO"):
+        projected = project_foreign_replay(payload)
+    assert at(projected["input"], 1) == {"type": "reasoning", "summary": []}
+    assert array(projected["input"])[2:] == payload["input"][2:]
+    body = project_responses(projected, max_output_tokens=64000, reasoning=None).body
+    assert "gAAAA" not in str(body) and "rs_native" not in str(body)
+    assert "Original request" in str(body) and "Continue on Opus" in str(body)
+    assert "call_native" in str(body) and "result" in str(body)
+    assert "thinking" not in str(body)
+    assert "converted=0 omitted=1" in caplog.text
+    assert "gAAAA" not in caplog.text and "rs_native" not in caplog.text
     assert payload == original
 
 
 @pytest.mark.parametrize("complete,completed", [(False, False), (True, True), (True, False)])
-def test_foreign_encrypted_active_and_complete_history_fail(complete, completed):
-    payload = history(completed=completed)
+@pytest.mark.parametrize("readable", [False, True])
+def test_foreign_encrypted_active_and_complete_history_fail(complete, completed, readable):
+    payload = history(completed=completed) if readable else history(completed=completed, summary=None, content=None)
     with pytest.raises(ClientPayloadError) as error:
         project_foreign_replay(payload, require_complete_history=complete)
     assert error.value.code == "nonportable_provider_history"
     assert error.value.param == "input[1]"
 
 
-def test_canonical_external_task_closes_foreign_history_but_tool_results_do_not():
-    payload = history(completed=False)
+@pytest.mark.parametrize("readable", [False, True])
+def test_canonical_external_task_closes_foreign_history_but_tool_results_do_not(readable):
+    payload = history(completed=False) if readable else history(completed=False, summary=None, content=None)
     with pytest.raises(ClientPayloadError, match="Active reasoning"):
         project_foreign_replay(payload)
     payload["input"].append(TASK_INPUT)
-    assert at(project_foreign_replay(payload)["input"], 1, "role") == "assistant"
+    projected = project_foreign_replay(payload)
+    if readable:
+        assert at(projected["input"], 1, "role") == "assistant"
+    else:
+        assert at(projected["input"], 1) == {"type": "reasoning", "summary": []}
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -105,8 +118,9 @@ def test_plaintext_only_history_needs_no_provider_signature_even_for_compaction(
         ("content", [{"type": "input_image", "image_url": "data:..."}]),
     ],
 )
-def test_unrepresentable_readable_state_is_not_discarded(field, parts):
-    payload = history(token=None)
+@pytest.mark.parametrize("token", [None, "gAAAA_native_openai"])
+def test_unrepresentable_readable_state_is_not_discarded(field, parts, token):
+    payload = history(token=token)
     payload["input"][1][field] = parts
     with pytest.raises(ClientPayloadError) as error:
         project_foreign_replay(payload)
@@ -143,11 +157,12 @@ def test_projection_never_bypasses_authentication_including_forked_scope(scope_f
     assert error.value.param == "input[1]"
 
 
-def test_opus_sol_opus_mixed_history_keeps_original_signed_state():
+@pytest.mark.parametrize("readable", [False, True])
+def test_opus_sol_opus_mixed_history_keeps_original_signed_state(readable):
     opaque = codec()
     signed = {"type": "thinking", "thinking": "Original Opus context", "signature": "original-signature"}
     token = opaque.encode(scope(), signed)
-    payload = history()
+    payload = history() if readable else history(summary=None, content=None)
     payload["input"].insert(0, {"type": "reasoning", "encrypted_content": token})
     projected = project_foreign_replay(payload)
     replay = authenticate_replay(
@@ -163,11 +178,13 @@ def test_opus_sol_opus_mixed_history_keeps_original_signed_state():
         ),
     ).body
     assert at(body["messages"], 0, "content") == [signed]
-    assert "Sol context" in str(body) and "gAAAA" not in str(body)
+    assert ("Sol context" in str(body)) is readable
+    assert "gAAAA" not in str(body)
 
 
-def test_empty_plaintext_reasoning_preserves_later_authentication_error_index():
-    payload = history(token=None, summary=None, content=None)
+@pytest.mark.parametrize("token", [None, "gAAAA_native_openai"])
+def test_empty_projection_preserves_later_authentication_error_index(token):
+    payload = history(token=token, summary=None, content=None)
     payload["input"].append({"type": "reasoning", "encrypted_content": "claude-v1.invalid"})
     projected = project_foreign_replay(payload)
     assert at(projected["input"], 1) == {"type": "reasoning", "summary": []}

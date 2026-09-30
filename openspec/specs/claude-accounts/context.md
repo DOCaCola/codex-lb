@@ -626,14 +626,27 @@ a new user request becomes assistant text when that request selects Opus 5.5.
 Explicit users and canonical external tasks close historical turns; paired tool
 results do not. Empty plaintext reasoning retains its item position for errors.
 
-Opaque-only foreign history and active encrypted continuations fail explicitly
-with `nonportable_provider_history` and the input index. Complete compaction also
+Completed opaque-only foreign history produces no Claude wire block but remains
+unchanged in retained logical history. Its temporary projection keeps an empty
+plaintext reasoning item so later diagnostics retain their input indices. The
+existing protocol renderer emits no block for that item. Active foreign encrypted
+continuations fail explicitly with `nonportable_provider_history` and the input
+index. Complete compaction also
 rejects foreign ciphertext, even with a summary: a display summary cannot prove
 the full encrypted state survived. Plaintext-only compaction preserves readable
 reasoning. Genuine Claude envelopes, including empty-display signed thinking,
 retain client/conversation authentication and account/model ownership. Invalid
 authentication returns `invalid_provider_history` rather than a generic payload
-error. Conversion logs contain only counts.
+error. Conversion logs contain only conversion and opaque-omission counts.
+
+The first implementation unnecessarily rejected completed opaque-only items.
+Production at 2026-09-30T16:23:45Z exposed that real inherited OpenAI history has
+empty-summary ciphertext alongside portable messages and tools. The revised
+policy preserves that visible conversation, not an unavailable private chain
+of thought. Retained native state is not deleted. CLIProxyAPI's inspected
+Responses-to-Claude converter omits foreign signatures instead of replaying
+unsigned thinking; our historical-only projection additionally retains readable
+summaries as ordinary text and enforces active/compaction checks.
 
 Inspected on 2026-09-30: OpenCodex
 `569e3e7dae48bafc54b8a1a7e3a85129befe2d98`, CLIProxyAPI

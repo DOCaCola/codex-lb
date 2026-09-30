@@ -55,12 +55,19 @@ def payload(**kwargs):
     }
 
 
-def assert_portable(body):
+def assert_portable(body, *, readable=True, reasoning=True):
     wire = json.dumps(body)
-    assert "Sol context" in wire and "Distinct raw context" in wire
+    if readable:
+        assert "Sol context" in wire and "Distinct raw context" in wire
+    else:
+        assert "Sol context" not in wire and "Distinct raw context" not in wire
+    assert "Original request" in wire and "Continue on Opus" in wire
     assert "gAAAA" not in wire and "rs_native" not in wire
-    assert body["thinking"]["type"] == "adaptive"
-    assert body["output_config"]["effort"] == "medium"
+    if reasoning:
+        assert body["thinking"]["type"] == "adaptive"
+        assert body["output_config"]["effort"] == "medium"
+    else:
+        assert "thinking" not in body
     blocks = [block for message in body["messages"] for block in message["content"]]
     assert not any(block["type"] in {"thinking", "redacted_thinking"} for block in blocks)
     assert [block["id"] for block in blocks if block["type"] == "tool_use"] == ["call_native"]
@@ -71,16 +78,17 @@ def assert_portable(body):
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("readable", [False, True])
 async def test_sol_to_opus_http_preserves_readable_history_and_retained_state(
-    async_client, opus_pool, monkeypatch, path, stream
+    async_client, opus_pool, monkeypatch, path, stream, readable
 ):
     captured, _ = install_upstream(monkeypatch)
-    original = payload()
+    original = payload() if readable else payload(summary=None, content=None)
     original["stream"] = stream
     untouched = deepcopy(original)
     response = await async_client.post(path, headers=HEADERS, json=original)
     assert response.status_code == 200, response.text
-    assert_portable(captured[0][2])
+    assert_portable(captured[0][2], readable=readable)
     assert original == untouched
     if stream:
         events = [
@@ -101,11 +109,13 @@ async def test_sol_to_opus_http_preserves_readable_history_and_retained_state(
         json={"model": MODEL, "previous_response_id": completed["id"], "input": "Another turn", "stream": False},
     )
     assert followup.status_code == 200, followup.text
-    assert "Sol context" in json.dumps(captured[1][2])
-    assert "gAAAA" not in json.dumps(captured[1][2])
+    assert_portable(captured[1][2], readable=readable, reasoning=False)
+    next_retained = await store.load(ReplayScope(None, HEADERS["session_id"]), followup.json()["id"])
+    assert next_retained is not None
+    assert next_retained.expand([])[: len(original["input"])] == original["input"]
 
 
-@pytest.mark.parametrize("case", ["opaque_only", "active", "tampered", "fork", "compact"])
+@pytest.mark.parametrize("case", ["active", "tampered", "fork"])
 async def test_nonportable_and_unauthenticated_history_fails_before_account_selection(
     async_client, opus_pool, monkeypatch, case
 ):
@@ -116,9 +126,7 @@ async def test_nonportable_and_unauthenticated_history_fails_before_account_sele
     monkeypatch.setattr(inference, "select_account", selection)
     request = payload()
     code = "nonportable_provider_history"
-    if case == "opaque_only":
-        request = payload(summary=None, content=None)
-    elif case == "active":
+    if case == "active":
         request = payload(completed=False)
     elif case in {"tampered", "fork"}:
         code = "invalid_provider_history"
@@ -130,13 +138,33 @@ async def test_nonportable_and_unauthenticated_history_fails_before_account_sele
                 {"type": "thinking", "thinking": "", "signature": "parent-signed"},
             )
         )
-    path = "/backend-api/codex/responses/compact" if case == "compact" else "/backend-api/codex/responses"
-    response = await async_client.post(path, headers=HEADERS, json=request)
+    response = await async_client.post("/backend-api/codex/responses", headers=HEADERS, json=request)
     assert response.status_code == 400, response.text
     error = response.json()["error"]
     assert error["code"] == code
     assert error["param"] == "input[1]"
     assert error["message"] != "Invalid request payload"
+    assert not captured
+    selection.assert_not_awaited()
+
+
+@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
+@pytest.mark.parametrize("readable", [False, True])
+async def test_complete_compaction_still_refuses_foreign_ciphertext(
+    async_client, opus_pool, monkeypatch, path, readable
+):
+    from app.modules.claude import inference
+
+    captured, _ = install_upstream(monkeypatch)
+    selection = AsyncMock(wraps=inference.select_account)
+    monkeypatch.setattr(inference, "select_account", selection)
+    request = payload() if readable else payload(summary=None, content=None)
+    response = await async_client.post(path, headers=HEADERS, json=request)
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "nonportable_provider_history"
+    assert error["param"] == "input[1]"
+    assert "Complete compaction" in error["message"]
     assert not captured
     selection.assert_not_awaited()
 
@@ -170,8 +198,9 @@ async def test_opus_sol_opus_preserves_original_empty_display_signed_blocks(asyn
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("readable", [False, True])
 async def test_sol_to_opus_websocket_projects_or_returns_specific_error(
-    async_client, opus_pool, monkeypatch, path, active
+    async_client, opus_pool, monkeypatch, path, active, readable
 ):
     captured, _ = install_upstream(monkeypatch)
     incoming, outgoing = asyncio.Queue(), asyncio.Queue()
@@ -189,13 +218,14 @@ async def test_sol_to_opus_websocket_projects_or_returns_specific_error(
         "subprotocols": [],
     }
     task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
+    request = payload(completed=not active) if readable else payload(completed=not active, summary=None, content=None)
     try:
         await incoming.put({"type": "websocket.connect"})
         assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
         await incoming.put(
             {
                 "type": "websocket.receive",
-                "text": json.dumps({**payload(completed=not active), "type": "response.create", "stream": True}),
+                "text": json.dumps({**request, "type": "response.create", "stream": True}),
             }
         )
         while True:
@@ -209,7 +239,11 @@ async def test_sol_to_opus_websocket_projects_or_returns_specific_error(
                 break
             if event["type"] == "response.completed":
                 assert not active
-                assert_portable(captured[0][2])
+                assert_portable(captured[0][2], readable=readable)
+                store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
+                retained = await store.load(ReplayScope(None, HEADERS["session_id"]), event["response"]["id"])
+                assert retained is not None
+                assert retained.expand([])[: len(request["input"])] == request["input"]
                 break
     finally:
         await incoming.put({"type": "websocket.disconnect", "code": 1000})
