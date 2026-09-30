@@ -1,4 +1,6 @@
 {
+  "accounts.usage.unknownUsage": "Usage unknown",
+  "accounts.usage.availabilityUnknown": "Availability unknown",
   "modelSources.modelEditor.add": "Add model",
   "modelSources.modelEditor.remove": "Remove model",
   "modelSources.modelEditor.select": "Model to edit",

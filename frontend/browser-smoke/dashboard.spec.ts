@@ -77,6 +77,38 @@ async function acceptTelemetryConsent(page: Page, consentDialog: Locator): Promi
 }
 
 for (const width of [390, 1440]) {
+  test(`Luna Reserve reuses Spark quota bars ${width}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height: 1000 });
+    await installMobileContainmentFixtures(page, [createAccountSummary({
+      accountId: "reserve-account", displayName: "Reserve account",
+      additionalQuotas: [
+        { limitName: "codex_spark", meteredFeature: "codex_bengalfox",
+          displayLabel: "GPT-5.3-Codex-Spark", routingPolicy: "inherit",
+          primaryWindow: { usedPercent: 35, windowMinutes: 300, resetAt: null }, secondaryWindow: null },
+        { limitName: "gpt-reserve", meteredFeature: "base_model_inference",
+          displayLabel: "Luna Reserve", routingPolicy: null, availability: "available",
+          primaryWindow: { usedPercent: 25, windowMinutes: 300, resetAt: null },
+          secondaryWindow: { usedPercent: 60, windowMinutes: 10080, resetAt: null } },
+      ],
+    })]);
+    await page.goto("/accounts?selected=reserve-account");
+    await expect(page.getByText("Luna Reserve", { exact: true })).toBeVisible();
+    await expect(page.getByText("25% used", { exact: true })).toBeVisible();
+    await expect(page.getByText("60% used", { exact: true })).toBeVisible();
+    const reserve = page.getByText("Luna Reserve", { exact: true }).locator("../..");
+    const spark = page.getByText("GPT-5.3-Codex-Spark", { exact: true }).locator("../..");
+    expect(await reserve.getAttribute("class")).toBe(await spark.getAttribute("class"));
+    const windows = reserve.getByTestId("additional-quota-windows");
+    expect(await windows.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length))
+      .toBe(width >= 640 ? 2 : 1);
+    await expect(reserve.getByText("Weekly", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`reserve-bars-${width}.png`), fullPage: true });
+  });
+}
+
+for (const width of [390, 1440]) {
   for (const provider of ["openrouter", "claude"] as const) {
     test(`provider account trends ${provider} ${width}`, async ({ page }, testInfo) => {
       await page.emulateMedia({ reducedMotion: "reduce" });

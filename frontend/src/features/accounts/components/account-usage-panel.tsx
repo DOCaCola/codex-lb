@@ -66,11 +66,12 @@ function AdditionalQuotaRow({
   resetAt,
 }: {
   label: string;
-  usedPercent: number;
+  usedPercent: number | null;
   resetAt: number | null;
 }) {
   const { t } = useTranslation();
-  const clamped = Math.max(0, Math.min(100, usedPercent));
+  const known = usedPercent != null && Number.isFinite(usedPercent);
+  const clamped = known ? Math.max(0, Math.min(100, usedPercent)) : 0;
   const countdown = formatResetCountdown(resetAt);
   const countdownLabel = countdown === "resetting"
     ? t("formatters.resetting")
@@ -82,10 +83,12 @@ function AdditionalQuotaRow({
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className="tabular-nums font-medium">{t("accounts.usage.percentUsed", { percent: Math.round(usedPercent) })}</span>
+        <span className="tabular-nums font-medium">{known
+          ? t("accounts.usage.percentUsed", { percent: Math.round(usedPercent) })
+          : t("accounts.usage.unknownUsage")}</span>
       </div>
       <div className="h-1.5 rounded-full bg-muted">
-        <div
+        {known && <div
           className={cn(
             "h-full rounded-full transition-all",
             clamped > 95
@@ -97,7 +100,7 @@ function AdditionalQuotaRow({
                   : "bg-green-500",
           )}
           style={{ width: `${clamped}%` }}
-        />
+        />}
       </div>
       {countdownLabel ? <p className="text-[11px] text-muted-foreground">{countdownLabel}</p> : null}
     </div>
@@ -267,20 +270,35 @@ function AccountUsagePanelContent({
                   </span>
                 ) : null}
               </p>
-              {quota.primaryWindow != null ? (
-                <AdditionalQuotaRow
-                  label={formatWindowLabel("primary", quota.primaryWindow.windowMinutes ?? null)}
-                  usedPercent={quota.primaryWindow.usedPercent}
-                  resetAt={quota.primaryWindow.resetAt ?? null}
-                />
+              {quota.availability === "unavailable" ? (
+                <p className="text-[11px] text-muted-foreground">{t("common.states.unavailable")}</p>
+              ) : quota.availability === "unknown" ? (
+                <p className="text-[11px] text-muted-foreground">{t("accounts.usage.availabilityUnknown")}</p>
               ) : null}
-              {quota.secondaryWindow != null ? (
-                <AdditionalQuotaRow
-                  label={formatWindowLabel("secondary", quota.secondaryWindow.windowMinutes ?? null)}
-                  usedPercent={quota.secondaryWindow.usedPercent}
-                  resetAt={quota.secondaryWindow.resetAt ?? null}
-                />
+              {quota.availability != null && quota.primaryWindow == null && quota.secondaryWindow == null ? (
+                <p className="text-xs text-muted-foreground">{t("accounts.usage.unknownUsage")}</p>
               ) : null}
+              <div data-testid="additional-quota-windows" className={cn("grid gap-4",
+                quota.primaryWindow != null && quota.secondaryWindow != null
+                  ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1",
+              )}>
+                {quota.primaryWindow != null ? (
+                  <AdditionalQuotaRow
+                    label={formatWindowLabel("primary", quota.primaryWindow.windowMinutes ?? null)}
+                    usedPercent={quota.primaryWindow.usedPercent}
+                    resetAt={quota.primaryWindow.resetAt ?? null}
+                  />
+                ) : null}
+                {quota.secondaryWindow != null ? (
+                  <AdditionalQuotaRow
+                    label={quota.secondaryWindow.windowMinutes === 10_080
+                      ? t("common.quota.weekly")
+                      : formatWindowLabel("secondary", quota.secondaryWindow.windowMinutes ?? null)}
+                    usedPercent={quota.secondaryWindow.usedPercent}
+                    resetAt={quota.secondaryWindow.resetAt ?? null}
+                  />
+                ) : null}
+              </div>
             </div>
           ))}
         </div>

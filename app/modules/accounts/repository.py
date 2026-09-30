@@ -1626,6 +1626,7 @@ def _apply_account_updates(target: Account, source: Account) -> None:
         target.codex_installation_id = source.codex_installation_id or str(uuid.uuid4())
     target.plan_type = source.plan_type
     target.access_token_encrypted = source.access_token_encrypted
+    target.reserve_usage = None
     target.refresh_token_encrypted = source.refresh_token_encrypted
     target.id_token_encrypted = source.id_token_encrypted
     target.last_refresh = source.last_refresh

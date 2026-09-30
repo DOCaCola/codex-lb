@@ -18,7 +18,7 @@ from app.core.clients import usage as usage_client_module
 from app.core.crypto import TokenEncryptor
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
 from app.core.usage import refresh_scheduler as refresh_scheduler_module
-from app.core.usage.models import UsagePayload
+from app.core.usage.models import ReserveUsageSnapshot, UsagePayload
 from app.core.usage.refresh_scheduler import _select_long_window_entries
 from app.core.utils.shared_future import _WAITERS_ATTR, wait_on_shared_future
 from app.core.utils.time import utcnow
@@ -806,6 +806,16 @@ class StubAdditionalUsageRepository:
         self.deleted_account_limit_pairs: list[tuple[str, str]] = []
         self.deleted_account_limit_windows: list[tuple[str, str, str]] = []
         self._written_accounts: set[str] = set()
+        self.reserve_snapshots: dict[str, ReserveUsageSnapshot] = {}
+
+    async def record_reserve_usage(
+        self,
+        account_id: str,
+        snapshot: ReserveUsageSnapshot,
+        *,
+        expected_access_token_encrypted: bytes,
+    ) -> None:
+        self.reserve_snapshots[account_id] = snapshot
 
     async def add_entry(
         self,
@@ -3603,6 +3613,75 @@ async def test_usage_updater_singleflights_concurrent_refreshes(monkeypatch) -> 
 
 
 # --- Additional rate limits tests ---
+
+
+@pytest.mark.asyncio
+async def test_reserve_query_keeps_capability_after_401_refresh(monkeypatch):
+    acc = _make_account("reserve-refresh", "workspace")
+    accounts = StubAccountsRepository()
+    accounts.accounts_by_id[acc.id] = acc
+    repo = StubAdditionalUsageRepository()
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo=accounts, additional_usage_repo=repo)
+    assert updater._auth_manager is not None
+    tokens = []
+
+    async def fetch(**kwargs):
+        assert kwargs["supports_luna_reserve"] is True
+        tokens.append(kwargs["access_token"])
+        if len(tokens) == 1:
+            raise usage_client_module.UsageFetchError(401, "Unauthorized")
+        return UsagePayload.model_validate({"additional_rate_limits": []})
+
+    async def refresh(account, *, force=False):
+        assert force is True
+        account.access_token_encrypted = TokenEncryptor().encrypt("new-token")
+        return account
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_usage", fetch)
+    monkeypatch.setattr(updater._auth_manager, "ensure_fresh", refresh)
+    await updater._refresh_account(acc, usage_account_id="workspace")
+    assert tokens == ["access", "new-token"]
+    assert repo.reserve_snapshots[acc.id].limit is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", [None, "account", "user", "duplicate"])
+async def test_reserve_usage_is_display_metadata_not_routing_history(monkeypatch, mismatch):
+    acc = _make_account("reserve", "workspace")
+    acc.chatgpt_user_id = "user"
+    limit = {
+        "limit_name": "gpt-reserve",
+        "metered_feature": "base_model_inference",
+        "rate_limit": {
+            "allowed": True,
+            "primary_window": {"used_percent": 25, "limit_window_seconds": 18000, "reset_at": 2000000000},
+        },
+    }
+
+    async def fetch(**kwargs):
+        assert kwargs["supports_luna_reserve"] is True
+        return UsagePayload.model_validate(
+            {
+                "account_id": "other" if mismatch == "account" else "workspace",
+                "user_id": "other" if mismatch == "user" else "user",
+                "rate_limit": {"allowed": False},
+                "rate_limit_upsell": {"banner_type": "luna_reserve"},
+                "additional_rate_limits": [limit, limit] if mismatch == "duplicate" else [limit],
+            }
+        )
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_usage", fetch)
+    repo = StubAdditionalUsageRepository()
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo=None, additional_usage_repo=repo)
+    await updater.refresh_accounts([acc], latest_usage={})
+    assert repo.entries == []
+    assert (acc.id in repo.reserve_snapshots) is (mismatch is None)
+    if mismatch is None:
+        limit = repo.reserve_snapshots[acc.id].limit
+        assert limit is not None
+        assert limit.rate_limit is not None
+        assert limit.rate_limit.primary_window is not None
+        assert limit.rate_limit.primary_window.used_percent == 25
 
 
 @pytest.mark.asyncio

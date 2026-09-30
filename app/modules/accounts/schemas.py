@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List
+from typing import List, Literal
 
 from pydantic import Field, PrivateAttr, field_validator
 
@@ -69,7 +69,7 @@ class AccountLimitWarmupStatus(DashboardModel):
 
 
 class AccountAdditionalWindow(DashboardModel):
-    used_percent: float
+    used_percent: float | None
     reset_at: int | None = None
     window_minutes: int | None = None
 
@@ -79,7 +79,8 @@ class AccountAdditionalQuota(DashboardModel):
     limit_name: str
     metered_feature: str
     display_label: str | None = None
-    routing_policy: str = Field(default="inherit", pattern=r"^(inherit|normal|burn_first|preserve)$")
+    routing_policy: str | None = Field(default="inherit", pattern=r"^(inherit|normal|burn_first|preserve)$")
+    availability: Literal["available", "unavailable", "unknown"] | None = None
     primary_window: AccountAdditionalWindow | None = None
     secondary_window: AccountAdditionalWindow | None = None
 

@@ -54,7 +54,7 @@ const AccountLimitWarmupStatusSchema = z.object({
 });
 
 const AccountAdditionalWindowSchema = z.object({
-  usedPercent: z.number(),
+  usedPercent: z.number().nullable(),
   resetAt: z.number().nullable().optional(),
   windowMinutes: z.number().nullable().optional(),
 });
@@ -65,6 +65,7 @@ export const AccountAdditionalQuotaSchema = z.object({
   meteredFeature: z.string(),
   displayLabel: z.string().nullable().optional(),
   routingPolicy: z.enum(["inherit", "normal", "burn_first", "preserve"]).nullable().optional(),
+  availability: z.enum(["available", "unavailable", "unknown"]).nullable().optional(),
   primaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
   secondaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
 });

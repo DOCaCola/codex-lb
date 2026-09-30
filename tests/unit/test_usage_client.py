@@ -43,6 +43,7 @@ class UsageClientState:
     auth: str | None = None
     account: str | None = None
     payload: dict[str, str] | None = None
+    reserve_capability: str | None = None
 
 
 class StubRequestContext:
@@ -77,6 +78,7 @@ class StubRequestContext:
             self._state.auth = self._headers.get("Authorization")
             self._state.account = self._headers.get("chatgpt-account-id")
             self._state.payload = self._payload
+            self._state.reserve_capability = self._headers.get("x-openai-codex-luna-reserve")
             if response.status in statuses and attempt < attempts - 1:
                 continue
             return response
@@ -249,6 +251,37 @@ async def test_fetch_usage_retries_and_returns_payload(usage_server):
     assert state.calls == 2
     assert state.auth == "Bearer access-token"
     assert state.account == "acc_test"
+    assert state.reserve_capability is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("egress", ["direct", "native", "proxy"])
+async def test_reserve_capability_reaches_each_egress(usage_server, monkeypatch, egress):
+    base_url, client, state = usage_server
+    native = StubNativeClient([StubNativeResponse(200, _usage_payload())])
+    codex = StubCodexClient()
+    monkeypatch.setattr("app.core.clients.usage.discover_native_egress_client", lambda: native)
+    route = ResolvedUpstreamRoute(
+        mode="account_bound", pool_id="pool", endpoint=ResolvedProxyEndpoint("endpoint", "http", "proxy.test", 8080)
+    )
+    await fetch_usage(
+        access_token="token",
+        account_id="account",
+        base_url=base_url,
+        supports_luna_reserve=True,
+        client=cast(Any, client) if egress == "direct" else None,
+        route=route if egress == "proxy" else None,
+        codex_client=cast(Any, codex),
+        allow_direct_egress=egress != "proxy",
+    )
+    if egress == "direct":
+        assert state.reserve_capability == "1"
+    elif egress == "native":
+        assert native.requests[0].headers["x-openai-codex-luna-reserve"] == "1"
+    else:
+        headers = codex.calls[0]["headers"]
+        assert isinstance(headers, dict)
+        assert headers["x-openai-codex-luna-reserve"] == "1"
 
 
 @pytest.mark.asyncio

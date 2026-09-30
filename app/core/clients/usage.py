@@ -90,6 +90,7 @@ async def fetch_usage(
     route: ResolvedUpstreamRoute | None = None,
     codex_client: CodexClient | None = None,
     allow_direct_egress: bool = False,
+    supports_luna_reserve: bool = False,
 ) -> UsagePayload:
     settings = get_settings()
     usage_base = base_url or settings.upstream_base_url
@@ -97,6 +98,8 @@ async def fetch_usage(
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or USAGE_FETCH_TIMEOUT_SECONDS)
     retries = max_retries if max_retries is not None else USAGE_FETCH_MAX_RETRIES
     headers = _usage_headers(access_token, account_id)
+    if supports_luna_reserve:
+        headers["x-openai-codex-luna-reserve"] = "1"
     retry_options = _retry_options(retries + 1)
     require_route_or_direct_egress_opt_in(
         route=route,

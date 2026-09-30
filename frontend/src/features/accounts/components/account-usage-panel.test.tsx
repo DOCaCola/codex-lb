@@ -98,6 +98,49 @@ describe("AccountUsagePanel", () => {
     expect(screen.getByText("Resets in 6d 13h")).toBeInTheDocument();
   });
 
+  it("renders Reserve in the same additional-quota layout without a routing badge", () => {
+    const account = createAccountSummary({ additionalQuotas: [{
+      limitName: "gpt-reserve", meteredFeature: "base_model_inference",
+      displayLabel: "Luna Reserve", routingPolicy: null, availability: "available",
+      primaryWindow: { usedPercent: 25, windowMinutes: 300, resetAt: 1767229200 },
+      secondaryWindow: { usedPercent: 60, windowMinutes: 10080, resetAt: null },
+    }] });
+    render(<AccountUsagePanel account={account} />);
+    expect(screen.getByText("Luna Reserve")).toBeInTheDocument();
+    expect(screen.getByText("25% used")).toBeInTheDocument();
+    expect(screen.getByText("60% used")).toBeInTheDocument();
+    expect(screen.getByText("Weekly", { exact: true })).toBeInTheDocument();
+    expect(screen.getByTestId("additional-quota-windows")).toHaveClass("sm:grid-cols-2");
+    expect(screen.getByText("Resets in 1h")).toBeInTheDocument();
+    expect(screen.queryByText("Burn first")).not.toBeInTheDocument();
+  });
+
+  it.each(["unavailable", "unknown"] as const)("shows %s Reserve without fabricated usage", (availability) => {
+    const account = createAccountSummary({ additionalQuotas: [{
+      limitName: "gpt-reserve", meteredFeature: "base_model_inference",
+      displayLabel: "Luna Reserve", routingPolicy: null, availability,
+      primaryWindow: null, secondaryWindow: null,
+    }] });
+    render(<AccountUsagePanel account={account} />);
+    expect(screen.getByText("Usage unknown")).toBeInTheDocument();
+    expect(screen.getByText(availability === "unavailable" ? "Unavailable" : "Availability unknown")).toBeInTheDocument();
+    expect(screen.queryByText("0% used")).not.toBeInTheDocument();
+    expect(screen.queryByText("100% used")).not.toBeInTheDocument();
+  });
+
+  it("keeps a percentage-less window unknown and retains its reset countdown", () => {
+    const account = createAccountSummary({ additionalQuotas: [{
+      limitName: "gpt-reserve", meteredFeature: "base_model_inference",
+      displayLabel: "Luna Reserve", routingPolicy: null, availability: "available",
+      primaryWindow: { usedPercent: null, windowMinutes: 300, resetAt: 1767229200 },
+      secondaryWindow: null,
+    }] });
+    render(<AccountUsagePanel account={account} />);
+    expect(screen.getByText("Usage unknown")).toBeInTheDocument();
+    expect(screen.getByText("Resets in 1h")).toBeInTheDocument();
+    expect(screen.queryByText("0% used")).not.toBeInTheDocument();
+  });
+
   it("renders request log usage summary when available", () => {
     const account = createAccountSummary({
       requestUsage: {

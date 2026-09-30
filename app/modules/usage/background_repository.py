@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from datetime import datetime
 
+from app.core.usage.models import ReserveUsageSnapshot
 from app.db.models import UsageHistory
 from app.db.session import detach_session_objects, get_background_session
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository, UsageWindowWrite
@@ -69,6 +70,18 @@ class BackgroundUsageRepository:
 
 
 class BackgroundAdditionalUsageRepository:
+    async def record_reserve_usage(
+        self,
+        account_id: str,
+        snapshot: ReserveUsageSnapshot,
+        *,
+        expected_access_token_encrypted: bytes,
+    ) -> None:
+        async with get_background_session() as session:
+            await AdditionalUsageRepository(session).record_reserve_usage(
+                account_id, snapshot, expected_access_token_encrypted=expected_access_token_encrypted
+            )
+
     async def add_entry(
         self,
         account_id: str,

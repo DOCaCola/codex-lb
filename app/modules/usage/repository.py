@@ -26,12 +26,14 @@ from sqlalchemy import (
     true,
     tuple_,
     union_all,
+    update,
     values,
 )
 from sqlalchemy import cast as sqlalchemy_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
+from app.core.usage.models import ReserveUsageSnapshot
 from app.core.usage.types import UsageAggregateRow, UsageTrendBucket
 from app.core.utils.time import utcnow
 from app.db.account_identity_lock import lock_postgresql_account_identities
@@ -1503,6 +1505,30 @@ class UsageRepository:
 class AdditionalUsageRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def record_reserve_usage(
+        self,
+        account_id: str,
+        snapshot: ReserveUsageSnapshot,
+        *,
+        expected_access_token_encrypted: bytes,
+    ) -> None:
+        # Do not attach an old request's telemetry to a re-imported credential.
+        stmt = (
+            update(Account)
+            .where(
+                Account.id == account_id,
+                Account.access_token_encrypted == expected_access_token_encrypted,
+                or_(
+                    Account.reserve_usage["observed_at"].as_string().is_(None),
+                    Account.reserve_usage["observed_at"].as_string() <= snapshot.observed_at.isoformat(),
+                ),
+            )
+            .values(reserve_usage=snapshot.model_dump(mode="json"))
+        )
+        async with sqlite_writer_section():
+            await self._session.execute(stmt)
+            await self._session.commit()
 
     async def add_entry(
         self,

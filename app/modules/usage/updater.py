@@ -23,7 +23,13 @@ from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import ACCOUNT_PLAN_TYPES, coerce_account_plan_type, normalize_account_plan_type
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
-from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
+from app.core.usage.models import (
+    LUNA_RESERVE_MODEL,
+    AdditionalRateLimitPayload,
+    ReserveUsageSnapshot,
+    UsagePayload,
+    UsageWindow,
+)
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.utils.request_id import get_request_id
 from app.core.utils.shared_future import wait_on_shared_future
@@ -64,6 +70,14 @@ class UsageRepositoryPort(Protocol):
 
 
 class AdditionalUsageRepositoryPort(Protocol):
+    async def record_reserve_usage(
+        self,
+        account_id: str,
+        snapshot: ReserveUsageSnapshot,
+        *,
+        expected_access_token_encrypted: bytes,
+    ) -> None: ...
+
     async def add_entry(
         self,
         account_id: str,
@@ -593,6 +607,7 @@ class UsageUpdater:
         access_token_override: str | None = None,
     ) -> AccountRefreshResult:
         access_token = access_token_override or self._encryptor.decrypt(account.access_token_encrypted)
+        queried_access_token_encrypted = account.access_token_encrypted
         observation_started_at = utcnow()
         payload: UsagePayload | None = None
         try:
@@ -602,6 +617,7 @@ class UsageUpdater:
                 account_id=usage_account_id,
                 route=route,
                 allow_direct_egress=route is None,
+                supports_luna_reserve=True,
             )
         except UpstreamProxyRouteError as exc:
             logger.warning(
@@ -627,6 +643,7 @@ class UsageUpdater:
                 _mark_usage_refresh_auth_cooldown(account.id, exc.status_code)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             access_token = self._encryptor.decrypt(account.access_token_encrypted)
+            queried_access_token_encrypted = account.access_token_encrypted
             try:
                 route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
                 payload = await fetch_usage(
@@ -634,6 +651,7 @@ class UsageUpdater:
                     account_id=usage_account_id,
                     route=route,
                     allow_direct_egress=route is None,
+                    supports_luna_reserve=True,
                 )
             except UpstreamProxyRouteError as route_exc:
                 logger.warning(
@@ -682,6 +700,23 @@ class UsageUpdater:
 
         now_epoch = _now_epoch()
         if self._additional_usage_repo is not None:
+            reserve_identity_matches = (payload.account_id is None or payload.account_id == usage_account_id) and (
+                payload.user_id is None or payload.user_id == account.chatgpt_user_id
+            )
+            reserve_limits = [
+                limit for limit in payload.additional_rate_limits or [] if limit.limit_name == LUNA_RESERVE_MODEL
+            ]
+            if reserve_identity_matches and len(reserve_limits) <= 1 and access_token_override is None:
+                await self._additional_usage_repo.record_reserve_usage(
+                    account.id,
+                    ReserveUsageSnapshot(
+                        observed_at=observation_started_at,
+                        ordinary_allowed=payload.rate_limit.allowed if payload.rate_limit else None,
+                        banner_type=payload.rate_limit_upsell.banner_type if payload.rate_limit_upsell else None,
+                        limit=reserve_limits[0] if reserve_limits else None,
+                    ),
+                    expected_access_token_encrypted=queried_access_token_encrypted,
+                )
             if payload.additional_rate_limits:
                 merged_limits = _merge_additional_rate_limits(
                     payload.additional_rate_limits,
@@ -1246,6 +1281,9 @@ def _merge_additional_rate_limits(
 ) -> dict[str, dict[str, _MergedAdditionalWindow]]:
     merged: dict[str, dict[str, _MergedAdditionalWindow]] = {}
     for additional in additional_rate_limits:
+        # Reserve display telemetry is not a model-selection quota grant.
+        if additional.limit_name == LUNA_RESERVE_MODEL:
+            continue
         limit_name = getattr(additional, "limit_name", None)
         metered_feature = getattr(additional, "metered_feature", None)
         quota_key = canonicalize_additional_quota_key(

@@ -28,6 +28,7 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.auth.dashboard_session_ttl import DEFAULT_DASHBOARD_SESSION_TTL_SECONDS
+from app.core.types import JsonObject
 
 
 class Base(DeclarativeBase):
@@ -106,6 +107,7 @@ class Account(Base):
     reasoning_restrictions: Mapped[dict[str, list[str]]] = mapped_column(
         JSON, default=dict, server_default=text("'{}'"), nullable=False
     )
+    reserve_usage: Mapped[JsonObject | None] = mapped_column(JSON, nullable=True)
     routing_policy: Mapped[str] = mapped_column(
         String,
         default="normal",

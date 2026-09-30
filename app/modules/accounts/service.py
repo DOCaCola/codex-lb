@@ -45,6 +45,7 @@ from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.deletion import request_account_deletion_run
 from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.accounts.reserve_usage import reserve_usage_quota
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAdditionalWindow,
@@ -231,6 +232,10 @@ class AccountsService:
                             else None,
                         )
                     )
+        for account in accounts:
+            reserve_quota = reserve_usage_quota(account)
+            if reserve_quota is not None:
+                additional_quotas_by_account.setdefault(account.id, []).append(reserve_quota)
         for account_quota_list in additional_quotas_by_account.values():
             account_quota_list.sort(key=lambda quota: quota.display_label or quota.quota_key or quota.limit_name)
 
