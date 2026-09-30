@@ -16,6 +16,102 @@ from app.modules.claude.task_input import is_external_task_input
 logger = logging.getLogger(__name__)
 
 
+def _last_user_index(items: list[JsonValue]) -> int:
+    # Task envelopes are user turns; paired tool outputs are not.
+    return max(
+        (
+            index
+            for index, item in enumerate(items)
+            if isinstance(item, dict)
+            and (
+                (item.get("role") == "user" and item.get("type", "message") == "message")
+                or is_external_task_input(item)
+            )
+        ),
+        default=-1,
+    )
+
+
+def project_foreign_replay(
+    payload: dict[str, JsonValue], *, require_complete_history: bool = False
+) -> dict[str, JsonValue]:
+    """Preserve portable reasoning without treating foreign ciphertext as Claude state."""
+    items = payload.get("input")
+    if not isinstance(items, list):
+        return payload
+    last_user = _last_user_index(items)
+    projected: list[JsonValue] = []
+    converted = 0
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or item.get("type") != "reasoning":
+            projected.append(item)
+            continue
+        param = f"input[{index}]"
+        token = item.get("encrypted_content")
+        if token is not None and not isinstance(token, str):
+            raise ClientPayloadError(
+                "Reasoning encrypted_content must be text", param=param, code="invalid_provider_history"
+            )
+        if isinstance(token, str) and token.startswith(CLAUDE_REASONING_PREFIX):
+            projected.append(item)
+            continue
+        if token and (require_complete_history or index >= last_user):
+            reason = "Complete compaction" if require_complete_history else "Active reasoning continuation"
+            raise ClientPayloadError(
+                f"{reason} contains encrypted state from another provider that Claude cannot recover; "
+                "continue with its original provider or supply portable context.",
+                param=param,
+                code="nonportable_provider_history",
+            )
+        texts: list[str] = []
+        for field, kind in (("summary", "summary_text"), ("content", "reasoning_text")):
+            parts = item.get(field)
+            if parts is None:
+                continue
+            if not isinstance(parts, list):
+                raise ClientPayloadError(
+                    f"Reasoning {field} must be an array", param=f"{param}.{field}", code="invalid_provider_history"
+                )
+            field_texts: list[str] = []
+            for part in parts:
+                if not isinstance(part, dict) or part.get("type") != kind or not isinstance(part.get("text"), str):
+                    raise ClientPayloadError(
+                        f"Reasoning {field} cannot be represented as assistant text",
+                        param=f"{param}.{field}",
+                        code="nonportable_provider_history",
+                    )
+                text = part["text"]
+                assert isinstance(text, str)
+                if text.strip():
+                    field_texts.append(text)
+            # Some clients mirror the same text into summary and content.
+            if field == "summary" or field_texts != texts:
+                texts.extend(field_texts)
+        if token and not texts:
+            raise ClientPayloadError(
+                "Encrypted reasoning from another provider has no readable context for Claude; "
+                "continue with its original provider or supply portable context.",
+                param=param,
+                code="nonportable_provider_history",
+            )
+        if texts:
+            projected.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text} for text in texts],
+                }
+            )
+        else:
+            # Keep item positions stable for subsequent signed-history diagnostics.
+            projected.append({"type": "reasoning", "summary": []})
+        converted += 1
+    if not converted:
+        return payload
+    logger.info("claude_foreign_history_projection converted=%d", converted)
+    return {**payload, "input": projected}
+
+
 def has_claude_replay(items: NativeJsonValue) -> bool:
     return isinstance(items, list) and any(
         isinstance(item, dict)
@@ -120,20 +216,7 @@ def authenticate_replay(
     items = payload.get("input")
     if not isinstance(items, list):
         return ClaudeReplay((), None, None)
-    # Canonical task envelopes are user turns, not paired tool outputs. Actual
-    # tool results, including parallel results, remain in the assistant turn.
-    last_user = max(
-        (
-            index
-            for index, item in enumerate(items)
-            if isinstance(item, dict)
-            and (
-                (item.get("role") == "user" and item.get("type", "message") == "message")
-                or is_external_task_input(item)
-            )
-        ),
-        default=-1,
-    )
+    last_user = _last_user_index(items)
     blocks: list[ReplayBlock] = []
     owner: str | None = None
     preferred: str | None = None
@@ -143,7 +226,10 @@ def authenticate_replay(
         token = item.get("encrypted_content")
         if not isinstance(token, str):
             continue
-        envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
+        try:
+            envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
+        except ClientPayloadError as exc:
+            raise ClientPayloadError(str(exc), param=f"input[{index}]", code="invalid_provider_history") from exc
         # Summarization must not silently discard even completed signed history
         # when the preferred account/model is unavailable.
         strict = require_complete_history or envelope.block.get("type") == "web_search" or index >= last_user

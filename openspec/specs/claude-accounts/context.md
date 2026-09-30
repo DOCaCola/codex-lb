@@ -613,3 +613,40 @@ acceptance guarantees. Our extraction/rejection policy intentionally avoids
 blanket foreign-ciphertext deletion. Local authenticated endpoint and serializer
 tests verify projection, rejection and unchanged retained state; production was
 not changed during implementation.
+
+## Switching native Codex history to Claude
+
+The opposite direction needs provider classification before Claude authentication.
+Native OpenAI ciphertext is not a `claude-v1.` envelope. Completed foreign
+reasoning with readable summaries or reasoning_text is projected as ordinary
+historical assistant text, preserving distinct channels and omitting ciphertext
+and lookup identities only from the wire representation. Original retained items,
+messages and tool pairs remain unchanged. For example, Sol reasoning followed by
+a new user request becomes assistant text when that request selects Opus 5.5.
+Explicit users and canonical external tasks close historical turns; paired tool
+results do not. Empty plaintext reasoning retains its item position for errors.
+
+Opaque-only foreign history and active encrypted continuations fail explicitly
+with `nonportable_provider_history` and the input index. Complete compaction also
+rejects foreign ciphertext, even with a summary: a display summary cannot prove
+the full encrypted state survived. Plaintext-only compaction preserves readable
+reasoning. Genuine Claude envelopes, including empty-display signed thinking,
+retain client/conversation authentication and account/model ownership. Invalid
+authentication returns `invalid_provider_history` rather than a generic payload
+error. Conversion logs contain only counts.
+
+Inspected on 2026-09-30: OpenCodex
+`569e3e7dae48bafc54b8a1a7e3a85129befe2d98`, CLIProxyAPI
+`a270e7b9e57aaecd8f82555f44c2108518ad2330`, Sub2API
+`42bc7f6cffe24bcb471608e48e66b4a0afa1f882`, and OmniRoute
+`0b62441dbcc3f86a1844a77558733b806537e688`. OmniRoute #6953/#12105 and
+merged #12386 show why unsigned thinking must not be forwarded or given fake
+signatures. CLIProxyAPI #3663's September 21 follow-up warns that genuine signed
+thinking can have empty displayed text; its unmerged #5497 thinking downgrade is
+not adopted. OpenCodex's September 28 merged #6217 reports Opus 5.5 rejects a
+thinking off-switch, while #4769's replay guard supports explicit failure for
+unavailable mandatory state. Sub2API #5329 concerns malformed translated replay,
+not independent native OAuth qualification. Unlike blanket foreign-reasoning
+deletion in reference adapters, this policy preserves readable context.
+Endpoint mocks verify the transformation and refusal contracts, not live OAuth
+eligibility or full encrypted-state portability.

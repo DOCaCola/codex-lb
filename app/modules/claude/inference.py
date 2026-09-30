@@ -18,7 +18,7 @@ from app.modules.claude.chat_replay import ChatHistory, plan_chat_replay
 from app.modules.claude.dispatch import ClaudeDispatchPreparer, PreparedClaudeRequest
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
-from app.modules.claude.replay import authenticate_replay
+from app.modules.claude.replay import authenticate_replay, project_foreign_replay
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.responses import ResponsesProjection
 from app.modules.claude.routing import ClaudePoolUnavailable, select_account
@@ -56,7 +56,9 @@ async def prepare_responses(
     conversation_id = continuation.scope.conversation_id
     client_scope = api_key.id if api_key else "anonymous"
     opaque = ClaudeOpaqueState(TokenEncryptor())
-    logical = cast(dict[str, PydanticJsonValue], payload)
+    logical = project_foreign_replay(
+        cast(dict[str, PydanticJsonValue], payload), require_complete_history=require_complete_history
+    )
     raw_instructions = payload.get("instructions")
     instructions = raw_instructions if isinstance(raw_instructions, str) else ""
     chat_plan = (
