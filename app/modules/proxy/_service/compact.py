@@ -81,6 +81,7 @@ from app.modules.proxy.load_balancer import (
     AccountSelection,
     effective_account_concurrency_caps,
 )
+from app.modules.proxy.native_history import project_native_history
 from app.modules.proxy.replay_safety import (
     project_responses_input_for_account_neutral_fresh_replay,
     responses_input_suffix_retains_prior_output,
@@ -830,6 +831,7 @@ class _CompactMixin:
 
         proxy._raise_for_unsupported_input_image_references(payload)
         try:
+            payload = project_native_history(payload, headers, api_key)
             rewritten_file_account_id = await proxy._resolve_forwarded_file_account_for_responses(
                 payload,
                 headers,

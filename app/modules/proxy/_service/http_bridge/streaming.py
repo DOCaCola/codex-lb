@@ -267,6 +267,7 @@ from app.modules.proxy.durable_bridge_runtime import http_bridge_owner_process_e
 from app.modules.proxy.helpers import (
     _normalize_error_code,
 )
+from app.modules.proxy.native_history import project_native_history
 from app.modules.proxy.replay_safety import (
     AccountNeutralReplayProjection,
     project_responses_input_for_account_neutral_fresh_replay,
@@ -991,6 +992,7 @@ class _HTTPBridgeStreamingMixin:
         capacity_startup_wait_event: asyncio.Event | None = None,
         capacity_startup_ready_event: asyncio.Event | None = None,
     ) -> AsyncIterator[str]:
+        payload = project_native_history(payload, headers, api_key)
         dashboard_settings = await _service_get_settings_cache().get()
         runtime_config = _http_bridge_runtime_config(dashboard_settings, _service_get_settings())
         if http_bridge_active is False:

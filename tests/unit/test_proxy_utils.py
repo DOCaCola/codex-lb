@@ -29035,7 +29035,11 @@ def test_native_response_create_serializers_sanitize_source_reasoning_replay(
     assert replay_text is not None
     for text_data in (initial_text, plain_text, replay_text):
         upstream_input = json.loads(text_data)["input"]
-        assert upstream_input[0] == {"type": "reasoning", "content": []}
+        assert upstream_input[0] == {
+            "type": "reasoning",
+            "content": [],
+            "summary": [{"type": "summary_text", "text": "provider reasoning"}],
+        }
         assert "id" not in upstream_input[1]
         assert "id" not in upstream_input[2]
         assert upstream_input[2]["call_id"] == "call_source"

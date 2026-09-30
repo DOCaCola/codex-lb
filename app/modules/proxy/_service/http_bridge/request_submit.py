@@ -244,6 +244,7 @@ from app.modules.proxy.helpers import (
     _parse_openai_error,
 )
 from app.modules.proxy.load_balancer import effective_account_concurrency_caps, effective_routing_tunables
+from app.modules.proxy.native_history import project_native_history
 from app.modules.proxy.tool_call_dedupe import (
     dedupe_replayed_side_effect_input_items,
 )
@@ -705,6 +706,7 @@ class _HTTPBridgeRequestSubmitMixin:
     ) -> tuple[_WebSocketRequestState, str]:
         # One dump feeds client-metadata derivation, the frame and the usage
         # budget; ``to_payload`` is deterministic so sharing it is exact.
+        payload = project_native_history(payload, headers, api_key)
         base_payload = payload.to_payload()
         request_state, text_data = self._prepare_response_bridge_request_state(
             payload,

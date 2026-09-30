@@ -575,3 +575,41 @@ interrupted, and server search/resource history remains owner/model-bound.
 Logs add identifier presence/type and task-metadata completeness only; they do
 not expose metadata values, content or credentials. HTTP/WS and retained genuine
 tool-continuation mocks exercise this behavior; live acceptance is unverified.
+
+## Switching Claude history to native Codex
+
+The native Codex boundary cannot resolve Claude's `resp_msg_…` reasoning IDs or
+decode our authenticated `claude-v1.` envelopes. Renaming an ID would conceal
+only the first incompatibility. Native dispatch now authenticates the envelope
+against the same client/conversation scope used by source retention and extracts
+readable thinking into `summary_text`. It removes the Claude envelope and its
+foreign item identity from the outbound projection, never from retained history.
+Existing summaries and additional plaintext reasoning survive; ordinary messages
+and function/custom-tool call/result pairs retain their contents and call IDs.
+For example, a Claude thinking item with an empty summary becomes native
+`{type: reasoning, summary: [{type: summary_text, text: ...}]}` rather than an
+empty placeholder. This is portable context, not native signed OpenAI thinking.
+
+Redacted thinking and hosted search state are not portable native state. They
+fail explicitly with `nonportable_provider_history` at the affected input index;
+users can continue on the originating Claude model or supply portable context.
+No fake signatures, search calls or server-resource ownership are created.
+Malformed/cross-client/cross-conversation envelopes fail before dispatch. Native
+opaque reasoning stays encrypted and is not decoded or re-encrypted by the proxy.
+HTTP, WebSocket, retained continuation and compaction share this policy. Logs
+record a conversion count only. The low-level native transport rejects envelopes
+that bypass authenticated preparation.
+
+Inspected on 2026-09-30: OpenCodex
+`569e3e7dae48bafc54b8a1a7e3a85129befe2d98` removes invalid type-specific item IDs
+and route-incompatible reasoning; CLIProxyAPI
+`a270e7b9e57aaecd8f82555f44c2108518ad2330` validates native blob format and
+promotes plaintext reasoning into summaries; Sub2API
+`42bc7f6cffe24bcb471608e48e66b4a0afa1f882` removes Codex reasoning lookup IDs
+and recovers from invalid ciphertext; OmniRoute
+`fc5e2bccd4f70fecf5aab94dfb8136c74ab5a21b` has transport compatibility and
+replay-rejection policies. These are source/test observations, not live
+acceptance guarantees. Our extraction/rejection policy intentionally avoids
+blanket foreign-ciphertext deletion. Local authenticated endpoint and serializer
+tests verify projection, rejection and unchanged retained state; production was
+not changed during implementation.

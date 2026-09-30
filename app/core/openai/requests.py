@@ -19,6 +19,8 @@ from pydantic import (
 
 from app.core.openai.compaction import lower_codex_lb_compaction_items
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.reasoning import sanitize_native_reasoning_input as sanitize_native_reasoning_input
+from app.core.openai.reasoning import strip_invalid_native_item_ids
 from app.core.openai.tool_call_safety import is_downstream_side_effect_tool_call_item
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
@@ -1850,31 +1852,6 @@ def _sanitize_interleaved_reasoning_input(payload: MutableJsonObject) -> None:
     payload["input"] = _sanitize_input_items(input_items)
 
 
-def sanitize_native_reasoning_input(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
-    """Normalize replayed reasoning at the native ChatGPT egress boundary."""
-
-    sanitized = dict(payload)
-    input_value = sanitized.get("input")
-    if not is_json_list(input_value):
-        return sanitized
-    changed = False
-    normalized_input: list[JsonValue] = []
-    for item in input_value:
-        if not is_json_mapping(item) or item.get("type") != "reasoning":
-            normalized_input.append(item)
-            continue
-        normalized_item = dict(item)
-        content = normalized_item.get("content")
-        if is_json_list(content) and content:
-            normalized_item["content"] = []
-        normalized_item.pop("status", None)
-        normalized_input.append(normalized_item)
-        changed = changed or normalized_item != item
-    if changed:
-        sanitized["input"] = normalized_input
-    return sanitized
-
-
 def strip_unstored_lookup_item_ids(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
     """Remove lookup-only item identities from stateless Responses input."""
 
@@ -1907,7 +1884,7 @@ def strip_unstored_lookup_item_ids(payload: Mapping[str, JsonValue]) -> MutableJ
 def sanitize_native_responses_input(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
     """Normalize stateless input for the native ChatGPT Responses boundary."""
 
-    return sanitize_native_reasoning_input(strip_unstored_lookup_item_ids(payload))
+    return sanitize_native_reasoning_input(strip_unstored_lookup_item_ids(strip_invalid_native_item_ids(payload)))
 
 
 def normalize_reasoning_aliases(payload: MutableJsonObject) -> None:

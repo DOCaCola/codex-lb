@@ -87,7 +87,7 @@ def test_native_reasoning_sanitizer_removes_foreign_output_fields() -> None:
     sanitized = sanitize_native_reasoning_input(payload)
 
     assert sanitized["input"] == [
-        {"type": "reasoning", "content": []},
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "provider thought"}], "content": []},
         {"type": "message", "role": "user", "content": "continue"},
     ]
     assert "provider thought" in str(payload["input"])

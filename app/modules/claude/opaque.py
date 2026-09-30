@@ -9,8 +9,9 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX
 
-PREFIX = "claude-v1."
+PREFIX = CLAUDE_REASONING_PREFIX
 
 
 class SignedBlock(BaseModel):

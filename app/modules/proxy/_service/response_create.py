@@ -38,6 +38,7 @@ from app.core.config.settings import DEFAULT_HOME_DIR, get_settings
 from app.core.errors import openai_error
 from app.core.ingress_limits import MAX_CONFIGURABLE_RESPONSES_BODY_BYTES
 from app.core.ingress_policy import responses_body_limit_bytes
+from app.core.openai.reasoning import ensure_native_provider_history
 from app.core.openai.requests import ResponsesRequest, sanitize_native_responses_input
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
@@ -254,7 +255,9 @@ def _response_create_text(
     include_type_field: bool,
     client_metadata: Mapping[str, JsonValue] | None,
 ) -> str:
-    upstream_payload = sanitize_native_responses_input(payload.to_payload())
+    upstream_payload = payload.to_payload()
+    ensure_native_provider_history(upstream_payload)
+    upstream_payload = sanitize_native_responses_input(upstream_payload)
     upstream_payload.pop("stream", None)
     upstream_payload.pop("background", None)
     if include_type_field:

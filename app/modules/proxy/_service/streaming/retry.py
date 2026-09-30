@@ -110,6 +110,7 @@ from app.modules.proxy.helpers import (
 )
 from app.modules.proxy.http_continuation import http_continuation_signal
 from app.modules.proxy.load_balancer import AccountLease, AccountSelection
+from app.modules.proxy.native_history import project_native_history
 from app.modules.proxy.replay_safety import responses_payload_is_account_neutral_fresh_replay
 from app.modules.proxy.selection_errors import USAGE_LIMIT_REACHED, selection_failure_response
 
@@ -347,6 +348,7 @@ class _StreamingRetryMixin:
         enforce_openai_sdk_contract: bool = True,
     ) -> AsyncIterator[str]:
         proxy = cast(_StreamingServiceProtocol, self)
+        payload = project_native_history(payload, headers, api_key)
         scheduler = scheduler_for(proxy)
         clock = clock_for(proxy)
         useragent, useragent_group, conversation_id = _request_log_client_fields(headers)

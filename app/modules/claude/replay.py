@@ -8,10 +8,72 @@ from dataclasses import dataclass
 from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX, append_reasoning_summary
+from app.core.types import JsonValue as NativeJsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
 from app.modules.claude.task_input import is_external_task_input
 
 logger = logging.getLogger(__name__)
+
+
+def has_claude_replay(items: NativeJsonValue) -> bool:
+    return isinstance(items, list) and any(
+        isinstance(item, dict)
+        and isinstance(token := item.get("encrypted_content"), str)
+        and token.startswith(CLAUDE_REASONING_PREFIX)
+        for item in items
+    )
+
+
+def project_native_replay(
+    items: list[NativeJsonValue],
+    opaque: ClaudeOpaqueState,
+    *,
+    client_scope: str,
+    conversation_id: str,
+) -> list[NativeJsonValue]:
+    """Extract portable thinking, never relabel opaque Claude state as OpenAI."""
+    projected: list[NativeJsonValue] = []
+    converted = 0
+    for index, item in enumerate(items):
+        token = item.get("encrypted_content") if isinstance(item, dict) else None
+        if not isinstance(token, str) or not token.startswith(CLAUDE_REASONING_PREFIX):
+            projected.append(item)
+            continue
+        param = f"input[{index}]"
+        try:
+            envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
+        except ClientPayloadError as exc:
+            raise ClientPayloadError(str(exc), param=param, code="invalid_provider_history") from exc
+        kind = envelope.block["type"]
+        assert isinstance(item, dict)
+        if item.get("type") != "reasoning":
+            raise ClientPayloadError(
+                "Claude reasoning envelope must belong to a reasoning item",
+                param=param,
+                code="invalid_provider_history",
+            )
+        if kind != "thinking":
+            raise ClientPayloadError(
+                "Claude redacted thinking or hosted search state cannot be replayed to OpenAI; "
+                "continue with its original Claude model or provide portable context.",
+                param=param,
+                code="nonportable_provider_history",
+            )
+        text = envelope.block.get("thinking")
+        if not isinstance(text, str):
+            raise ClientPayloadError("Invalid Claude thinking text", param=param, code="invalid_provider_history")
+        result = dict(item)
+        result.pop("id", None)
+        result.pop("encrypted_content")
+        result.setdefault("summary", [])
+        if text:
+            append_reasoning_summary(result, text)
+        projected.append(result)
+        converted += 1
+    if converted:
+        logger.info("claude_native_history_projection converted=%d", converted)
+    return projected
 
 
 @dataclass(frozen=True)

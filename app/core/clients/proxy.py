@@ -88,6 +88,7 @@ from app.core.openai.parsing import (
     parse_compact_response_payload,
     parse_error_payload,
 )
+from app.core.openai.reasoning import ensure_native_provider_history
 from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
@@ -3724,7 +3725,9 @@ async def _stream_responses_with_session(
     failure_exception_type: str | None = None
     retryable_same_contract: bool | None = None
     client_session = session
-    payload_dict = sanitize_native_responses_input(payload.to_payload())
+    payload_dict = payload.to_payload()
+    ensure_native_provider_history(payload_dict)
+    payload_dict = sanitize_native_responses_input(payload_dict)
     apply_codex_installation_metadata(payload_dict, codex_installation_id)
     # ``shared`` (the default) returns immediately, so the bytes below are
     # unchanged. ``isolated`` must land here: above the http/websocket fork, so
@@ -4875,6 +4878,7 @@ class _CompactCommandTransport:
         effective_connect_timeout = _effective_compact_connect_timeout(settings.upstream_connect_timeout_seconds)
         payload_dict = _responses_compact_payload_for_responses_endpoint(self.payload)
         payload_dict["store"] = False
+        ensure_native_provider_history(payload_dict)
         payload_dict = sanitize_native_responses_input(payload_dict)
         payload_dict["stream"] = True
         payload_dict = await _inline_input_image_urls(
