@@ -125,6 +125,61 @@ async def test_routing_policy_does_not_override_owner_or_affinity(pool, async_cl
     assert await choose(preferred_source_id=pool[0]) == pool[0]
 
 
+async def test_reasoning_policy_filters_priority_affinity_and_strict_owner(pool, async_client):
+    restricted = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "routingPolicy": "burn_first",
+            "reasoningRestrictions": {"claude-opus-5": ["medium"]},
+        },
+    )
+    assert restricted.status_code == 200, restricted.text
+    assert await choose(reasoning_effort="medium") == pool[0]
+    assert await choose(reasoning_effort="high", preferred_source_id=pool[0]) == pool[1]
+    assert await choose(reasoning_effort="none", preferred_source_id=pool[0]) == pool[1]
+    # Opus 5 advertises high by default; omission must not turn into medium.
+    assert await choose(preferred_source_id=pool[0]) == pool[1]
+    with pytest.raises(ClaudePoolUnavailable) as error:
+        await choose(reasoning_effort="high", owner_source_id=pool[0])
+    assert error.value.code == "previous_response_owner_unavailable"
+
+
+async def test_missing_claude_catalog_retains_editable_reasoning_and_membership(pool, async_client, monkeypatch):
+    configured = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "reasoningRestrictions": {"claude-opus-5": ["high"]},
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    original = [CatalogModel.model_validate(item) for item in configured.json()["state"]["catalog"]]
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[]))
+    refreshed = await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")
+    assert refreshed.json()["state"]["reasoning_restrictions"] == {"claude-opus-5": ["high"]}
+    with pytest.raises(ClaudePoolUnavailable):
+        await choose(owner_source_id=pool[0], reasoning_effort="high")
+    edited = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "selections": [],
+            "reasoningRestrictions": {"claude-opus-5": ["medium"]},
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    selected = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "selections": [{"model": "claude-opus-5"}],
+        },
+    )
+    assert selected.status_code == 200, selected.text
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=original))
+    await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")
+    assert await choose(owner_source_id=pool[0], reasoning_effort="medium") == pool[0]
+    with pytest.raises(ClaudePoolUnavailable):
+        await choose(owner_source_id=pool[0], reasoning_effort="high")
+
+
 @pytest.mark.parametrize("condition", ["reauth", "uncertain", "refresh", "backoff", "quota"])
 async def test_unavailable_owner_cannot_cross_account(pool, condition):
     async with SessionLocal() as session:

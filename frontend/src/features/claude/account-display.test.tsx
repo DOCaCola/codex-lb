@@ -5,7 +5,11 @@ import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { AccountList as DashboardList } from "@/features/dashboard/components/account-list";
 import { AccountList } from "@/features/accounts/components/account-list";
 import { usePrivacyStore } from "@/hooks/use-privacy";
-import { ClaudeAccountCard, ClaudeListItem, ClaudeQuota } from "./account-display";
+import {
+  ClaudeAccountCard,
+  ClaudeListItem,
+  ClaudeQuota,
+} from "./account-display";
 import { claudeStatus } from "./display-values";
 import type { ClaudeAccount } from "./api";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -26,6 +30,7 @@ const account: ClaudeAccount = {
   expiresAt: "2026-09-25T20:00:00Z",
   state: {
     all_models: false,
+    reasoning_restrictions: {},
     selections: [],
     catalog: [],
     catalog_updated_at: null,
@@ -60,44 +65,87 @@ afterEach(() => {
 });
 describe("Claude shared account surfaces", () => {
   it("shows All models on both the card and account list", () => {
-    const automatic = { ...account, state: { ...account.state, all_models: true } };
-    const view = render(<MemoryRouter><ClaudeAccountCard account={automatic} /></MemoryRouter>);
+    const automatic = {
+      ...account,
+      state: { ...account.state, all_models: true },
+    };
+    const view = render(
+      <MemoryRouter>
+        <ClaudeAccountCard account={automatic} />
+      </MemoryRouter>,
+    );
     expect(screen.getByText(/Claude.*All models/)).toBeVisible();
-    view.rerender(<MemoryRouter><ClaudeListItem account={automatic} selected onSelect={vi.fn()} /></MemoryRouter>);
+    view.rerender(
+      <MemoryRouter>
+        <ClaudeListItem account={automatic} selected onSelect={vi.fn()} />
+      </MemoryRouter>,
+    );
     expect(screen.getByText(/Claude.*All models/)).toBeVisible();
   });
   it("renders only returned quota windows, including genuine unknown or stale scoped observations", () => {
     const { rerender } = render(<ClaudeQuota account={account} detailed />);
     expect(screen.queryByText("Weekly Opus remaining")).not.toBeInTheDocument();
-    expect(screen.queryByText("Weekly Sonnet remaining")).not.toBeInTheDocument();
-    rerender(<ClaudeQuota account={{ ...account, quota: {
-      ...account.quota, windows: [
-        ...account.quota.windows,
-        { name: "seven_day_opus", utilization: null, resetsAt: null, freshness: "unknown", exhausted: false },
-        { name: "seven_day_sonnet", utilization: 50, resetsAt: null, freshness: "stale", exhausted: false },
-      ],
-    } }} detailed />);
+    expect(
+      screen.queryByText("Weekly Sonnet remaining"),
+    ).not.toBeInTheDocument();
+    rerender(
+      <ClaudeQuota
+        account={{
+          ...account,
+          quota: {
+            ...account.quota,
+            windows: [
+              ...account.quota.windows,
+              {
+                name: "seven_day_opus",
+                utilization: null,
+                resetsAt: null,
+                freshness: "unknown",
+                exhausted: false,
+              },
+              {
+                name: "seven_day_sonnet",
+                utilization: 50,
+                resetsAt: null,
+                freshness: "stale",
+                exhausted: false,
+              },
+            ],
+          },
+        }}
+        detailed
+      />,
+    );
     expect(screen.getByText("Weekly Opus remaining")).toBeInTheDocument();
     expect(screen.getByText("Weekly Sonnet remaining")).toBeInTheDocument();
   });
   it("preserves usage overshoot while bounding the remaining bar", () => {
     render(
-      <ClaudeQuota account={{
-        ...account,
-        quota: {
-          ...account.quota,
-          windows: [{
-            ...account.quota.windows[0],
-            utilization: 104,
-            freshness: "fresh",
-            exhausted: true,
-          }],
-        },
-      }} />,
+      <ClaudeQuota
+        account={{
+          ...account,
+          quota: {
+            ...account.quota,
+            windows: [
+              {
+                ...account.quota.windows[0],
+                utilization: 104,
+                freshness: "fresh",
+                exhausted: true,
+              },
+            ],
+          },
+        }}
+      />,
     );
     expect(screen.getByText("104% used")).toBeInTheDocument();
-    expect(screen.getByTestId("mini-quota-track-5h")).toHaveAttribute("value", "0");
-    expect(screen.getByTestId("mini-quota-track-5h-fill")).toHaveStyle({ width: "0%" });
+    expect(screen.getByTestId("mini-quota-track-5h")).toHaveAttribute(
+      "value",
+      "0",
+    );
+    expect(screen.getByTestId("mini-quota-track-5h-fill")).toHaveStyle({
+      width: "0%",
+    });
   });
   it("requires explicit refresh ownership consent before enrollment", async () => {
     const client = new QueryClient({
@@ -161,9 +209,14 @@ describe("Claude shared account surfaces", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(changes).toEqual([{ isEnabled: false }]);
-    await userEvent.click(screen.getByRole("combobox", { name: "Routing policy" }));
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Routing policy" }),
+    );
     await userEvent.click(screen.getByRole("option", { name: "Burn first" }));
-    expect(changes).toEqual([{ isEnabled: false }, { routingPolicy: "burn_first" }]);
+    expect(changes).toEqual([
+      { isEnabled: false },
+      { routingPolicy: "burn_first" },
+    ]);
     view.rerender(
       <QueryClientProvider client={client}>
         <ClaudeAccountControls account={account} readOnly onCreated={vi.fn()}>
@@ -171,7 +224,9 @@ describe("Claude shared account surfaces", () => {
         </ClaudeAccountControls>
       </QueryClientProvider>,
     );
-    expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeDisabled();
+    expect(
+      screen.getByRole("combobox", { name: "Routing policy" }),
+    ).toBeDisabled();
     for (const name of [
       "Pause",
       "Reconnect",
@@ -190,15 +245,23 @@ describe("Claude shared account surfaces", () => {
         return HttpResponse.json({ ...account, name: "Team Claude" });
       }),
     );
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
-        <ClaudeAccountControls account={account} readOnly={false} onCreated={vi.fn()}>
+        <ClaudeAccountControls
+          account={account}
+          readOnly={false}
+          onCreated={vi.fn()}
+        >
           {({ detail }) => detail}
         </ClaudeAccountControls>
       </QueryClientProvider>,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Rename account" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Rename account" }),
+    );
     const input = screen.getByRole("textbox", { name: "Account name" });
     await userEvent.clear(input);
     await userEvent.type(input, "Team Claude");
@@ -214,36 +277,99 @@ describe("Claude shared account surfaces", () => {
   });
   it("shows automatic model limits and saves identifiers only", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
-    const discovered: ClaudeAccount = { ...account, state: { ...account.state, catalog: [
-      { id: "claude-opus-5", display_name: "Opus", max_input_tokens: 1000000, max_tokens: 128000 },
-      { id: "unknown", display_name: "Unknown model", max_input_tokens: null, max_tokens: null },
-    ] }};
-    const view = render(<ModelSelection account={discovered} readOnly={false} onSave={save} onClose={vi.fn()} />);
+    const discovered: ClaudeAccount = {
+      ...account,
+      state: {
+        ...account.state,
+        catalog: [
+          {
+            id: "claude-opus-5",
+            display_name: "Opus",
+            max_input_tokens: 1000000,
+            max_tokens: 128000,
+            reasoning_levels: ["low", "medium", "high", "max"],
+            default_reasoning_level: "high",
+          },
+          {
+            id: "unknown",
+            display_name: "Unknown model",
+            max_input_tokens: null,
+            max_tokens: null,
+            reasoning_levels: [],
+            default_reasoning_level: null,
+          },
+        ],
+      },
+    };
+    const view = render(
+      <ModelSelection
+        account={discovered}
+        readOnly={false}
+        onSave={save}
+        onClose={vi.fn()}
+      />,
+    );
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    expect(screen.getByText(/1M context.*128K maximum output.*64K default output/i)).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Unknown model — Unavailable" })).toBeDisabled();
+    expect(
+      screen.getByText(/1M context.*128K maximum output.*64K default output/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Unknown model — Unavailable" }),
+    ).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox", { name: "Opus" }));
     await userEvent.click(screen.getByRole("button", { name: "Save 1 model" }));
-    expect(save).toHaveBeenCalledWith([{ model: "claude-opus-5" }]);
-    view.rerender(<ModelSelection account={discovered} readOnly onSave={save} onClose={vi.fn()} />);
+    expect(save).toHaveBeenCalledWith({
+      selections: [{ model: "claude-opus-5" }],
+      allModels: false,
+      reasoningRestrictions: {},
+    });
+    view.rerender(
+      <ModelSelection
+        account={discovered}
+        readOnly
+        onSave={save}
+        onClose={vi.fn()}
+      />,
+    );
     expect(screen.getByRole("checkbox", { name: "Opus" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save 1 model" })).toBeDisabled();
   });
   it("can remove a selected model with unavailable limits", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
-    render(<ModelSelection account={{ ...account, state: { ...account.state, selections: [{ model: "removed" }] } }} readOnly={false} onSave={save} onClose={vi.fn()} />);
-    const checkbox = screen.getByRole("checkbox", { name: "removed — Unavailable" });
+    render(
+      <ModelSelection
+        account={{
+          ...account,
+          state: { ...account.state, selections: [{ model: "removed" }] },
+        }}
+        readOnly={false}
+        onSave={save}
+        onClose={vi.fn()}
+      />,
+    );
+    const checkbox = screen.getByRole("checkbox", {
+      name: "removed — Unavailable",
+    });
     expect(checkbox).toBeEnabled();
     await userEvent.click(checkbox);
-    await userEvent.click(screen.getByRole("button", { name: "Save 0 models" }));
-    expect(save).toHaveBeenCalledWith([]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save 0 models" }),
+    );
+    expect(save).toHaveBeenCalledWith({
+      selections: [],
+      allModels: false,
+      reasoningRestrictions: {},
+    });
   });
   it("distinguishes unknown and stale observations", () => {
     render(<ClaudeQuota account={account} />);
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(screen.getByText("60%")).toBeInTheDocument();
     expect(screen.getByText("· stale")).toBeInTheDocument();
-    expect(screen.getByTestId("mini-quota-track-5h")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("mini-quota-track-5h")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
   });
   it.each([AccountCards, DashboardList])(
     "includes provider-only accounts in dashboard layouts",
@@ -255,7 +381,9 @@ describe("Claude shared account surfaces", () => {
       );
       expect(screen.getByText(account.name)).toBeInTheDocument();
       if (Component === DashboardList)
-        expect(screen.getAllByTestId("account-list-quota-meter")).toHaveLength(2);
+        expect(screen.getAllByTestId("account-list-quota-meter")).toHaveLength(
+          2,
+        );
       expect(screen.getByRole("link", { name: "Details" })).toHaveAttribute(
         "href",
         "/accounts?selected=claude-test",
@@ -310,7 +438,10 @@ describe("Claude shared account surfaces", () => {
       quota: {
         ...account.quota,
         models: [{ model: "test", blocked: true, retryAt: null }],
-        windows: account.quota.windows.map((window) => ({ ...window, exhausted: window.name === drained })),
+        windows: account.quota.windows.map((window) => ({
+          ...window,
+          exhausted: window.name === drained,
+        })),
       },
     });
     // Same distinction as Codex: 5-hour drain is rate limited, weekly is exceeded.

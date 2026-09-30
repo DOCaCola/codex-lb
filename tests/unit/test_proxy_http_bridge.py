@@ -93,6 +93,27 @@ from tests.unit.hypothesis_strategies import json_values as hypothesis_json_valu
 pytestmark = pytest.mark.unit
 
 
+def test_parallel_http_bridge_compatibility_uses_requested_reasoning(monkeypatch):
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "policy", None)
+    session = _make_bridge_session(key=key)
+    session.request_model = "gpt-5.4"
+    session.account.reasoning_restrictions = {"gpt-5.4": ["high"]}
+    monkeypatch.setattr(http_bridge_helpers_module, "_http_bridge_session_account_active", lambda _: True)
+    kwargs = {
+        "key": key,
+        "session": session,
+        "inflight_creation": False,
+        "incoming_turn_state": None,
+        "previous_response_id": "resp_owned",
+        "request_model": "gpt-5.4",
+        "request_service_tier": None,
+        "request_scope_id": "policy-turn",
+    }
+    assert http_bridge_helpers_module._http_bridge_parallel_fork_key(**kwargs, request_reasoning_effort="high") is None
+    with pytest.raises(ProxyResponseError):
+        http_bridge_helpers_module._http_bridge_parallel_fork_key(**kwargs, request_reasoning_effort="none")
+
+
 class _RecordingVirtualScheduler(VirtualScheduler):
     def __init__(self, clock: VirtualClock) -> None:
         super().__init__(clock)
@@ -9245,6 +9266,46 @@ async def test_http_bridge_capacity_wait_with_response_id_sends_explicit_keepali
     assert response["id"] == "resp-capacity-response"
 
     await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_warm_http_bridge_reselects_when_reasoning_policy_changes(monkeypatch):
+    from app.modules.proxy.account_cache import get_routing_availability_cache
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    service._ring_membership = None
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "reasoning-policy", None)
+    existing = _make_bridge_session(key=key)
+    existing.request_model = "gpt-5.4"
+    replacement = _make_bridge_session(key=key)
+    replacement.request_model = "gpt-5.4"
+    replacement.account.id = "replacement"
+    service._http_bridge_sessions[key] = existing
+    create = AsyncMock(return_value=replacement)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", create)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(service, "_schedule_http_bridge_session_closes", Mock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service, "_active_http_bridge_instance_ring", AsyncMock(return_value=("instance-a", ["instance-a"]))
+    )
+    get_routing_availability_cache().set_reasoning_restrictions(existing.account.id, {"gpt-5.4": ["medium"]})
+    resolved = await service._get_or_create_http_bridge_session(
+        key,
+        headers={},
+        affinity=proxy_service._AffinityPolicy(key=key.affinity_key),
+        api_key=None,
+        request_model="gpt-5.4",
+        request_reasoning_effort="high",
+        idle_ttl_seconds=120,
+        max_sessions=8,
+    )
+    assert resolved is replacement
+    assert create.await_args.args[0].affinity_kind == "internal_request_parallel"
+    assert service._http_bridge_sessions[key] is existing
+    assert create.await_args.kwargs["request_reasoning_effort"] == "high"
 
 
 @pytest.mark.asyncio
@@ -20975,6 +21036,7 @@ async def test_get_or_create_http_bridge_session_preserves_explicit_forwarded_af
         api_key: proxy_service.ApiKeyData | None,
         request_model: str | None,
         idle_ttl_seconds: float,
+        request_reasoning_effort: str | None = None,
         request_stage: str = "first_turn",
         preferred_account_id: str | None = None,
         require_preferred_account: bool = False,
@@ -21060,6 +21122,7 @@ async def test_get_or_create_http_bridge_session_falls_back_to_session_header_wh
         api_key: proxy_service.ApiKeyData | None,
         request_model: str | None,
         idle_ttl_seconds: float,
+        request_reasoning_effort: str | None = None,
         request_stage: str = "first_turn",
         preferred_account_id: str | None = None,
         require_preferred_account: bool = False,
@@ -21269,6 +21332,7 @@ async def test_get_or_create_http_bridge_session_preserves_durable_canonical_pro
         api_key: proxy_service.ApiKeyData | None,
         request_model: str | None,
         idle_ttl_seconds: float,
+        request_reasoning_effort: str | None = None,
         request_stage: str = "first_turn",
         preferred_account_id: str | None = None,
         require_preferred_account: bool = False,

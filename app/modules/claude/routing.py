@@ -18,8 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config.settings_cache import get_settings_cache
+from app.core.model_routing import reasoning_allowed
 from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourceModel
 from app.modules.api_keys.service import ApiKeyData
+from app.modules.claude.capabilities import reasoning_spec
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.quota import model_quota, quota_status
 from app.modules.claude.quota_evidence import read_evidence
@@ -52,12 +54,19 @@ class ClaudePoolUnavailable(ClaudeError):
 @dataclass(frozen=True)
 class Eligibility:
     eligible: bool
-    reason: Literal["ready", "paused", "credentials", "refreshing", "refresh_backoff", "model", "quota", "cooldown"]
+    reason: Literal[
+        "ready", "paused", "credentials", "refreshing", "refresh_backoff", "model", "reasoning", "quota", "cooldown"
+    ]
     retry_at: datetime | None = None
 
 
 def eligibility(
-    account: ClaudeAccount, model: str, *, now: datetime, cooldowns: Sequence[ClaudeCooldown] = ()
+    account: ClaudeAccount,
+    model: str,
+    *,
+    now: datetime,
+    cooldowns: Sequence[ClaudeCooldown] = (),
+    reasoning_effort: str | None = None,
 ) -> Eligibility:
     source = account.source
     if not source.is_enabled:
@@ -69,6 +78,13 @@ def eligibility(
     if not source.supports_responses or not any(row.model == model and row.is_enabled for row in source.models):
         return Eligibility(False, "model")
     state = AccountState.model_validate_json(account.state_json)
+    upstream_model = model.removeprefix("anthropic/")
+    entry = next((entry for entry in state.catalog if entry.id == upstream_model), None)
+    spec = reasoning_spec(upstream_model, entry.capabilities if entry else None)
+    if not reasoning_allowed(
+        state.reasoning_restrictions.get(upstream_model), reasoning_effort, spec.default if spec else None
+    ):
+        return Eligibility(False, "reasoning")
     quota = model_quota(model, quota_status(state, now=now).windows)
     restrictions = [item for row in cooldowns for item in read_evidence(row).restrictions if item.until > now]
     deadlines = [item.until for item in restrictions]
@@ -101,6 +117,7 @@ async def select_account(
     preferred_source_id: str | None = None,
     excluded_source_ids: frozenset[str] = frozenset(),
     require_streaming: bool = False,
+    reasoning_effort: str | None = None,
     now: datetime | None = None,
 ) -> ClaudeAccount:
     now = now or datetime.now(UTC)
@@ -150,7 +167,11 @@ async def select_account(
         (
             account,
             eligibility(
-                account, model, now=now, cooldowns=[row for row in cooldowns if row.source_id == account.source_id]
+                account,
+                model,
+                now=now,
+                cooldowns=[row for row in cooldowns if row.source_id == account.source_id],
+                reasoning_effort=reasoning_effort,
             ),
         )
         for account in accounts
@@ -173,6 +194,12 @@ async def select_account(
                 "All authorized Claude accounts for this model are rate limited",
                 status_code=429,
                 retry_at=retry_at,
+            )
+        if candidates and all(diagnostic.reason == "reasoning" for _, diagnostic in candidates):
+            raise ClaudePoolUnavailable(
+                "reasoning_effort_not_allowed",
+                "No eligible Claude account permits the requested or default reasoning effort",
+                status_code=400,
             )
         raise ClaudePoolUnavailable(
             "claude_pool_unavailable", "No authorized Claude account is available for this model", retry_at=retry_at

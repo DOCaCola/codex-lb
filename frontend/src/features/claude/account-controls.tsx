@@ -19,7 +19,6 @@ import { ClaudeVersionControls } from "./version-controls";
 import { ClaudeCapacitySettings } from "./capacity-settings";
 import { ClaudeResetGrants } from "./reset-grants";
 import { ModelSelection } from "./model-selection";
-import { AccountModelMode } from "@/features/accounts/components/account-model-mode";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
@@ -38,7 +37,9 @@ export function ClaudeAccountControls({
   children: (controls: { onAdd: () => void; detail: ReactNode }) => ReactNode;
 }) {
   const api = useClaude();
-  const dateFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
+  const dateFormat = useDateDisplayFormatStore(
+    (state) => state.dateDisplayFormat,
+  );
   const [open, setOpen] = useState(false);
   const [reconnectId, setReconnectId] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -81,13 +82,30 @@ export function ClaudeAccountControls({
         <AccountNameEditor
           key={account.id}
           value={account.name}
-          labels={{ edit: "Rename account", input: "Account name", save: "Save name", cancel: "Cancel" }}
+          labels={{
+            edit: "Rename account",
+            input: "Account name",
+            save: "Save name",
+            cancel: "Cancel",
+          }}
           disabled={readOnly || busy}
-          onSave={(name) => run(() => api.update.mutateAsync({ id: account.id, body: { name: name ?? account.name } }))}
+          onSave={(name) =>
+            run(() =>
+              api.update.mutateAsync({
+                id: account.id,
+                body: { name: name ?? account.name },
+              }),
+            )
+          }
         >
           <ClaudeName account={account} />
         </AccountNameEditor>
-        <p className="mt-0.5 text-xs text-muted-foreground">Claude OAuth | {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Claude OAuth |{" "}
+          {account.state.all_models
+            ? "All models"
+            : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
+        </p>
       </div>
       {[error, account.state.catalog_error, account.state.usage_error]
         .filter(Boolean)
@@ -97,31 +115,64 @@ export function ClaudeAccountControls({
           </p>
         ))}
       <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Usage
+        </h3>
         <ClaudeQuota account={account} detailed />
-        <ClaudeResetGrants key={account.id} accountId={account.id} readOnly={readOnly} />
-        <ProviderAccountTrends provider="claude" accountId={account.id} embedded />
+        <ClaudeResetGrants
+          key={account.id}
+          accountId={account.id}
+          readOnly={readOnly}
+        />
+        <ProviderAccountTrends
+          provider="claude"
+          accountId={account.id}
+          embedded
+        />
       </section>
       <p className="text-xs text-muted-foreground">
         Quota observations are provider-reported. Recorded API-equivalent costs
         are not subscription charges. OAuth acceptance and included-plan billing
         require live qualification.
       </p>
-      <AccountInfoPanel title="Monitoring" rows={[
-        { label: "Status", value: formatSlug(account.credentialStatus) },
-        { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
-        { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
-        { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
-      ]} />
+      <AccountInfoPanel
+        title="Monitoring"
+        rows={[
+          { label: "Status", value: formatSlug(account.credentialStatus) },
+          {
+            label: "Access token expires",
+            value: formatDateTimeInline(account.expiresAt, dateFormat),
+          },
+          {
+            label: "Catalog updated",
+            value: formatDateTimeInline(
+              account.state.catalog_updated_at,
+              dateFormat,
+            ),
+          },
+          {
+            label: "Usage updated",
+            value: formatDateTimeInline(
+              account.state.usage_updated_at,
+              dateFormat,
+            ),
+          },
+        ]}
+      />
       <details className="min-w-0 rounded-lg border bg-muted/30 p-4">
-        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">Provider settings</summary>
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Provider settings
+        </summary>
         <div className="mt-4 space-y-4">
           <ClaudeCapacitySettings
             key={`${account.id}:${account.maxConcurrency}`}
             value={account.maxConcurrency}
             readOnly={readOnly}
             onSave={(maxConcurrency) =>
-              api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })
+              api.update.mutateAsync({
+                id: account.id,
+                body: { maxConcurrency },
+              })
             }
           />
           <ClaudeVersionControls readOnly={readOnly} />
@@ -129,24 +180,42 @@ export function ClaudeAccountControls({
       </details>
       {/* Actions last, matching the Codex account detail. */}
       <div className="space-y-3 border-t pt-4">
-        <AccountModelMode allModels={account.state.all_models} disabled={readOnly || busy}
-          onChange={(allModels) => void run(() => api.update.mutateAsync({ id: account.id, body: { allModels } }))} />
         <AccountRoutingPolicyControl
           policy={account.routingPolicy}
           disabled={readOnly || busy}
-          onChange={(routingPolicy) => void run(() => api.update.mutateAsync({ id: account.id, body: { routingPolicy } }))}
+          onChange={(routingPolicy) =>
+            void run(() =>
+              api.update.mutateAsync({
+                id: account.id,
+                body: { routingPolicy },
+              }),
+            )
+          }
         />
         <div className="flex flex-wrap gap-2">
           <AccountPauseButton
             paused={!account.isEnabled}
             disabled={readOnly || busy}
-            onClick={() => void run(() => api.update.mutateAsync({
-              id: account.id,
-              body: { isEnabled: !account.isEnabled },
-            }))}
+            onClick={() =>
+              void run(() =>
+                api.update.mutateAsync({
+                  id: account.id,
+                  body: { isEnabled: !account.isEnabled },
+                }),
+              )
+            }
           />
-          <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={() => setModelAccountId(account.id)}>
-            <Layers className="h-3.5 w-3.5" />Models ({account.state.all_models ? "All" : account.state.selections.length})
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={readOnly || busy}
+            onClick={() => setModelAccountId(account.id)}
+          >
+            <Layers className="h-3.5 w-3.5" />
+            Models (
+            {account.state.all_models ? "All" : account.state.selections.length}
+            )
           </Button>
           <Button
             size="sm"
@@ -199,9 +268,15 @@ export function ClaudeAccountControls({
         },
         detail,
       })}
-      {account && modelAccountId === account.id && <ModelSelection
-        key={account.id + JSON.stringify(account.state.selections)} account={account} readOnly={readOnly || busy}
-        onClose={() => setModelAccountId(null)} onSave={(selections) => api.update.mutateAsync({ id: account.id, body: { selections } })} />}
+      {account && modelAccountId === account.id && (
+        <ModelSelection
+          key={account.id + JSON.stringify(account.state.selections)}
+          account={account}
+          readOnly={readOnly || busy}
+          onClose={() => setModelAccountId(null)}
+          onSave={(body) => api.update.mutateAsync({ id: account.id, body })}
+        />
+      )}
       <Dialog
         open={open}
         onOpenChange={(value) => {

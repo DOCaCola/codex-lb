@@ -15,12 +15,18 @@ export const ClaudeAccountSchema = z.object({
   expiresAt: z.string(),
   state: z.object({
     all_models: z.boolean(),
+    reasoning_restrictions: z.record(z.string(), z.array(z.string()).min(1)),
     selections: z.array(SelectionSchema),
-    catalog: z.array(z.object({
-      id: z.string(), display_name: z.string(),
-      max_input_tokens: z.number().int().positive().nullable(),
-      max_tokens: z.number().int().positive().nullable(),
-    })),
+    catalog: z.array(
+      z.object({
+        id: z.string(),
+        display_name: z.string(),
+        max_input_tokens: z.number().int().positive().nullable(),
+        max_tokens: z.number().int().positive().nullable(),
+        reasoning_levels: z.array(z.string()),
+        default_reasoning_level: z.string().nullable(),
+      }),
+    ),
     catalog_updated_at: z.string().nullable(),
     catalog_error: z.string().nullable(),
     usage_updated_at: z.string().nullable(),
@@ -54,6 +60,7 @@ export const ClaudeAccountSchema = z.object({
 export type ClaudeAccount = z.infer<typeof ClaudeAccountSchema>;
 export type ClaudeUpdate = {
   allModels?: boolean;
+  reasoningRestrictions?: Record<string, string[]>;
   routingPolicy?: "normal" | "burn_first" | "preserve";
   maxConcurrency?: number | null;
   name?: string;

@@ -469,7 +469,7 @@ from app.modules.proxy._service.websocket.helpers import (
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
 from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
-from app.modules.proxy.account_cache import is_account_model_allowed
+from app.modules.proxy.account_cache import is_account_model_allowed, is_account_reasoning_allowed
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
     _is_synthesized_turn_state,
@@ -2305,11 +2305,18 @@ class _WebSocketMixin:
                     and (
                         request_state.require_security_work_authorized
                         or not is_account_model_allowed(account, request_state.model)
+                        or not is_account_reasoning_allowed(
+                            account, request_state.model, request_state.routing_reasoning_effort
+                        )
                     )
                 ):
                     capability_account_reusable = False
-                    if upstream_requires_security_work_authorized and is_account_model_allowed(
-                        account, request_state.model
+                    if (
+                        upstream_requires_security_work_authorized
+                        and is_account_model_allowed(account, request_state.model)
+                        and is_account_reasoning_allowed(
+                            account, request_state.model, request_state.routing_reasoning_effort
+                        )
                     ):
                         try:
                             (
@@ -2431,6 +2438,7 @@ class _WebSocketMixin:
                         api_key=request_state.api_key or api_key,
                         affinity_policy=request_state.affinity_policy,
                         model=request_state.model,
+                        reasoning_effort=request_state.routing_reasoning_effort,
                         preferred_account_id=account.id,
                         require_security_work_authorized=request_state.require_security_work_authorized,
                         fallback_on_preferred_account_unavailable=False,
@@ -3676,6 +3684,7 @@ class _WebSocketMixin:
             request_stage=request_state.request_stage,
             api_key=api_key,
             model=request_state.model,
+            reasoning_effort=request_state.routing_reasoning_effort,
             service_tier=request_state.requested_service_tier,
             preferred_account_id=account.id,
             require_security_work_authorized=request_state.require_security_work_authorized,
@@ -4094,6 +4103,7 @@ class _WebSocketMixin:
                     prefer_earlier_reset_window=prefer_earlier_reset_window,
                     routing_strategy=routing_strategy,
                     model=model,
+                    reasoning_effort=request_state.routing_reasoning_effort,
                     service_tier=request_state.requested_service_tier,
                     exclude_account_ids=exclude_account_ids,
                     preferred_account_id=preferred_account_id,

@@ -1004,6 +1004,7 @@ class _WebSocketRequestState:
     reasoning_effort: str | None
     api_key_reservation: ApiKeyUsageReservationData | None
     started_at: float
+    pre_normalization_reasoning_effort: str | None = None
     responses_lite_model: str | None = None
     latency_first_token_ms: int | None = None
     ttft_reasoning_deltas: dict[tuple[str | None, int | None, int | None], _TTFTReasoningDeltaState] = field(
@@ -1324,6 +1325,10 @@ class _WebSocketRequestState:
     capacity_startup_wait_event: asyncio.Event | None = None
     capacity_startup_ready_event: asyncio.Event | None = None
 
+    @property
+    def routing_reasoning_effort(self) -> str | None:
+        return self.pre_normalization_reasoning_effort or self.reasoning_effort
+
 
 @dataclass(frozen=True, slots=True)
 class _HTTPBridgeSessionKey:
@@ -1487,13 +1492,16 @@ def _http_bridge_session_supports_service_tier(
     *,
     request_model: str | None,
     request_service_tier: str | None,
+    request_reasoning_effort: str | None = None,
 ) -> bool:
     if request_model is None:
         return True
 
-    from app.modules.proxy.account_cache import is_account_model_allowed
+    from app.modules.proxy.account_cache import is_account_model_allowed, is_account_reasoning_allowed
 
     if not is_account_model_allowed(session.account, request_model):
+        return False
+    if not is_account_reasoning_allowed(session.account, request_model, request_reasoning_effort):
         return False
 
     registry = get_model_registry()

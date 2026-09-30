@@ -63,6 +63,7 @@ class ModelSourcesRepository:
         allowed_source_ids: set[str] | None = None,
         require_streaming: bool = False,
         only_disabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> ModelSource | None:
         stmt = (
             select(ModelSource)
@@ -80,7 +81,6 @@ class ModelSourcesRepository:
             .where(ModelSourceModel.model == model)
             .where(_enablement_filter(only_disabled))
             .order_by(ModelSource.name, ModelSource.id)
-            .limit(1)
         )
         if require_streaming:
             stmt = stmt.where(ModelSourceModel.supports_streaming.is_(True))
@@ -89,7 +89,9 @@ class ModelSourcesRepository:
                 return None
             stmt = stmt.where(ModelSource.id.in_(allowed_source_ids))
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        return await self._choose_source(
+            list(result.scalars().unique()), model, only_disabled=only_disabled, reasoning_effort=reasoning_effort
+        )
 
     async def find_responses_source_for_model(
         self,
@@ -100,6 +102,8 @@ class ModelSourcesRepository:
         only_disabled: bool = False,
         excluded_source_ids: set[str] | None = None,
         advance_rotation: bool = True,
+        reasoning_effort: str | None = None,
+        enforce_reasoning: bool = True,
     ) -> ModelSource | None:
         stmt = (
             select(ModelSource)
@@ -118,14 +122,38 @@ class ModelSourcesRepository:
                 return None
             stmt = stmt.where(ModelSource.id.in_(allowed_source_ids))
         result = await self._session.execute(stmt)
+        sources = list(result.scalars().unique())
+        return await self._choose_source(
+            sources,
+            model,
+            only_disabled=only_disabled,
+            reasoning_effort=reasoning_effort,
+            enforce_reasoning=enforce_reasoning,
+            excluded_source_ids=excluded_source_ids,
+            advance_rotation=advance_rotation,
+        )
+
+    async def _choose_source(
+        self,
+        sources: list[ModelSource],
+        model: str,
+        *,
+        only_disabled: bool,
+        reasoning_effort: str | None,
+        enforce_reasoning: bool = True,
+        excluded_source_ids: set[str] | None = None,
+        advance_rotation: bool = True,
+    ) -> ModelSource | None:
         from app.modules.openrouter.routing import select_available
 
-        sources = list(result.scalars().unique())
+        sources = [source for source in sources if source.id not in (excluded_source_ids or set())]
         if only_disabled:
             return sources[0] if sources else None
-        return await select_available(
-            self._session, sources, model, excluded=excluded_source_ids, advance_rotation=advance_rotation
-        )
+        if enforce_reasoning and sources and sources[0].kind == "openrouter":
+            from app.modules.model_sources.reasoning import filter_reasoning_sources
+
+            sources = filter_reasoning_sources(sources, model, reasoning_effort)
+        return await select_available(self._session, sources, model, advance_rotation=advance_rotation)
 
     async def find_audio_transcriptions_source_for_model(
         self,

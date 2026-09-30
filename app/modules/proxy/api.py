@@ -4104,6 +4104,7 @@ async def _operator_available_native_models(
     models: dict[str, UpstreamModel],
     api_key: ApiKeyData | None,
 ) -> dict[str, UpstreamModel]:
+    from app.core.plan_types import account_plan_matches_allowed
     from app.modules.proxy.account_cache import is_account_model_allowed
 
     async with get_background_session() as session:
@@ -4117,7 +4118,12 @@ async def _operator_available_native_models(
     available = {}
     for slug, model in models.items():
         owners = registry.account_ids_for_model(slug)
-        candidates = [account for account in accounts if owners is None or account.id in owners]
+        candidates = [
+            account
+            for account in accounts
+            if (owners is None or account.id in owners)
+            and account_plan_matches_allowed(account.plan_type, model.available_in_plans)
+        ]
         if any(is_account_model_allowed(account, slug) for account in candidates):
             available[slug] = model
     return available
@@ -4577,16 +4583,20 @@ async def v1_chat_completions(
         effective_model = responses_payload.model
     validate_model_access(api_key, responses_payload.model)
     source_route_attempted = not responses_shaped_payload and payload.messages is not None
-    source_selection = (
-        await _select_chat_model_source(
-            responses_payload.model,
-            api_key,
-            raw_model=effective_model,
-            require_streaming=payload.stream is True,
+    try:
+        source_selection = (
+            await _select_chat_model_source(
+                responses_payload.model,
+                api_key,
+                raw_model=effective_model,
+                require_streaming=payload.stream is True,
+                reasoning_effort=responses_payload.routing_reasoning_effort,
+            )
+            if source_route_attempted
+            else None
         )
-        if source_route_attempted
-        else None
-    )
+    except ProxyResponseError as exc:
+        return _logged_error_json_response(request, exc.status_code, exc.payload, headers=rate_limit_headers)
     source = source_selection[0] if source_selection is not None else None
     request_model = source_selection[1] if source_selection is not None else responses_payload.model
     if tool_media_candidate and (source is None or source.kind != "claude"):
@@ -4829,6 +4839,7 @@ async def _select_chat_model_source(
     raw_model: str | None = None,
     require_streaming: bool = False,
     only_disabled: bool = False,
+    reasoning_effort: str | None = None,
 ) -> tuple[ModelSource, str] | None:
     """Resolve ``model`` to a Chat Completions-capable model source, if any.
 
@@ -4857,6 +4868,7 @@ async def _select_chat_model_source(
                 allowed_source_ids=assigned_source_ids,
                 require_streaming=require_streaming,
                 only_disabled=only_disabled,
+                reasoning_effort=reasoning_effort,
             )
             if source is not None:
                 break
@@ -4876,6 +4888,7 @@ async def _select_responses_model_source(
     raw_model: str | None = None,
     require_streaming: bool = False,
     only_disabled: bool = False,
+    reasoning_effort: str | None = None,
 ) -> tuple[ModelSource, str] | None:
     # Shared with the WebSocket path so both transports agree on which models
     # belong to a model source.
@@ -4885,6 +4898,7 @@ async def _select_responses_model_source(
         raw_model=raw_model,
         require_streaming=require_streaming,
         only_disabled=only_disabled,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -4912,6 +4926,7 @@ async def _select_responses_model_source_with_continuity(
         api_key,
         raw_model=raw_model,
         require_streaming=require_streaming,
+        reasoning_effort=payload.routing_reasoning_effort,
     )
     if (
         source_selection is None
@@ -5462,12 +5477,18 @@ async def _source_responses_response(
                         headers=_source_error_response_headers(rate_limit_headers, exc),
                     )
                 await record_failure(source.id, payload.model, exc.upstream_status_code, exc.retry_after)
-        selected = await select_responses_model_source(
-            payload.model,
-            api_key,
-            require_streaming=bool(payload.stream),
-            excluded_source_ids=attempted,
-        )
+        try:
+            selected = await select_responses_model_source(
+                payload.model,
+                api_key,
+                require_streaming=bool(payload.stream),
+                excluded_source_ids=attempted,
+                reasoning_effort=payload.routing_reasoning_effort,
+            )
+        except ProxyResponseError:
+            # A remaining account that rejects this effort cannot recover the
+            # provider refusal. Preserve the original status and retry headers.
+            selected = None
         if selected is None or selected[0].kind != "openrouter":
             return _logged_error_json_response(
                 request,
@@ -5565,7 +5586,14 @@ async def _dispatch_source_responses_response(
                 recovery.last_error = exc
                 if await request.is_disconnected():
                     return Response()
-                await recover_authentication(recovery, payload.model, api_key)
+                await recover_authentication(
+                    recovery,
+                    payload.model,
+                    api_key,
+                    reasoning_effort=native_request.reasoning_effort
+                    if native_request is not None
+                    else payload.routing_reasoning_effort,
+                )
                 if recovery.budget.remaining == 0:
                     raise
                 await anyio.lowlevel.checkpoint()
@@ -7794,7 +7822,12 @@ async def _compact_responses(
         service_tier_was_enforced=enforcement.service_tier_was_enforced,
     )
     validate_model_access(api_key, payload.model)
-    source_selection = await select_responses_model_source(payload.model, api_key)
+    try:
+        source_selection = await select_responses_model_source(
+            payload.model, api_key, reasoning_effort=payload.routing_reasoning_effort
+        )
+    except ProxyResponseError as exc:
+        return _logged_error_json_response(request, exc.status_code, exc.payload)
     if source_selection is not None:
         return await _source_compaction_response(
             request,

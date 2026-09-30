@@ -153,6 +153,7 @@ from app.modules.proxy._load_balancer.unbound_selection import (
 from app.modules.proxy.account_cache import (
     get_account_selection_cache,
     is_account_model_allowed,
+    is_account_reasoning_allowed,
     mark_account_routing_unavailable,
 )
 from app.modules.proxy.account_eligibility import (
@@ -592,6 +593,7 @@ class LoadBalancer:
         relative_availability_power: float = 2.0,
         relative_availability_top_k: int = 5,
         model: str | None = None,
+        reasoning_effort: str | None = None,
         service_tier: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
@@ -635,6 +637,27 @@ class LoadBalancer:
                 service_tier=service_tier,
                 additional_limit_name=additional_limit_name,
                 account_ids=scoped_account_ids,
+            )
+            accounts_before_reasoning = selection_inputs.accounts
+            reasoning_owners = [
+                account
+                for account in selection_inputs.effective_continuity_owner_candidates
+                if is_account_reasoning_allowed(account, model, reasoning_effort)
+            ]
+            reasoning_accounts = [
+                account
+                for account in accounts_before_reasoning
+                if is_account_reasoning_allowed(account, model, reasoning_effort)
+            ]
+            reasoning_denied = bool(accounts_before_reasoning and not reasoning_accounts)
+            selection_inputs = replace(
+                selection_inputs,
+                accounts=reasoning_accounts,
+                continuity_owner_candidates=reasoning_owners,
+                error_code="reasoning_effort_not_allowed" if reasoning_denied else selection_inputs.error_code,
+                error_message="No eligible account permits this model's requested or default reasoning effort"
+                if reasoning_denied
+                else selection_inputs.error_message,
             )
             if require_security_work_authorized:
                 # Ownership scope and routing availability are separate. Even

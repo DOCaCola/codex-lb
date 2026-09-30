@@ -18,7 +18,9 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import type { OpenRouterAccount, Selection } from "./api";
+import type { OpenRouterAccount, Selection, AccountUpdate } from "./api";
+import { AccountModelMode } from "@/features/accounts/components/account-model-mode";
+import { ModelReasoningPicker } from "@/features/accounts/components/model-reasoning-picker";
 import { modelSelectionKind, type ModelSelectionKind } from "./model-selection";
 
 type CatalogModel = OpenRouterAccount["state"]["catalog"][number];
@@ -43,7 +45,7 @@ export function ModelPicker({
 }: {
   account: OpenRouterAccount;
   onClose: () => void;
-  onSave: (selections: Selection[]) => Promise<void>;
+  onSave: (selections: Selection[], settings: AccountUpdate) => Promise<void>;
   busy: boolean;
   kind?: ModelSelectionKind;
 }) {
@@ -53,6 +55,10 @@ export function ModelPicker({
     account.state.selections,
   );
   const [error, setError] = useState<string | null>(null);
+  const [allModels, setAllModels] = useState(account.state.all_models);
+  const [reasoning, setReasoning] = useState(
+    account.state.reasoning_restrictions,
+  );
   const catalog = useMemo(
     () => new Map(account.state.catalog.map((model) => [model.id, model])),
     [account],
@@ -60,7 +66,11 @@ export function ModelPicker({
   const ids = useMemo(
     () =>
       [
-        ...new Set([...selected.map((item) => item.model), ...catalog.keys()]),
+        ...new Set([
+          ...account.state.selections.map((item) => item.model),
+          ...Object.keys(account.state.reasoning_restrictions),
+          ...catalog.keys(),
+        ]),
       ].filter((id) => {
         const model = catalog.get(id);
         return (
@@ -73,7 +83,14 @@ export function ModelPicker({
           )
         );
       }),
-    [catalog, search, selected, filters, kind],
+    [
+      account.state.selections,
+      account.state.reasoning_restrictions,
+      catalog,
+      search,
+      filters,
+      kind,
+    ],
   );
   const selectedCount = selected.filter(
     (item) => modelSelectionKind(catalog.get(item.model)) === kind,
@@ -92,7 +109,9 @@ export function ModelPicker({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] sm:max-w-3xl">
+      <DialogContent
+        className={`max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl ${kind === "models" ? "grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]" : "grid-rows-[auto_auto_minmax(0,1fr)_auto]"} sm:max-w-3xl`}
+      >
         <DialogHeader>
           <DialogTitle>
             {kind === "images" ? "Image models" : "Models"} · {account.name}
@@ -103,6 +122,13 @@ export function ModelPicker({
               : "Choose models for selected mode and configure per-model limits. Saved choices and image selections are retained when All models is enabled."}
           </DialogDescription>
         </DialogHeader>
+        {kind === "models" && (
+          <AccountModelMode
+            allModels={allModels}
+            disabled={busy}
+            onChange={setAllModels}
+          />
+        )}
         <div className="flex flex-wrap gap-2">
           <Input
             className="min-w-40 flex-1"
@@ -161,8 +187,8 @@ export function ModelPicker({
               <div key={id} className="rounded-lg border p-3 text-sm">
                 <label className="flex items-center gap-3">
                   <Checkbox
-                    checked={!!selection}
-                    disabled={busy || (!model && !selection)}
+                    checked={!imageOnly && allModels ? !!model : !!selection}
+                    disabled={busy || (!imageOnly && allModels)}
                     onCheckedChange={(checked) =>
                       setSelected((current) =>
                         checked
@@ -221,6 +247,41 @@ export function ModelPicker({
                       ? ` · Reasoning: ${model.reasoning.supported_efforts.join(", ")}`
                       : ""}
                     {model.reasoning?.mandatory ? " (required)" : ""}
+                  </div>
+                )}
+                {!imageOnly && (
+                  <div className="mt-2">
+                    <ModelReasoningPicker
+                      model={id}
+                      levels={
+                        model?.supported_parameters.includes("reasoning")
+                          ? (
+                              model.reasoning?.supported_efforts ?? [
+                                "none",
+                                "minimal",
+                                "low",
+                                "medium",
+                                "high",
+                                "xhigh",
+                                "max",
+                              ]
+                            ).filter(
+                              (level) =>
+                                !model.reasoning?.mandatory || level !== "none",
+                            )
+                          : []
+                      }
+                      value={reasoning[id]}
+                      disabled={busy}
+                      onChange={(value) =>
+                        setReasoning((current) => {
+                          const next = { ...current };
+                          if (value) next[id] = value;
+                          else delete next[id];
+                          return next;
+                        })
+                      }
+                    />
                   </div>
                 )}
                 {selection && (
@@ -321,14 +382,20 @@ export function ModelPicker({
             disabled={busy || !valid}
             onClick={async () => {
               try {
-                await onSave(selected);
+                await onSave(
+                  selected,
+                  kind === "models"
+                    ? { allModels, reasoningRestrictions: reasoning }
+                    : {},
+                );
                 onClose();
               } catch (err) {
                 setError(err instanceof Error ? err.message : "Save failed");
               }
             }}
           >
-            Save {selectedCount} {kind === "images" ? "image " : ""}{selectedCount === 1 ? "model" : "models"}
+            Save {selectedCount} {kind === "images" ? "image " : ""}
+            {selectedCount === 1 ? "model" : "models"}
           </Button>
         </div>
       </DialogContent>

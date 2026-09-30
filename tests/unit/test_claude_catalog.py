@@ -59,6 +59,16 @@ def test_projection_only_selected_models_and_retains_missing_selection():
     assert observed.selections[0].model == "missing"
 
 
+def test_all_mode_preserves_disabled_claim_for_missing_reasoning_configuration():
+    state = AccountState(all_models=True, reasoning_restrictions={"missing": ["high"]})
+    row = project_models(state)[0]
+    assert row.model == "anthropic/missing"
+    assert not row.is_enabled
+    assert json.loads(row.raw_metadata_json)["allowed_reasoning_efforts"] == ["high"]
+    state.all_models = False
+    assert project_models(state) == []
+
+
 def test_discovery_limits_override_registry_without_persisted_client_budgets():
     model = CatalogModel(id="claude-opus-5", display_name="Opus", max_input_tokens=750000, max_tokens=96000)
     state = AccountState(catalog=[model], selections=[ModelSelection(model=model.id)])

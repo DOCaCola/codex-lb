@@ -5,6 +5,7 @@ from typing import List
 
 from pydantic import Field, PrivateAttr, field_validator
 
+from app.core.model_routing import ReasoningRestrictions
 from app.modules.shared.schemas import DashboardModel
 
 
@@ -174,6 +175,7 @@ class AccountUpdateRequest(DashboardModel):
 class AccountModelSelectionRequest(DashboardModel):
     all_models: bool
     selected_models: list[str] = Field(max_length=1000)
+    reasoning_restrictions: ReasoningRestrictions = Field(default_factory=dict)
 
 
 class AccountCatalogModel(DashboardModel):
@@ -183,6 +185,9 @@ class AccountCatalogModel(DashboardModel):
     supports_tools: bool
     supports_vision: bool
     supports_reasoning: bool
+    available: bool
+    reasoning_levels: list[str]
+    default_reasoning_level: str | None
 
 
 class AccountModelSettings(AccountModelSelectionRequest):

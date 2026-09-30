@@ -41,6 +41,7 @@ class _HTTPBridgeActivityMixin:
         preferred_account_id: str | None,
         require_preferred_account: bool,
         request_service_tier: str | None,
+        request_reasoning_effort: str | None = None,
     ) -> tuple[Any, bool]:
         if original_request_unanchored and existing is not None:
             detached = self._detach_http_bridge_session_locked(key, expected_session=existing)
@@ -73,6 +74,7 @@ class _HTTPBridgeActivityMixin:
                 existing,
                 request_model=request_model,
                 request_service_tier=request_service_tier,
+                request_reasoning_effort=request_reasoning_effort,
             ),
         )
         raise AssertionError("incompatible admission handoff must raise")

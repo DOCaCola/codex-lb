@@ -71,6 +71,7 @@ const MODEL_OPTION_DELIMITER = ":::";
 const AccountModelPayloadSchema = z.object({
   allModels: z.boolean(),
   selectedModels: z.array(z.string()),
+  reasoningRestrictions: z.record(z.string(), z.array(z.string()).min(1)),
 });
 const accountModelCatalog = ["gpt-6-astra", "gpt-5.4"].map((model) => ({
   model,
@@ -79,6 +80,9 @@ const accountModelCatalog = ["gpt-6-astra", "gpt-5.4"].map((model) => ({
   supportsTools: true,
   supportsVision: true,
   supportsReasoning: true,
+  available: true,
+  reasoningLevels: ["none", "low", "medium", "high", "max"],
+  defaultReasoningLevel: "medium",
 }));
 const STATUS_ORDER = ["ok", "cancelled", "rate_limit", "quota", "error"] as const;
 
@@ -400,7 +404,7 @@ function reservedUsernameRefusal(username: string | null | undefined): Response 
 }
 
 type MockState = {
-  accountModels: Record<string, { allModels: boolean; selectedModels: string[] }>;
+  accountModels: Record<string, { allModels: boolean; selectedModels: string[]; reasoningRestrictions: Record<string, string[]> }>;
   accounts: AccountSummary[];
   requestLogs: RequestLogEntry[];
   conversations: ConversationEntry[];
@@ -1026,7 +1030,7 @@ export const handlers = [
   }),
 
   http.get("/api/accounts/:accountId/models", ({ params }) => {
-    const settings = state.accountModels[String(params.accountId)] ?? { allModels: true, selectedModels: [] };
+    const settings = state.accountModels[String(params.accountId)] ?? { allModels: true, selectedModels: [], reasoningRestrictions: {} };
     return HttpResponse.json({ ...settings, catalog: accountModelCatalog });
   }),
 

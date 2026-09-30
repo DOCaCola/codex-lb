@@ -73,6 +73,7 @@ class OpenRouterService:
     async def update(self, source_id: str, payload: OpenRouterUpdate) -> OpenRouterAccountResponse:
         row = await self._get(source_id)
         state = AccountState.model_validate_json(row.state_json)
+        saved_model_ids = {item.model for item in state.selections} | set(state.reasoning_restrictions)
         if payload.name is not None:
             if not payload.name.strip():
                 raise OpenRouterError("Account name is required")
@@ -107,10 +108,15 @@ class OpenRouterService:
             ids = [item.model for item in payload.selections]
             if len(ids) != len(set(ids)):
                 raise OpenRouterError("Models must be selected only once")
-            known = {item.id for item in state.catalog} | {item.model for item in state.selections}
+            known = {item.id for item in state.catalog} | saved_model_ids
             if set(ids) - known:
                 raise OpenRouterError("Select models from the synchronized account catalog")
             state.selections = payload.selections
+        if payload.reasoning_restrictions is not None:
+            known = {item.id for item in state.catalog} | saved_model_ids
+            if set(payload.reasoning_restrictions) - known:
+                raise OpenRouterError("Configure reasoning for known account models")
+            state.reasoning_restrictions = payload.reasoning_restrictions
         if payload.selections is not None or payload.api_key is not None:
             assert row.source.api_key_encrypted is not None
             await self._image_endpoints(state, self.encryptor.decrypt(row.source.api_key_encrypted))

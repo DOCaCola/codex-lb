@@ -345,6 +345,7 @@ class _HTTPBridgeMixin(
         idle_ttl_seconds: float,
         max_sessions: int,
         request_service_tier: str | None = None,
+        request_reasoning_effort: str | None = None,
         previous_response_id: str | None = None,
         gateway_safe_mode: bool = False,
         allow_forward_to_owner: Literal[False] = False,
@@ -378,6 +379,7 @@ class _HTTPBridgeMixin(
         idle_ttl_seconds: float,
         max_sessions: int,
         request_service_tier: str | None = None,
+        request_reasoning_effort: str | None = None,
         previous_response_id: str | None = None,
         gateway_safe_mode: bool = False,
         allow_forward_to_owner: Literal[True],
@@ -410,6 +412,7 @@ class _HTTPBridgeMixin(
         idle_ttl_seconds: float,
         max_sessions: int,
         request_service_tier: str | None = None,
+        request_reasoning_effort: str | None = None,
         previous_response_id: str | None = None,
         gateway_safe_mode: bool = False,
         allow_forward_to_owner: bool = False,
@@ -594,7 +597,11 @@ class _HTTPBridgeMixin(
                             else:
                                 key = _HTTPBridgeSessionKey("turn_state_header", incoming_turn_state, api_key_id)
                         elif not _http_bridge_compatible(
-                            alias_session, request_model, request_service_tier, True
+                            alias_session,
+                            request_model,
+                            request_service_tier,
+                            True,
+                            request_reasoning_effort=request_reasoning_effort,
                         ) or not _http_bridge_session_matches_preferred_account(
                             session=alias_session,
                             previous_response_id=previous_response_id,
@@ -623,7 +630,13 @@ class _HTTPBridgeMixin(
                                 previous_session is not None
                                 and (not previous_session.closed or previous_session.handoff_in_progress)
                                 and _http_bridge_session_account_active(previous_session)
-                                and _http_bridge_compatible(previous_session, request_model, request_service_tier, True)
+                                and _http_bridge_compatible(
+                                    previous_session,
+                                    request_model,
+                                    request_service_tier,
+                                    True,
+                                    request_reasoning_effort=request_reasoning_effort,
+                                )
                                 and _http_bridge_session_matches_preferred_account(
                                     session=previous_session,
                                     previous_response_id=previous_response_id,
@@ -705,7 +718,12 @@ class _HTTPBridgeMixin(
                         previous_response_id=previous_response_id,
                         preferred_account_id=preferred_account_id,
                         require_preferred_account=require_preferred_account,
-                        service_tier_supported=_http_bridge_compatible(existing, request_model, request_service_tier),
+                        service_tier_supported=_http_bridge_compatible(
+                            existing,
+                            request_model,
+                            request_service_tier,
+                            request_reasoning_effort=request_reasoning_effort,
+                        ),
                         allow_closed_admission_handoff=retained_handoff,
                         session_key_quarantined=_http_bridge_session_key_quarantined(self, existing.key),
                     )
@@ -720,6 +738,7 @@ class _HTTPBridgeMixin(
                     request_model=request_model,
                     request_service_tier=request_service_tier,
                     request_scope_id=request_scope_id,
+                    request_reasoning_effort=request_reasoning_effort,
                     allow_model_fork=reusable or model_transition_rebind,
                     force_canonical_replacement=force_goal_restart_account_reselection,
                 )
@@ -747,6 +766,7 @@ class _HTTPBridgeMixin(
                         preferred_account_id,
                         require_preferred_account,
                         request_service_tier,
+                        request_reasoning_effort,
                     )
                 if reusable:
                     assert existing is not None
@@ -1168,7 +1188,13 @@ class _HTTPBridgeMixin(
                                 previous_session is not None
                                 and not previous_session.closed
                                 and _http_bridge_session_account_active(previous_session)
-                                and _http_bridge_compatible(previous_session, request_model, request_service_tier, True)
+                                and _http_bridge_compatible(
+                                    previous_session,
+                                    request_model,
+                                    request_service_tier,
+                                    True,
+                                    request_reasoning_effort=request_reasoning_effort,
+                                )
                             ):
                                 key = previous_session.key
                                 existing = previous_session
@@ -1427,6 +1453,7 @@ class _HTTPBridgeMixin(
                     request_model=request_model,
                     request_service_tier=request_service_tier,
                     request_scope_id=request_scope_id,
+                    request_reasoning_effort=request_reasoning_effort,
                     same_model_required=True,
                     force_canonical_replacement=force_goal_restart_account_reselection,
                 )
@@ -1444,7 +1471,13 @@ class _HTTPBridgeMixin(
                     and not session.closed
                     and _http_bridge_session_account_active(session)
                     and _http_bridge_session_allows_api_key(session, api_key)
-                    and _http_bridge_compatible(session, request_model, request_service_tier, True)
+                    and _http_bridge_compatible(
+                        session,
+                        request_model,
+                        request_service_tier,
+                        True,
+                        request_reasoning_effort=request_reasoning_effort,
+                    )
                     and _http_bridge_session_reusable_for_request(
                         session=session,
                         key=key,
@@ -1498,6 +1531,7 @@ class _HTTPBridgeMixin(
                     "affinity": affinity,
                     "api_key": api_key,
                     "request_model": request_model,
+                    "request_reasoning_effort": request_reasoning_effort,
                     "request_service_tier": request_service_tier,
                     "idle_ttl_seconds": effective_idle_ttl_seconds,
                     "request_stage": request_stage,
@@ -1668,6 +1702,7 @@ class _HTTPBridgeMixin(
         request_model: str | None,
         idle_ttl_seconds: float,
         request_service_tier: str | None = None,
+        request_reasoning_effort: str | None = None,
         request_stage: str = "first_turn",
         preferred_account_id: str | None = None,
         require_preferred_account: bool = False,
@@ -1684,7 +1719,7 @@ class _HTTPBridgeMixin(
             model=request_model,
             service_tier=request_service_tier,
             requested_service_tier=request_service_tier,
-            reasoning_effort=None,
+            reasoning_effort=request_reasoning_effort,
             api_key_reservation=None,
             started_at=clock_for(self).monotonic(),
             thread_affinity_last_touch_at=clock_for(self).monotonic(),
@@ -1726,6 +1761,7 @@ class _HTTPBridgeMixin(
                 "prefer_earlier_reset_window": _prefer_earlier_reset_window(settings),
                 "routing_strategy": _routing_strategy(settings),
                 "model": request_model,
+                "reasoning_effort": request_reasoning_effort,
                 "service_tier": request_service_tier,
                 "exclude_account_ids": excluded_account_ids,
                 "preferred_account_id": proxy_connect_failover.preferred_account_id,
@@ -2153,6 +2189,7 @@ class _HTTPBridgeMixin(
                     prefer_earlier_reset_window=_prefer_earlier_reset_window(settings),
                     routing_strategy=_routing_strategy(settings),
                     model=session.request_model,
+                    reasoning_effort=request_state.routing_reasoning_effort,
                     service_tier=session.request_service_tier,
                     exclude_account_ids=excluded_account_ids,
                     preferred_account_id=preferred_candidate_id,

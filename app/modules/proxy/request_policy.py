@@ -319,6 +319,7 @@ def apply_api_key_enforcement(
             )
 
     if api_key.enforced_reasoning_effort is not None:
+        payload._codex_lb_pre_normalization_reasoning_effort = None
         requested_effort = payload.reasoning.effort if payload.reasoning else None
         if payload.reasoning is None:
             payload.reasoning = ResponsesReasoning(effort=api_key.enforced_reasoning_effort)
@@ -730,6 +731,7 @@ def normalize_unsupported_reasoning_effort(
         payload.model,
         registry=registry or get_model_registry(),
     )
+    payload._codex_lb_pre_normalization_reasoning_effort = normalized_effort
     payload.reasoning.effort = fallback
     logger.info(
         "reasoning_effort_normalized request_id=%s model=%s requested_effort=%s normalized_effort=%s",

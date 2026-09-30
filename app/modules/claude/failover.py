@@ -56,7 +56,9 @@ def is_authentication_failure(error: ModelSourceForwardingError) -> bool:
     return isinstance(detail, dict) and detail.get("type") in (None, "authentication_error")
 
 
-async def recover_authentication(state: FailoverState, model: str, api_key: ApiKeyData | None) -> None:
+async def recover_authentication(
+    state: FailoverState, model: str, api_key: ApiKeyData | None, *, reasoning_effort: str | None = None
+) -> None:
     assert state.source_id is not None and state.credential_generation is not None
     source_id = state.source_id
     state.retry_source_id = None
@@ -74,7 +76,14 @@ async def recover_authentication(state: FailoverState, model: str, api_key: ApiK
         state.auth_retried.add(source_id)
         try:
             # Authorization and current eligibility still precede refresh.
-            await select_account(session, model, api_key, conversation_id="", owner_source_id=source_id)
+            await select_account(
+                session,
+                model,
+                api_key,
+                conversation_id="",
+                owner_source_id=source_id,
+                reasoning_effort=reasoning_effort,
+            )
             await ClaudeAuth(repository, ClaudeClient(), TokenEncryptor()).snapshot(
                 source_id, rejected_generation=state.credential_generation
             )

@@ -265,6 +265,7 @@ export const AccountRoutingPolicyUpdateRequestSchema = z.object({
 export const AccountModelSelectionRequestSchema = z.object({
   allModels: z.boolean(),
   selectedModels: z.array(z.string()).max(1000),
+  reasoningRestrictions: z.record(z.string(), z.array(z.string()).min(1)),
 });
 
 export const AccountModelSettingsSchema = AccountModelSelectionRequestSchema.extend({
@@ -275,6 +276,9 @@ export const AccountModelSettingsSchema = AccountModelSelectionRequestSchema.ext
     supportsTools: z.boolean(),
     supportsVision: z.boolean(),
     supportsReasoning: z.boolean(),
+    available: z.boolean(),
+    reasoningLevels: z.array(z.string()),
+    defaultReasoningLevel: z.string().nullable(),
   })),
 });
 

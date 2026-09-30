@@ -39,6 +39,7 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
     # time (see source_model_request_overrides); it must never reach the
     # client-visible catalog payloads built from UpstreamModel.raw.
     raw.pop("source_request_overrides", None)
+    raw.pop("allowed_reasoning_efforts", None)
     context_window = source_model.context_window or DEFAULT_SOURCE_CONTEXT_WINDOW
     if source.kind == "claude":
         from app.modules.claude.model_limits import default_client_context_window

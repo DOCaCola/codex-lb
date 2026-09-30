@@ -658,6 +658,8 @@ class AccountsService:
         return result
 
     async def model_settings(self, account_id: str) -> AccountModelSettings | None:
+        from app.modules.proxy.request_policy import resolve_wire_reasoning_effort
+
         account = await self._repo.get_by_id_fresh(account_id)
         if account is None or account.delete_requested_at is not None:
             return None
@@ -666,10 +668,15 @@ class AccountsService:
         for model in registry.get_models_with_fallback().values():
             if model.source_kind != MODEL_SOURCE_KIND_SUBSCRIPTION:
                 continue
-            if not account_plan_matches_allowed(account.plan_type, model.available_in_plans):
-                continue
             owners = registry.account_ids_for_model(model.slug)
-            if owners is not None and account.id not in owners:
+            available = account_plan_matches_allowed(account.plan_type, model.available_in_plans) and (
+                owners is None or account.id in owners
+            )
+            if (
+                not available
+                and model.slug not in account.selected_models
+                and model.slug not in account.reasoning_restrictions
+            ):
                 continue
             catalog.append(
                 AccountCatalogModel(
@@ -679,30 +686,64 @@ class AccountsService:
                     supports_tools=True,
                     supports_vision="image" in model.input_modalities,
                     supports_reasoning=bool(model.supported_reasoning_levels),
+                    available=available,
+                    reasoning_levels=list(
+                        dict.fromkeys(
+                            resolve_wire_reasoning_effort(level.effort) for level in model.supported_reasoning_levels
+                        )
+                    ),
+                    default_reasoning_level=model.default_reasoning_level,
                 )
             )
         return AccountModelSettings(
-            all_models=account.all_models, selected_models=account.selected_models, catalog=catalog
+            all_models=account.all_models,
+            selected_models=account.selected_models,
+            reasoning_restrictions=account.reasoning_restrictions,
+            catalog=catalog,
         )
 
     async def set_model_selection(self, account_id: str, payload: AccountModelSelectionRequest) -> bool:
         settings = await self.model_settings(account_id)
         if settings is None:
             return False
-        known = {model.model for model in settings.catalog} | set(settings.selected_models)
+        known = (
+            {model.model for model in settings.catalog}
+            | set(settings.selected_models)
+            | set(settings.reasoning_restrictions)
+        )
         if len(payload.selected_models) != len(set(payload.selected_models)) or set(payload.selected_models) - known:
             from app.core.exceptions import DashboardBadRequestError
 
             raise DashboardBadRequestError(
                 "Select each model once from the account catalog", code="invalid_model_selection"
             )
+        if set(payload.reasoning_restrictions) - known:
+            from app.core.exceptions import DashboardBadRequestError
+
+            raise DashboardBadRequestError(
+                "Configure reasoning for known account models", code="invalid_model_selection"
+            )
+        if any(
+            "ultra" in levels and "ultra" not in settings.reasoning_restrictions.get(model, [])
+            for model, levels in payload.reasoning_restrictions.items()
+        ):
+            from app.core.exceptions import DashboardBadRequestError
+
+            raise DashboardBadRequestError(
+                "Ultra is client-side and arrives as max; select max for account routing",
+                code="invalid_reasoning_selection",
+            )
         result = await self._repo.update_model_selection(
-            account_id, all_models=payload.all_models, selected_models=payload.selected_models
+            account_id,
+            all_models=payload.all_models,
+            selected_models=payload.selected_models,
+            reasoning_restrictions=payload.reasoning_restrictions,
         )
         if result:
             get_routing_availability_cache().set_model_selection(
                 account_id, payload.all_models, payload.selected_models
             )
+            get_routing_availability_cache().set_reasoning_restrictions(account_id, payload.reasoning_restrictions)
             get_account_selection_cache().invalidate()
             await propagate_account_routing_change()
         return result

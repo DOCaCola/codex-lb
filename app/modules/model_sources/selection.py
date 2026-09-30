@@ -37,6 +37,8 @@ async def select_responses_model_source(
     only_disabled: bool = False,
     excluded_source_ids: set[str] | None = None,
     advance_rotation: bool = True,
+    reasoning_effort: str | None = None,
+    enforce_reasoning: bool = True,
 ) -> tuple[ModelSource, str] | None:
     """Resolve ``model`` to a Responses-capable model source, if any.
 
@@ -74,6 +76,8 @@ async def select_responses_model_source(
                 only_disabled=only_disabled,
                 excluded_source_ids=excluded_source_ids,
                 advance_rotation=advance_rotation,
+                reasoning_effort=reasoning_effort,
+                enforce_reasoning=enforce_reasoning,
             )
             if source is not None:
                 break
@@ -168,6 +172,7 @@ async def responses_model_is_source_owned(
                 api_key,
                 raw_model=raw,
                 require_streaming=True,
+                enforce_reasoning=False,
             )
             is not None
         ):
@@ -179,6 +184,7 @@ async def responses_model_is_source_owned(
                 raw_model=raw,
                 require_streaming=True,
                 only_disabled=True,
+                enforce_reasoning=False,
             )
             is not None
         )

@@ -1430,6 +1430,7 @@ class _StreamingRetryMixin:
                             prefer_earlier_reset_window=_facade()._prefer_earlier_reset_window(settings),
                             routing_strategy=routing_strategy,
                             model=payload.model,
+                            reasoning_effort=payload.routing_reasoning_effort,
                             service_tier=payload.service_tier,
                             exclude_account_ids=excluded_account_ids,
                             preferred_account_id=effective_preferred_account_id,

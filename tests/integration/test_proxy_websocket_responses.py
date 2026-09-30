@@ -1136,8 +1136,13 @@ def test_codex_provider_profiles_route_before_first_account_attempt(
     assert forwarded_capability_headers == [False]
 
 
-def test_backend_responses_websocket_retires_socket_after_model_restriction(app_instance, monkeypatch):
-    from app.modules.proxy.account_cache import get_routing_availability_cache, is_account_model_allowed
+@pytest.mark.parametrize("policy", ["model", "reasoning"])
+def test_backend_responses_websocket_retires_socket_after_model_restriction(app_instance, monkeypatch, policy):
+    from app.modules.proxy.account_cache import (
+        get_routing_availability_cache,
+        is_account_model_allowed,
+        is_account_reasoning_allowed,
+    )
 
     first = account_fixture(id="model_policy_first")
     replacement = account_fixture(id="model_policy_replacement")
@@ -1160,7 +1165,11 @@ def test_backend_responses_websocket_retires_socket_after_model_restriction(app_
         return None
 
     async def connect(self, headers, *, model, **kwargs):
-        candidates = [item for item in [first, replacement] if is_account_model_allowed(item, model)]
+        candidates = [
+            item
+            for item in [first, replacement]
+            if is_account_model_allowed(item, model) and is_account_reasoning_allowed(item, model, "high")
+        ]
         selected = candidates[0]
         opened.append(selected.id)
         return selected, first_upstream if selected.id == first.id else replacement_upstream
@@ -1172,11 +1181,19 @@ def test_backend_responses_websocket_retires_socket_after_model_restriction(app_
 
     with TestClient(app_instance) as client:
         with client.websocket_connect("/backend-api/codex/responses") as websocket:
-            websocket.send_text(json.dumps(_websocket_response_create("first turn")))
+            payload = _websocket_response_create("first turn")
+            payload["reasoning"] = {"effort": "high"}
+            websocket.send_text(json.dumps(payload))
             assert json.loads(websocket.receive_text())["response"]["id"] == "resp_before_restriction"
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
-            get_routing_availability_cache().set_model_selection(first.id, False, [])
-            websocket.send_text(json.dumps(_websocket_response_create("unanchored next turn")))
+            cache = get_routing_availability_cache()
+            if policy == "model":
+                cache.set_model_selection(first.id, False, [])
+            else:
+                cache.set_reasoning_restrictions(first.id, {payload["model"]: ["medium"]})
+            payload = _websocket_response_create("unanchored next turn")
+            payload["reasoning"] = {"effort": "high"}
+            websocket.send_text(json.dumps(payload))
             assert json.loads(websocket.receive_text())["response"]["id"] == "resp_after_restriction"
             assert json.loads(websocket.receive_text())["type"] == "response.completed"
 

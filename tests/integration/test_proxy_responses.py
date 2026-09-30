@@ -218,6 +218,50 @@ async def test_backend_responses_prohibits_fast_model_alias_priority_tier(async_
 
 
 @pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
+async def test_stream_account_policy_uses_requested_effort_before_wire_normalization(async_client, monkeypatch, path):
+    from app.modules.proxy.request_policy import apply_api_key_enforcement
+
+    normalized = ResponsesRequest(model="gpt-5.4", instructions="", input=[], reasoning={"effort": "minimal"})
+    apply_api_key_enforcement(normalized, None)
+    wire_effort = normalized.reasoning.effort
+    assert wire_effort != "minimal"
+    for raw_id, allowed, policy in (
+        ("wire-only", wire_effort, "burn_first"),
+        ("requested-only", "minimal", "normal"),
+    ):
+        auth = _make_auth_json(raw_id, f"{raw_id}@example.invalid", plan_type="pro")
+        imported = await async_client.post(
+            "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth), "application/json")}
+        )
+        assert imported.status_code == 200, imported.text
+        account_id = imported.json()["accountId"]
+        await async_client.put(f"/api/accounts/{account_id}/routing-policy", json={"routingPolicy": policy})
+        configured = await async_client.put(
+            f"/api/accounts/{account_id}/models",
+            json={"allModels": True, "selectedModels": [], "reasoningRestrictions": {"gpt-5.4": [allowed]}},
+        )
+        assert configured.status_code == 200, configured.text
+
+    seen = []
+
+    async def fake_stream(payload, headers, access_token, account_id, **kwargs):
+        seen.append((account_id, payload.reasoning.effort))
+        yield (
+            'data: {"type":"response.completed","response":{"id":"resp_policy",'
+            '"object":"response","status":"completed","output":[]}}\n\n'
+        )
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    response = await async_client.post(
+        path,
+        json={"model": "gpt-5.4", "instructions": "", "input": [], "stream": True, "reasoning": {"effort": "minimal"}},
+    )
+    assert response.status_code == 200, response.text
+    assert "response.completed" in response.text
+    assert seen == [("requested-only", wire_effort)]
+
+
+@pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
 @pytest.mark.asyncio
 async def test_responses_prohibit_explicit_priority_service_tier(async_client, monkeypatch, path: str):
     raw_account_id = f"acc_prohibit_explicit_{path.rsplit('/', 2)[-2]}"

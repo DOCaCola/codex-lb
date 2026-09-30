@@ -11,7 +11,6 @@ import { formatDateTimeInline } from "@/utils/formatters";
 import type { OpenRouterAccount } from "./api";
 import { OpenRouterName, OpenRouterTier, OpenRouterMetrics } from "./account-display";
 import { modelSelectionKind } from "./model-selection";
-import { AccountModelMode } from "@/features/accounts/components/account-model-mode";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import type { AccountRoutingPolicy } from "@/features/accounts/schemas";
 
@@ -27,7 +26,6 @@ export function OpenRouterAccountDetail({
   onRefresh,
   onToggle,
   onDelete,
-  onAllModels,
   onRoutingPolicy,
 }: {
   account: OpenRouterAccount;
@@ -41,7 +39,6 @@ export function OpenRouterAccountDetail({
   onRefresh: () => void;
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
-  onAllModels: (value: boolean) => void;
   onRoutingPolicy: (value: AccountRoutingPolicy) => void;
 }) {
   const { t } = useTranslation();
@@ -99,7 +96,6 @@ export function OpenRouterAccountDetail({
       ]} />
       {/* Actions last, matching the Codex account detail. */}
       <div className="space-y-3 border-t pt-4">
-        <AccountModelMode allModels={state.all_models} disabled={readOnly || busy} onChange={onAllModels} />
         <AccountRoutingPolicyControl policy={account.routingPolicy} disabled={readOnly || busy} onChange={onRoutingPolicy} />
         <div className="flex flex-wrap gap-2">
         <AccountPauseButton

@@ -188,12 +188,18 @@ def _overrides_source(raw_metadata: dict[str, object]) -> ModelSource:
 
 
 def test_source_request_overrides_never_reach_upstream_model_raw() -> None:
-    source = _overrides_source({"source_request_overrides": {"options": {"num_ctx": 32768}}})
+    source = _overrides_source(
+        {
+            "source_request_overrides": {"options": {"num_ctx": 32768}},
+            "allowed_reasoning_efforts": ["high"],
+        }
+    )
 
     models = source_models_to_upstream_models([source])
 
     assert len(models) == 1
     assert "source_request_overrides" not in models[0].raw
+    assert "allowed_reasoning_efforts" not in models[0].raw
     # Overrides stay available for operator-side request application.
     assert source_model_request_overrides(source, "llama3.1:8b") == {"options": {"num_ctx": 32768}}
 

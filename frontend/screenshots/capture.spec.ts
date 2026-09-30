@@ -39,10 +39,10 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
   page.on("pageerror", (error) => browserErrors.push(error.message));
   const native = { ...accounts[0], alias: "Codex Research" };
   let nativeModels = {
-    allModels: true, selectedModels: ["gpt-6-astra"],
+    allModels: true, selectedModels: ["gpt-6-astra"], reasoningRestrictions: {},
     catalog: [
-      { model: "gpt-6-astra", displayName: "GPT-6 Astra", contextWindow: 272000, supportsTools: true, supportsVision: true, supportsReasoning: true },
-      { model: "gpt-6-sol", displayName: "GPT-6 Sol", contextWindow: 272000, supportsTools: true, supportsVision: true, supportsReasoning: true },
+      { model: "gpt-6-astra", displayName: "GPT-6 Astra", contextWindow: 272000, supportsTools: true, supportsVision: true, supportsReasoning: true, available: true, reasoningLevels: ["none", "low", "medium", "high", "max"], defaultReasoningLevel: "medium" },
+      { model: "gpt-6-sol", displayName: "GPT-6 Sol", contextWindow: 272000, supportsTools: true, supportsVision: true, supportsReasoning: true, available: true, reasoningLevels: ["low", "medium", "high", "max"], defaultReasoningLevel: "low" },
     ],
   };
   const provider = createOpenRouterAccount({ name: "OpenRouter Research" });
@@ -66,6 +66,7 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
       if (body.allModels !== undefined) provider.state.all_models = body.allModels;
       if (body.routingPolicy !== undefined) provider.routingPolicy = body.routingPolicy;
       if (body.selections !== undefined) provider.state.selections = body.selections;
+      if (body.reasoningRestrictions !== undefined) provider.state.reasoning_restrictions = body.reasoningRestrictions;
       return fulfill(route, provider);
     }
     return fulfill(route, { accounts: [provider] });
@@ -76,7 +77,7 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
     await page.setViewportSize({ width, height: 900 });
     for (const [id, label, expectedAll] of [[native.accountId, "codex", true], [provider.id, "openrouter", false]] as const) {
       await page.goto(`${BASE_URL}/accounts?selected=${id}`);
-      await expect(page.getByRole("switch", { name: /All models/ })).toBeChecked({ checked: expectedAll });
+      await expect(page.getByRole("switch", { name: /All models/ })).toHaveCount(0);
       if (label === "openrouter") {
         const curve = page.locator('[aria-label="OpenRouter activity"] .recharts-area-curve');
         await expect(curve).toHaveCount(1);
@@ -91,15 +92,20 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
       await page.screenshot({ path: testInfo.outputPath(`${label}-detail-${width}.png`), fullPage: true, animations: "disabled" });
       await page.getByRole("button", { name: label === "codex" ? "Models (All)" : "Models (1)", exact: true }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByRole("switch", { name: /All models/ })).toBeChecked({ checked: expectedAll });
       await page.screenshot({ path: testInfo.outputPath(`${label}-models-${width}.png`), animations: "disabled" });
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
     }
   }
   await page.goto(`${BASE_URL}/accounts?selected=${native.accountId}`);
+  await page.getByRole("button", { name: "Models (All)", exact: true }).click();
   await page.getByRole("switch", { name: /All models/ }).click();
+  await page.getByRole("button", { name: "Save 1 model", exact: true }).click();
   await expect(page.getByRole("button", { name: "Models (1)", exact: true })).toBeVisible();
   expect(nativeModels.selectedModels).toEqual(["gpt-6-astra"]);
+  await page.getByRole("button", { name: "Models (1)", exact: true }).click();
   await page.getByRole("switch", { name: /All models/ }).click();
+  await page.getByRole("button", { name: "Save 1 model", exact: true }).click();
   await expect(page.getByRole("button", { name: "Models (All)", exact: true })).toBeVisible();
   expect(browserErrors).toEqual([]);
 });
@@ -113,11 +119,12 @@ test("Claude automatic models and shared account presentation", async ({ page },
     expiresAt: "2026-10-01T12:00:00Z",
     state: {
       all_models: false,
+      reasoning_restrictions: {},
       selections: [{ model: "claude-opus-5" }],
       catalog: [
-        { id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 },
-        { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5", max_input_tokens: 200000, max_tokens: 64000 },
-        { id: "unknown", display_name: "Model awaiting metadata", max_input_tokens: null, max_tokens: null },
+        { id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000, reasoning_levels: ["low", "medium", "high", "max"], default_reasoning_level: "high" },
+        { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5", max_input_tokens: 200000, max_tokens: 64000, reasoning_levels: ["low", "medium", "high", "max"], default_reasoning_level: "medium" },
+        { id: "unknown", display_name: "Model awaiting metadata", max_input_tokens: null, max_tokens: null, reasoning_levels: [], default_reasoning_level: null },
       ],
       catalog_updated_at: "2026-09-29T08:00:00Z", catalog_error: null,
       usage_updated_at: "2026-09-29T08:00:00Z", usage_error: null,
@@ -156,7 +163,7 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`${BASE_URL}/accounts?selected=claude-preview`);
   await expect(page.getByRole("combobox", { name: "Routing policy" })).toBeVisible();
-  await expect(page.getByRole("switch", { name: /All models/ })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: /All models/ })).toHaveCount(0);
   await expect(page.locator('[aria-label="Claude quota history"] .recharts-surface')).toBeVisible();
   await expect(page.getByText("Weekly plan", { exact: true })).toBeVisible();
   await expect(page.getByText(/Weekly Opus/)).toHaveCount(0);
@@ -171,6 +178,7 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("claude-detail-mobile.png"), fullPage: true, animations: "disabled" });
   await page.getByRole("button", { name: "Models (1)", exact: true }).click();
+  await expect(page.getByRole("switch", { name: /All models/ })).not.toBeChecked();
   await expect(page.getByText(/1M context.*128K maximum output.*64K default output/i)).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Model awaiting metadata — Unavailable" })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath("claude-models-mobile.png"), animations: "disabled" });

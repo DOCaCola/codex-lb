@@ -13,11 +13,136 @@ from app.modules.proxy.account_cache import (
     RoutingAvailabilityCache,
     get_routing_availability_cache,
     is_account_model_allowed,
+    is_account_reasoning_allowed,
 )
 from app.modules.proxy.load_balancer import LoadBalancer
 from tests.integration.test_load_balancer_integration import _repo_factory
 
 pytestmark = pytest.mark.integration
+
+
+async def test_reasoning_eligibility_precedes_priority_and_rechecks_warm_accounts(async_client):
+    async with SessionLocal() as session:
+        first, second = account("first"), account("second")
+        first.routing_policy = "burn_first"
+        second.routing_policy = "normal"
+        session.add_all([first, second])
+        await session.commit()
+        session.expunge(first)
+    settings = (await async_client.get("/api/accounts/first/models")).json()
+    model = settings["catalog"][0]["model"]
+    assert settings["reasoningRestrictions"] == {}
+    response = await async_client.put(
+        "/api/accounts/first/models",
+        json={
+            "allModels": True,
+            "selectedModels": [],
+            "reasoningRestrictions": {model: ["medium"]},
+        },
+    )
+    assert response.status_code == 200, response.text
+    balancer = LoadBalancer(_repo_factory)
+    assert (await balancer.select_account(model=model, reasoning_effort="medium")).account.id == "first"
+    assert (await balancer.select_account(model=model, reasoning_effort="high")).account.id == "second"
+    assert (await balancer.select_account(model=model, reasoning_effort="none")).account.id == "second"
+    assert not is_account_reasoning_allowed(first, model, "high")
+    assert not _http_bridge_session_supports_service_tier(
+        SimpleNamespace(account=first),
+        request_model=model,
+        request_service_tier=None,
+        request_reasoning_effort="high",
+    )
+    denied = await balancer.select_account(
+        model=model, reasoning_effort="high", required_account_id="first", required_account_is_ownership_constraint=True
+    )
+    assert denied.account is None
+    await async_client.put(
+        "/api/accounts/second/models",
+        json={
+            "allModels": True,
+            "selectedModels": [],
+            "reasoningRestrictions": {model: ["none"]},
+        },
+    )
+    denied = await balancer.select_account(model=model, reasoning_effort="high")
+    assert denied.account is None
+    assert denied.error_code == "reasoning_effort_not_allowed"
+    await async_client.put(
+        "/api/accounts/first/models",
+        json={
+            "allModels": True,
+            "selectedModels": [],
+            "reasoningRestrictions": {},
+        },
+    )
+    assert is_account_reasoning_allowed(first, model, "high")
+
+
+async def test_native_unavailable_saved_models_survive_plan_change(async_client):
+    async with SessionLocal() as session:
+        session.add(account("downgrade"))
+        await session.commit()
+    path = "/api/accounts/downgrade/models"
+    initial = (await async_client.get(path)).json()
+    model = next(item["model"] for item in initial["catalog"] if item["model"] == "gpt-5.4")
+    payload = {"allModels": False, "selectedModels": [model], "reasoningRestrictions": {model: ["high"]}}
+    assert (await async_client.put(path, json=payload)).status_code == 200
+    async with SessionLocal() as session:
+        row = await session.get(Account, "downgrade")
+        row.plan_type = "free"
+        await session.commit()
+    unavailable = (await async_client.get(path)).json()
+    entry = next(item for item in unavailable["catalog"] if item["model"] == model)
+    assert entry["available"] is False
+    assert unavailable["selectedModels"] == [model]
+    assert unavailable["reasoningRestrictions"] == {model: ["high"]}
+    visible = (await async_client.get("/v1/models")).json()["data"]
+    assert model not in {item["id"] for item in visible}
+    assert (await async_client.put(path, json=payload)).status_code == 200
+    async with SessionLocal() as session:
+        row = await session.get(Account, "downgrade")
+        row.plan_type = "pro"
+        await session.commit()
+    restored = (await async_client.get(path)).json()
+    assert next(item for item in restored["catalog"] if item["model"] == model)["available"] is True
+    assert restored["reasoningRestrictions"] == payload["reasoningRestrictions"]
+
+
+@pytest.mark.parametrize("levels", [[], ["high", "high"], ["invented"]])
+async def test_native_reasoning_policy_rejects_invalid_effort_lists(async_client, levels):
+    async with SessionLocal() as session:
+        session.add(account("invalid-efforts"))
+        await session.commit()
+    response = await async_client.put(
+        "/api/accounts/invalid-efforts/models",
+        json={
+            "allModels": True,
+            "selectedModels": [],
+            "reasoningRestrictions": {"gpt-5.6-sol": levels},
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_native_model_controls_expose_wire_efforts_not_client_only_ultra(async_client):
+    async with SessionLocal() as session:
+        session.add(account("wire-efforts"))
+        await session.commit()
+    path = "/api/accounts/wire-efforts/models"
+    catalog = (await async_client.get(path)).json()["catalog"]
+    model = next(entry for entry in catalog if entry["model"] == "gpt-5.6-sol")
+    assert "max" in model["reasoningLevels"]
+    assert "ultra" not in model["reasoningLevels"]
+    response = await async_client.put(
+        path,
+        json={
+            "allModels": True,
+            "selectedModels": [],
+            "reasoningRestrictions": {model["model"]: ["ultra"]},
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "invalid_reasoning_selection"
 
 
 def account(account_id):
@@ -108,6 +233,7 @@ async def test_repeated_model_restriction_during_snapshot_refresh_remains_effect
             if repeat:
                 repeat = False
                 cache.set_model_selection(row.id, False, [])
+                cache.set_reasoning_restrictions(row.id, {"gpt-5.4": ["high"]})
             return result
 
         monkeypatch.setattr(session, "execute", read_then_repeat)
@@ -115,10 +241,13 @@ async def test_repeated_model_restriction_during_snapshot_refresh_remains_effect
 
     cache = RoutingAvailabilityCache(factory)
     cache.set_model_selection(row.id, False, [])
+    cache.set_reasoning_restrictions(row.id, {"gpt-5.4": ["high"]})
     await cache.refresh_from_db()
     assert cache.model_selection(row) == (False, ())
+    assert cache.reasoning_restrictions(row) == {"gpt-5.4": ["high"]}
     await cache.refresh_from_db()
     assert cache.model_selection(row) == (True, ())
+    assert cache.reasoning_restrictions(row) == {}
 
 
 def test_account_controls_migration_defaults_and_roundtrip(tmp_path):
@@ -139,8 +268,8 @@ def test_account_controls_migration_defaults_and_roundtrip(tmp_path):
         run_upgrade(url, "head", bootstrap_legacy=False)
         with engine.connect() as connection:
             assert connection.execute(
-                sa.text("SELECT all_models, selected_models FROM accounts WHERE id='legacy'")
-            ).one() == (1, "[]")
+                sa.text("SELECT all_models, selected_models, reasoning_restrictions FROM accounts WHERE id='legacy'")
+            ).one() == (1, "[]", "{}")
         assert check_schema_drift(url) == ()
         command.downgrade(_build_alembic_config(url), parent)
         run_upgrade(url, "head", bootstrap_legacy=False)

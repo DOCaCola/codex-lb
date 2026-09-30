@@ -646,7 +646,12 @@ class ResponsesTextControls(BaseModel):
 class ResponsesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     _codex_lb_client_reasoning_effort: str | None = PrivateAttr(default=None)
+    _codex_lb_pre_normalization_reasoning_effort: str | None = PrivateAttr(default=None)
     _codex_lb_provider_reasoning_effort_materialized: bool = PrivateAttr(default=False)
+
+    @property
+    def routing_reasoning_effort(self) -> str | None:
+        return self._codex_lb_pre_normalization_reasoning_effort or (self.reasoning.effort if self.reasoning else None)
 
     @model_validator(mode="before")
     @classmethod
@@ -779,6 +784,11 @@ class ResponsesRequest(BaseModel):
 class ResponsesCompactRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     _codex_lb_client_reasoning_effort: str | None = PrivateAttr(default=None)
+    _codex_lb_pre_normalization_reasoning_effort: str | None = PrivateAttr(default=None)
+
+    @property
+    def routing_reasoning_effort(self) -> str | None:
+        return self._codex_lb_pre_normalization_reasoning_effort or (self.reasoning.effort if self.reasoning else None)
 
     @model_validator(mode="before")
     @classmethod

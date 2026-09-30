@@ -25,6 +25,115 @@ from tests.integration.model_source_helpers import _enable_api_key_auth, stub_so
 pytestmark = pytest.mark.integration
 
 
+async def test_reasoning_policy_filters_source_priority_and_reports_denial(async_client, provider):
+    from app.core.clients.proxy import ProxyResponseError
+    from app.modules.model_sources.selection import select_responses_model_source
+
+    ids = []
+    for name, policy, levels in (("First", "burn_first", ["medium"]), ("Second", "normal", ["high"])):
+        created = await async_client.post("/api/openrouter-accounts", json={"name": name, "apiKey": "secret-test"})
+        source_id = created.json()["id"]
+        ids.append(source_id)
+        updated = await async_client.patch(
+            f"/api/openrouter-accounts/{source_id}",
+            json={
+                "allModels": True,
+                "routingPolicy": policy,
+                "reasoningRestrictions": {"vendor/test": levels},
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["state"]["selections"] == []
+    model = "openrouter/vendor/test"
+    assert (await select_responses_model_source(model, None, reasoning_effort="medium"))[0].id == ids[0]
+    assert (await select_responses_model_source(model, None, reasoning_effort="high"))[0].id == ids[1]
+    assert (await select_responses_model_source(model, None))[0].id == ids[1]
+    with pytest.raises(ProxyResponseError) as error:
+        await select_responses_model_source(model, None, reasoning_effort="none")
+    assert error.value.payload["error"]["code"] == "reasoning_effort_not_allowed"
+    response = await async_client.post(
+        "/v1/responses", json={"model": model, "input": "hi", "reasoning": {"effort": "none"}}
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "reasoning_effort_not_allowed"
+    response = await async_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "none",
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "reasoning_effort_not_allowed"
+    response = await async_client.post(
+        "/v1/responses/compact",
+        json={
+            "model": model,
+            "input": [],
+            "reasoning": {"effort": "none"},
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "reasoning_effort_not_allowed"
+
+
+async def test_websocket_reasoning_rejection_finishes_each_turn(async_client, provider):
+    created = await async_client.post("/api/openrouter-accounts", json={"name": "WS", "apiKey": "secret-test"})
+    await async_client.patch(
+        f"/api/openrouter-accounts/{created.json()['id']}",
+        json={
+            "allModels": True,
+            "reasoningRestrictions": {"vendor/test": ["high"]},
+        },
+    )
+    path = "/backend-api/codex/responses"
+    incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "ws",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"user-agent", b"codex_cli_rs/0.157.0")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+        "subprotocols": [],
+    }
+    task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
+    try:
+        await incoming.put({"type": "websocket.connect"})
+        assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
+        for _ in range(2):
+            await incoming.put(
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps(
+                        {
+                            "type": "response.create",
+                            "model": "openrouter/vendor/test",
+                            "input": "Hi",
+                            "reasoning": {"effort": "none"},
+                        }
+                    ),
+                }
+            )
+            event = json.loads((await asyncio.wait_for(outgoing.get(), 5))["text"])
+            assert event["type"] == "error"
+            assert event["status"] == 400
+            assert event["error"]["code"] == "reasoning_effort_not_allowed"
+    finally:
+        await incoming.put({"type": "websocket.disconnect", "code": 1000})
+        try:
+            await asyncio.wait_for(task, 5)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_all_mode_retains_curated_choices_and_applies_priority_after_cooldown(async_client, provider):
     from datetime import timedelta
 
@@ -188,17 +297,44 @@ async def test_account_lifecycle_selection_and_disappearance(async_client, provi
         f"/api/openrouter-accounts/{account_id}",
         json={
             "selections": [{"model": "vendor/test"}],
+            "reasoningRestrictions": {"vendor/test": ["high"]},
         },
     )
     assert selected.status_code == 200, selected.text
     assert selected.json()["state"]["selections"][0]["contextWindow"] == 262144
+    original_catalog = provider.data
     provider.data = []
     refreshed = await async_client.post(f"/api/openrouter-accounts/{account_id}/refresh")
     assert refreshed.status_code == 200, refreshed.text
     assert refreshed.json()["state"]["selections"][0]["model"] == "vendor/test"
+    assert refreshed.json()["state"]["reasoning_restrictions"] == {"vendor/test": ["high"]}
+    listed = (await async_client.get("/v1/models")).json()["data"]
+    assert "openrouter/vendor/test" not in {item["id"] for item in listed}
     denied = await async_client.post("/v1/responses", json={"model": "openrouter/vendor/test", "input": "Hi"})
     assert denied.status_code == 503, denied.text
     assert denied.json()["error"]["code"] == "model_source_disabled"
+    # An atomic dialog save can deselect a missing model and still edit its
+    # retained reasoning policy. It remains configurable after that save.
+    edited = await async_client.patch(
+        f"/api/openrouter-accounts/{account_id}",
+        json={
+            "selections": [],
+            "reasoningRestrictions": {"vendor/test": ["medium"]},
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    restored_selection = await async_client.patch(
+        f"/api/openrouter-accounts/{account_id}",
+        json={
+            "selections": [{"model": "vendor/test"}],
+        },
+    )
+    assert restored_selection.status_code == 200, restored_selection.text
+    provider.data = original_catalog
+    restored = await async_client.post(f"/api/openrouter-accounts/{account_id}/refresh")
+    assert restored.json()["state"]["reasoning_restrictions"] == {"vendor/test": ["medium"]}
+    listed = (await async_client.get("/v1/models")).json()["data"]
+    assert "openrouter/vendor/test" in {item["id"] for item in listed}
     deleted = await async_client.delete(f"/api/openrouter-accounts/{account_id}")
     assert deleted.status_code == 204
     assert (await async_client.get("/api/openrouter-accounts")).json() == {"accounts": []}
@@ -329,6 +465,47 @@ async def test_explicit_rejection_fails_over_before_delivery(async_client, provi
                 await session.scalars(select(RequestLog.cost_usd).where(RequestLog.model_source_id == source_ids[1]))
             )
             assert costs == [pytest.approx(0.001), pytest.approx(0.001)]
+
+
+async def test_reasoning_policy_prevents_ineligible_account_failover(async_client, provider):
+    calls = []
+
+    async def limited(request):
+        calls.append("limited")
+        return web.json_response({"error": {"message": "Rate limited"}}, status=429, headers={"Retry-After": "120"})
+
+    async def unexpected(request):
+        calls.append("ineligible")
+        return web.json_response({"error": {"message": "Must not dispatch"}}, status=500)
+
+    async with stub_source_upstreams() as start:
+        for name, effort, handler in (("A", "high", limited), ("B", "medium", unexpected)):
+            created = await async_client.post("/api/openrouter-accounts", json={"name": name, "apiKey": "secret-test"})
+            source_id = created.json()["id"]
+            response = await async_client.patch(
+                f"/api/openrouter-accounts/{source_id}",
+                json={
+                    "selections": [{"model": "vendor/test"}],
+                    "reasoningRestrictions": {"vendor/test": [effort]},
+                },
+            )
+            assert response.status_code == 200, response.text
+            url = await start(handler)
+            async with SessionLocal() as session:
+                source = await session.get(ModelSource, source_id)
+                source.base_url = url
+                await session.commit()
+        result = await async_client.post(
+            "/v1/responses",
+            json={
+                "model": "openrouter/vendor/test",
+                "input": "Hi",
+                "reasoning": {"effort": "high"},
+            },
+        )
+        assert result.status_code == 429, result.text
+        assert result.headers["retry-after"] == "120"
+        assert calls == ["limited"]
 
 
 async def test_read_only_account_mutations_denied(async_client, provider, monkeypatch):

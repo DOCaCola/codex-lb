@@ -34,16 +34,22 @@ describe("Codex model controls", () => {
   it("defaults to all models and retains curated choices across mode switches", async () => {
     const user = userEvent.setup();
     renderControls();
-    const toggle = await screen.findByRole("switch", { name: /All models/ });
+    await user.click(
+      await screen.findByRole("button", { name: "Models (All)" }),
+    );
+    const toggle = screen.getByRole("switch", { name: /All models/ });
     expect(toggle).toBeChecked();
     await user.click(toggle);
-    await user.click(await screen.findByRole("button", { name: "Models (0)" }));
     await user.click(screen.getByRole("checkbox", { name: "gpt-5.4" }));
     await user.click(screen.getByRole("button", { name: "Save 1 model" }));
-    await screen.findByRole("button", { name: "Models (1)" });
-    await user.click(toggle);
-    await screen.findByRole("button", { name: "Models (All)" });
-    await user.click(toggle);
+    await user.click(await screen.findByRole("button", { name: "Models (1)" }));
+    await user.click(screen.getByRole("switch", { name: /All models/ }));
+    await user.click(screen.getByRole("button", { name: "Save 1 model" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Models (All)" }),
+    );
+    await user.click(screen.getByRole("switch", { name: /All models/ }));
+    await user.click(screen.getByRole("button", { name: "Save 1 model" }));
     await user.click(await screen.findByRole("button", { name: "Models (1)" }));
     expect(screen.getByRole("checkbox", { name: "gpt-5.4" })).toBeChecked();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
@@ -52,9 +58,11 @@ describe("Codex model controls", () => {
   it("prevents model mutations for read-only accounts", async () => {
     renderControls(true);
     expect(
-      await screen.findByRole("switch", { name: /All models/ }),
+      await screen.findByRole("button", { name: "Models (All)" }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Models (All)" })).toBeDisabled();
+    expect(
+      screen.queryByRole("switch", { name: /All models/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("reports a failed mode update without changing the saved mode", async () => {
@@ -68,12 +76,20 @@ describe("Codex model controls", () => {
     );
     const user = userEvent.setup();
     renderControls();
-    const toggle = await screen.findByRole("switch", { name: /All models/ });
+    await user.click(
+      await screen.findByRole("button", { name: "Models (All)" }),
+    );
+    const toggle = screen.getByRole("switch", { name: /All models/ });
     await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Save 0 models" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not update models",
     );
-    expect(toggle).toBeChecked();
+    expect(toggle).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("button", { name: "Models (All)" }),
+    ).toBeInTheDocument();
   });
 
   it("preserves unavailable selections and leaves failed saves editable", async () => {
@@ -82,6 +98,7 @@ describe("Codex model controls", () => {
         HttpResponse.json({
           allModels: false,
           selectedModels: ["retired"],
+          reasoningRestrictions: {},
           catalog: [],
         }),
       ),
@@ -119,6 +136,7 @@ describe("Codex model controls", () => {
           : HttpResponse.json({
               allModels: true,
               selectedModels: [],
+              reasoningRestrictions: {},
               catalog: [],
             }),
       ),
@@ -126,8 +144,9 @@ describe("Codex model controls", () => {
     const user = userEvent.setup();
     renderControls();
     await user.click(await screen.findByRole("button", { name: "Retry" }));
-    expect(
-      await screen.findByRole("switch", { name: /All models/ }),
-    ).toBeChecked();
+    await user.click(
+      await screen.findByRole("button", { name: "Models (All)" }),
+    );
+    expect(screen.getByRole("switch", { name: /All models/ })).toBeChecked();
   });
 });

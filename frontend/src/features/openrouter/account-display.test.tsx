@@ -22,29 +22,44 @@ describe("Unified provider accounts", () => {
     [true, "Free"],
     [false, "Paid"],
     [null, "Unknown"],
-  ] as const)("displays key tier %s in account cards and lists", (free, label) => {
-    const account = createOpenRouterAccount();
-    if (free === null) account.state.key = null;
-    else account.state.key!.is_free_tier = free;
-    render(
-      <MemoryRouter>
-        <OpenRouterAccountCard account={account} />
-        <DashboardAccountList accounts={[]} openRouterAccounts={[account]} />
-        <AccountList accounts={[]} openRouterAccounts={[account]} selectedAccountId={null}
-          onSelect={vi.fn()} onOpenImport={vi.fn()} onOpenOauth={vi.fn()} />
-      </MemoryRouter>,
-    );
-    expect(screen.getAllByTitle(/API key tier reported/)).toHaveLength(3);
-    for (const tier of screen.getAllByTitle(/API key tier reported/)) {
-      expect(tier).toHaveTextContent(label);
-    }
-  });
+  ] as const)(
+    "displays key tier %s in account cards and lists",
+    (free, label) => {
+      const account = createOpenRouterAccount();
+      if (free === null) account.state.key = null;
+      else account.state.key!.is_free_tier = free;
+      render(
+        <MemoryRouter>
+          <OpenRouterAccountCard account={account} />
+          <DashboardAccountList accounts={[]} openRouterAccounts={[account]} />
+          <AccountList
+            accounts={[]}
+            openRouterAccounts={[account]}
+            selectedAccountId={null}
+            onSelect={vi.fn()}
+            onOpenImport={vi.fn()}
+            onOpenOauth={vi.fn()}
+          />
+        </MemoryRouter>,
+      );
+      expect(screen.getAllByTitle(/API key tier reported/)).toHaveLength(3);
+      for (const tier of screen.getAllByTitle(/API key tier reported/)) {
+        expect(tier).toHaveTextContent(label);
+      }
+    },
+  );
 
   it("marks retained tier metadata stale", () => {
     const account = createOpenRouterAccount();
     account.state.key_error = "Refresh failed";
-    render(<MemoryRouter><OpenRouterAccountCard account={account} /></MemoryRouter>);
-    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent("Paid· stale");
+    render(
+      <MemoryRouter>
+        <OpenRouterAccountCard account={account} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent(
+      "Paid· stale",
+    );
   });
 
   it("uses Pause and Resume instead of an enabled switch", async () => {
@@ -66,8 +81,12 @@ describe("Unified provider accounts", () => {
     const view = render(
       <OpenRouterAccountDetail account={account} {...props} />,
     );
-    expect(screen.getByRole("switch", { name: /All models/ })).not.toBeChecked();
-    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent("Paid");
+    expect(
+      screen.queryByRole("switch", { name: /All models/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent(
+      "Paid",
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "Image models (0)" }),
     );
@@ -112,18 +131,21 @@ describe("Unified provider accounts", () => {
         onImageModels={vi.fn()}
         onRefresh={vi.fn()}
         onToggle={vi.fn()}
-        onAllModels={vi.fn()}
         onRoutingPolicy={vi.fn()}
         onDelete={vi.fn()}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Rename account" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Rename account" }),
+    );
     const input = screen.getByRole("textbox", { name: "Account name" });
     await userEvent.clear(input);
     expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
     await userEvent.type(input, "Team key{Enter}");
     expect(onRename).toHaveBeenCalledWith("Team key");
-    expect(screen.queryByRole("textbox", { name: "Account name" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Account name" }),
+    ).not.toBeInTheDocument();
   });
 
   it("sorts provider balances numerically in dashboard list view", async () => {

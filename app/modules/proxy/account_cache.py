@@ -13,6 +13,8 @@ from app.core.cache.invalidation import (
     NAMESPACE_ACCOUNT_SELECTION,
     get_cache_invalidation_poller,
 )
+from app.core.model_routing import reasoning_allowed
+from app.core.openai.model_registry import get_model_registry
 from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal, close_session
 
@@ -117,6 +119,19 @@ class RoutingAvailabilityCache:
         self._local_marks: set[str] = set()
         self._models: dict[str, tuple[bool, tuple[str, ...]]] = {}
         self._local_models: dict[str, tuple[bool, tuple[str, ...]]] = {}
+        self._reasoning: dict[str, dict[str, list[str]]] = {}
+        self._local_reasoning: dict[str, dict[str, list[str]]] = {}
+
+    def set_reasoning_restrictions(self, account_id: str, restrictions: dict[str, list[str]]) -> None:
+        self._local_reasoning[account_id] = {model: list(levels) for model, levels in restrictions.items()}
+        _request_account_routing_bump()
+
+    def reasoning_restrictions(self, account: Account) -> dict[str, list[str]]:
+        if account.id in self._local_reasoning:
+            return self._local_reasoning[account.id]
+        if account.id in self._reasoning:
+            return self._reasoning[account.id]
+        return account.reasoning_restrictions or {}
 
     def set_model_selection(self, account_id: str, all_models: bool, selected_models: list[str]) -> None:
         self._local_models[account_id] = (all_models, tuple(selected_models))
@@ -172,19 +187,31 @@ class RoutingAvailabilityCache:
         """
         marks_before_refresh = frozenset(self._local_marks)
         models_before_refresh = dict(self._local_models)
+        reasoning_before_refresh = dict(self._local_reasoning)
         factory = self._session_factory or SessionLocal
         session = factory()
         try:
             result = await session.execute(
-                select(Account.id, Account.status, Account.all_models, Account.selected_models)
+                select(
+                    Account.id,
+                    Account.status,
+                    Account.all_models,
+                    Account.selected_models,
+                    Account.reasoning_restrictions,
+                )
             )
             rows = result.all()
-            snapshot: dict[str, AccountStatus] = {account_id: status for account_id, status, _, _ in rows}
-            models = {account_id: (all_models, tuple(selected)) for account_id, _, all_models, selected in rows}
+            snapshot: dict[str, AccountStatus] = {account_id: status for account_id, status, _, _, _ in rows}
+            models = {account_id: (all_models, tuple(selected)) for account_id, _, all_models, selected, _ in rows}
+            reasoning = {account_id: restrictions for account_id, _, _, _, restrictions in rows}
         finally:
             await close_session(session)
         self._snapshot = snapshot
         self._models = models
+        self._reasoning = reasoning
+        self._local_reasoning = {
+            key: value for key, value in self._local_reasoning.items() if reasoning_before_refresh.get(key) is not value
+        }
         self._local_models = {
             key: value for key, value in self._local_models.items() if models_before_refresh.get(key) is not value
         }
@@ -202,6 +229,8 @@ class RoutingAvailabilityCache:
         self._local_marks.clear()
         self._models.clear()
         self._local_models.clear()
+        self._reasoning.clear()
+        self._local_reasoning.clear()
 
 
 _account_selection_cache = AccountSelectionCache()
@@ -243,6 +272,14 @@ def is_account_model_allowed(account: Account, model: str | None) -> bool:
         return True
     all_models, selected = _routing_availability_cache.model_selection(account)
     return all_models or model.strip().lower() in {item.strip().lower() for item in selected}
+
+
+def is_account_reasoning_allowed(account: Account, model: str | None, effort: str | None) -> bool:
+    if model is None:
+        return True
+    allowed = _routing_availability_cache.reasoning_restrictions(account).get(model)
+    metadata = get_model_registry().get_models_with_fallback().get(model)
+    return reasoning_allowed(allowed, effort, metadata.default_reasoning_level if metadata else None)
 
 
 async def propagate_account_routing_change() -> bool:

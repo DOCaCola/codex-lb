@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
-import { getAccountModelSettings, updateAccountModels } from "@/features/accounts/api";
+import {
+  getAccountModelSettings,
+  updateAccountModels,
+} from "@/features/accounts/api";
 import type { AccountModelSelectionRequest } from "@/features/accounts/schemas";
 import { Button } from "@/components/ui/button";
 import { formatCompactNumber } from "@/utils/formatters";
-import { AccountModelMode } from "./account-model-mode";
 import { AccountModelPicker } from "./account-model-picker";
 
 export function CodexModelControls({
@@ -26,7 +28,8 @@ export function CodexModelControls({
     queryFn: ({ signal }) => getAccountModelSettings(accountId, { signal }),
   });
   const update = useMutation({
-    mutationFn: (body: AccountModelSelectionRequest) => updateAccountModels(accountId, body),
+    mutationFn: (body: AccountModelSelectionRequest) =>
+      updateAccountModels(accountId, body),
     onSuccess: async (data) => {
       queryClient.setQueryData(["accounts", "models", accountId], data);
       await queryClient.invalidateQueries({ queryKey: ["accounts", "list"] });
@@ -59,25 +62,7 @@ export function CodexModelControls({
   return (
     <>
       {children({
-        mode: (
-          <div className="space-y-2">
-            <AccountModelMode
-              allModels={data.allModels}
-              disabled={disabled || update.isPending}
-              onChange={(allModels) =>
-                update.mutate({
-                  allModels,
-                  selectedModels: data.selectedModels,
-                })
-              }
-            />
-            {update.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {update.error.message}
-              </p>
-            )}
-          </div>
-        ),
+        mode: null,
         action: (
           <Button
             variant="outline"
@@ -96,11 +81,14 @@ export function CodexModelControls({
           name={name}
           provider="Codex"
           selectedModels={data.selectedModels}
+          allModels={data.allModels}
+          reasoningRestrictions={data.reasoningRestrictions}
           disabled={disabled || update.isPending}
           catalog={data.catalog.map((model) => ({
             model: model.model,
             name: model.displayName,
-            available: true,
+            available: model.available,
+            reasoningLevels: model.reasoningLevels,
             description: [
               `${formatCompactNumber(model.contextWindow)} context`,
               model.supportsTools ? "Tools" : "",
@@ -111,8 +99,12 @@ export function CodexModelControls({
               .join(" · "),
           }))}
           onClose={() => setOpen(false)}
-          onSave={(selectedModels) =>
-            update.mutateAsync({ allModels: data.allModels, selectedModels })
+          onSave={(selectedModels, allModels, reasoningRestrictions) =>
+            update.mutateAsync({
+              allModels,
+              selectedModels,
+              reasoningRestrictions,
+            })
           }
         />
       )}

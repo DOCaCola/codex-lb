@@ -20,6 +20,19 @@ from app.modules.proxy.request_policy import (
 )
 
 
+@pytest.mark.parametrize("request_type", [ResponsesRequest, ResponsesCompactRequest])
+@pytest.mark.parametrize("effort", ["none", "minimal", "high", None])
+def test_operator_routing_effort_survives_wire_normalization(request_type, effort):
+    payload = request_type(model="gpt-5.4", instructions="", input=[], reasoning={"effort": effort} if effort else None)
+    apply_api_key_enforcement(payload, None)
+    apply_api_key_enforcement(payload, None)
+    assert payload.routing_reasoning_effort == effort
+    assert payload.model_copy().routing_reasoning_effort == effort
+    assert "routing_reasoning_effort" not in payload.model_dump()
+    if effort == "minimal":
+        assert payload.reasoning.effort != "minimal"
+
+
 @pytest.mark.parametrize(
     ("alias", "canonical", "expected_effort", "expected_service_tier"),
     [

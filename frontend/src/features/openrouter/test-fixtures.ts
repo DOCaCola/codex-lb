@@ -11,6 +11,7 @@ export function createOpenRouterAccount(
     hasManagementKey: true,
     state: {
       all_models: false,
+      reasoning_restrictions: {},
       selections: [],
       catalog: [],
       catalog_updated_at: "2026-09-25T12:00:00Z",

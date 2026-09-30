@@ -433,6 +433,8 @@ class _AliasSourceCatalog:
                 only_disabled: bool = False,
                 excluded_source_ids: set[str] | None = None,
                 advance_rotation: bool = True,
+                reasoning_effort: str | None = None,
+                enforce_reasoning: bool = True,
             ):  # noqa: ANN202
                 catalog.seen_candidates.append(candidate)
                 # ``only_disabled`` selects the complement of the routable

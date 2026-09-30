@@ -40,6 +40,16 @@ def test_all_mode_preserves_overrides_removed_claims_and_explicit_image_selectio
     assert project_models(state)[-1].model == "openrouter/image"
 
 
+def test_all_mode_preserves_disabled_claim_for_missing_reasoning_configuration():
+    state = AccountState(all_models=True, reasoning_restrictions={"missing": ["high"]})
+    row = project_models(state)[0]
+    assert row.model == "openrouter/missing"
+    assert not row.is_enabled
+    assert json.loads(row.raw_metadata_json)["allowed_reasoning_efforts"] == ["high"]
+    state.all_models = False
+    assert project_models(state) == []
+
+
 @pytest.mark.parametrize(
     "efforts, expected",
     [(None, ["minimal", "low", "medium", "high", "xhigh", "max"]), ([], []), (["high", "none"], ["high"])],
@@ -75,3 +85,30 @@ def test_unspecified_efforts_survive_snapshot():
         "supported_efforts"
         not in ReasoningMetadata.model_validate_json(metadata.model_dump_json(exclude_unset=True)).model_fields_set
     )
+
+
+@pytest.mark.parametrize(
+    "parameters,reasoning,expected",
+    [
+        ([], None, "none"),
+        (["reasoning"], {"default_enabled": False, "default_effort": "high"}, "none"),
+        (["reasoning"], {"default_effort": "high"}, "high"),
+        (["reasoning"], None, None),
+    ],
+)
+def test_projected_default_does_not_invent_enabled_reasoning(parameters, reasoning, expected):
+    model = CatalogModel.model_validate(
+        {
+            "id": "test",
+            "name": "Test",
+            "context_length": 100000,
+            "architecture": {},
+            "pricing": {},
+            "top_provider": {},
+            "supported_parameters": parameters,
+            "reasoning": reasoning,
+        }
+    )
+    state = AccountState(catalog=[model], selections=[ModelSelection(model="test")])
+    metadata = json.loads(project_models(state)[0].raw_metadata_json)
+    assert metadata.get("default_reasoning_level") == expected

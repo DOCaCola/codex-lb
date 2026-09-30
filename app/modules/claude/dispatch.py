@@ -45,6 +45,7 @@ class PreparedClaudeRequest:
     native_binding: NativeSessionBinding | None
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
     require_complete_history: bool = False
+    reasoning_effort: str | None = None
 
 
 class ClaudeDispatchPreparer:
@@ -63,6 +64,7 @@ class ClaudeDispatchPreparer:
         translated: bool,
         owner_source_id: str | None = None,
         excluded_source_ids: frozenset[str] = frozenset(),
+        reasoning_effort: str | None = None,
     ) -> PreparedClaudeRequest:
         model = logical.get("model")
         if not isinstance(model, str) or not model.startswith("anthropic/"):
@@ -77,6 +79,17 @@ class ClaudeDispatchPreparer:
         if metadata_identity is not None and client_session and client_session != metadata_identity["session_id"]:
             raise ClaudeError("Claude session header and metadata disagree")
         session = self.repository.session
+        if not translated:
+            output_config = logical.get("output_config")
+            thinking = logical.get("thinking")
+            if isinstance(thinking, dict) and thinking.get("type") == "disabled":
+                reasoning_effort = "none"
+            elif isinstance(output_config, dict) and isinstance(output_config.get("effort"), str):
+                reasoning_effort = output_config["effort"]
+            elif isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                reasoning_effort = {4096: "low", 8192: "medium", 16384: "high", 32000: "max"}.get(
+                    thinking.get("budget_tokens"), "custom"
+                )
         native_ownership = None
         retained_owner = None
         preferred_owner = None
@@ -119,6 +132,7 @@ class ClaudeDispatchPreparer:
             preferred_source_id=preferred_owner,
             excluded_source_ids=excluded_source_ids,
             require_streaming=logical.get("stream") is True,
+            reasoning_effort=reasoning_effort,
         )
         if endpoint == "messages":
             limit = logical.get("max_tokens")
@@ -206,6 +220,7 @@ class ClaudeDispatchPreparer:
             conversation_id=conversation_id,
             owner_source_id=source_id,
             require_streaming=logical.get("stream") is True,
+            reasoning_effort=reasoning_effort,
         )
         headers["authorization"] = f"Bearer {snapshot.credentials.access_token.get_secret_value()}"
         return PreparedClaudeRequest(
@@ -219,6 +234,7 @@ class ClaudeDispatchPreparer:
             logical_body=deepcopy(logical),
             conversation_id=conversation_id,
             credential_generation=snapshot.generation,
+            reasoning_effort=reasoning_effort,
             native_binding=NativeSessionBinding(
                 client_scope=api_key.id if api_key else "anonymous",
                 conversation_id=conversation_id,

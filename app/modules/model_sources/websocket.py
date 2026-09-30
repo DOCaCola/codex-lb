@@ -79,7 +79,7 @@ async def handle_source_frame(
         return False
     model = effective_model_for_api_key(key, requested) or requested
     selected = await select_responses_model_source(
-        model, key, raw_model=model, require_streaming=True, advance_rotation=False
+        model, key, raw_model=model, require_streaming=True, advance_rotation=False, enforce_reasoning=False
     )
     disabled = (
         None

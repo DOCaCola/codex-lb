@@ -66,7 +66,9 @@ export function OpenRouterAccountControls({
             busy={busy}
             error={error?.message}
             onEdit={() => openEditor(account)}
-            onRename={(name) => update.mutateAsync({ id: account.id, body: { name } })}
+            onRename={(name) =>
+              update.mutateAsync({ id: account.id, body: { name } })
+            }
             onModels={() => {
               setModelKind("models");
               setModels(account);
@@ -80,8 +82,9 @@ export function OpenRouterAccountControls({
               update.mutate({ id: account.id, body: { isEnabled } })
             }
             onDelete={() => setDeleting(account)}
-            onAllModels={(allModels) => update.mutate({ id: account.id, body: { allModels } })}
-            onRoutingPolicy={(routingPolicy) => update.mutate({ id: account.id, body: { routingPolicy } })}
+            onRoutingPolicy={(routingPolicy) =>
+              update.mutate({ id: account.id, body: { routingPolicy } })
+            }
           />
         ) : null,
       })}
@@ -92,9 +95,9 @@ export function OpenRouterAccountControls({
           kind={modelKind}
           busy={busy}
           onClose={() => setModels(null)}
-          onSave={(selections) =>
+          onSave={(selections, settings) =>
             update
-              .mutateAsync({ id: models.id, body: { selections } })
+              .mutateAsync({ id: models.id, body: { selections, ...settings } })
               .then(() => undefined)
           }
         />

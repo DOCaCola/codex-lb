@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from app.core.model_routing import ReasoningRestrictions
 from app.db.models import AccountRoutingPolicy
 from app.modules.shared.schemas import DashboardModel
 
@@ -153,6 +154,7 @@ class ModelSelection(DashboardModel):
 class AccountState(BaseModel):
     model_config = ConfigDict(extra="forbid")
     all_models: bool = False
+    reasoning_restrictions: ReasoningRestrictions = Field(default_factory=dict)
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
     catalog_updated_at: datetime | None = None
@@ -173,6 +175,7 @@ class OpenRouterCreate(DashboardModel):
 
 class OpenRouterUpdate(DashboardModel):
     all_models: bool | None = None
+    reasoning_restrictions: ReasoningRestrictions | None = None
     routing_policy: AccountRoutingPolicy | None = None
     name: str | None = Field(default=None, min_length=1, max_length=128)
     is_enabled: bool | None = None

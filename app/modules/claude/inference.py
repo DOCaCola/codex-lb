@@ -54,6 +54,9 @@ async def prepare_responses(
     if not isinstance(model, str):
         raise ClientPayloadError("Claude model is required", param="model")
     conversation_id = continuation.scope.conversation_id
+    reasoning = payload.get("reasoning")
+    requested_effort = reasoning.get("effort") if isinstance(reasoning, dict) else None
+    requested_effort = requested_effort if isinstance(requested_effort, str) else None
     client_scope = api_key.id if api_key else "anonymous"
     opaque = ClaudeOpaqueState(TokenEncryptor())
     logical = project_foreign_replay(
@@ -85,6 +88,7 @@ async def prepare_responses(
                     owner_source_id=chat_plan.active_owner or retry_source_id,
                     preferred_source_id=chat_plan.preferred_owner,
                     excluded_source_ids=excluded_source_ids,
+                    reasoning_effort=requested_effort,
                 )
             except ClaudePoolUnavailable as exc:
                 if exc.code != "previous_response_owner_unavailable" or chat_plan.active_owner is None:
@@ -96,6 +100,7 @@ async def prepare_responses(
                     conversation_id=conversation_id,
                     preferred_source_id=chat_plan.preferred_owner,
                     excluded_source_ids=excluded_source_ids,
+                    reasoning_effort=requested_effort,
                 )
             logical = cast(
                 dict[str, PydanticJsonValue],
@@ -126,6 +131,7 @@ async def prepare_responses(
                 owner_source_id=replay.owner_source_id or retry_source_id,
                 preferred_source_id=replay.preferred_source_id,
                 excluded_source_ids=excluded_source_ids,
+                reasoning_effort=requested_effort,
             )
         selected = next(row for row in account.source.models if row.model == model)
         assert selected.max_output_tokens is not None  # Only resolved catalog models are eligible.
@@ -150,6 +156,7 @@ async def prepare_responses(
             endpoint="messages",
             translated=True,
             owner_source_id=account.source_id,
+            reasoning_effort=requested_effort,
         )
         prepared = replace(prepared, require_complete_history=require_complete_history)
         detach_session_objects(session)

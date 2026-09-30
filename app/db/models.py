@@ -103,6 +103,9 @@ class Account(Base):
     plan_type: Mapped[str] = mapped_column(String, nullable=False)
     all_models: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     selected_models: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"), nullable=False)
+    reasoning_restrictions: Mapped[dict[str, list[str]]] = mapped_column(
+        JSON, default=dict, server_default=text("'{}'"), nullable=False
+    )
     routing_policy: Mapped[str] = mapped_column(
         String,
         default="normal",

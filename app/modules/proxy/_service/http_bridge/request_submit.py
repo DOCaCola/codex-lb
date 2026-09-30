@@ -809,6 +809,7 @@ class _HTTPBridgeRequestSubmitMixin:
             model=payload.model,
             service_tier=forwarded_service_tier,
             reasoning_effort=payload.reasoning.effort if payload.reasoning else None,
+            pre_normalization_reasoning_effort=payload._codex_lb_pre_normalization_reasoning_effort,
             api_key_reservation=api_key_reservation,
             started_at=clock_for(self).monotonic(),
             thread_affinity_last_touch_at=clock_for(self).monotonic(),
@@ -964,6 +965,19 @@ class _HTTPBridgeRequestSubmitMixin:
         request_scope_id = ensure_request_scope_id()
         owned_unanchored_handoff = session.unanchored_reservation_id == request_scope_id
         try:
+            from app.modules.proxy.account_cache import is_account_reasoning_allowed
+
+            if not is_account_reasoning_allowed(
+                session.account, request_state.model, request_state.routing_reasoning_effort
+            ):
+                raise ProxyResponseError(
+                    400,
+                    openai_error(
+                        "reasoning_effort_not_allowed",
+                        "This account does not permit the requested or default reasoning effort",
+                        error_type="invalid_request_error",
+                    ),
+                )
             await self._submit_http_bridge_request_with_handoff(
                 session,
                 request_state=request_state,

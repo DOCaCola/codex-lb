@@ -192,6 +192,7 @@ class ClaudeService:
     async def update(self, source_id: str, payload: ClaudeUpdate) -> ClaudeAccountResponse:
         row = await self._get(source_id)
         state = AccountState.model_validate_json(row.state_json)
+        saved_model_ids = {item.model for item in state.selections} | set(state.reasoning_restrictions)
         if payload.name is not None:
             if not payload.name.strip():
                 raise ClaudeError("Account name is required")
@@ -200,20 +201,31 @@ class ClaudeService:
             row.source.is_enabled = payload.is_enabled
         if payload.all_models is not None:
             state.all_models = payload.all_models
+        if payload.reasoning_restrictions is not None:
+            known = {item.id for item in state.catalog} | saved_model_ids
+            if set(payload.reasoning_restrictions) - known:
+                raise ClaudeError("Configure reasoning for known account models")
+            state.reasoning_restrictions = payload.reasoning_restrictions
         if payload.routing_policy is not None:
             row.routing_policy = payload.routing_policy.value
         if "max_concurrency" in payload.model_fields_set:
             row.source.max_concurrency = payload.max_concurrency
         if payload.selections is not None:
             selected = [item.model for item in payload.selections]
-            known = {item.id for item in state.catalog} | {item.model for item in state.selections}
+            known = {item.id for item in state.catalog} | saved_model_ids
             if len(selected) != len(set(selected)) or set(selected) - known:
                 raise ClaudeError("Select each model once from the synchronized catalog")
             newly_selected = set(selected) - {item.model for item in state.selections}
             if any(item.id in newly_selected and item.token_limits is None for item in state.catalog):
                 raise ClaudeError("Model token limits are unavailable; refresh the catalog before selecting this model")
             state.selections = payload.selections
-        await self._save(row, state, project=payload.selections is not None or payload.all_models is not None)
+        await self._save(
+            row,
+            state,
+            project=payload.selections is not None
+            or payload.all_models is not None
+            or payload.reasoning_restrictions is not None,
+        )
         return self._response(row)
 
     async def refresh(self, source_id: str, *, catalog: bool = True, force: bool = True) -> ClaudeAccountResponse:
@@ -411,6 +423,7 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
                         "supports_reasoning": reasoning is not None,
                         "supported_reasoning_levels": list(reasoning.levels) if reasoning else [],
                         "default_reasoning_level": reasoning.default if reasoning else None,
+                        "allowed_reasoning_efforts": state.reasoning_restrictions.get(selection.model),
                     }
                 ),
             )

@@ -1742,6 +1742,7 @@ class ProxyService(
         prefer_earlier_reset_window: ResetPreferenceWindow = "secondary",
         routing_strategy: RoutingStrategy = "capacity_weighted",
         model: str | None = None,
+        reasoning_effort: str | None = None,
         service_tier: str | None = None,
         additional_limit_name: str | None = None,
         exclude_account_ids: Collection[str] | None = None,
@@ -1907,6 +1908,7 @@ class ProxyService(
                         relative_availability_top_k=_relative_availability_top_k(settings),
                         routing_tunables=routing_tunables,
                         model=model,
+                        reasoning_effort=reasoning_effort,
                         service_tier=service_tier,
                         additional_limit_name=additional_limit_name,
                         account_ids=(
@@ -1976,6 +1978,7 @@ class ProxyService(
                     relative_availability_power=_relative_availability_power(settings),
                     relative_availability_top_k=_relative_availability_top_k(settings),
                     model=model,
+                    reasoning_effort=reasoning_effort,
                     service_tier=service_tier,
                     additional_limit_name=additional_limit_name,
                     account_ids=scoped_account_ids,

@@ -61,15 +61,28 @@ async def test_future_expiry_401_refreshes_same_account(async_client, pool, monk
         return await original(source, *args, **kwargs)
 
     monkeypatch.setattr(transport, "_open_source_stream", send)
+    configured = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "routingPolicy": "burn_first",
+            "reasoningRestrictions": {MODEL.removeprefix("anthropic/"): ["medium"]},
+        },
+    )
+    assert configured.status_code == 200, configured.text
     body = {"model": MODEL, "stream": True}
     body.update(
         {"max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}
         if path.endswith("messages")
         else {"input": "Hi"}
     )
+    if path.endswith("messages"):
+        body.update(thinking={"type": "adaptive"}, output_config={"effort": "medium"})
+    else:
+        body["reasoning"] = {"effort": "medium"}
     result = await async_client.post(path, json=body)
     assert result.status_code == 200, result.text
     assert len(sent) == 2 and sent[0][0] == sent[1][0] and sent[0][1] != sent[1][1]
+    assert sent[0][0] == pool[0]
     assert len(captured) == 1
     refresh.assert_awaited_once()
 

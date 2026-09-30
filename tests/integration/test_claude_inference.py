@@ -14,6 +14,50 @@ pool = routing_fixtures.pool
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize(
+    "path", ["/v1/messages", "/v1/chat/completions", "/v1/responses", "/backend-api/codex/responses"]
+)
+@pytest.mark.parametrize("effort", ["none", "medium", "high", None])
+async def test_account_reasoning_policy_applies_before_claude_dispatch(async_client, pool, monkeypatch, path, effort):
+    from app.modules.claude import transport
+
+    install_upstream(monkeypatch)
+    original = transport._open_source_stream
+    dispatched = []
+
+    async def send(source, *args, **kwargs):
+        dispatched.append(source.id)
+        return await original(source, *args, **kwargs)
+
+    monkeypatch.setattr(transport, "_open_source_stream", send)
+    response = await async_client.patch(
+        f"/api/claude-accounts/{pool[0]}",
+        json={
+            "routingPolicy": "burn_first",
+            "reasoningRestrictions": {"claude-opus-5": ["medium"]},
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = {"model": MODEL, "stream": True}
+    if path.endswith("messages"):
+        body.update(max_tokens=100, messages=[{"role": "user", "content": "Hi"}])
+        if effort == "none":
+            body.update(thinking={"type": "disabled"}, output_config={"effort": "high"})
+        elif effort:
+            body.update(thinking={"type": "adaptive"}, output_config={"effort": effort})
+    elif path.endswith("completions"):
+        body["messages"] = [{"role": "user", "content": "Hi"}]
+        if effort:
+            body["reasoning_effort"] = effort
+    else:
+        body["input"] = "Hi"
+        if effort:
+            body["reasoning"] = {"effort": effort}
+    response = await async_client.post(path, json=body, headers=native_headers() if path.endswith("messages") else {})
+    assert response.status_code == 200, response.text
+    assert dispatched == [pool[0] if effort == "medium" else pool[1]]
+
+
 def install_upstream(
     monkeypatch,
     *,

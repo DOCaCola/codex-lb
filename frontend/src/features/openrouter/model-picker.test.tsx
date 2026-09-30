@@ -12,6 +12,7 @@ const account: OpenRouterAccount = {
   hasManagementKey: false,
   state: {
     all_models: false,
+    reasoning_restrictions: {},
     selections: [],
     catalog_updated_at: null,
     catalog_error: null,
@@ -91,6 +92,9 @@ describe("OpenRouter model selection", () => {
         kind === "images" ? "openai/gpt-image-2.5-sunburst" : "vendor/test";
       expect(save).toHaveBeenCalledWith(
         mixed.state.selections.filter((item) => item.model !== removedId),
+        kind === "models"
+          ? { allModels: false, reasoningRestrictions: {} }
+          : {},
       );
     },
   );
@@ -194,7 +198,7 @@ describe("OpenRouter model selection", () => {
     await user.click(
       screen.getByRole("button", { name: "Save 1 image model" }),
     );
-    expect(save).toHaveBeenCalledWith(filtered.state.selections);
+    expect(save).toHaveBeenCalledWith(filtered.state.selections, {});
   });
   it("shows image prices without conversational context controls", async () => {
     const user = userEvent.setup();
@@ -255,14 +259,17 @@ describe("OpenRouter model selection", () => {
       262144,
     );
     await user.click(screen.getByRole("button", { name: "Save 1 model" }));
-    expect(save).toHaveBeenCalledWith([
-      {
-        model: "vendor/test",
-        contextWindow: 262144,
-        maxOutputTokens: null,
-        displayName: null,
-      },
-    ]);
+    expect(save).toHaveBeenCalledWith(
+      [
+        {
+          model: "vendor/test",
+          contextWindow: 262144,
+          maxOutputTokens: null,
+          displayName: null,
+        },
+      ],
+      { allModels: false, reasoningRestrictions: {} },
+    );
   });
 
   it("keeps retired selections visible so operators can remove them", () => {

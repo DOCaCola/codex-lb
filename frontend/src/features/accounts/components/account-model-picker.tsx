@@ -2,6 +2,11 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { AccountModelMode } from "./account-model-mode";
+import {
+  ModelReasoningPicker,
+  type ReasoningRestrictions,
+} from "./model-reasoning-picker";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +20,7 @@ export type AccountModelOption = {
   name: string;
   description: string;
   available: boolean;
+  reasoningLevels: string[];
 };
 
 export function AccountModelPicker({
@@ -22,6 +28,8 @@ export function AccountModelPicker({
   provider,
   catalog,
   selectedModels,
+  allModels,
+  reasoningRestrictions,
   disabled,
   onClose,
   onSave,
@@ -30,22 +38,34 @@ export function AccountModelPicker({
   provider: string;
   catalog: AccountModelOption[];
   selectedModels: string[];
+  allModels: boolean;
+  reasoningRestrictions: ReasoningRestrictions;
   disabled: boolean;
   onClose: () => void;
-  onSave: (selected: string[]) => Promise<unknown>;
+  onSave: (
+    selected: string[],
+    allModels: boolean,
+    reasoning: ReasoningRestrictions,
+  ) => Promise<unknown>;
 }) {
   const [selected, setSelected] = useState(selectedModels);
+  const [all, setAll] = useState(allModels);
+  const [reasoning, setReasoning] = useState(reasoningRestrictions);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const entries = [...catalog];
-  for (const model of selectedModels) {
+  for (const model of new Set([
+    ...selectedModels,
+    ...Object.keys(reasoningRestrictions),
+  ])) {
     if (!entries.some((entry) => entry.model === model)) {
       entries.push({
         model,
         name: model,
         description: "Unavailable in the current account catalog",
         available: false,
+        reasoningLevels: [],
       });
     }
   }
@@ -59,7 +79,7 @@ export function AccountModelPicker({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] sm:max-w-3xl">
+      <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Models · {name}</DialogTitle>
           <DialogDescription>
@@ -67,6 +87,11 @@ export function AccountModelPicker({
             models is enabled. Upstream availability and quota still apply.
           </DialogDescription>
         </DialogHeader>
+        <AccountModelMode
+          allModels={all}
+          disabled={disabled || busy}
+          onChange={setAll}
+        />
         <Input
           aria-label={`Search ${provider} models`}
           placeholder="Search models"
@@ -84,11 +109,16 @@ export function AccountModelPicker({
             <div key={entry.model} className="rounded-lg border p-3 text-sm">
               <label className="flex items-center gap-3">
                 <Checkbox
-                  checked={selected.includes(entry.model)}
+                  checked={
+                    all ? entry.available : selected.includes(entry.model)
+                  }
                   disabled={
                     disabled ||
                     busy ||
-                    (!entry.available && !selected.includes(entry.model))
+                    all ||
+                    (!entry.available &&
+                      !selectedModels.includes(entry.model) &&
+                      !(entry.model in reasoningRestrictions))
                   }
                   onCheckedChange={(checked) =>
                     setSelected((current) =>
@@ -109,6 +139,22 @@ export function AccountModelPicker({
               <p className="mt-1 text-xs text-muted-foreground">
                 {entry.description}
               </p>
+              <div className="mt-2">
+                <ModelReasoningPicker
+                  model={entry.model}
+                  levels={entry.reasoningLevels}
+                  value={reasoning[entry.model]}
+                  disabled={disabled || busy}
+                  onChange={(value) =>
+                    setReasoning((current) => {
+                      const next = { ...current };
+                      if (value) next[entry.model] = value;
+                      else delete next[entry.model];
+                      return next;
+                    })
+                  }
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -128,7 +174,7 @@ export function AccountModelPicker({
                 setBusy(true);
                 setError(null);
                 try {
-                  await onSave(selected);
+                  await onSave(selected, all, reasoning);
                   onClose();
                 } catch (cause) {
                   setError(

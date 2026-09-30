@@ -15,10 +15,18 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
         for model in state.catalog:
             if model.image is None and "text" in model.architecture.output_modalities:
                 selections.setdefault(model.id, ModelSelection(model=model.id))
-    return [_project(selection, catalog.get(selection.model)) for selection in selections.values()]
+        for model in state.reasoning_restrictions:
+            if model not in catalog:
+                selections.setdefault(model, ModelSelection(model=model))
+    return [
+        _project(selection, catalog.get(selection.model), state.reasoning_restrictions.get(selection.model))
+        for selection in selections.values()
+    ]
 
 
-def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSourceModel:
+def _project(
+    selection: ModelSelection, model: CatalogModel | None, allowed_efforts: list[str] | None
+) -> ModelSourceModel:
     # Retain a disabled routing claim when a selected model disappears. It must
     # never fall through to a subscription account or a different paid model.
     row = ModelSourceModel(
@@ -30,7 +38,10 @@ def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSour
         supports_vision=False,
         context_window=selection.context_window,
     )
-    metadata: dict[str, object] = {"upstream_model": selection.model}
+    metadata: dict[str, object] = {
+        "upstream_model": selection.model,
+        "allowed_reasoning_efforts": allowed_efforts,
+    }
     if model is not None and model.image is not None:
         metadata["image"] = model.image.model_dump(mode="json")
         metadata["output_modalities"] = model.architecture.output_modalities
@@ -73,7 +84,11 @@ def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSour
                     [effort for effort in efforts if not (reasoning.mandatory and effort == "none")],
                     key=lambda effort: _EFFORT_ORDER.index(effort) if effort in _EFFORT_ORDER else len(_EFFORT_ORDER),
                 )
-            if reasoning.default_effort is not None:
+            if reasoning.default_enabled is False and not reasoning.mandatory:
+                metadata["default_reasoning_level"] = "none"
+            elif reasoning.default_effort is not None:
                 metadata["default_reasoning_level"] = reasoning.default_effort
+        elif "reasoning" not in model.supported_parameters:
+            metadata["default_reasoning_level"] = "none"
     row.raw_metadata_json = json.dumps(metadata)
     return row

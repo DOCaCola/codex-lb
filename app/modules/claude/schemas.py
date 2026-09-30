@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, computed_field, field_validator, model_validator
 
+from app.core.model_routing import ReasoningRestrictions
 from app.db.models import AccountRoutingPolicy
 from app.modules.claude.capabilities import CatalogCapabilities
 from app.modules.claude.model_limits import ModelTokenLimits, resolve_token_limits
@@ -104,6 +105,22 @@ class CatalogModel(BaseModel):
     # None until a catalog refresh records them (older stored state).
     capabilities: CatalogCapabilities | None = None
 
+    @computed_field
+    @property
+    def reasoning_levels(self) -> list[str]:
+        from app.modules.claude.capabilities import reasoning_spec
+
+        spec = reasoning_spec(self.id, self.capabilities)
+        return list(spec.levels) if spec else []
+
+    @computed_field
+    @property
+    def default_reasoning_level(self) -> str | None:
+        from app.modules.claude.capabilities import reasoning_spec
+
+        spec = reasoning_spec(self.id, self.capabilities)
+        return spec.default if spec else None
+
     @model_validator(mode="after")
     def resolve_limits(self) -> CatalogModel:
         limits = self.token_limits
@@ -161,6 +178,7 @@ class MetadataRefreshState(BaseModel):
 
 class AccountState(BaseModel):
     all_models: bool = False
+    reasoning_restrictions: ReasoningRestrictions = Field(default_factory=dict)
     metadata_refresh: dict[MetadataEndpoint, MetadataRefreshState] = Field(default_factory=dict)
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
@@ -210,6 +228,7 @@ class ClaudeImport(DashboardModel):
 
 class ClaudeUpdate(DashboardModel):
     all_models: bool | None = None
+    reasoning_restrictions: ReasoningRestrictions | None = None
     routing_policy: AccountRoutingPolicy | None = None
     max_concurrency: int | None = Field(default=None, gt=0, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=128)

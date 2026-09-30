@@ -60,6 +60,7 @@ const AccountSchema = z.object({
   hasManagementKey: z.boolean(),
   state: z.object({
     all_models: z.boolean(),
+    reasoning_restrictions: z.record(z.string(), z.array(z.string()).min(1)),
     selections: z.array(SelectionSchema),
     catalog: z.array(CatalogSchema),
     catalog_updated_at: z.string().nullable(),
@@ -95,6 +96,7 @@ const AccountSchema = z.object({
 export type OpenRouterAccount = z.infer<typeof AccountSchema>;
 export type AccountUpdate = {
   allModels?: boolean;
+  reasoningRestrictions?: Record<string, string[]>;
   routingPolicy?: "normal" | "burn_first" | "preserve";
   name?: string;
   isEnabled?: boolean;
