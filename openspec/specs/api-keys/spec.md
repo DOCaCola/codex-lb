@@ -1963,7 +1963,12 @@ The system SHALL serve `GET /api/api-keys/trends` and its trailing-slash equival
 
 ### Requirement: API-key comparison trend panel
 
-The APIs overview SHALL place a full-width seven-day comparison chart between summary statistics and lifetime breakdown panels, using the existing card and chart styles. It SHALL default to Cost and Per hour. Accessible controls SHALL switch Cost/Tokens and Per hour/Cumulative without refetching. Hourly mode SHALL use stacked areas; cumulative mode SHALL use independent running-total lines starting from the selected window, with one measurement axis. The five largest series by selected seven-day measure SHALL appear individually; remaining series SHALL be summed as Other without losing usage or coverage. Ties SHALL use stable key identity ordering. Legend controls SHALL hide and restore series, and colors SHALL remain stable when modes change. Loading, empty, and retryable error states SHALL be explicit. Controls and legend SHALL fit mobile widths. Unknown-only cost points SHALL be gaps rather than apparent free usage, and compact tooltips SHALL distinguish unknown cost from explicit zero-priced requests.
+The APIs overview SHALL place a full-width seven-day comparison chart between summary statistics and lifetime breakdown panels, using the existing card and chart styles. It SHALL default to Cost and Per hour. Accessible controls SHALL switch Cost/Tokens and Per hour/Cumulative without refetching. Hourly mode SHALL use independent, unstacked areas sharing a zero baseline for both costs and tokens; cumulative mode SHALL use independent running-total lines starting from the selected window, with one measurement axis. The five largest series by selected seven-day measure SHALL appear individually; remaining series SHALL be summed as Other without losing usage or coverage. Ties SHALL use stable key identity ordering. Legend controls SHALL hide and restore series, and colors SHALL remain stable when modes change. Loading, empty, and retryable error states SHALL be explicit. Controls and legend SHALL fit mobile widths. Unknown-only cost points SHALL be gaps rather than apparent free usage, and compact tooltips SHALL distinguish unknown cost from explicit zero-priced requests.
+
+#### Scenario: Compare hourly values independently
+- **WHEN** two keys have hourly costs of 2 and 3 or hourly token counts of 200 and 300
+- **THEN** each area's height represents its own value from zero, not a stacked sum
+- **AND** hiding one series does not change the remaining series' measurements
 
 #### Scenario: Switch measure and accumulation
 - **WHEN** the user selects Tokens and Cumulative

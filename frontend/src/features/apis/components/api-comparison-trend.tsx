@@ -142,7 +142,6 @@ export function ApiComparisonTrend({ data, loading, error, onRetry }: ApiCompari
               {visible.map((item) => (
                 <Series key={item.id} name={item.id} dataKey={(row: ComparisonPoint) => row.values[item.id]}
                   type={mode === "cumulative" ? "stepAfter" : "linear"}
-                  stackId={mode === "hourly" ? "usage" : undefined}
                   stroke={item.color} strokeWidth={1.5} fill={item.color} fillOpacity={0.15}
                   dot={false} connectNulls={false} activeDot={{ r: 3, strokeWidth: 1.5 }}
                   isAnimationActive={!reducedMotion} animationDuration={500} />

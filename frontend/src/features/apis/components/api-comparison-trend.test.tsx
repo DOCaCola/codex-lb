@@ -19,7 +19,7 @@ vi.mock("@/components/lazy-recharts", () => ({
     chartData = data;
     return <div data-testid="cumulative-chart">{children}</div>;
   },
-  Area: ({ name }: { name: string }) => <div data-testid={`series-${name}`} />,
+  Area: ({ name, stackId }: { name: string; stackId?: string }) => <div data-testid={`series-${name}`} data-stack-id={stackId} />,
   Line: ({ name }: { name: string }) => <div data-testid={`series-${name}`} />,
   CartesianGrid: () => null, XAxis: () => null, YAxis: () => null,
   Tooltip: ({ content }: { content: ReactElement<Record<string, unknown>> }) =>
@@ -38,6 +38,32 @@ const fixture: ApiKeysTrendsResponse = {
 };
 
 describe("ApiComparisonTrend", () => {
+  it("renders independent hourly costs and tokens without stacking", async () => {
+    const user = userEvent.setup();
+    const data: ApiKeysTrendsResponse = {
+      ...fixture,
+      series: [2, 3].map((value) => ({
+        keyId: `key-${value}`, name: `Key ${value}`, isDeleted: false,
+        cost: [{ t: "2026-09-30T08:00:00Z", v: value, pricedRequests: 1 }],
+        tokens: [{ t: "2026-09-30T08:00:00Z", v: value * 100 }],
+      })),
+    };
+    renderWithProviders(<ApiComparisonTrend data={data} loading={false} error={false} onRetry={vi.fn()} />);
+    for (const value of [2, 3]) {
+      expect(screen.getByTestId(`series-key:key-${value}`)).not.toHaveAttribute("data-stack-id");
+      expect(chartData[0].values[`key:key-${value}`]).toBe(value);
+    }
+    await user.click(screen.getByRole("button", { name: "Tokens" }));
+    for (const value of [2, 3]) {
+      expect(screen.getByTestId(`series-key:key-${value}`)).not.toHaveAttribute("data-stack-id");
+      expect(chartData[0].values[`key:key-${value}`]).toBe(value * 100);
+    }
+    const legend = screen.getByRole("group", { name: "Visible API keys" });
+    await user.click(within(legend).getByRole("button", { name: "Key 2" }));
+    expect(screen.queryByTestId("series-key:key-2")).not.toBeInTheDocument();
+    expect(chartData[0].values["key:key-3"]).toBe(300);
+  });
+
   it("switches measure and accumulation, and preserves legend choices across controls", async () => {
     const user = userEvent.setup();
     renderWithProviders(<ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()} />);
