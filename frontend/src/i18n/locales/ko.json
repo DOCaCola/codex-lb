@@ -277,7 +277,7 @@
   "apiKeys.overview.activeKeys": "활성 key",
   "apiKeys.overview.apiKeys": "API Key",
   "apiKeys.overview.costByKey": "API Key별 누적 비용",
-  "apiKeys.overview.costByKeySubtitle": "전체 key의 상대 비용",
+  "apiKeys.overview.costByKeySubtitle": "기록된 추정 비용의 비중",
   "apiKeys.overview.expiredMeta": "{{count}} 만료",
   "apiKeys.overview.idleMeta": "{{count}} idle",
   "apiKeys.overview.inactiveMeta": "{{count}} 비활성",

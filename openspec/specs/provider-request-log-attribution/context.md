@@ -31,3 +31,14 @@ Est. API Cost (7d) card uses its usual Avg/day description instead of request
 coverage counts, and incomplete period comparisons stay suppressed. This is a
 presentation change, not repricing or a claim that subscription invoices equal
 API-equivalent estimates. The non-monetary burn-rate lower bound is unchanged.
+
+API-key lifetime breakdown rows and API trend tooltip values use the same compact
+formatter as API cost cards and tables. For example, $44,248.05 with partial
+request coverage remains $44,248.05, without an inline request-count string that
+can overflow the chart. Lifetime cost bars and percentages divide each recorded
+positive cost by the sum of the displayed costs, regardless of incomplete or
+historically unknown coverage. The subtitle "Share of recorded estimated cost"
+defines this basis instead of claiming a complete invoice breakdown. For example,
+$30 and $10 produce 75% and 25% bars even if some requests have no known price.
+Unknown requests receive no invented cost. Other coverage-sensitive report
+comparisons, detailed report coverage and underlying aggregate fields are unchanged.

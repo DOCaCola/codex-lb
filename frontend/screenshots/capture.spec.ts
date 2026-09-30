@@ -117,6 +117,52 @@ const DISABLE_ANIMATIONS_CSS = `
 type Theme = "light" | "dark";
 type SessionOverride = typeof authSession | typeof unauthenticatedSession;
 
+test("API lifetime cost bars and compact labels on desktop and mobile", async ({ page }, testInfo) => {
+  await interceptApi(page);
+  await page.route("**/api/api-keys/**", (route) => {
+    if (new URL(route.request().url()).pathname !== "/api/api-keys/") return route.fallback();
+    return fulfill(route, [{
+      ...apiKeys[0],
+      usageSummary: {
+        requestCount: 426943, totalTokens: 80000, cachedInputTokens: 12000,
+        totalCostUsd: 44248.05, pricedRequests: 422859, unpricedRequests: 99,
+        unmeteredRequests: 3985, coverageUnknown: false,
+      },
+    }, {
+      ...apiKeys[1],
+      usageSummary: {
+        requestCount: 10000, totalTokens: 40000, cachedInputTokens: 6000,
+        totalCostUsd: 14749.35, pricedRequests: 10000, unpricedRequests: 0,
+        unmeteredRequests: 0, coverageUnknown: false,
+      },
+    }]);
+  });
+  await applyTheme(page, "light");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(BASE_URL);
+  await page.getByRole("link", { name: "APIs", exact: true }).click();
+  const panel = page.getByTestId("api-keys-overview-cost-panel");
+  await expect(panel.getByText("$44,248.05 · 75%", { exact: true })).toBeVisible();
+  await expect(panel.getByText("$14,749.35 · 25%", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Share of recorded estimated cost", { exact: true })).toBeVisible();
+  await expect(panel).not.toContainText(/known|incomplete|priced|unmetered/);
+  for (const [name, width, height] of [["desktop", 1440, 900], ["mobile", 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    await panel.evaluate((element) => element.scrollIntoView({ block: "center" }));
+    await expect(panel.getByText("$44,248.05 · 75%", { exact: true })).toBeVisible();
+    await expect(panel.getByRole("meter", { name: "Production" })).toBeVisible();
+    await expect(panel.getByRole("meter", { name: "Development" })).toBeVisible();
+    await expect.poll(() => panel.getByRole("meter", { name: "Production" }).evaluate(
+      (element) => Math.round(element.firstElementChild!.getBoundingClientRect().width / element.getBoundingClientRect().width * 100),
+    )).toBe(75);
+    await expect.poll(() => panel.getByRole("meter", { name: "Development" }).evaluate(
+      (element) => Math.round(element.firstElementChild!.getBoundingClientRect().width / element.getBoundingClientRect().width * 100),
+    )).toBe(25);
+    await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await panel.screenshot({ path: testInfo.outputPath(`api-cost-${name}.png`), animations: "disabled" });
+  }
+});
+
 // ── Route interception ──
 
 function fulfill(route: Route, data: unknown) {

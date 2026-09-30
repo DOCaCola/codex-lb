@@ -13,7 +13,7 @@ import {
 import { useChartColors } from "@/hooks/use-chart-colors";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import type { ApiKeyTrendPoint } from "@/features/apis/schemas";
-import { formatCoveredCost, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { formatChartDateTime, formatCompactNumber, formatCurrency } from "@/utils/formatters";
 
 type MergedPoint = {
@@ -97,7 +97,7 @@ function CustomTooltip({ active, payload, label }: ChartTooltipProps) {
             <span className="text-muted-foreground">{meta ? t(`apis.trend.series.${entry.dataKey}`, { defaultValue: meta.label }) : ""}</span>
             <span className="ml-auto tabular-nums font-medium">
               {entry.dataKey === "cost" && entry.payload?.costCoverage
-                ? formatCoveredCost(entry.value ?? 0, entry.payload.costCoverage)
+                ? formatCoveredCostShort(entry.value ?? 0, entry.payload.costCoverage)
                 : meta?.formatter(entry.value ?? 0)}
             </span>
           </div>

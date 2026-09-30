@@ -277,7 +277,7 @@
   "apiKeys.overview.activeKeys": "活跃 key",
   "apiKeys.overview.apiKeys": "API Key",
   "apiKeys.overview.costByKey": "按 API Key 统计的累计费用",
-  "apiKeys.overview.costByKeySubtitle": "所有 key 的相对花费",
+  "apiKeys.overview.costByKeySubtitle": "已记录估算费用的占比",
   "apiKeys.overview.expiredMeta": "{{count}} 个已过期",
   "apiKeys.overview.idleMeta": "{{count}} 个 idle",
   "apiKeys.overview.inactiveMeta": "{{count}} 个未激活",

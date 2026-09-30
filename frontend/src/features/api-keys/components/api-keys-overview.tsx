@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import type { ApiKey } from "@/features/api-keys/schemas";
-import { formatCoveredCost, formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import { formatCompactNumber, formatCurrency } from "@/utils/formatters";
 
 type UsageMetric = "requests" | "tokens" | "cost";
@@ -17,7 +17,7 @@ type BreakdownRow = {
   label: string;
   labelSuffix: string;
   value: number;
-  share: number | null;
+  share: number;
   costLabel?: string;
 };
 
@@ -55,9 +55,6 @@ function formatMetricValue(metric: UsageMetric, value: number): string {
 }
 
 function buildBreakdownRows(apiKeys: ApiKey[], metric: UsageMetric): BreakdownRow[] {
-  const incompleteCost = metric === "cost" && apiKeys.some(
-    (apiKey) => apiKey.usageSummary && !isCostCoverageComplete(apiKey.usageSummary),
-  );
   const rows = apiKeys.reduce<Array<Omit<BreakdownRow, "share">>>((nextRows, apiKey) => {
     const usage = apiKey.usageSummary;
     const value =
@@ -73,7 +70,7 @@ function buildBreakdownRows(apiKeys: ApiKey[], metric: UsageMetric): BreakdownRo
         label: apiKey.name,
         labelSuffix: apiKey.keyPrefix ? ` · ${apiKey.keyPrefix}` : "",
         value,
-        costLabel: metric === "cost" && usage ? formatCoveredCost(value, usage) : undefined,
+        costLabel: metric === "cost" && usage ? formatCoveredCostShort(value, usage) : undefined,
       });
     }
     return nextRows;
@@ -87,7 +84,7 @@ function buildBreakdownRows(apiKeys: ApiKey[], metric: UsageMetric): BreakdownRo
 
   return rows.map((row) => ({
     ...row,
-    share: incompleteCost ? null : row.value / total,
+    share: row.value / total,
   }));
 }
 
@@ -134,17 +131,22 @@ function BreakdownPanel({
                   <span className="text-muted-foreground">{row.labelSuffix}</span>
                 </span>
                 <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {row.costLabel ?? formatMetricValue(metric, row.value)} · {row.share == null ? "—" : formatSharePercent(row.share)}
+                  {row.costLabel ?? formatMetricValue(metric, row.value)} · {formatSharePercent(row.share)}
                 </span>
               </div>
-              {row.share == null ? null : (
-                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
-                    style={{ width: `${Math.max(row.share * 100, 1)}%` }}
-                  />
-                </div>
-              )}
+              <div
+                className="h-1.5 overflow-hidden rounded-full bg-muted"
+                role="meter"
+                aria-label={row.label}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={row.share * 100}
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.max(row.share * 100, 1)}%` }}
+                />
+              </div>
             </div>
           ))}
         </div>

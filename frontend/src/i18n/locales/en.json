@@ -277,7 +277,7 @@
   "apiKeys.overview.activeKeys": "Active keys",
   "apiKeys.overview.apiKeys": "API Keys",
   "apiKeys.overview.costByKey": "Lifetime Cost by API Key",
-  "apiKeys.overview.costByKeySubtitle": "Relative spend across all keys",
+  "apiKeys.overview.costByKeySubtitle": "Share of recorded estimated cost",
   "apiKeys.overview.expiredMeta": "{{count}} expired",
   "apiKeys.overview.idleMeta": "{{count}} idle",
   "apiKeys.overview.inactiveMeta": "{{count}} inactive",

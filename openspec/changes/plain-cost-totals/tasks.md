@@ -1,2 +1,4 @@
 - [x] 1. Remove mathematical prefix from all shared monetary subtotal displays while retaining coverage descriptions and unknown/free distinction.
 - [x] 2. Update regression tests and specs/context; run frontend checks.
+- [x] 3. Restore compact monetary labels in the API-key lifetime breakdown and trend tooltips without coverage-count strings; preserve accounting and incomplete-share guards, and verify rendered regressions.
+- [x] 4. Restore API-key cost bars and percentages as shares of recorded estimated cost, clarify the subtitle, and test incomplete, historical, unknown and multiple-key states on desktop and mobile. This replaces the chart-specific share suppression retained in task 3; other report guards remain unchanged.
