@@ -3010,6 +3010,14 @@ export const handlers = [
     return HttpResponse.json(regenerated);
   }),
 
+  http.get("/api/api-keys/trends", () => HttpResponse.json({
+    since: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+    until: new Date().toISOString(),
+    series: state.apiKeys.map((key) => ({
+      ...createApiKeyTrends({ keyId: key.id }), name: key.name, isDeleted: false,
+    })),
+  })),
+
   http.get("/api/api-keys/:keyId/trends", ({ params }) => {
     const keyId = String(params.keyId);
     const existing = findApiKey(keyId);

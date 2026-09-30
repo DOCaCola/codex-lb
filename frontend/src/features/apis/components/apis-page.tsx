@@ -14,10 +14,12 @@ import type {
 import { ApiKeyCreatedDialog } from "@/features/api-keys/components/api-key-created-dialog";
 import { ApiKeysOverview } from "@/features/api-keys/components/api-keys-overview";
 import { ApiDetail } from "@/features/apis/components/api-detail";
+import { ApiComparisonTrend } from "@/features/apis/components/api-comparison-trend";
 import { ApiList } from "@/features/apis/components/api-list";
 import { ApisSkeleton } from "@/features/apis/components/apis-skeleton";
 import {
 	useApiKeys,
+	useApiKeysTrends,
 	useApiKeyTrends,
 	useApiKeyUsage7Day,
 } from "@/features/apis/hooks/use-apis";
@@ -85,6 +87,7 @@ export function ApisPage() {
 	);
 
 	const trendsQuery = useApiKeyTrends(selectedApiKey?.id ?? null, { enabled: canReadKeys });
+	const comparisonQuery = useApiKeysTrends({ enabled: canReadKeys });
 	const usage7DayQuery = useApiKeyUsage7Day(selectedApiKey?.id ?? null, { enabled: canReadKeys });
 
 	const mutationBusy =
@@ -169,7 +172,10 @@ export function ApisPage() {
 				</div>
 			) : (
 				<div className="space-y-6">
-					<ApiKeysOverview apiKeys={apiKeys} />
+					<ApiKeysOverview apiKeys={apiKeys} trend={
+						<ApiComparisonTrend data={comparisonQuery.data} loading={comparisonQuery.isPending}
+							error={!!comparisonQuery.error} onRetry={() => void comparisonQuery.refetch()} />
+					} />
 
 					<div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
 						<div className="rounded-xl border bg-card p-4">

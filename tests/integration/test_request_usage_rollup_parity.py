@@ -336,6 +336,7 @@ async def _snapshot(*, lead_since: datetime = SINCE_UNALIGNED) -> dict:
             "trends_key2": await api_keys.trends_by_key("key_2", SINCE_ALIGNED, UNTIL_UNALIGNED, 7200),
             "trends_raw_degrade": await api_keys.trends_by_key("key_1", lead_since, NOW, 5400),
             "trends_no_logs": await api_keys.trends_by_key("key_none", lead_since, NOW, 3600),
+            "collection_trends": await api_keys.trends_by_keys(lead_since, NOW, 3600),
             "listing_totals": await _listing_totals(logs, lead_since),
         }
 
@@ -657,6 +658,7 @@ async def test_statistics_survive_retention_pruning_folded_raw(db_setup, monkeyp
         "top_error_since",
         "top_error_between",
         "trends_key1",
+        "collection_trends",
         "conv_buckets_1h",
         "conv_buckets_6h",
         "activity_since",

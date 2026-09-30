@@ -11,6 +11,7 @@ import { ApisPage } from "./apis-page";
 const hookMocks = vi.hoisted(() => ({
 	useApiKeys: vi.fn(),
 	useApiKeyTrends: vi.fn(),
+	useApiKeysTrends: vi.fn(),
 	useApiKeyUsage7Day: vi.fn(),
 }));
 
@@ -75,6 +76,7 @@ function renderApisPage({
 		regenerateMutation,
 	});
 	hookMocks.useApiKeyTrends.mockReturnValue(trendsQuery);
+	hookMocks.useApiKeysTrends.mockReturnValue(createQueryMock({ series: [], since: "2026-09-23T00:00:00Z", until: "2026-09-30T00:00:00Z" }));
 	hookMocks.useApiKeyUsage7Day.mockReturnValue(usage7DayQuery);
 
 	return renderWithProviders(<ApisPage />);

@@ -15,6 +15,23 @@ export const ApiKeyTrendsResponseSchema = z.object({
   tokens: z.array(ApiKeyTrendPointSchema),
 });
 
+const ApiKeyComparisonSeriesSchema = z.object({
+  keyId: z.string().nullable(),
+  name: z.string().nullable(),
+  isDeleted: z.boolean(),
+  cost: z.array(ApiKeyTrendPointSchema),
+  tokens: z.array(ApiKeyTrendPointSchema),
+});
+
+export const ApiKeysTrendsResponseSchema = z.object({
+  since: z.iso.datetime({ offset: true }),
+  until: z.iso.datetime({ offset: true }),
+  series: z.array(ApiKeyComparisonSeriesSchema),
+});
+
+export type ApiKeyComparisonSeries = z.input<typeof ApiKeyComparisonSeriesSchema>;
+export type ApiKeysTrendsResponse = z.input<typeof ApiKeysTrendsResponseSchema>;
+
 const ApiKeyAccountCostSchema = z.object({
   accountId: z.string().nullable().default(null),
   email: z.string().nullable().default(null),

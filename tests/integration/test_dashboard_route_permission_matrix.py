@@ -78,6 +78,8 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], PermissionRequirement] = {
     # Guest-restricted reads (PR-0a-2): inventories and topology are not guest-safe.
     ("GET", "/api/api-keys"): PermissionRequirement(Permission.API_KEYS_READ),
     ("GET", "/api/api-keys/"): PermissionRequirement(Permission.API_KEYS_READ),
+    ("GET", "/api/api-keys/trends"): PermissionRequirement(Permission.API_KEYS_READ),
+    ("GET", "/api/api-keys/trends/"): PermissionRequirement(Permission.API_KEYS_READ),
     ("GET", "/api/api-keys/{key_id}/trends"): PermissionRequirement(Permission.API_KEYS_READ),
     ("GET", "/api/api-keys/{key_id}/usage-7d"): PermissionRequirement(Permission.API_KEYS_READ),
     ("GET", "/api/settings/upstream-proxy"): PermissionRequirement(Permission.OPS_WRITE),

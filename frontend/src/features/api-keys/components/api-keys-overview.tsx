@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ApiKey } from "@/features/api-keys/schemas";
@@ -157,9 +158,10 @@ function BreakdownPanel({
 
 export type ApiKeysOverviewProps = {
   apiKeys: ApiKey[];
+  trend?: ReactNode;
 };
 
-export function ApiKeysOverview({ apiKeys }: ApiKeysOverviewProps) {
+export function ApiKeysOverview({ apiKeys, trend }: ApiKeysOverviewProps) {
   const { t } = useTranslation();
   const totalKeys = apiKeys.length;
   const activeKeys = apiKeys.filter((apiKey) => apiKey.isActive && !isExpired(apiKey)).length;
@@ -195,6 +197,8 @@ export function ApiKeysOverview({ apiKeys }: ApiKeysOverviewProps) {
         />
         <OverviewStat label={t("apiKeys.overview.lifetimeCost")} value={formatCoveredCostShort(totalCostUsd, costCoverage)} meta={t("apiKeys.overview.lifetimeCostMeta")} />
       </div>
+
+      {trend}
 
       <div className="grid gap-4 xl:grid-cols-2">
         <BreakdownPanel

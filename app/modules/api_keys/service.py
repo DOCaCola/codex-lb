@@ -206,6 +206,12 @@ class ApiKeysRepositoryProtocol(Protocol):
         bucket_seconds: int = 3600,
     ) -> list[ApiKeyTrendBucket]: ...
 
+    async def trends_by_keys(
+        self, since: datetime, until: datetime, bucket_seconds: int = 3600
+    ) -> dict[str, list[ApiKeyTrendBucket]]: ...
+
+    async def key_names(self) -> dict[str, str]: ...
+
     async def usage_7d(
         self,
         key_id: str,
@@ -1307,6 +1313,24 @@ class ApiKeysService:
         )
         return _build_api_key_trends(key_id, buckets, since, now, _DETAIL_BUCKET_SECONDS)
 
+    async def get_keys_trends(self) -> ApiKeysTrendsData:
+        now = utcnow()
+        since = now - timedelta(days=_SPARKLINE_DAYS)
+        names = await self._repository.key_names()
+        buckets_by_key = await self._repository.trends_by_keys(since, now, _DETAIL_BUCKET_SECONDS)
+        series: list[ApiKeyComparisonSeriesData] = []
+        deleted_buckets: list[ApiKeyTrendBucket] = []
+        for key_id, buckets in sorted(buckets_by_key.items()):
+            if key_id not in names:
+                deleted_buckets.extend(buckets)
+                continue
+            trends = _build_api_key_trends(key_id, buckets, since, now, _DETAIL_BUCKET_SECONDS)
+            series.append(ApiKeyComparisonSeriesData(key_id, names[key_id], False, trends.cost, trends.tokens))
+        if deleted_buckets:
+            trends = _build_api_key_trends("", deleted_buckets, since, now, _DETAIL_BUCKET_SECONDS)
+            series.append(ApiKeyComparisonSeriesData(None, None, True, trends.cost, trends.tokens))
+        return ApiKeysTrendsData(since, now, series)
+
     async def get_key_usage_summary_for_self(self, key_id: str) -> ApiKeySelfUsageData | None:
         """Return usage summary + current limits for a single key (self-service lookup)."""
         row = await self._repository.get_by_id(key_id)
@@ -1388,6 +1412,22 @@ class ApiKeyTrendsData:
     key_id: str
     cost: list[ApiKeyTrendsPoint] = field(default_factory=list)
     tokens: list[ApiKeyTrendsPoint] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyComparisonSeriesData:
+    key_id: str | None
+    name: str | None
+    is_deleted: bool
+    cost: list[ApiKeyTrendsPoint]
+    tokens: list[ApiKeyTrendsPoint]
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeysTrendsData:
+    since: datetime
+    until: datetime
+    series: list[ApiKeyComparisonSeriesData]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2140,29 +2180,26 @@ def _build_api_key_trends(
     bucket_count = ((end_epoch - start_epoch) // bucket_seconds) + 1
     time_grid = [start_epoch + i * bucket_seconds for i in range(bucket_count)]
 
-    cost_by_bucket: dict[int, float] = {}
-    coverage_by_bucket: dict[int, ApiKeyTrendBucket] = {}
-    tokens_by_bucket: dict[int, int] = {}
+    buckets_by_epoch: dict[int, ApiKeyTrendBucket] = {}
     for b in buckets:
-        cost_by_bucket[b.bucket_epoch] = b.total_cost_usd
-        coverage_by_bucket[b.bucket_epoch] = b
-        tokens_by_bucket[b.bucket_epoch] = b.total_tokens
+        previous = buckets_by_epoch.get(b.bucket_epoch, ApiKeyTrendBucket(b.bucket_epoch, 0, 0.0))
+        buckets_by_epoch[b.bucket_epoch] = previous.merge(b)
 
     cost_points: list[ApiKeyTrendsPoint] = []
     tokens_points: list[ApiKeyTrendsPoint] = []
     for epoch in time_grid:
         dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
-        bucket = coverage_by_bucket.get(epoch)
+        bucket = buckets_by_epoch.get(epoch)
         cost_points.append(
             ApiKeyTrendsPoint(
                 t=dt,
-                v=round(cost_by_bucket.get(epoch, 0.0), 6),
+                v=round(bucket.total_cost_usd, 6) if bucket else 0.0,
                 priced_requests=bucket.priced_requests if bucket else 0,
                 unpriced_requests=bucket.unpriced_requests if bucket else 0,
                 unmetered_requests=bucket.unmetered_requests if bucket else 0,
                 coverage_unknown=bucket.coverage_unknown if bucket else False,
             )
         )
-        tokens_points.append(ApiKeyTrendsPoint(t=dt, v=float(tokens_by_bucket.get(epoch, 0))))
+        tokens_points.append(ApiKeyTrendsPoint(t=dt, v=float(bucket.total_tokens) if bucket else 0.0))
 
     return ApiKeyTrendsData(key_id=key_id, cost=cost_points, tokens=tokens_points)

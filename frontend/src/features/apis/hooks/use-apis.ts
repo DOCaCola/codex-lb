@@ -13,7 +13,7 @@ import type {
   ApiKeyCreateRequest,
   ApiKeyUpdateRequest,
 } from "@/features/api-keys/schemas";
-import { getApiKeyTrends, getApiKeyUsage7Day } from "@/features/apis/api";
+import { getApiKeysTrends, getApiKeyTrends, getApiKeyUsage7Day } from "@/features/apis/api";
 
 export type ApiKeyQueryOptions = {
   /** Set false for principals the backend would answer with 403 (read-only guests). */
@@ -97,6 +97,17 @@ export function useApiKeyTrends(keyId: string | null, { enabled = true }: ApiKey
     queryKey: ["api-keys", "trends", keyId],
     queryFn: () => getApiKeyTrends(keyId!),
     enabled: enabled && !!keyId,
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useApiKeysTrends({ enabled = true }: ApiKeyQueryOptions = {}) {
+  return useQuery({
+    queryKey: ["api-keys", "trends", "overview"],
+    queryFn: getApiKeysTrends,
+    enabled,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
     refetchIntervalInBackground: false,

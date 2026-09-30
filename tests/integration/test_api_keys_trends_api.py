@@ -50,6 +50,81 @@ async def test_api_key_detail_endpoints_return_404_for_missing_key(async_client,
 
 
 @pytest.mark.asyncio
+async def test_collection_trends_share_window_preserve_coverage_and_deleted_usage(async_client, monkeypatch):
+    first = await _create_api_key(async_client, name="First")
+    second = await _create_api_key(async_client, name="Second")
+    idle = await _create_api_key(async_client, name="Idle")
+    deleted = await _create_api_key(async_client, name="Former private name")
+    now = datetime(2026, 9, 30, 10, 37)
+    since = now - timedelta(days=7)
+    monkeypatch.setattr("app.modules.api_keys.service.utcnow", lambda: now)
+    rows = [
+        (first, since + timedelta(minutes=1), 10, 5, None, 0.25, None),
+        (first, now - timedelta(minutes=2), 30, None, 7, None, None),
+        (second, now - timedelta(hours=1), 20, 6, None, 0, None),
+        (deleted, now - timedelta(hours=1), 40, 8, None, 0.75, None),
+        ("already-deleted", now - timedelta(hours=1), 4, 1, None, 0.05, None),
+        (None, now - timedelta(hours=1), 999, 999, None, 9.99, None),
+        (first, since - timedelta(seconds=1), 999, 999, None, 9.99, None),
+        (first, now, 999, 999, None, 9.99, None),
+        (first, now - timedelta(hours=1), 999, 999, None, 9.99, "warmup"),
+        (first, now - timedelta(hours=1), 999, 999, None, 9.99, "limit_warmup"),
+    ]
+    await _insert_request_logs(
+        *[
+            RequestLog(
+                api_key_id=key_id,
+                request_id=f"collection-{index}",
+                requested_at=requested_at,
+                model="gpt-5.1",
+                status="success",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                reasoning_tokens=reasoning_tokens,
+                cost_usd=cost,
+                request_kind=kind,
+            )
+            for index, (key_id, requested_at, input_tokens, output_tokens, reasoning_tokens, cost, kind) in enumerate(
+                rows
+            )
+        ]
+    )
+    assert (await async_client.delete(f"/api/api-keys/{deleted}")).status_code == 204
+    response = await async_client.get("/api/api-keys/trends")
+    assert response.status_code == 200
+    payload = response.json()
+    assert (await async_client.get("/api/api-keys/trends/")).json() == payload
+    assert _parse_utc(payload["until"]) - _parse_utc(payload["since"]) == timedelta(days=7)
+    series = {item["keyId"]: item for item in payload["series"]}
+    assert set(series) == {first, second, None}
+    assert idle not in series
+    timelines = [[point["t"] for point in item["cost"]] for item in series.values()]
+    assert all(timeline == timelines[0] for timeline in timelines)
+    assert len(timelines[0]) == 169  # Both partial boundary hours are included.
+    for key_id in (first, second):
+        individual = (await async_client.get(f"/api/api-keys/{key_id}/trends")).json()
+        assert series[key_id]["cost"] == individual["cost"]
+        assert series[key_id]["tokens"] == individual["tokens"]
+    assert sum(point["v"] for point in series[first]["tokens"]) == 52
+    assert sum(point["v"] for point in series[first]["cost"]) == pytest.approx(0.25)
+    assert sum(point["unpricedRequests"] for point in series[first]["cost"]) == 1
+    assert sum(point["pricedRequests"] for point in series[second]["cost"]) == 1
+    assert series[None]["isDeleted"] is True
+    assert series[None]["name"] is None
+    assert sum(point["v"] for point in series[None]["cost"]) == pytest.approx(0.8)
+    assert sum(point["v"] for point in series[None]["tokens"]) == 53
+
+
+@pytest.mark.asyncio
+async def test_collection_trends_empty_window(async_client, monkeypatch):
+    await _create_api_key(async_client, name="Unused")
+    monkeypatch.setattr("app.modules.api_keys.service.utcnow", lambda: datetime(2026, 9, 30, 10))
+    response = await async_client.get("/api/api-keys/trends")
+    assert response.status_code == 200
+    assert response.json()["series"] == []
+
+
+@pytest.mark.asyncio
 async def test_adding_limit_backfills_current_window_usage(async_client, monkeypatch: pytest.MonkeyPatch):
     key_id = await _create_api_key(async_client, name="limit-backfill-key")
     other_key_id = await _create_api_key(async_client, name="limit-backfill-other-key")

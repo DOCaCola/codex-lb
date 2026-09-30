@@ -21,6 +21,7 @@ const apiKeysApiMocks = vi.hoisted(() => ({
 }));
 
 const apisApiMocks = vi.hoisted(() => ({
+	getApiKeysTrends: vi.fn(),
 	getApiKeyTrends: vi.fn(),
 	getApiKeyUsage7Day: vi.fn(),
 }));

@@ -440,6 +440,8 @@ async def test_guest_cannot_read_inventory_and_topology_surfaces(
 
     for path, permission in (
         ("/api/api-keys/", Permission.API_KEYS_READ),
+        ("/api/api-keys/trends", Permission.API_KEYS_READ),
+        ("/api/api-keys/trends/", Permission.API_KEYS_READ),
         ("/api/api-keys/some-key/trends", Permission.API_KEYS_READ),
         ("/api/api-keys/some-key/usage-7d", Permission.API_KEYS_READ),
         ("/api/settings/upstream-proxy", Permission.OPS_WRITE),

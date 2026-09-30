@@ -15,9 +15,12 @@ from app.dependencies import ApiKeysContext, get_api_keys_context
 from app.modules.api_keys.repository import ApiKeyOwnerDisabledError
 from app.modules.api_keys.schemas import (
     ApiKeyAccountCostResponse,
+    ApiKeyComparisonSeriesResponse,
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
     ApiKeyResponse,
+    ApiKeysTrendsResponse,
+    ApiKeyTrendPoint,
     ApiKeyTrendsResponse,
     ApiKeyUpdateRequest,
     ApiKeyUsage7DayResponse,
@@ -305,13 +308,26 @@ async def regenerate_api_key(
     )
 
 
+@router.get("/trends", response_model=ApiKeysTrendsResponse)
+@router.get("/trends/", response_model=ApiKeysTrendsResponse, include_in_schema=False)
+async def get_api_keys_trends(
+    context: ApiKeysContext = Depends(get_api_keys_context),
+) -> ApiKeysTrendsResponse:
+    result = await context.service.get_keys_trends()
+    return ApiKeysTrendsResponse(
+        since=result.since,
+        until=result.until,
+        series=[
+            ApiKeyComparisonSeriesResponse.model_validate(series, from_attributes=True) for series in result.series
+        ],
+    )
+
+
 @router.get("/{key_id}/trends", response_model=ApiKeyTrendsResponse)
 async def get_api_key_trends(
     key_id: str,
     context: ApiKeysContext = Depends(get_api_keys_context),
 ) -> ApiKeyTrendsResponse:
-    from app.modules.api_keys.schemas import ApiKeyTrendPoint
-
     result = await context.service.get_key_trends(key_id)
     if result is None:
         raise DashboardNotFoundError(f"API key not found: {key_id}")

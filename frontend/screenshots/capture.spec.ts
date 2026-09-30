@@ -203,6 +203,78 @@ const DISABLE_ANIMATIONS_CSS = `
 type Theme = "light" | "dark";
 type SessionOverride = typeof authSession | typeof unauthenticatedSession;
 
+test("API comparison trends across metrics and modes on desktop and mobile", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await interceptApi(page);
+  await page.route("**/health/ready", (route) => fulfill(route, { status: "ok" }));
+  const names = ["Production", "Development", "Research", "Automation", "Mobile", "Test", "Unpriced provider"];
+  const keys = names.map((name, index) => ({ ...apiKeys[index % apiKeys.length], id: `compare-${index}`, name }));
+  let trendRequests = 0;
+  await page.route("**/api/api-keys/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/api-keys/") return fulfill(route, keys);
+    if (path !== "/api/api-keys/trends") return route.fallback();
+    trendRequests++;
+    return fulfill(route, {
+      since: "2026-09-23T00:00:00Z", until: "2026-09-30T00:00:00Z",
+      series: keys.map((key, index) => {
+        const points = Array.from({ length: 168 }, (_, hour) => {
+          const date = new Date(Date.UTC(2026, 8, 23, hour));
+          const activity = Math.max(0, Math.sin((hour + index * 3) / 4)) * (1 + hour / 168);
+          return { t: date.toISOString(), v: index === 6 ? 0 : Number((activity * (7 - index) / 8).toFixed(4)),
+            pricedRequests: index === 6 ? 0 : 5, unpricedRequests: index === 6 ? 5 : 0,
+            unmeteredRequests: 0, coverageUnknown: false };
+        });
+        return { keyId: key.id, name: key.name, isDeleted: false, cost: points,
+          tokens: points.map((point, hour) => ({ ...point, v: Math.round((index + 1) * (1 + Math.sin(hour / 4)) * 1800) })) };
+      }),
+    });
+  });
+  await applyTheme(page, "light");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(BASE_URL);
+  await page.getByRole("link", { name: "APIs", exact: true }).click();
+  const panel = page.getByTestId("api-keys-comparison-trend");
+  await expect(panel.getByRole("heading", { name: "Usage Trend by API Key (7d)" })).toBeVisible();
+  await expect(panel.locator(".recharts-area-curve")).toHaveCount(6);
+  const legend = panel.getByRole("group", { name: "Visible API keys" });
+  await expect(legend.getByRole("button", { name: "Other", exact: true })).toBeVisible();
+  await expect(legend.getByRole("button", { name: "Production", exact: true })).toBeVisible();
+  await panel.locator("..").screenshot({ path: testInfo.outputPath("api-trends-overview-desktop.png"), animations: "disabled" });
+  const plot = panel.locator(".recharts-surface");
+  const bounds = (await plot.boundingBox())!;
+  await plot.hover({ position: { x: bounds.width * 0.7, y: bounds.height * 0.5 } });
+  await expect(panel.locator('[role="tooltip"]')).toContainText("Some costs are unknown; displayed amounts include recorded costs only.");
+  await page.mouse.move(0, 0);
+  await panel.getByRole("button", { name: "Cumulative", exact: true }).click();
+  await expect(panel.locator(".recharts-line-curve")).toHaveCount(6);
+  for (const curve of await panel.locator(".recharts-line-curve").all()) {
+    expect(await curve.getAttribute("d")).not.toContain("NaN");
+  }
+  await panel.screenshot({ path: testInfo.outputPath("api-trends-cumulative-cost.png"), animations: "disabled" });
+  await panel.getByRole("button", { name: "Tokens", exact: true }).click();
+  await expect(legend.getByRole("button", { name: "Unpriced provider", exact: true })).toBeVisible();
+  await expect(legend.getByRole("button", { name: "Production", exact: true })).toHaveCount(0);
+  await legend.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(panel.locator(".recharts-line-curve")).toHaveCount(5);
+  await panel.getByRole("button", { name: "Per hour", exact: true }).click();
+  await expect(panel.locator(".recharts-area-curve")).toHaveCount(5);
+  await expect(legend.getByRole("button", { name: "Research", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await legend.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(panel.locator(".recharts-area-curve")).toHaveCount(6);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await panel.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
+  await panel.screenshot({ path: testInfo.outputPath("api-trends-hourly-tokens-mobile.png"), animations: "disabled" });
+  await panel.getByRole("button", { name: "Cost", exact: true }).click();
+  await panel.getByRole("button", { name: "Cumulative", exact: true }).click();
+  await panel.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
+  await panel.screenshot({ path: testInfo.outputPath("api-trends-cumulative-cost-mobile.png"), animations: "disabled" });
+  expect(trendRequests).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 test("API lifetime cost bars and compact labels on desktop and mobile", async ({ page }, testInfo) => {
   await interceptApi(page);
   await page.route("**/api/api-keys/**", (route) => {
@@ -311,6 +383,7 @@ async function interceptApi(
     }
     if (p === "/api/models") return fulfill(route, { models });
     if (p === "/api/api-keys" || p === "/api/api-keys/") return fulfill(route, apiKeys);
+    if (p === "/api/api-keys/trends") return fulfill(route, { since: "2026-09-23T00:00:00Z", until: "2026-09-30T00:00:00Z", series: [] });
 
     return route.abort();
   });

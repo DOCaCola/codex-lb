@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from typing import Any
+from typing import cast as typing_cast
 
 from sqlalchemy import BigInteger, Integer, cast, delete, func, insert, literal, or_, select, text, true, update
 from sqlalchemy.exc import OperationalError
@@ -34,7 +35,12 @@ from app.db.models import (
 )
 from app.db.session import sqlite_writer_section
 from app.modules.accounts.usage_rollup import api_key_usage_aggregate_stmt, read_api_key_rollup_state
-from app.modules.accounts.usage_time_rollup import HOURLY_BUCKET_SECONDS, WARMUP_REQUEST_KINDS, to_dimension
+from app.modules.accounts.usage_time_rollup import (
+    HOURLY_BUCKET_SECONDS,
+    WARMUP_REQUEST_KINDS,
+    from_dimension,
+    to_dimension,
+)
 from app.modules.accounts.usage_time_rollup_read import RawWindow, raw_windows_clause, read_hourly_window
 from app.modules.api_keys.limit_windows import advance_limit_reset
 
@@ -91,6 +97,17 @@ class ApiKeyTrendBucket:
     unpriced_requests: int = 0
     unmetered_requests: int = 0
     coverage_unknown: bool = False
+
+    def merge(self, other: ApiKeyTrendBucket) -> ApiKeyTrendBucket:
+        return ApiKeyTrendBucket(
+            bucket_epoch=self.bucket_epoch,
+            total_tokens=self.total_tokens + other.total_tokens,
+            total_cost_usd=self.total_cost_usd + other.total_cost_usd,
+            priced_requests=self.priced_requests + other.priced_requests,
+            unpriced_requests=self.unpriced_requests + other.unpriced_requests,
+            unmetered_requests=self.unmetered_requests + other.unmetered_requests,
+            coverage_unknown=self.coverage_unknown or other.coverage_unknown,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1090,13 +1107,37 @@ class ApiKeysRepository:
         until: datetime,
         bucket_seconds: int = 3600,
     ) -> list[ApiKeyTrendBucket]:
+        buckets = await self._trend_buckets(since, until, bucket_seconds, key_id=key_id)
+        return buckets.get(key_id, [])
+
+    async def trends_by_keys(
+        self,
+        since: datetime,
+        until: datetime,
+        bucket_seconds: int = 3600,
+    ) -> dict[str, list[ApiKeyTrendBucket]]:
+        return await self._trend_buckets(since, until, bucket_seconds)
+
+    async def key_names(self) -> dict[str, str]:
+        rows = await self._session.execute(select(ApiKey.id, ApiKey.name))
+        return {row.id: row.name for row in rows}
+
+    async def _trend_buckets(
+        self,
+        since: datetime,
+        until: datetime,
+        bucket_seconds: int,
+        *,
+        key_id: str | None = None,
+    ) -> dict[str, list[ApiKeyTrendBucket]]:
         # Folded history from the hourly rollups (the api_key_id dimension
         # and the output-or-reasoning measure were folded for exactly this
         # read); raw only covers the un-folded complement. Non-hour-multiple
         # bucket sizes degrade to the full raw scan.
-        merged: dict[int, list[float]] = {}
+        merged: dict[str, dict[int, ApiKeyTrendBucket]] = {}
 
         def _add(
+            api_key_id: str,
             bucket_epoch: int,
             input_tokens: int,
             output_tokens: int,
@@ -1106,14 +1147,19 @@ class ApiKeysRepository:
             unmetered: int,
             unknown: bool,
         ) -> None:
-            entry = merged.setdefault(bucket_epoch, [0, 0, 0.0, 0, 0, 0, 0])
-            entry[0] += input_tokens
-            entry[1] += output_tokens
-            entry[2] += cost_usd
-            entry[3] += priced
-            entry[4] += unpriced
-            entry[5] += unmetered
-            entry[6] += int(unknown)
+            key_buckets = merged.setdefault(api_key_id, {})
+            previous = key_buckets.get(bucket_epoch, ApiKeyTrendBucket(bucket_epoch, 0, 0.0))
+            key_buckets[bucket_epoch] = previous.merge(
+                ApiKeyTrendBucket(
+                    bucket_epoch=bucket_epoch,
+                    total_tokens=input_tokens + output_tokens,
+                    total_cost_usd=cost_usd,
+                    priced_requests=priced,
+                    unpriced_requests=unpriced,
+                    unmetered_requests=unmetered,
+                    coverage_unknown=unknown,
+                )
+            )
 
         raw_windows: list[RawWindow] = [(since, until)]
         if bucket_seconds > 0 and bucket_seconds % HOURLY_BUCKET_SECONDS == 0:
@@ -1122,12 +1168,17 @@ class ApiKeysRepository:
                 since,
                 until,
                 filters=(
-                    RequestUsageHourlyRollup.api_key_id == to_dimension(key_id),
+                    RequestUsageHourlyRollup.api_key_id == to_dimension(key_id)
+                    if key_id is not None
+                    else RequestUsageHourlyRollup.api_key_id != to_dimension(None),
                     RequestUsageHourlyRollup.request_kind.not_in(WARMUP_REQUEST_KINDS),
                 ),
             )
             for rollup in rollup_rows:
+                # The SQL filter excludes the nullable dimension sentinel.
+                rollup_key_id = typing_cast(str, from_dimension(rollup.api_key_id))
                 _add(
+                    rollup_key_id,
                     rollup.bucket_epoch // bucket_seconds * bucket_seconds,
                     rollup.input_tokens,
                     rollup.output_or_reasoning_tokens,
@@ -1151,6 +1202,7 @@ class ApiKeysRepository:
 
             stmt = (
                 select(
+                    RequestLog.api_key_id,
                     bucket_col,
                     func.coalesce(func.sum(RequestLog.input_tokens), 0).label("total_input_tokens"),
                     func.coalesce(
@@ -1161,14 +1213,15 @@ class ApiKeysRepository:
                     *request_cost_expressions(RequestLog)[1:],
                 )
                 .where(
-                    RequestLog.api_key_id == key_id,
+                    RequestLog.api_key_id == key_id if key_id is not None else RequestLog.api_key_id.is_not(None),
                     raw_windows_clause(raw_windows),
                     self._exclude_warmup_clause(),
                 )
-                .group_by(bucket_col)
+                .group_by(RequestLog.api_key_id, bucket_col)
             )
             for row in (await self._session.execute(stmt)).all():
                 _add(
+                    row.api_key_id,
                     int(row.bucket_epoch),
                     int(row.total_input_tokens or 0),
                     int(row.total_output_tokens or 0),
@@ -1178,18 +1231,13 @@ class ApiKeysRepository:
                     int(row.unmetered_requests or 0),
                     False,
                 )
-        return [
-            ApiKeyTrendBucket(
-                bucket_epoch=bucket_epoch,
-                total_tokens=int(entry[0] + entry[1]),
-                total_cost_usd=round(float(entry[2]), 6),
-                priced_requests=int(entry[3]),
-                unpriced_requests=int(entry[4]),
-                unmetered_requests=int(entry[5]),
-                coverage_unknown=bool(entry[6]),
-            )
-            for bucket_epoch, entry in sorted(merged.items())
-        ]
+        return {
+            api_key_id: [
+                replace(buckets[epoch], total_cost_usd=round(buckets[epoch].total_cost_usd, 6))
+                for epoch in sorted(buckets)
+            ]
+            for api_key_id, buckets in merged.items()
+        }
 
     async def usage_7d(self, key_id: str, since: datetime, until: datetime) -> ApiKeyUsageTotals:
         filtered_logs = (

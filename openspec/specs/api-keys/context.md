@@ -2,6 +2,16 @@
 
 See `openspec/specs/api-keys/spec.md` for normative requirements.
 
+## Seven-day comparison overview
+
+The APIs page compares downstream API keys, independently of their upstream account/provider assignments. The full-width recent trend sits between lifetime summary statistics and lifetime share panels, so recent behavior and all-time totals remain distinct.
+
+The collection trend reader shares the individual-key watermark partition: whole folded hours come from hourly summaries, and the exact raw complement supplies partial boundary hours and the unfurled tail. After retention prunes raw edges, the existing reader can undercount up to one partial bucket per unaligned edge. This is the same limitation as individual-key trends. Unauthenticated traffic is excluded; retained IDs that no longer exist in the key inventory are combined anonymously as Deleted keys.
+
+Cost is recorded estimated API cost, not subscription charges. Tokens match individual-key accounting: input plus output, using reasoning only when output is absent. The chart shows the five largest series for the selected measure and sums the rest into Other. For example, seven keys with hourly costs 7, 6, 5, 4, 3, 2 and 1 produce five individual bands and an Other band worth 3. Ranking occurs before legend filtering so hiding a key does not promote another; a hidden individual key also stays excluded if a measure switch moves it into Other.
+
+Hourly areas show usage in each hour; cumulative lines sum only the current seven-day window. Cost-coverage counts accumulate alongside dollars. Unknown-only cost points are gaps and tooltips say Unknown; a priced free request is zero. Known subtotals keep compact currency formatting, with a brief tooltip notice for incomplete coverage. Controls transform the same response locally, without additional requests. The query refreshes every five minutes and is invalidated by key mutations; errors offer an explicit retry.
+
 ## Request-aware reservation estimate
 
 The admission budget for token and `cost_usd` limits (Requirement
