@@ -1,4 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render as renderTestingLibrary, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -9,6 +11,11 @@ import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { ADMIN_PERMISSIONS, createUpstreamProxyAdmin } from "@/test/mocks/factories";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
+
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderTestingLibrary(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 // Trends have their own query-provider integration coverage; these tests exercise
 // the account page's selection and mutation controls.
@@ -164,7 +171,8 @@ describe("AccountsPage", () => {
     render(<MemoryRouter><AccountsPage /></MemoryRouter>);
     for (const name of ["API keys", "Rename account", "Delete", "Refresh", "Models (0)"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /All models/ })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeDisabled();
   });
 
   beforeEach(() => {

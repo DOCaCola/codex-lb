@@ -10,7 +10,9 @@ Operational details: [implementation context](../openspec/specs/claude-accounts/
 3. Complete OAuth sign-in, or explicitly upload your Claude Code credential JSON.
 4. Refresh the account, select models, and save. Context and output capabilities
    are discovered automatically; there are no manual token-limit editors.
-   New models stay disabled until selected. Models with unresolved limits cannot
+   By default, new models stay disabled until selected. The **All models** toggle
+   opts into automatic availability of eligible discovered models while retaining
+   saved selections. Models with unresolved limits cannot
    be enabled until discovery or maintained metadata supplies both limits.
 5. Grant source-restricted client API keys access to the Claude account source.
 
@@ -82,7 +84,10 @@ reported after a successful usage refresh; missing rows do not imply unlimited
 quota or unavailable models. Known stale observations remain visible.
 
 Pause/resume, quota monitoring, model selection and reconnect are in the shared
-account detail. Routing policy offers Normal, Burn first and Preserve within the
+account detail. **Models** opens the searchable selection dialog; provider
+capacity and CLI-version controls are under **Provider settings**. See
+[shared model controls](../openspec/specs/account-model-controls/spec.md).
+Routing policy offers Normal, Burn first and Preserve within the
 Claude pool, using the same strategy-specific semantics as Codex. Hard owners and
 eligible conversation affinity still take precedence. Unknown quota is not zero usage. Model-specific exhaustion only
 blocks applicable models. API-equivalent costs are not subscription charges.

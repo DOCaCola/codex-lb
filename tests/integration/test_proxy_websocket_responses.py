@@ -51,6 +51,7 @@ from app.modules.proxy.capability_routing import (
     REQUIRED_CAPABILITY_HEADER,
     _capability_lineage_unavailable_error,
 )
+from tests.account_helpers import account_fixture
 
 pytestmark = pytest.mark.integration
 
@@ -359,7 +360,7 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
 
     async def fake_connect_proxy_websocket(self, headers, **kwargs):
         del self, headers, kwargs
-        return SimpleNamespace(id="acct_route_drain"), upstream
+        return account_fixture(id="acct_route_drain"), upstream
 
     async def fake_refresh_api_key(self, current_api_key):
         del self
@@ -704,7 +705,7 @@ def test_backend_responses_websocket_preserves_recorded_previous_response_accoun
 ):
     model = "external-ws-recorded-owner"
     previous_response_id = "resp_c5ca4bbf04a26678c9ec342f00fe90fe69f3940780f7556092"
-    account = SimpleNamespace(id="acct_ws_recorded_previous_owner", security_work_authorized=False)
+    account = account_fixture(id="acct_ws_recorded_previous_owner", security_work_authorized=False)
     upstream = _FakeUpstreamWebSocket(_websocket_response_batch("resp_ws_recorded_owner_completed"))
     owner_lookups: list[str] = []
 
@@ -836,7 +837,7 @@ def test_backend_responses_websocket_model_switch_does_not_inherit_native_anchor
     native_model = "gpt-5.6-sol"
     source_model = "openrouter/z-ai/glm-5.3-flash"
     native_response_id = "resp_native_before_source_switch"
-    account = SimpleNamespace(id="acct_ws_native_before_source", security_work_authorized=False)
+    account = account_fixture(id="acct_ws_native_before_source", security_work_authorized=False)
     upstream = _SequencedUpstreamWebSocket(
         [],
         deferred_message_batches=[
@@ -1076,7 +1077,7 @@ def test_codex_provider_profiles_route_before_first_account_attempt(
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
         account_kind = "cyber" if require_security_work_authorized else "ordinary"
-        return SimpleNamespace(
+        return account_fixture(
             id=f"acct_profile_{account_kind}",
             security_work_authorized=require_security_work_authorized,
         )
@@ -1135,6 +1136,55 @@ def test_codex_provider_profiles_route_before_first_account_attempt(
     assert forwarded_capability_headers == [False]
 
 
+def test_backend_responses_websocket_retires_socket_after_model_restriction(app_instance, monkeypatch):
+    from app.modules.proxy.account_cache import get_routing_availability_cache, is_account_model_allowed
+
+    first = account_fixture(id="model_policy_first")
+    replacement = account_fixture(id="model_policy_replacement")
+    first_upstream = _SequencedUpstreamWebSocket(
+        [], deferred_message_batches=[_websocket_response_batch("resp_before_restriction")]
+    )
+    replacement_upstream = _SequencedUpstreamWebSocket(
+        [], deferred_message_batches=[_websocket_response_batch("resp_after_restriction")]
+    )
+    opened = []
+
+    class SettingsCache:
+        async def get(self):
+            return _websocket_settings()
+
+    async def allow_firewall(_websocket):
+        return None
+
+    async def allow_key(_authorization, *, request=None):
+        return None
+
+    async def connect(self, headers, *, model, **kwargs):
+        candidates = [item for item in [first, replacement] if is_account_model_allowed(item, model)]
+        selected = candidates[0]
+        opened.append(selected.id)
+        return selected, first_upstream if selected.id == first.id else replacement_upstream
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_key)
+    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: SettingsCache())
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", connect)
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/backend-api/codex/responses") as websocket:
+            websocket.send_text(json.dumps(_websocket_response_create("first turn")))
+            assert json.loads(websocket.receive_text())["response"]["id"] == "resp_before_restriction"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            get_routing_availability_cache().set_model_selection(first.id, False, [])
+            websocket.send_text(json.dumps(_websocket_response_create("unanchored next turn")))
+            assert json.loads(websocket.receive_text())["response"]["id"] == "resp_after_restriction"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+
+    assert opened == [first.id, replacement.id]
+    assert first_upstream.closed
+    assert len(first_upstream.sent_text) == len(replacement_upstream.sent_text) == 1
+
+
 def test_backend_responses_websocket_sanitizes_source_reasoning_for_native_upstream(
     app_instance,
     monkeypatch,
@@ -1157,7 +1207,7 @@ def test_backend_responses_websocket_sanitizes_source_reasoning_for_native_upstr
 
     async def fake_connect_proxy_websocket(self, headers, **kwargs):
         del self, headers, kwargs
-        return SimpleNamespace(id="acct_native_after_source"), upstream
+        return account_fixture(id="acct_native_after_source"), upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -1401,7 +1451,7 @@ def test_backend_responses_websocket_fails_over_confirmed_proxy_connect_before_d
             ),
         ]
     )
-    accounts = [SimpleNamespace(id="acct_ws_proxy_a"), SimpleNamespace(id="acct_ws_proxy_b")]
+    accounts = [account_fixture(id="acct_ws_proxy_a"), account_fixture(id="acct_ws_proxy_b")]
     selection_exclusions: list[set[str]] = []
     connect_accounts: list[str] = []
     backed_off_accounts: list[str] = []
@@ -1613,9 +1663,9 @@ def test_backend_responses_websocket_session_ended_auth_failure_fails_over_befor
         excluded = getattr(request_state, "excluded_account_ids", set())
         if "acct_ws_expired" in excluded:
             connect_accounts.append("acct_ws_recovered")
-            return SimpleNamespace(id="acct_ws_recovered"), recovered_upstream
+            return account_fixture(id="acct_ws_recovered"), recovered_upstream
         connect_accounts.append("acct_ws_expired")
-        return SimpleNamespace(id="acct_ws_expired"), first_upstream
+        return account_fixture(id="acct_ws_expired"), first_upstream
 
     async def fake_mark_permanent_failure(self, account, error_code):
         del self
@@ -1715,7 +1765,7 @@ def test_backend_responses_websocket_id_bearing_auth_failure_is_forwarded_withou
             websocket,
         )
         connect_accounts.append("acct_ws_id_bearing_auth_failure")
-        return SimpleNamespace(id="acct_ws_id_bearing_auth_failure"), first_upstream
+        return account_fixture(id="acct_ws_id_bearing_auth_failure"), first_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -1840,11 +1890,11 @@ def test_backend_responses_websocket_generic_auth_failure_refreshes_once_then_fa
         excluded = getattr(request_state, "excluded_account_ids", set())
         if "acct_ws_auth" in excluded:
             connect_accounts.append("acct_ws_auth_recovered")
-            return SimpleNamespace(id="acct_ws_auth_recovered"), recovered_upstream
+            return account_fixture(id="acct_ws_auth_recovered"), recovered_upstream
         connect_accounts.append("acct_ws_auth")
         if len(connect_accounts) == 1:
-            return SimpleNamespace(id="acct_ws_auth"), first_upstream
-        return SimpleNamespace(id="acct_ws_auth"), refreshed_upstream
+            return account_fixture(id="acct_ws_auth"), first_upstream
+        return account_fixture(id="acct_ws_auth"), refreshed_upstream
 
     async def fake_mark_permanent_failure(self, account, error_code):
         del self
@@ -1981,12 +2031,12 @@ def test_backend_responses_websocket_generic_auth_refresh_budget_is_per_account(
         if "acct_ws_auth_a" not in excluded:
             connect_accounts.append("acct_ws_auth_a")
             if len([account for account in connect_accounts if account == "acct_ws_auth_a"]) == 1:
-                return SimpleNamespace(id="acct_ws_auth_a"), account_a_first
-            return SimpleNamespace(id="acct_ws_auth_a"), account_a_refreshed
+                return account_fixture(id="acct_ws_auth_a"), account_a_first
+            return account_fixture(id="acct_ws_auth_a"), account_a_refreshed
         connect_accounts.append("acct_ws_auth_b")
         if getattr(request_state, "force_refresh_account_id", None) == "acct_ws_auth_b":
-            return SimpleNamespace(id="acct_ws_auth_b"), account_b_refreshed
-        return SimpleNamespace(id="acct_ws_auth_b"), account_b_first
+            return account_fixture(id="acct_ws_auth_b"), account_b_refreshed
+        return account_fixture(id="acct_ws_auth_b"), account_b_first
 
     async def fake_mark_permanent_failure(self, account, error_code):
         del self
@@ -2098,7 +2148,7 @@ def test_backend_responses_websocket_transient_refresh_claim_fails_over_instead_
                 continue
             selected_accounts.append(account_id)
             request_state.websocket_stream_lease = SimpleNamespace(account_id=account_id)
-            return SimpleNamespace(id=account_id)
+            return account_fixture(id=account_id)
         return None
 
     async def fake_ensure_fresh(self, account, *, force=False, timeout_seconds=None):
@@ -2246,7 +2296,7 @@ def test_backend_responses_websocket_genuine_transport_error_penalizes_and_fails
                 continue
             selected_accounts.append(account_id)
             request_state.websocket_stream_lease = SimpleNamespace(account_id=account_id)
-            return SimpleNamespace(id=account_id)
+            return account_fixture(id=account_id)
         return None
 
     async def fake_ensure_fresh(self, account, *, force=False, timeout_seconds=None):
@@ -2380,7 +2430,7 @@ def test_backend_responses_websocket_transient_refresh_exhaustion_emits_error_no
                 continue
             selected_accounts.append(account_id)
             request_state.websocket_stream_lease = SimpleNamespace(account_id=account_id)
-            return SimpleNamespace(id=account_id)
+            return account_fixture(id=account_id)
         return None
 
     async def fake_ensure_fresh(self, account, *, force=False, timeout_seconds=None):
@@ -2514,7 +2564,7 @@ def test_backend_responses_websocket_pinned_transient_refresh_claim_emits_retrya
             return None
         selected_accounts.append(owner_id)
         request_state.websocket_stream_lease = SimpleNamespace(account_id=owner_id)
-        return SimpleNamespace(id=owner_id)
+        return account_fixture(id=owner_id)
 
     async def fake_ensure_fresh(self, account, *, force=False, timeout_seconds=None):
         del self, force, timeout_seconds
@@ -2750,7 +2800,7 @@ def test_backend_responses_websocket_proxies_and_persists_conversation_id(
         seen["routing_strategy"] = routing_strategy
         seen["model"] = model
         seen["request_id"] = request_state.request_id
-        return SimpleNamespace(id="acct_ws_proxy", codex_installation_id="account-installation"), fake_upstream
+        return account_fixture(id="acct_ws_proxy", codex_installation_id="account-installation"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         log_calls.append(kwargs)
@@ -2963,7 +3013,7 @@ def test_backend_responses_websocket_forwards_client_tools_byte_identical(app_in
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_tools_bytes", codex_installation_id="account-installation"), fake_upstream
+        return account_fixture(id="acct_ws_tools_bytes", codex_installation_id="account-installation"), fake_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -3070,7 +3120,7 @@ def test_backend_responses_websocket_strips_replayed_tool_call_namespaces(app_in
 
     async def fake_connect_proxy_websocket(self, headers, **kwargs):
         del self, headers, kwargs
-        return SimpleNamespace(id="acct_ws_namespaced_call", codex_installation_id=None), fake_upstream
+        return account_fixture(id="acct_ws_namespaced_call", codex_installation_id=None), fake_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -3192,7 +3242,7 @@ def test_backend_responses_websocket_lite_marker_requires_previous_response_link
         del self, headers, sticky_key, sticky_kind, reallocate_sticky, sticky_max_age_seconds
         del prefer_earlier_reset, prefer_earlier_reset_window, routing_strategy, model
         del request_state, api_key, client_send_lock, websocket
-        return SimpleNamespace(id="acct_ws_lite_linkage"), fake_upstream
+        return account_fixture(id="acct_ws_lite_linkage"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -3375,8 +3425,8 @@ def test_backend_responses_websocket_lite_fresh_replay_drops_marker_after_previo
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_lite_replay"), first_upstream
-        return SimpleNamespace(id="acct_ws_lite_replay"), recovered_upstream
+            return account_fixture(id="acct_ws_lite_replay"), first_upstream
+        return account_fixture(id="acct_ws_lite_replay"), recovered_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -3575,8 +3625,8 @@ def test_backend_responses_websocket_body_lite_fresh_replay_keeps_marker_and_con
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_lite_body_replay"), first_upstream
-        return SimpleNamespace(id="acct_ws_lite_body_replay"), recovered_upstream
+            return account_fixture(id="acct_ws_lite_body_replay"), first_upstream
+        return account_fixture(id="acct_ws_lite_body_replay"), recovered_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -3749,8 +3799,8 @@ def test_backend_responses_websocket_lite_visible_replay_trusts_downstream_respo
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_lite_visible_replay"), first_upstream
-        return SimpleNamespace(id="acct_ws_lite_visible_replay"), recovered_upstream
+            return account_fixture(id="acct_ws_lite_visible_replay"), first_upstream
+        return account_fixture(id="acct_ws_lite_visible_replay"), recovered_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -3951,7 +4001,7 @@ def test_backend_responses_websocket_keeps_same_response_distinct_tool_call_ids(
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_duplicate_tool"), fake_upstream
+        return account_fixture(id="acct_ws_duplicate_tool"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -4064,7 +4114,7 @@ def test_backend_responses_websocket_preserves_image_generation_tool_advertiseme
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -4185,7 +4235,7 @@ def test_backend_responses_websocket_accepts_and_reuses_generated_turn_state(app
             websocket,
         )
         selections.append({"headers": dict(headers), "sticky_key": sticky_key, "sticky_kind": sticky_kind})
-        return SimpleNamespace(id="acct_turn_state"), upstreams.popleft()
+        return account_fixture(id="acct_turn_state"), upstreams.popleft()
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -4309,7 +4359,7 @@ def test_backend_responses_websocket_echoed_generated_turn_state_reuses_continui
             websocket,
         )
         selections.append({"headers": dict(headers), "key": sticky_key, "kind": sticky_kind})
-        return SimpleNamespace(id=f"acct_generated_echo_{len(selections)}"), upstreams.popleft()
+        return account_fixture(id=f"acct_generated_echo_{len(selections)}"), upstreams.popleft()
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -4453,7 +4503,7 @@ def test_backend_responses_websocket_goal_restart_retires_reused_socket_and_keep
             }
         )
         account_id = "acct_goal_owner" if len(selections) == 1 else "acct_goal_replacement"
-        return SimpleNamespace(id=account_id), upstreams.popleft()
+        return account_fixture(id=account_id), upstreams.popleft()
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -4588,7 +4638,7 @@ def test_backend_responses_websocket_reconnect_keeps_session_affinity_with_fresh
             websocket,
         )
         selections.append({"headers": dict(headers), "key": sticky_key, "kind": sticky_kind})
-        return SimpleNamespace(id=f"acct_reconnect_{len(selections)}"), upstreams.popleft()
+        return account_fixture(id=f"acct_reconnect_{len(selections)}"), upstreams.popleft()
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -4700,7 +4750,7 @@ def test_backend_responses_websocket_echoes_existing_turn_state_header(app_insta
         seen["headers"] = dict(headers)
         seen["sticky_key"] = sticky_key
         seen["sticky_kind"] = sticky_kind
-        return SimpleNamespace(id="acct_turn_state"), fake_upstream
+        return account_fixture(id="acct_turn_state"), fake_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -4832,7 +4882,7 @@ def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_inst
                 "model": model,
             }
         )
-        return SimpleNamespace(id="acct_ws_proxy_owner"), first_upstream
+        return account_fixture(id="acct_ws_proxy_owner"), first_upstream
 
     def capture_dispatch_owner(*args, **kwargs):
         bound = original_bind_dispatch_owner(*args, **kwargs)
@@ -5018,7 +5068,7 @@ def test_v1_responses_websocket_archives_multiplexed_upstream_frames_by_response
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -5145,7 +5195,7 @@ def test_v1_responses_websocket_accepts_and_reuses_generated_turn_state(app_inst
         seen["headers"] = dict(headers)
         seen["sticky_key"] = sticky_key
         seen["sticky_kind"] = sticky_kind
-        return SimpleNamespace(id="acct_v1_turn_state"), fake_upstream
+        return account_fixture(id="acct_v1_turn_state"), fake_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -5239,7 +5289,7 @@ def test_v1_responses_websocket_normalizes_payload_before_forwarding(app_instanc
         seen["prefer_earlier_reset_window"] = prefer_earlier_reset_window
         seen["routing_strategy"] = routing_strategy
         seen["model"] = model
-        return SimpleNamespace(id="acct_ws_proxy_v1"), fake_upstream
+        return account_fixture(id="acct_ws_proxy_v1"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -5384,7 +5434,7 @@ def test_backend_responses_websocket_forwards_previous_response_id(app_instance,
         del self, sticky_key, sticky_kind, prefer_earlier_reset, routing_strategy, model
         del request_state, api_key, client_send_lock, websocket, reallocate_sticky, sticky_max_age_seconds
         seen["headers"] = dict(headers)
-        return SimpleNamespace(id="acct_ws_prev"), fake_upstream
+        return account_fixture(id="acct_ws_prev"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -5542,7 +5592,7 @@ def test_backend_responses_websocket_injects_interrupted_custom_tool_output_on_f
         del self, sticky_key, sticky_kind, prefer_earlier_reset, routing_strategy, model
         del request_state, api_key, client_send_lock, websocket, reallocate_sticky, sticky_max_age_seconds
         del headers
-        return SimpleNamespace(id="acct_ws_custom_interrupt"), fake_upstream
+        return account_fixture(id="acct_ws_custom_interrupt"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -5769,7 +5819,7 @@ def test_backend_responses_websocket_injects_interrupted_custom_tool_output_afte
         del self, sticky_key, sticky_kind, prefer_earlier_reset, routing_strategy, model
         del request_state, api_key, client_send_lock, websocket, reallocate_sticky, sticky_max_age_seconds
         del headers
-        return SimpleNamespace(id=f"acct_ws_custom_interrupt_{case_id}"), fake_upstream
+        return account_fixture(id=f"acct_ws_custom_interrupt_{case_id}"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -5912,7 +5962,7 @@ def test_backend_responses_websocket_trims_replayed_tool_call_items_with_previou
     ):
         del self, headers, sticky_key, sticky_kind, prefer_earlier_reset, routing_strategy, model
         del request_state, api_key, client_send_lock, websocket, reallocate_sticky, sticky_max_age_seconds
-        return SimpleNamespace(id="acct_ws_tool_output"), fake_upstream
+        return account_fixture(id="acct_ws_tool_output"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -6020,7 +6070,7 @@ def test_v1_responses_websocket_forwards_previous_response_id(app_instance, monk
         del self, headers, sticky_key, sticky_kind, prefer_earlier_reset, routing_strategy, model
         del request_state, api_key, client_send_lock, websocket, reallocate_sticky, sticky_max_age_seconds
         seen["connected"] = True
-        return SimpleNamespace(id="acct_ws_v1_prev"), fake_upstream
+        return account_fixture(id="acct_ws_v1_prev"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -6182,8 +6232,8 @@ def test_v1_responses_websocket_masks_short_previous_response_not_found_without_
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_prev_mask", codex_installation_id="account-installation"), first_upstream
-        return SimpleNamespace(id="acct_ws_prev_mask", codex_installation_id="account-installation"), recovered_upstream
+            return account_fixture(id="acct_ws_prev_mask", codex_installation_id="account-installation"), first_upstream
+        return account_fixture(id="acct_ws_prev_mask", codex_installation_id="account-installation"), recovered_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -6338,7 +6388,7 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
                 "fresh_upstream_request_text_set": bool(request_state.fresh_upstream_request_text),
             }
         )
-        return SimpleNamespace(id="acct_ws_fresh_turn"), upstream_socket
+        return account_fixture(id="acct_ws_fresh_turn"), upstream_socket
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -6499,8 +6549,8 @@ def test_responses_websocket_replays_client_full_resend_previous_response_miss_w
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_prev_mask", codex_installation_id="account-installation"), first_upstream
-        return SimpleNamespace(id="acct_ws_prev_mask", codex_installation_id="account-installation"), recovered_upstream
+            return account_fixture(id="acct_ws_prev_mask", codex_installation_id="account-installation"), first_upstream
+        return account_fixture(id="acct_ws_prev_mask", codex_installation_id="account-installation"), recovered_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -6675,8 +6725,8 @@ def test_v1_responses_websocket_masks_invalid_request_previous_response_not_foun
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_prev_mask"), first_upstream
-        return SimpleNamespace(id="acct_ws_prev_mask"), recovered_upstream
+            return account_fixture(id="acct_ws_prev_mask"), first_upstream
+        return account_fixture(id="acct_ws_prev_mask"), recovered_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -6782,7 +6832,7 @@ def test_backend_responses_websocket_connect_failure_masks_previous_response_not
             headers,
         )
         assert request_state.previous_response_id == "resp_ws_prev_anchor"
-        return SimpleNamespace(id="acct_ws_prev_connect_failure")
+        return account_fixture(id="acct_ws_prev_connect_failure")
 
     async def fake_try_open_websocket_connect_attempt(
         self,
@@ -6987,8 +7037,8 @@ def test_backend_responses_websocket_masks_short_previous_response_not_found_wit
         connect_count += 1
         captured_preferred_accounts.append(request_state.preferred_account_id)
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_prev_mask"), first_upstream
-        return SimpleNamespace(id="acct_ws_prev_mask"), recovered_upstream
+            return account_fixture(id="acct_ws_prev_mask"), first_upstream
+        return account_fixture(id="acct_ws_prev_mask"), recovered_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -7143,7 +7193,7 @@ def test_backend_responses_websocket_masks_anonymous_previous_response_not_found
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_prev_followup"), fake_upstream
+        return account_fixture(id="acct_ws_prev_followup"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -7296,7 +7346,7 @@ def test_backend_responses_websocket_masks_top_level_previous_response_not_found
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_chatgpt_prev_top_level"), fake_upstream
+        return account_fixture(id="acct_ws_chatgpt_prev_top_level"), fake_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -7408,7 +7458,7 @@ def test_backend_responses_websocket_masks_pretty_previous_response_not_found_fr
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_pretty_prev_mask"), upstream_socket
+        return account_fixture(id="acct_ws_pretty_prev_mask"), upstream_socket
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -7560,8 +7610,8 @@ def test_backend_responses_websocket_masks_previous_response_not_found_when_mess
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_prev_nf_omitted_id"), first_upstream
-        return SimpleNamespace(id="acct_ws_prev_nf_omitted_id"), recovered_upstream
+            return account_fixture(id="acct_ws_prev_nf_omitted_id"), first_upstream
+        return account_fixture(id="acct_ws_prev_nf_omitted_id"), recovered_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -7691,7 +7741,7 @@ def test_backend_responses_websocket_never_exposes_raw_previous_response_id_to_c
         )
         nonlocal connect_count
         connect_count += 1
-        return SimpleNamespace(id="acct_live_anchor"), upstream
+        return account_fixture(id="acct_live_anchor"), upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -7867,8 +7917,8 @@ def test_backend_responses_websocket_keeps_session_alive_after_foreign_previous_
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_followup_prev_nf"), first_upstream
-        return SimpleNamespace(id="acct_ws_followup_prev_nf"), recovered_upstream
+            return account_fixture(id="acct_ws_followup_prev_nf"), first_upstream
+        return account_fixture(id="acct_ws_followup_prev_nf"), recovered_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -8102,8 +8152,8 @@ def test_backend_responses_websocket_keeps_session_alive_after_anonymous_prev_nf
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_followup_prev_nf"), first_upstream
-        return SimpleNamespace(id="acct_ws_followup_prev_nf"), recovered_upstream
+            return account_fixture(id="acct_ws_followup_prev_nf"), first_upstream
+        return account_fixture(id="acct_ws_followup_prev_nf"), recovered_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -8376,8 +8426,8 @@ def test_backend_responses_websocket_matches_previous_response_error_to_anchor_w
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_followup_prev_nf"), first_upstream
-        return SimpleNamespace(id="acct_ws_followup_prev_nf"), recovered_upstream
+            return account_fixture(id="acct_ws_followup_prev_nf"), first_upstream
+        return account_fixture(id="acct_ws_followup_prev_nf"), recovered_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -8557,7 +8607,7 @@ def test_backend_responses_websocket_same_owner_followup_skips_selector_revalida
         )
         nonlocal connect_count
         connect_count += 1
-        return SimpleNamespace(id="acct_ws_same_owner"), first_upstream
+        return account_fixture(id="acct_ws_same_owner"), first_upstream
 
     async def fake_resolve_previous_response_owner(
         self,
@@ -8788,8 +8838,8 @@ def test_backend_responses_websocket_masks_anonymous_previous_response_not_found
         nonlocal connect_count
         connect_count += 1
         if connect_count == 1:
-            return SimpleNamespace(id="acct_ws_same_anchor"), first_upstream
-        return SimpleNamespace(id="acct_ws_same_anchor"), recovered_upstream
+            return account_fixture(id="acct_ws_same_anchor"), first_upstream
+        return account_fixture(id="acct_ws_same_anchor"), recovered_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -9096,7 +9146,7 @@ def test_backend_responses_websocket_treats_typeless_upstream_error_as_terminal(
         del prefer_earlier_reset, routing_strategy, model, request_state, api_key
         del client_send_lock, websocket
         connect_attempts["count"] += 1
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -9181,7 +9231,7 @@ def test_backend_responses_websocket_emits_terminal_failure_when_upstream_send_b
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -9317,7 +9367,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
             yield format_sse_event(event_payload)
 
     async def select_account(self, headers, **kwargs):
-        return SimpleNamespace(id="acct_size", codex_installation_id="installation"), ResponsesTransport(
+        return account_fixture(id="acct_size", codex_installation_id="installation"), ResponsesTransport(
             None,
             connect=connect,
             stream_http=stream_http,
@@ -9620,7 +9670,7 @@ def test_backend_responses_websocket_preserves_historical_inline_artifacts_for_t
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -9757,7 +9807,7 @@ def test_backend_responses_websocket_keeps_downstream_open_after_clean_upstream_
             websocket,
         )
         connect_models.append(model)
-        return SimpleNamespace(id=f"acct_ws_proxy_{len(connect_models)}"), upstreams[len(connect_models) - 1]
+        return account_fixture(id=f"acct_ws_proxy_{len(connect_models)}"), upstreams[len(connect_models) - 1]
 
     async def fake_write_request_log(self, **kwargs):
         del self, kwargs
@@ -9869,7 +9919,7 @@ def test_backend_responses_websocket_reclaims_idle_downstream_session_and_upstre
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -9992,7 +10042,7 @@ def test_backend_responses_websocket_does_not_expire_downstream_while_request_pe
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -10127,7 +10177,7 @@ def test_backend_responses_websocket_reconnects_after_account_health_failure(app
         )
         upstream = upstreams[len(connect_models)]
         connect_models.append(model)
-        return SimpleNamespace(id=f"acct_ws_proxy_{len(connect_models)}"), upstream
+        return account_fixture(id=f"acct_ws_proxy_{len(connect_models)}"), upstream
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -10293,7 +10343,7 @@ def test_backend_responses_websocket_transparently_retries_precreated_usage_limi
         )
         upstream = upstreams[len(connect_models)]
         connect_models.append(model)
-        return SimpleNamespace(id=f"acct_ws_proxy_{len(connect_models)}"), upstream
+        return account_fixture(id=f"acct_ws_proxy_{len(connect_models)}"), upstream
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -10430,7 +10480,7 @@ def test_backend_responses_websocket_transparently_retries_precreated_error_usag
         )
         upstream = upstreams[len(connect_models)]
         connect_models.append(model)
-        return SimpleNamespace(id=f"acct_ws_proxy_{len(connect_models)}"), upstream
+        return account_fixture(id=f"acct_ws_proxy_{len(connect_models)}"), upstream
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -10574,7 +10624,7 @@ def test_backend_responses_websocket_retries_stale_account_model_route_on_anothe
         index = len(connect_models)
         connect_models.append(model)
         excluded_snapshots.append(set(request_state.excluded_account_ids))
-        return SimpleNamespace(id=account_ids[index]), upstreams[index]
+        return account_fixture(id=account_ids[index]), upstreams[index]
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -10694,7 +10744,7 @@ def test_backend_responses_websocket_previous_response_usage_limit_returns_upstr
         )
         connect_models.append(model)
         captured_preferred_accounts.append(request_state.preferred_account_id)
-        return SimpleNamespace(id="acct_ws_proxy_owner"), first_upstream
+        return account_fixture(id="acct_ws_proxy_owner"), first_upstream
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -10806,7 +10856,7 @@ def test_backend_responses_websocket_transparent_replay_emits_no_accounts_when_r
         connect_models.append(model)
         if len(connect_models) == 1:
             del client_send_lock, websocket
-            return SimpleNamespace(id="acct_ws_proxy_1"), first_upstream
+            return account_fixture(id="acct_ws_proxy_1"), first_upstream
         async with client_send_lock:
             await websocket.send_text(
                 json.dumps(
@@ -10939,7 +10989,7 @@ def test_backend_responses_websocket_usage_limit_frame_benches_the_account_witho
         connect_models.append(model)
         if len(connect_models) == 1:
             del client_send_lock, websocket
-            return SimpleNamespace(id="acct_ws_frame_limit_1"), first_upstream
+            return account_fixture(id="acct_ws_frame_limit_1"), first_upstream
         async with client_send_lock:
             await websocket.send_text(
                 json.dumps(
@@ -11076,7 +11126,7 @@ def test_backend_responses_websocket_usage_limit_frame_after_a_visible_event_sti
             websocket,
         )
         connect_models.append(model)
-        return SimpleNamespace(id="acct_ws_frame_visible_1"), first_upstream
+        return account_fixture(id="acct_ws_frame_visible_1"), first_upstream
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -11182,7 +11232,7 @@ def test_backend_responses_websocket_unrelated_frame_without_a_code_leaves_the_a
             websocket,
         )
         connect_models.append(model)
-        return SimpleNamespace(id="acct_ws_frame_safety_1"), first_upstream
+        return account_fixture(id="acct_ws_frame_safety_1"), first_upstream
 
     async def fake_handle_stream_error(self, account, error, code, **_kwargs):
         del self, account, error
@@ -11381,7 +11431,7 @@ def test_backend_responses_websocket_attributes_generated_turns_on_prewarm_conne
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
+        return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -11511,7 +11561,7 @@ def test_backend_responses_websocket_emits_response_failed_before_close_on_upstr
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_proxy"), upstreams.pop(0)
+        return account_fixture(id="acct_ws_proxy"), upstreams.pop(0)
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -11616,7 +11666,7 @@ def test_backend_responses_websocket_closes_before_replaying_exposed_sequence(
         nonlocal connect_calls
         del self, headers, kwargs
         connect_calls += 1
-        return SimpleNamespace(id="acct_ws_sequenced_close"), upstreams.pop(0)
+        return account_fixture(id="acct_ws_sequenced_close"), upstreams.pop(0)
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -11732,7 +11782,7 @@ def test_backend_responses_websocket_recovers_created_only_sequenced_prewarm(
         nonlocal connect_calls
         del self, headers, kwargs
         connect_calls += 1
-        return SimpleNamespace(id="acct_ws_prewarm_replay"), upstreams.pop(0)
+        return account_fixture(id="acct_ws_prewarm_replay"), upstreams.pop(0)
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -11885,7 +11935,7 @@ def test_backend_responses_websocket_connect_failure_logs_client_supplied_stale_
         request_state.previous_response_owner_lookup_outcome = "hit"
         request_state.previous_response_owner_requested_at = owner_requested_at
         request_state.previous_response_owner_session_id = request_state.session_id
-        return SimpleNamespace(id="acct_ws_prev_connect_failure")
+        return account_fixture(id="acct_ws_prev_connect_failure")
 
     async def fake_try_open_websocket_connect_attempt(
         self,
@@ -12091,7 +12141,7 @@ def test_backend_responses_websocket_logs_proxy_injected_stale_anchor_metadata(
         )
         nonlocal connect_count
         connect_count += 1
-        return SimpleNamespace(id="acct_ws_proxy_injected"), upstream_socket
+        return account_fixture(id="acct_ws_proxy_injected"), upstream_socket
 
     async def fake_write_request_log(self, **kwargs):
         del self
@@ -12296,7 +12346,7 @@ def test_backend_responses_websocket_grouped_anonymous_stale_anchor_persists_dia
             client_send_lock,
             websocket,
         )
-        return SimpleNamespace(id="acct_ws_grouped_stale"), first_upstream
+        return account_fixture(id="acct_ws_grouped_stale"), first_upstream
 
     async def fake_resolve_previous_response_owner(
         self, *, previous_response_id, api_key, session_id=None, surface, request_state=None
@@ -12451,7 +12501,7 @@ def test_backend_responses_websocket_trusted_capability_routes_before_first_acco
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
         account_kind = "cyber" if require_security_work_authorized else "ordinary"
-        return SimpleNamespace(
+        return account_fixture(
             id=f"acct_ws_capability_{account_kind}",
             security_work_authorized=require_security_work_authorized,
         )
@@ -12581,7 +12631,7 @@ def test_backend_responses_websocket_trusted_capability_survives_session_reconne
     ):
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id=f"acct_ws_capability_session_{len(selection_requirements)}",
             security_work_authorized=require_security_work_authorized,
         )
@@ -12717,7 +12767,7 @@ def test_backend_responses_websocket_trusted_capability_survives_response_only_r
     ):
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id="acct_ws_capability_response",
             security_work_authorized=require_security_work_authorized,
         )
@@ -12835,7 +12885,7 @@ def test_backend_responses_websocket_capability_response_lineage_write_failure_f
     ):
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id="acct_ws_capability_response_write_failure",
             security_work_authorized=True,
         )
@@ -13298,7 +13348,7 @@ def test_direct_responses_websocket_rejects_capability_carrier_on_unsupported_fr
     async def select_ordinary_account(self, deadline, *, require_security_work_authorized, **_kwargs):
         del self, deadline, _kwargs
         assert require_security_work_authorized is False
-        return SimpleNamespace(
+        return account_fixture(
             id="acct_ws_capability_wrong_frame",
             security_work_authorized=False,
         )
@@ -13438,7 +13488,7 @@ def test_backend_responses_websocket_trusted_capability_inheritance_retires_idle
         selection_requirements.append(require_security_work_authorized)
         account_kind = "cyber" if require_security_work_authorized else "ordinary"
         account_index = selection_requirements.count(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id=f"acct_ws_capability_{account_kind}_{account_index}",
             # An ordinary selection may happen to land on a capable account.
             # Socket reuse must follow the selection contract, not this flag.
@@ -13585,7 +13635,7 @@ def test_backend_responses_websocket_revalidates_required_socket_after_grant_rev
     ):
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id=f"acct_ws_capability_revocation_{len(selection_requirements)}",
             security_work_authorized=True,
         )
@@ -13723,7 +13773,7 @@ def test_backend_responses_websocket_capability_revalidation_error_releases_fram
     ):
         del self, deadline, request_state, _kwargs
         selection_requirements.append(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id="acct_ws_capability_revalidation_error",
             security_work_authorized=True,
         )
@@ -13870,7 +13920,7 @@ def test_backend_responses_websocket_trusted_capability_pending_conflict_keeps_o
         selection_requirements.append(require_security_work_authorized)
         account_kind = "cyber" if require_security_work_authorized else "ordinary"
         account_index = selection_requirements.count(require_security_work_authorized)
-        return SimpleNamespace(
+        return account_fixture(
             id=f"acct_ws_capability_conflict_{account_kind}_{account_index}",
             # This socket was selected under the ordinary contract even though
             # the selected account itself currently has the capability grant.
@@ -14142,7 +14192,7 @@ class _TwoAccountWebSocketFailover:
                 )
                 return None, None
             failover.connect_accounts.append(selected_account_id)
-            return SimpleNamespace(id=selected_account_id), failover.upstreams_by_account[selected_account_id].popleft()
+            return account_fixture(id=selected_account_id), failover.upstreams_by_account[selected_account_id].popleft()
 
         async def spy_handle_stream_error(self, account, error, code, http_status=None):
             failover.stream_errors.append((account.id, code))

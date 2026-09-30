@@ -1012,6 +1012,17 @@ class AccountsRepository:
             await self._session.commit()
             return result.scalar_one_or_none() is not None
 
+    async def update_model_selection(self, account_id: str, *, all_models: bool, selected_models: list[str]) -> bool:
+        async with sqlite_writer_section():
+            result = await self._session.execute(
+                update(Account)
+                .where(Account.id == account_id, Account.delete_requested_at.is_(None))
+                .values(all_models=all_models, selected_models=selected_models)
+                .returning(Account.id)
+            )
+            await self._session.commit()
+            return result.scalar_one_or_none() is not None
+
     async def update_routing_policy(self, account_id: str, routing_policy: str) -> bool:
         async with sqlite_writer_section():
             result = await self._session.execute(

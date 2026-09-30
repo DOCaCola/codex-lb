@@ -469,6 +469,7 @@ from app.modules.proxy._service.websocket.helpers import (
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
 from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.account_cache import is_account_model_allowed
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
     _is_synthesized_turn_state,
@@ -2301,10 +2302,15 @@ class _WebSocketMixin:
                     request_state is not None
                     and upstream is not None
                     and account is not None
-                    and request_state.require_security_work_authorized
+                    and (
+                        request_state.require_security_work_authorized
+                        or not is_account_model_allowed(account, request_state.model)
+                    )
                 ):
                     capability_account_reusable = False
-                    if upstream_requires_security_work_authorized:
+                    if upstream_requires_security_work_authorized and is_account_model_allowed(
+                        account, request_state.model
+                    ):
                         try:
                             (
                                 revalidated_account,

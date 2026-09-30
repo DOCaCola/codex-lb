@@ -4,11 +4,13 @@ export function createOpenRouterAccount(
   overrides: Partial<OpenRouterAccount> = {},
 ): OpenRouterAccount {
   return {
+    routingPolicy: "normal",
     id: "src_research",
     name: "Research",
     isEnabled: true,
     hasManagementKey: true,
     state: {
+      all_models: false,
       selections: [],
       catalog: [],
       catalog_updated_at: "2026-09-25T12:00:00Z",

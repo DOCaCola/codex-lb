@@ -5,7 +5,7 @@ import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { AccountList as DashboardList } from "@/features/dashboard/components/account-list";
 import { AccountList } from "@/features/accounts/components/account-list";
 import { usePrivacyStore } from "@/hooks/use-privacy";
-import { ClaudeQuota } from "./account-display";
+import { ClaudeAccountCard, ClaudeListItem, ClaudeQuota } from "./account-display";
 import { claudeStatus } from "./display-values";
 import type { ClaudeAccount } from "./api";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -25,6 +25,7 @@ const account: ClaudeAccount = {
   credentialStatus: "ready",
   expiresAt: "2026-09-25T20:00:00Z",
   state: {
+    all_models: false,
     selections: [],
     catalog: [],
     catalog_updated_at: null,
@@ -58,6 +59,13 @@ afterEach(() => {
   useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
 });
 describe("Claude shared account surfaces", () => {
+  it("shows All models on both the card and account list", () => {
+    const automatic = { ...account, state: { ...account.state, all_models: true } };
+    const view = render(<MemoryRouter><ClaudeAccountCard account={automatic} /></MemoryRouter>);
+    expect(screen.getByText(/Claude.*All models/)).toBeVisible();
+    view.rerender(<MemoryRouter><ClaudeListItem account={automatic} selected onSelect={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/Claude.*All models/)).toBeVisible();
+  });
   it("renders only returned quota windows, including genuine unknown or stale scoped observations", () => {
     const { rerender } = render(<ClaudeQuota account={account} detailed />);
     expect(screen.queryByText("Weekly Opus remaining")).not.toBeInTheDocument();
@@ -168,7 +176,7 @@ describe("Claude shared account surfaces", () => {
       "Pause",
       "Reconnect",
       "Refresh",
-      "Save models",
+      "Models (0)",
       "Delete Claude account",
     ])
       expect(screen.getByRole("button", { name })).toBeDisabled();
@@ -210,24 +218,24 @@ describe("Claude shared account surfaces", () => {
       { id: "claude-opus-5", display_name: "Opus", max_input_tokens: 1000000, max_tokens: 128000 },
       { id: "unknown", display_name: "Unknown model", max_input_tokens: null, max_tokens: null },
     ] }};
-    const view = render(<ModelSelection account={discovered} readOnly={false} onSave={save} />);
+    const view = render(<ModelSelection account={discovered} readOnly={false} onSave={save} onClose={vi.fn()} />);
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     expect(screen.getByText(/1M context.*128K maximum output.*64K default output/i)).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Unknown model" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Unknown model — Unavailable" })).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox", { name: "Opus" }));
-    await userEvent.click(screen.getByRole("button", { name: "Save models" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save 1 model" }));
     expect(save).toHaveBeenCalledWith([{ model: "claude-opus-5" }]);
-    view.rerender(<ModelSelection account={discovered} readOnly onSave={save} />);
+    view.rerender(<ModelSelection account={discovered} readOnly onSave={save} onClose={vi.fn()} />);
     expect(screen.getByRole("checkbox", { name: "Opus" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save models" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save 1 model" })).toBeDisabled();
   });
   it("can remove a selected model with unavailable limits", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
-    render(<ModelSelection account={{ ...account, state: { ...account.state, selections: [{ model: "removed" }] } }} readOnly={false} onSave={save} />);
-    const checkbox = screen.getByRole("checkbox", { name: "removed (unavailable)" });
+    render(<ModelSelection account={{ ...account, state: { ...account.state, selections: [{ model: "removed" }] } }} readOnly={false} onSave={save} onClose={vi.fn()} />);
+    const checkbox = screen.getByRole("checkbox", { name: "removed — Unavailable" });
     expect(checkbox).toBeEnabled();
     await userEvent.click(checkbox);
-    await userEvent.click(screen.getByRole("button", { name: "Save models" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save 0 models" }));
     expect(save).toHaveBeenCalledWith([]);
   });
   it("distinguishes unknown and stale observations", () => {

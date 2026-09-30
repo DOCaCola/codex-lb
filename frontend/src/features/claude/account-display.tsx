@@ -67,7 +67,7 @@ function Heading({ account, card = false }: { account: ClaudeAccount; card?: boo
           <ClaudeName account={account} />
         </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          Claude | {account.state.selections.length} models selected
+          Claude | {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">

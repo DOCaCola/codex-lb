@@ -17,6 +17,39 @@ from app.modules.claude.schemas import CatalogModel, Credentials, UsageSnapshot
 pytestmark = pytest.mark.integration
 
 
+async def test_all_mode_projects_only_valid_metadata_and_retains_selected_mode(async_client, monkeypatch):
+    monkeypatch.setattr(
+        ClaudeClient,
+        "catalog",
+        AsyncMock(
+            return_value=[
+                CatalogModel(id="claude-opus-5", display_name="Opus", max_input_tokens=1000000, max_tokens=128000),
+                CatalogModel(id="unknown", display_name="Unknown"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=UsageSnapshot()))
+    created = await async_client.post("/api/claude-accounts/import", json=import_body())
+    assert created.status_code == 200, created.text
+    source_id = created.json()["id"]
+    assert created.json()["state"]["all_models"] is False
+    await async_client.post(f"/api/claude-accounts/{source_id}/refresh")
+    enabled = await async_client.patch(f"/api/claude-accounts/{source_id}", json={"allModels": True})
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["state"]["selections"] == []
+    assert [model["model"] for model in enabled.json()["quota"]["models"]] == ["claude-opus-5"]
+    visible = (await async_client.get("/backend-api/codex/models")).json()["models"]
+    assert any(model["slug"] == "anthropic/claude-opus-5" for model in visible)
+    assert not any(model["slug"] == "anthropic/unknown" for model in visible)
+    selected = await async_client.patch(
+        f"/api/claude-accounts/{source_id}", json={"selections": [{"model": "claude-opus-5"}]}
+    )
+    assert selected.status_code == 200
+    await async_client.post(f"/api/claude-accounts/{source_id}/refresh")
+    off = await async_client.patch(f"/api/claude-accounts/{source_id}", json={"allModels": False})
+    assert off.json()["state"]["selections"] == [{"model": "claude-opus-5"}]
+
+
 def install_profile_stub(monkeypatch):
     from app.modules.claude.schemas import AuthenticatedProfile
 

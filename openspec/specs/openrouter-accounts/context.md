@@ -1,5 +1,15 @@
 # Implementation context
 
+## Account model modes and routing priority
+
+Accounts default to curated selection. All models projects the current eligible
+conversation catalog at refresh without erasing selections or overrides. Image
+models remain explicit. Normal, Burn first and Preserve use manual priority
+after cooldown, authorization and model-availability filtering; rotation is
+within the highest-priority usable pool. For example, a cooled Burn first
+account cannot beat an eligible Normal account. See
+[shared account controls](../account-model-controls/context.md).
+
 ## Observed timing and account tiers
 
 OpenRouter streaming timings use the gateway's monotonic clock, starting before

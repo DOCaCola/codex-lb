@@ -229,6 +229,16 @@ async def test_admin_preset_is_unaffected(
 # --- PR-0a-2: guest-restricted surfaces ---------------------------------------
 
 
+@pytest.mark.parametrize("permission,method", [(Permission.ACCOUNTS_READ, "GET"), (Permission.ACCOUNTS_WRITE, "PUT")])
+async def test_account_model_controls_require_account_permissions(
+    app_instance, async_client, monkeypatch, permission, method
+):
+    _use_principal(app_instance, monkeypatch, _principal_with_only(dashboard__read=Scope.ALL))
+    kwargs = {"json": {"allModels": False, "selectedModels": []}} if method == "PUT" else {}
+    response = await async_client.request(method, "/api/accounts/missing/models", **kwargs)
+    _assert_permission_required(response, permission)
+
+
 async def _seed_account(email: str = "alice.smith@example.com") -> str:
     from datetime import UTC, datetime
 

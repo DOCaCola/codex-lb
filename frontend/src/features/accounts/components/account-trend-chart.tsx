@@ -49,6 +49,7 @@ function interpolatePoints(points: AccountChartSeries["points"], timestamps: num
     const previous = sorted[nextIndex - 1];
     const next = sorted[nextIndex];
     if (!previous) return null;
+    if (Date.parse(previous.t) === time) return previous.v;
     if (!next) return previous.v;
     if (previous.v === null || next.v === null) return null;
     const fraction = (time - Date.parse(previous.t)) / (Date.parse(next.t) - Date.parse(previous.t));
@@ -56,8 +57,8 @@ function interpolatePoints(points: AccountChartSeries["points"], timestamps: num
   });
 }
 
-function formatXTick(isoStr: string): string {
-  return isoStr.slice(5, 10);
+function formatXTick(time: number): string {
+  return new Date(time).toISOString().slice(5, 10);
 }
 
 type ChartTooltipPayloadEntry = {
@@ -69,14 +70,14 @@ type ChartTooltipPayloadEntry = {
 type ChartTooltipProps = {
   active?: boolean;
   payload?: ChartTooltipPayloadEntry[];
-  label?: string;
+  label?: number;
   series: AccountChartSeries[];
   percentage: boolean;
 };
 
 function CustomTooltip({ active, payload, label, series, percentage }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
-  const heading = formatChartDateTime(label as string);
+  const heading = formatChartDateTime(new Date(label!).toISOString());
   return (
     <div className="rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-md">
       <p className="mb-1 text-[11px] text-muted-foreground">{heading}</p>
@@ -133,7 +134,7 @@ export function AccountSeriesChart({ series, percentage = true }: {
   const id = useId().replaceAll(":", "");
   const data = useMemo(() => mergeSeries(series), [series]);
 
-  if (data.length === 0) {
+  if (!series.some((s) => s.points.some((point) => point.v !== null))) {
     return (
       <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">
         {t("accounts.trend.empty")}
@@ -152,7 +153,10 @@ export function AccountSeriesChart({ series, percentage = true }: {
         </defs>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.06} />
         <XAxis
-          dataKey="t"
+          dataKey={(point: { t: string }) => Date.parse(point.t)}
+          type="number"
+          scale="time"
+          domain={["dataMin", "dataMax"]}
           tickFormatter={formatXTick}
           tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
           tickLine={false}
@@ -176,10 +180,12 @@ export function AccountSeriesChart({ series, percentage = true }: {
         />
         {series.filter((s) => s.points.length > 0).map((s, i) => s.dashed ? (
           <Line key={s.key} type="linear" dataKey={s.key}
+            data={s.points.map((point) => ({ t: point.t, [s.key]: point.v }))}
             stroke={chartColors[(s.colorIndex ?? i) % chartColors.length]} strokeWidth={1.25} strokeDasharray="5 5"
             dot={false} connectNulls={false} isAnimationActive={!reducedMotion} animationDuration={500} />
         ) : (
           <Area key={s.key} type="monotone" dataKey={s.key}
+            data={s.interpolate ? undefined : s.points.map((point) => ({ t: point.t, [s.key]: point.v }))}
             stroke={chartColors[(s.colorIndex ?? i) % chartColors.length]} strokeWidth={1.5}
             fill={`url(#${id}-${s.key})`} dot={s.points.filter((p) => p.v !== null).length === 1 ? { r: 3 } : false}
             activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}

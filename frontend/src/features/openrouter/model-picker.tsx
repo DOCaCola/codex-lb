@@ -100,7 +100,7 @@ export function ModelPicker({
           <DialogDescription>
             {kind === "images"
               ? "Select image generation and editing models for the public Images API. Conversational selections are preserved. Refresh the account if an image model is missing."
-              : "Only selected models are available to clients. Image selections are preserved. New models remain disabled after synchronization."}
+              : "Choose models for selected mode and configure per-model limits. Saved choices and image selections are retained when All models is enabled."}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap gap-2">
@@ -328,7 +328,7 @@ export function ModelPicker({
               }
             }}
           >
-            Save {selectedCount} {kind === "images" ? "image models" : "models"}
+            Save {selectedCount} {kind === "images" ? "image " : ""}{selectedCount === 1 ? "model" : "models"}
           </Button>
         </div>
       </DialogContent>

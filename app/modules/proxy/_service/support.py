@@ -1491,6 +1491,11 @@ def _http_bridge_session_supports_service_tier(
     if request_model is None:
         return True
 
+    from app.modules.proxy.account_cache import is_account_model_allowed
+
+    if not is_account_model_allowed(session.account, request_model):
+        return False
+
     registry = get_model_registry()
     # Mirror select_account: only apply model-account filtering when the model has
     # registry plan-presence. An operator-mapped but unadvertised slug yields an

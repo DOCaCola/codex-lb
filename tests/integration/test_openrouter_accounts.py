@@ -25,6 +25,46 @@ from tests.integration.model_source_helpers import _enable_api_key_auth, stub_so
 pytestmark = pytest.mark.integration
 
 
+async def test_all_mode_retains_curated_choices_and_applies_priority_after_cooldown(async_client, provider):
+    from datetime import timedelta
+
+    from app.core.utils.time import utcnow
+    from app.db.models import OpenRouterCooldown
+
+    ids = []
+    for name in ("First", "Second", "Reserve"):
+        created = await async_client.post("/api/openrouter-accounts", json={"name": name, "apiKey": "secret-test"})
+        assert created.status_code == 200, created.text
+        assert created.json()["state"]["all_models"] is False
+        assert created.json()["routingPolicy"] == "normal"
+        ids.append(created.json()["id"])
+    for source_id, policy in zip(ids, ("burn_first", "normal", "preserve"), strict=True):
+        updated = await async_client.patch(
+            f"/api/openrouter-accounts/{source_id}", json={"allModels": True, "routingPolicy": policy}
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["state"]["selections"] == []
+    async with SessionLocal() as session:
+        sources = list(await session.scalars(select(ModelSource).where(ModelSource.id.in_(ids))))
+        assert all(source.models[0].context_window == 262144 for source in sources)
+        assert (await routing.select_available(session, sources, "openrouter/vendor/test")).id == ids[0]
+        session.add(
+            OpenRouterCooldown(source_id=ids[0], model="openrouter/vendor/test", until=utcnow() + timedelta(minutes=1))
+        )
+        await session.commit()
+        assert (await routing.select_available(session, sources, "openrouter/vendor/test")).id == ids[1]
+        assert (
+            await routing.select_available(session, sources, "openrouter/vendor/test", excluded={ids[1]})
+        ).id == ids[2]
+    selected = [{"model": "vendor/test", "contextWindow": 100000}]
+    await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"selections": selected})
+    off = await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"allModels": False})
+    assert off.json()["state"]["selections"][0]["contextWindow"] == 100000
+    refreshed = await async_client.post(f"/api/openrouter-accounts/{ids[0]}/refresh")
+    assert refreshed.json()["state"]["all_models"] is False
+    assert refreshed.json()["routingPolicy"] == "burn_first"
+
+
 @pytest.fixture
 def provider(monkeypatch):
     catalog = CatalogResponse.model_validate(

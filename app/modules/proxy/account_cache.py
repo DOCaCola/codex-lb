@@ -115,6 +115,19 @@ class RoutingAvailabilityCache:
         self._session_factory = session_factory
         self._snapshot: dict[str, AccountStatus] | None = None
         self._local_marks: set[str] = set()
+        self._models: dict[str, tuple[bool, tuple[str, ...]]] = {}
+        self._local_models: dict[str, tuple[bool, tuple[str, ...]]] = {}
+
+    def set_model_selection(self, account_id: str, all_models: bool, selected_models: list[str]) -> None:
+        self._local_models[account_id] = (all_models, tuple(selected_models))
+        _request_account_routing_bump()
+
+    def model_selection(self, account: Account) -> tuple[bool, tuple[str, ...]]:
+        return (
+            self._local_models.get(account.id)
+            or self._models.get(account.id)
+            or (account.all_models is not False, tuple(account.selected_models or ()))
+        )
 
     @property
     def seeded(self) -> bool:
@@ -158,14 +171,23 @@ class RoutingAvailabilityCache:
         deletion, or deactivation.
         """
         marks_before_refresh = frozenset(self._local_marks)
+        models_before_refresh = dict(self._local_models)
         factory = self._session_factory or SessionLocal
         session = factory()
         try:
-            result = await session.execute(select(Account.id, Account.status))
-            snapshot: dict[str, AccountStatus] = {account_id: status for account_id, status in result.all()}
+            result = await session.execute(
+                select(Account.id, Account.status, Account.all_models, Account.selected_models)
+            )
+            rows = result.all()
+            snapshot: dict[str, AccountStatus] = {account_id: status for account_id, status, _, _ in rows}
+            models = {account_id: (all_models, tuple(selected)) for account_id, _, all_models, selected in rows}
         finally:
             await close_session(session)
         self._snapshot = snapshot
+        self._models = models
+        self._local_models = {
+            key: value for key, value in self._local_models.items() if models_before_refresh.get(key) is not value
+        }
         self._local_marks = {
             account_id
             for account_id in self._local_marks
@@ -178,6 +200,8 @@ class RoutingAvailabilityCache:
         """Drop all state (snapshot back to unseeded). Test isolation helper."""
         self._snapshot = None
         self._local_marks.clear()
+        self._models.clear()
+        self._local_models.clear()
 
 
 _account_selection_cache = AccountSelectionCache()
@@ -212,6 +236,13 @@ def clear_all_account_routing_unavailable() -> None:
 
 def is_account_routing_unavailable(account_id: str) -> bool:
     return _routing_availability_cache.is_unavailable(account_id)
+
+
+def is_account_model_allowed(account: Account, model: str | None) -> bool:
+    if model is None:
+        return True
+    all_models, selected = _routing_availability_cache.model_selection(account)
+    return all_models or model.strip().lower() in {item.strip().lower() for item in selected}
 
 
 async def propagate_account_routing_change() -> bool:

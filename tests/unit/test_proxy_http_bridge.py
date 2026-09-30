@@ -86,6 +86,7 @@ from app.modules.proxy.http_bridge_event_batcher import (
 )
 from app.modules.proxy.http_bridge_forwarding import OwnerForwardRelayFailure
 from app.modules.proxy.load_balancer import CONTINUITY_OWNER_UNAVAILABLE, CatalogOmissionQuotaAdmission
+from tests.account_helpers import account_fixture
 from tests.simulation.virtual_time import VirtualClock, VirtualScheduler
 from tests.unit.hypothesis_strategies import json_values as hypothesis_json_values
 
@@ -955,7 +956,7 @@ def _make_bridge_session(
         request_model="gpt-5.2",
         account=cast(
             Any,
-            SimpleNamespace(
+            account_fixture(
                 id="acc-bridge",
                 chatgpt_account_id="workspace-bridge",
                 status=AccountStatus.ACTIVE,
@@ -2184,7 +2185,7 @@ async def test_http_bridge_owned_terminal_lifecycle_skips_outer_startup_release(
         key_id="key-bridge-owned",
         model="gpt-5.6-sol",
     )
-    account = cast(Any, SimpleNamespace(id="acc-bridge-owned"))
+    account = cast(Any, account_fixture(id="acc-bridge-owned"))
     runtime_config = SimpleNamespace(
         enabled=True,
         idle_ttl_seconds=120.0,
@@ -2260,7 +2261,7 @@ async def test_http_bridge_startup_fallback_releases_current_lifecycle_before_ba
         key_id="key-bridge-startup",
         model="gpt-5.6-sol",
     )
-    account = cast(Any, SimpleNamespace(id="acc-bridge-startup"))
+    account = cast(Any, account_fixture(id="acc-bridge-startup"))
     runtime_config = SimpleNamespace(
         enabled=True,
         idle_ttl_seconds=120.0,
@@ -2710,7 +2711,7 @@ async def test_durable_active_recovery_alias_protection_prevents_superseding_rep
     for index, (service, recovery) in enumerate(zip(services, recoveries, strict=True)):
         recovery.account = cast(
             Any,
-            SimpleNamespace(id=f"acc-replica-{index}", status=AccountStatus.ACTIVE, plan_type="plus"),
+            account_fixture(id=f"acc-replica-{index}", status=AccountStatus.ACTIVE, plan_type="plus"),
         )
         recovery.durable_session_id = f"durable-replica-recovery-{index}"
         recovery.durable_owner_epoch = 2
@@ -6308,7 +6309,7 @@ def _hard_capable_bridge_session(
     )
     session.affinity = _BRIDGE_BARE_SESSION_HEADER_AFFINITY
     assert session.affinity.legacy_selection_key == "bridge-legacy-process"
-    session.account = cast(Any, SimpleNamespace(id="acc-legacy-hard-owner", status=AccountStatus.ACTIVE))
+    session.account = cast(Any, account_fixture(id="acc-legacy-hard-owner", status=AccountStatus.ACTIVE))
     session.last_upstream_close_code = close_code
     session.upstream_turn_state = "upstream-turn-state-owner"
     session.upstream = cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock()))
@@ -8406,7 +8407,7 @@ async def test_http_bridge_stream_masks_single_top_level_previous_response_error
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.1",
-        account=cast(Any, SimpleNamespace(id="acc-single-prev", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-single-prev", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -8853,7 +8854,7 @@ async def test_http_bridge_keepalive_counts_as_first_yield_before_late_response_
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.1",
-        account=cast(Any, SimpleNamespace(id="acc-keepalive-first", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-keepalive-first", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -9035,7 +9036,7 @@ async def test_http_bridge_account_capacity_wait_sends_keepalive_instead_of_idle
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.1",
-        account=cast(Any, SimpleNamespace(id="acc-capacity-wait", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-capacity-wait", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -9257,7 +9258,7 @@ async def test_get_or_create_http_bridge_session_reuses_live_local_session_witho
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4-mini",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace()),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -9427,7 +9428,7 @@ async def test_get_or_create_http_bridge_session_replaces_routing_unavailable_ac
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-routing-unavailable"),
         request_model="gpt-5.4-mini",
-        account=cast(Any, SimpleNamespace(id="acc-unavailable", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-unavailable", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -9442,7 +9443,7 @@ async def test_get_or_create_http_bridge_session_replaces_routing_unavailable_ac
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-routing-unavailable"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-fresh", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -9980,7 +9981,7 @@ async def test_get_or_create_http_bridge_session_replaces_live_session_when_acco
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4-mini",
-        account=cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -9995,7 +9996,7 @@ async def test_get_or_create_http_bridge_session_replaces_live_session_when_acco
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-fresh", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -10054,7 +10055,7 @@ async def test_get_or_create_http_bridge_session_replaces_prompt_cache_session_p
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4-mini",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -10073,7 +10074,7 @@ async def test_get_or_create_http_bridge_session_replaces_prompt_cache_session_p
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -10132,7 +10133,7 @@ async def test_get_or_create_http_bridge_session_registers_turn_state_alias_with
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -10232,7 +10233,7 @@ async def test_stream_via_http_bridge_turn_state_request_ignores_prompt_cache_ow
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -10331,7 +10332,7 @@ async def test_stream_via_http_bridge_durable_outage_does_not_reuse_stale_recove
     recovery = _make_bridge_session(key=_make_account_neutral_replay_session_key("stale-local-recovery"))
     recovery.account = cast(
         Any,
-        SimpleNamespace(id="acc-stale-recovery", status=AccountStatus.ACTIVE, plan_type="plus"),
+        account_fixture(id="acc-stale-recovery", status=AccountStatus.ACTIVE, plan_type="plus"),
     )
     stale_turn_state = "http_turn_stale_recovery_owner"
     recovery.downstream_turn_state = stale_turn_state
@@ -11507,7 +11508,7 @@ async def test_select_account_with_budget_prefers_durable_account_id_when_availa
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(
-            account=cast(Any, SimpleNamespace(id="acc-preferred")),
+            account=cast(Any, account_fixture(id="acc-preferred")),
             error_message=None,
             error_code=None,
         )
@@ -11545,7 +11546,7 @@ async def test_select_account_with_budget_skips_preferred_account_outside_assign
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(
-            account=cast(Any, SimpleNamespace(id="acc-allowed")),
+            account=cast(Any, account_fixture(id="acc-allowed")),
             error_message=None,
             error_code=None,
         )
@@ -11720,8 +11721,8 @@ async def test_create_http_bridge_session_defers_confirmed_proxy_backoff_until_r
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account_a = cast(Any, SimpleNamespace(id="acc-proxy-a", status=AccountStatus.ACTIVE, plan_type="plus"))
-    account_b = cast(Any, SimpleNamespace(id="acc-proxy-b", status=AccountStatus.ACTIVE, plan_type="plus"))
+    account_a = cast(Any, account_fixture(id="acc-proxy-a", status=AccountStatus.ACTIVE, plan_type="plus"))
+    account_b = cast(Any, account_fixture(id="acc-proxy-b", status=AccountStatus.ACTIVE, plan_type="plus"))
     lease_a = proxy_service.AccountLease("lease-bridge-a", account_a.id, "stream", time.monotonic())
     lease_b = proxy_service.AccountLease("lease-bridge-b", account_b.id, "stream", time.monotonic())
     selections: list[set[str]] = []
@@ -11811,7 +11812,7 @@ async def test_create_http_bridge_session_confirmed_proxy_failure_keeps_hard_own
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account = cast(Any, SimpleNamespace(id="acc-proxy-owner", status=AccountStatus.ACTIVE, plan_type="plus"))
+    account = cast(Any, account_fixture(id="acc-proxy-owner", status=AccountStatus.ACTIVE, plan_type="plus"))
     lease = proxy_service.AccountLease("lease-bridge-owner", account.id, "stream", time.monotonic())
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(account=account, error_message=None, lease=lease)
@@ -11857,7 +11858,7 @@ async def test_create_http_bridge_session_preserves_proxy_failure_when_no_replac
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account = cast(Any, SimpleNamespace(id="acc-proxy-only", status=AccountStatus.ACTIVE, plan_type="plus"))
+    account = cast(Any, account_fixture(id="acc-proxy-only", status=AccountStatus.ACTIVE, plan_type="plus"))
     lease = proxy_service.AccountLease("lease-bridge-only", account.id, "stream", time.monotonic())
     selections: list[set[str]] = []
     original_error = _pre_dispatch_proxy_error("original bridge proxy failure")
@@ -11905,7 +11906,7 @@ async def test_create_http_bridge_session_idle_close_error_is_not_treated_as_dea
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account = cast(Any, SimpleNamespace(id="acc-proxy-idle", status=AccountStatus.ACTIVE, plan_type="plus"))
+    account = cast(Any, account_fixture(id="acc-proxy-idle", status=AccountStatus.ACTIVE, plan_type="plus"))
     lease = proxy_service.AccountLease("lease-bridge-idle", account.id, "stream", time.monotonic())
     record_error_backoff = AsyncMock()
     idle_error = ProxyResponseError(
@@ -12007,7 +12008,7 @@ async def test_reconnect_goal_restart_can_leave_owner_that_failed_before_dispatc
     old_account = session.account
     replacement = cast(
         Any,
-        SimpleNamespace(
+        account_fixture(
             id="acc-goal-restart-replacement",
             status=AccountStatus.ACTIVE,
             plan_type="plus",
@@ -12083,7 +12084,7 @@ async def test_reconnect_with_caller_snapshot_takes_no_settings_read_of_its_own(
     )
     replacement = cast(
         Any,
-        SimpleNamespace(
+        account_fixture(
             id="acc-snapshot-reconnect-replacement",
             status=AccountStatus.ACTIVE,
             plan_type="plus",
@@ -12401,7 +12402,7 @@ async def test_reconnect_http_bridge_session_preserves_exclusions_after_capacity
         routing_strategy="usage_weighted",
     )
     selection_kwargs: list[dict[str, object]] = []
-    account = cast(Any, SimpleNamespace(id=session.account.id, status=AccountStatus.ACTIVE))
+    account = cast(Any, account_fixture(id=session.account.id, status=AccountStatus.ACTIVE))
 
     async def select_account(_deadline: float, **kwargs: object) -> proxy_service.AccountSelection:
         selection_kwargs.append(kwargs)
@@ -12465,7 +12466,7 @@ async def test_create_http_bridge_session_filters_http_headers_for_upstream_webs
 
     async def select_account(_deadline: float, **_: object) -> proxy_service.AccountSelection:
         return proxy_service.AccountSelection(
-            account=cast(Any, SimpleNamespace(id="acc-bridge", status=AccountStatus.ACTIVE)),
+            account=cast(Any, account_fixture(id="acc-bridge", status=AccountStatus.ACTIVE)),
             error_message=None,
             error_code=None,
         )
@@ -12716,7 +12717,7 @@ async def test_reconnect_http_bridge_session_offers_the_retired_turn_state_only_
     session.upstream_turn_state = "upstream-turn-state-owner"
     session.downstream_turn_state = "downstream-turn-state-owner"
     replacement_account = cast(
-        Any, SimpleNamespace(id="acc-replacement", status=AccountStatus.ACTIVE, plan_type="plus")
+        Any, account_fixture(id="acc-replacement", status=AccountStatus.ACTIVE, plan_type="plus")
     )
     selected_account = session.account if selected == "same_account" else replacement_account
     captured_headers: list[dict[str, str]] = []
@@ -12787,7 +12788,7 @@ async def test_reconnect_keeps_handoff_protected_during_lease_swap(
         kind="stream",
         acquired_at=1.0,
     )
-    new_account = cast(Any, SimpleNamespace(id="acc-replacement", status=AccountStatus.ACTIVE, plan_type="plus"))
+    new_account = cast(Any, account_fixture(id="acc-replacement", status=AccountStatus.ACTIVE, plan_type="plus"))
     new_lease = proxy_service.AccountLease(
         lease_id="lease-new-handoff",
         account_id=new_account.id,
@@ -12856,10 +12857,10 @@ async def test_reconnect_cancellation_during_wrong_owner_lease_release_completes
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     session = _make_bridge_session()
-    required_account = cast(Any, SimpleNamespace(id="acc-required", status=AccountStatus.ACTIVE, plan_type="plus"))
+    required_account = cast(Any, account_fixture(id="acc-required", status=AccountStatus.ACTIVE, plan_type="plus"))
     replacement_account = cast(
         Any,
-        SimpleNamespace(id="acc-replacement", status=AccountStatus.ACTIVE, plan_type="plus"),
+        account_fixture(id="acc-replacement", status=AccountStatus.ACTIVE, plan_type="plus"),
     )
     replacement_lease = proxy_service.AccountLease(
         lease_id="lease-wrong-owner-cancelled",
@@ -13051,7 +13052,7 @@ async def test_reconnect_http_bridge_session_skips_soft_account_after_1011_witho
         key_value="sid-soft-1011",
     )
     session.last_upstream_close_code = 1011
-    other_account = cast(Any, SimpleNamespace(id="acc-other", status=AccountStatus.ACTIVE, plan_type="plus"))
+    other_account = cast(Any, account_fixture(id="acc-other", status=AccountStatus.ACTIVE, plan_type="plus"))
     selection_kwargs: list[dict[str, object]] = []
 
     async def select_account(_deadline: float, **kwargs: object) -> proxy_service.AccountSelection:
@@ -13258,7 +13259,7 @@ async def test_reconnect_http_bridge_session_bounds_a_self_excluded_hard_owner_s
     recovery_waits: list[proxy_service.AccountSelection] = []
     recovery_sleeps: list[float] = []
     alternate_account = cast(
-        Any, SimpleNamespace(id="acc-self-excluded-alternate", status=AccountStatus.ACTIVE, plan_type="plus")
+        Any, account_fixture(id="acc-self-excluded-alternate", status=AccountStatus.ACTIVE, plan_type="plus")
     )
 
     async def select_account(_deadline: float, **kwargs: object) -> proxy_service.AccountSelection:
@@ -13711,7 +13712,7 @@ async def test_reconnect_http_bridge_session_fails_closed_after_hard_1011_owner_
         key_value="sid-hard-1011-connect-error",
     )
     session.last_upstream_close_code = 1011
-    other_account = cast(Any, SimpleNamespace(id="acc-other", status=AccountStatus.ACTIVE))
+    other_account = cast(Any, account_fixture(id="acc-other", status=AccountStatus.ACTIVE))
     selection_kwargs: list[dict[str, object]] = []
 
     async def select_account(_deadline: float, **kwargs: object) -> proxy_service.AccountSelection:
@@ -13827,7 +13828,7 @@ async def test_select_account_with_budget_required_file_pin_does_not_fallback_on
                 error_code="account_stream_cap",
             ),
             proxy_service.AccountSelection(
-                account=cast(Any, SimpleNamespace(id="acc-other")),
+                account=cast(Any, account_fixture(id="acc-other")),
                 error_message=None,
                 error_code=None,
             ),
@@ -13869,7 +13870,7 @@ async def test_select_account_with_budget_previous_response_owner_bypasses_singl
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(
-            account=cast(Any, SimpleNamespace(id="acc-file-owner")),
+            account=cast(Any, account_fixture(id="acc-file-owner")),
             error_message=None,
             error_code=None,
         )
@@ -13957,7 +13958,7 @@ async def test_select_account_with_budget_file_pin_continuity_overrides_single_a
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(
-            account=cast(Any, SimpleNamespace(id="acc-file-owner")),
+            account=cast(Any, account_fixture(id="acc-file-owner")),
             error_message=None,
             error_code=None,
         )
@@ -14061,7 +14062,7 @@ async def test_select_account_with_budget_required_preferred_does_not_fallback_w
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(
-            account=cast(Any, SimpleNamespace(id="acc-other")),
+            account=cast(Any, account_fixture(id="acc-other")),
             error_message=None,
             error_code=None,
         )
@@ -14103,7 +14104,7 @@ async def test_select_account_with_budget_soft_preference_can_fallback_after_acc
                 error_code="account_stream_cap",
             ),
             proxy_service.AccountSelection(
-                account=cast(Any, SimpleNamespace(id="acc-other")),
+                account=cast(Any, account_fixture(id="acc-other")),
                 error_message=None,
                 error_code=None,
             ),
@@ -14335,7 +14336,7 @@ async def test_stream_via_http_bridge_injects_durable_previous_response_anchor(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -14654,7 +14655,7 @@ async def test_stream_via_http_bridge_trims_replayed_tool_call_items_with_previo
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -14762,7 +14763,7 @@ async def test_stream_via_http_bridge_does_not_inject_session_anchor_for_soft_re
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -14876,7 +14877,7 @@ async def test_stream_via_http_bridge_skips_session_anchor_injection_when_trim_w
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -15008,7 +15009,7 @@ async def _run_session_anchor_owner_stream(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id=account_id, status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id=account_id, status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -15151,7 +15152,7 @@ async def test_stream_via_http_bridge_does_not_inject_durable_previous_response_
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -15446,7 +15447,7 @@ async def test_stream_via_http_bridge_preserves_only_safe_trimmable_full_resend_
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -15795,7 +15796,7 @@ async def test_stream_via_http_bridge_does_not_inject_durable_previous_response_
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -15921,7 +15922,7 @@ async def test_stream_via_http_bridge_does_not_prefer_durable_account_for_soft_p
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -16055,7 +16056,7 @@ async def test_stream_via_http_bridge_prefers_durable_account_for_soft_prompt_ca
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -16208,7 +16209,7 @@ async def test_close_http_bridge_session_fails_pending_downstream_requests() -> 
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-close", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-close", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=pending_requests,
@@ -16811,7 +16812,7 @@ async def test_stream_via_http_bridge_does_not_inject_durable_anchor_for_live_tu
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -16940,7 +16941,7 @@ async def test_stream_via_http_bridge_does_not_inject_durable_anchor_for_live_pr
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -17361,7 +17362,7 @@ async def test_stream_via_http_bridge_preserves_context_after_owner_unavailable(
             # continuity owner, so the durable anchor stays on its own account.
             recovery_session.account = cast(
                 Any,
-                SimpleNamespace(id=preferred_account_id, status=AccountStatus.ACTIVE, plan_type="plus"),
+                account_fixture(id=preferred_account_id, status=AccountStatus.ACTIVE, plan_type="plus"),
             )
         return recovery_session
 
@@ -17596,7 +17597,7 @@ async def test_stream_via_http_bridge_does_not_inject_durable_previous_response_
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -17721,7 +17722,7 @@ async def test_stream_via_http_bridge_resolves_previous_response_owner_from_requ
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -17852,7 +17853,7 @@ async def test_stream_via_http_bridge_fails_closed_when_previous_response_owner_
     monkeypatch.setattr(service, "_prepare_http_bridge_request", fake_prepare)
     load_selection_inputs = AsyncMock(
         return_value=SimpleNamespace(
-            accounts=[SimpleNamespace(id="acc-only", status=AccountStatus.ACTIVE)],
+            accounts=[account_fixture(id="acc-only", status=AccountStatus.ACTIVE)],
         )
     )
     monkeypatch.setattr(
@@ -17919,7 +17920,7 @@ async def test_stream_via_http_bridge_uses_generated_downstream_turn_state_for_o
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -18841,7 +18842,7 @@ async def test_stream_via_http_bridge_reacquires_api_key_reservation_for_local_p
             key="bridge-prev-rebind", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -18858,7 +18859,7 @@ async def test_stream_via_http_bridge_reacquires_api_key_reservation_for_local_p
             key="bridge-prev-rebind", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -18982,7 +18983,7 @@ async def test_stream_via_http_bridge_does_not_rebind_after_downstream_visible(
             key="bridge-visible-rebind", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -19118,7 +19119,7 @@ async def test_http_bridge_local_owner_account_id_records_resolution_source(
             key="bridge-prev-rebind", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -19157,11 +19158,11 @@ async def test_http_bridge_local_owner_rejects_aliases_for_distinct_live_session
     response_session = _make_bridge_session(key=response_key, key_value="response-owner")
     turn_session.account = cast(
         Any,
-        SimpleNamespace(id="acc-shared-seat", status=AccountStatus.ACTIVE, plan_type="plus"),
+        account_fixture(id="acc-shared-seat", status=AccountStatus.ACTIVE, plan_type="plus"),
     )
     response_session.account = cast(
         Any,
-        SimpleNamespace(id="acc-shared-seat", status=AccountStatus.ACTIVE, plan_type="plus"),
+        account_fixture(id="acc-shared-seat", status=AccountStatus.ACTIVE, plan_type="plus"),
     )
     service._http_bridge_sessions[turn_key] = turn_session
     service._http_bridge_sessions[response_key] = response_session
@@ -19252,7 +19253,7 @@ async def test_stream_via_http_bridge_reuses_api_key_reservation_after_pre_dispa
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -19523,7 +19524,7 @@ def _make_owner_forward_recovery_session() -> "proxy_service._HTTPBridgeSession"
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -19797,7 +19798,7 @@ async def _run_owner_forward_recovery_durable_anchor_stream(
         key=proxy_service._HTTPBridgeSessionKey("session_header", "sid-recover", None),
     )
     recovery_session = _make_owner_forward_recovery_session()
-    recovery_session.account = cast(Any, SimpleNamespace(id=recovery_account_id, status=AccountStatus.ACTIVE))
+    recovery_session.account = cast(Any, account_fixture(id=recovery_account_id, status=AccountStatus.ACTIVE))
     send_text = AsyncMock()
     if real_submit:
         recovery_session.upstream = cast(
@@ -20058,7 +20059,7 @@ async def test_stream_via_http_bridge_local_previous_response_rebind_fails_exist
             key="bridge-prev-rebind", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([stale_pending_request]),
@@ -20075,7 +20076,7 @@ async def test_stream_via_http_bridge_local_previous_response_rebind_fails_exist
             key="bridge-prev-rebind", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -20219,7 +20220,7 @@ async def test_stream_via_http_bridge_rolls_over_session_after_context_length_ex
             key="bridge-context-overflow", kind=proxy_service.StickySessionKind.PROMPT_CACHE
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([stale_pending_request]),
@@ -20355,7 +20356,7 @@ async def test_stream_via_http_bridge_context_overflow_keeps_hard_affinity_sessi
             key="turn_hard_overflow", kind=proxy_service.StickySessionKind.CODEX_SESSION
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -20461,7 +20462,7 @@ async def test_stream_via_http_bridge_context_overflow_does_not_retry_hard_affin
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -20954,7 +20955,7 @@ async def test_get_or_create_http_bridge_session_preserves_explicit_forwarded_af
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21039,7 +21040,7 @@ async def test_get_or_create_http_bridge_session_falls_back_to_session_header_wh
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21248,7 +21249,7 @@ async def test_get_or_create_http_bridge_session_preserves_durable_canonical_pro
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21344,7 +21345,7 @@ async def test_get_or_create_http_bridge_session_recovers_from_previous_response
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21790,7 +21791,7 @@ async def test_get_or_create_http_bridge_session_closes_stale_session_before_pre
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4-mini",
-        account=cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21809,7 +21810,7 @@ async def test_get_or_create_http_bridge_session_closes_stale_session_before_pre
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21879,7 +21880,7 @@ async def test_get_or_create_http_bridge_session_drops_stale_previous_response_m
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -21899,7 +21900,7 @@ async def test_get_or_create_http_bridge_session_drops_stale_previous_response_m
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-2", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-2", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22217,7 +22218,7 @@ async def test_get_or_create_http_bridge_session_allows_local_rebind_for_previou
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22272,7 +22273,7 @@ async def test_get_or_create_http_bridge_session_allows_local_rebind_for_bootstr
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22350,7 +22351,7 @@ async def test_get_or_create_http_bridge_session_recovers_locally_when_owner_end
         headers={"x-codex-turn-state": "http_turn_123"},
         affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22404,7 +22405,7 @@ async def test_get_or_create_http_bridge_session_recovers_locally_when_stale_own
         headers={"x-codex-session-id": "sid-123"},
         affinity=proxy_service._AffinityPolicy(key="sid-123", kind=proxy_service.StickySessionKind.CODEX_SESSION),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22470,7 +22471,7 @@ async def test_get_or_create_http_bridge_session_recovers_locally_when_owner_end
         headers={"x-codex-turn-state": "http_turn_123"},
         affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22536,7 +22537,7 @@ async def test_get_or_create_http_bridge_session_does_not_force_takeover_live_dr
         headers={"x-codex-turn-state": "http_turn_123"},
         affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22624,7 +22625,7 @@ async def test_get_or_create_does_not_steal_when_active_lookup_becomes_live_drai
         headers={"x-codex-turn-state": "http_turn_race"},
         affinity=proxy_service._AffinityPolicy(key="http_turn_race"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22698,7 +22699,7 @@ async def test_get_or_create_http_bridge_session_recovers_locally_without_anchor
         headers={"x-codex-turn-state": "turn_123"},
         affinity=proxy_service._AffinityPolicy(key="turn_123"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22763,7 +22764,7 @@ async def test_get_or_create_http_bridge_session_prompt_cache_takes_over_stale_s
         headers={},
         affinity=proxy_service._AffinityPolicy(key="cache-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22831,7 +22832,7 @@ async def test_get_or_create_http_bridge_session_discards_local_session_when_dur
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22849,7 +22850,7 @@ async def test_get_or_create_http_bridge_session_discards_local_session_when_dur
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-new", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-new", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -22921,7 +22922,7 @@ async def test_get_or_create_http_bridge_session_does_not_publish_before_durable
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -23279,7 +23280,7 @@ async def test_close_all_http_bridge_sessions_fails_capacity_waiters_instead_of_
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-existing", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-existing", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=cast(deque[proxy_service._WebSocketRequestState], deque()),
@@ -23351,7 +23352,7 @@ async def test_get_or_create_http_bridge_session_capacity_wait_times_out(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-existing", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-existing", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=cast(deque[proxy_service._WebSocketRequestState], deque()),
@@ -23802,7 +23803,7 @@ async def test_create_http_bridge_session_cancellation_before_connect_handoff_re
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     account = cast(
         Any,
-        SimpleNamespace(
+        account_fixture(
             id="acc-bridge-cancel-handoff",
             chatgpt_account_id="acc-bridge-cancel-handoff",
             status=AccountStatus.ACTIVE,
@@ -23880,7 +23881,7 @@ async def test_get_or_create_http_bridge_session_cancel_during_stale_close_clean
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.DEACTIVATED, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-stale", status=AccountStatus.DEACTIVATED, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=cast(deque[proxy_service._WebSocketRequestState], deque()),
@@ -24020,7 +24021,7 @@ async def test_claim_durable_http_bridge_session_propagates_claim_failure(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -24105,7 +24106,7 @@ async def test_claim_durable_http_bridge_session_falls_back_when_tables_are_miss
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -24183,7 +24184,7 @@ async def test_claim_durable_http_bridge_session_rejects_remote_owner_without_ta
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -24235,7 +24236,7 @@ async def test_claim_durable_http_bridge_session_retries_ownerless_row_before_mi
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -24306,7 +24307,7 @@ async def test_get_or_create_http_bridge_session_hard_continuity_lookup_failure_
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -24366,7 +24367,7 @@ async def test_maybe_prewarm_http_bridge_session_skips_continuity_turns(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -24590,7 +24591,7 @@ async def test_process_http_bridge_upstream_text_masks_single_previous_response_
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -24666,7 +24667,7 @@ async def test_process_http_bridge_upstream_text_masks_previous_response_not_fou
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -24747,7 +24748,7 @@ async def test_process_http_bridge_upstream_text_retries_precreated_usage_limit(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -24817,7 +24818,7 @@ async def test_process_http_bridge_upstream_text_masks_failed_replay_usage_limit
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -24830,7 +24831,7 @@ async def test_process_http_bridge_upstream_text_masks_failed_replay_usage_limit
     handle_stream_error = AsyncMock()
 
     async def failed_replay(target_session: proxy_service._HTTPBridgeSession) -> bool:
-        target_session.account = cast(Any, SimpleNamespace(id="acc-replacement", status=AccountStatus.ACTIVE))
+        target_session.account = cast(Any, account_fixture(id="acc-replacement", status=AccountStatus.ACTIVE))
         return False
 
     monkeypatch.setattr(service, "_handle_stream_error", handle_stream_error)
@@ -24904,7 +24905,7 @@ async def test_process_http_bridge_upstream_text_preserves_raw_error_but_finaliz
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-raw-error", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-raw-error", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -24978,7 +24979,7 @@ async def test_process_http_bridge_upstream_text_masks_previous_response_usage_l
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -25065,7 +25066,7 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
     )
-    account = cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE))
+    account = cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE))
     session = proxy_service._HTTPBridgeSession(
         key=proxy_service._HTTPBridgeSessionKey(
             "turn_state_header",
@@ -25176,7 +25177,7 @@ async def test_http_bridge_masks_owner_pinned_quota_error_with_queued_requests(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state, queued_request_state]),
@@ -25276,7 +25277,7 @@ async def test_http_bridge_retire_after_drain_closes_session_on_cancellation(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=close)),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state, queued_request_state]),
@@ -25338,7 +25339,7 @@ async def test_http_bridge_retire_after_drain_waits_for_queued_submission(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=close)),
         upstream_control=proxy_service._WebSocketUpstreamControl(
             reconnect_requested=True,
@@ -25406,7 +25407,7 @@ async def test_http_bridge_retire_after_drain_does_not_cancel_current_upstream_r
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-reader-retire", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-reader-retire", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=close)),
         upstream_control=proxy_service._WebSocketUpstreamControl(
             reconnect_requested=True,
@@ -25481,7 +25482,7 @@ async def test_submit_http_bridge_request_starts_api_key_reservation_heartbeat(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-http-heartbeat", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-http-heartbeat", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26230,7 +26231,7 @@ async def test_submit_http_bridge_request_rejects_retiring_session() -> None:
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-limited", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=close)),
         upstream_control=proxy_service._WebSocketUpstreamControl(
             reconnect_requested=True,
@@ -26288,7 +26289,7 @@ async def test_submit_http_bridge_request_rejects_unregistered_session_after_adm
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-unregistered", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-unregistered", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26346,7 +26347,7 @@ async def test_submit_http_bridge_request_rejects_unregistered_closed_session_wi
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-unregistered", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-unregistered", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26406,7 +26407,7 @@ async def test_submit_http_bridge_request_waits_for_closed_session_retirement_be
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-retiring", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-retiring", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26469,7 +26470,7 @@ async def test_submit_http_bridge_request_does_not_send_after_retirement_between
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-retire-gap", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-retire-gap", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26545,7 +26546,7 @@ async def test_submit_http_bridge_request_rejects_state_after_response_event() -
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-visible-submit", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-visible-submit", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26585,7 +26586,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_reconnects_without_re
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26647,7 +26648,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_requires_file_pin_own
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-file", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-file", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26704,7 +26705,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_propagates_file_owner
             kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-file", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-file", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26828,7 +26829,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_refuses_after_respons
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-visible", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-visible", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -26906,7 +26907,7 @@ async def test_process_http_bridge_upstream_text_masks_unmatched_missing_tool_ou
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state_a, request_state_b]),
@@ -26988,7 +26989,7 @@ async def test_process_http_bridge_upstream_text_masks_missing_custom_tool_outpu
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -27066,7 +27067,7 @@ async def test_process_http_bridge_upstream_text_masks_missing_tool_search_outpu
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -27156,7 +27157,7 @@ async def test_process_http_bridge_upstream_text_does_not_mask_unmatched_missing
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state_a, request_state_b]),
@@ -27228,7 +27229,7 @@ async def test_process_http_bridge_upstream_text_scopes_tool_dedupe_to_request_s
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state_a, request_state_b]),
@@ -27305,7 +27306,7 @@ async def test_process_http_bridge_upstream_text_marks_text_delta_downstream_vis
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-visible", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-visible", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -27428,7 +27429,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_refuses_to_resend_pre
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -27486,7 +27487,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_replays_retry_safe_in
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -27517,7 +27518,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_replays_retry_safe_in
         del args, kwargs
         session.account = cast(
             Any,
-            SimpleNamespace(
+            account_fixture(
                 id="acc-2",
                 status=AccountStatus.ACTIVE,
                 codex_installation_id="installation-b",
@@ -27572,7 +27573,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_refuses_session_level
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -27677,7 +27678,7 @@ async def test_get_or_create_http_bridge_session_soft_mismatch_rebinds_locally(
         headers={},
         affinity=proxy_service._AffinityPolicy(key="cache-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-fresh", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -27770,7 +27771,7 @@ async def test_get_or_create_http_bridge_session_hard_preferred_owner_blocks_sta
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-hard-owner-stale", None)
     stale_session = _make_bridge_session(key=key, key_value="sid-hard-owner-stale")
-    stale_session.account = cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus"))
+    stale_session.account = cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus"))
     created_session = _make_bridge_session(key=key, key_value="sid-hard-owner-stale")
     create_session = AsyncMock(return_value=created_session)
     service._http_bridge_sessions[key] = stale_session
@@ -27819,9 +27820,9 @@ async def test_get_or_create_http_bridge_session_soft_continuity_owner_blocks_st
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "soft-owner-stale", None)
     stale_session = _make_bridge_session(key=key, key_value="soft-owner-stale")
-    stale_session.account = cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus"))
+    stale_session.account = cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus"))
     created_session = _make_bridge_session(key=key, key_value="soft-owner-stale")
-    created_session.account = cast(Any, SimpleNamespace(id="acc-owner", status=AccountStatus.ACTIVE, plan_type="plus"))
+    created_session.account = cast(Any, account_fixture(id="acc-owner", status=AccountStatus.ACTIVE, plan_type="plus"))
     create_session = AsyncMock(return_value=created_session)
     service._http_bridge_sessions[key] = stale_session
 
@@ -27961,7 +27962,7 @@ async def test_create_http_bridge_session_never_falls_back_after_required_owner_
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-123", None)
-    preferred_account = cast(Any, SimpleNamespace(id="acc-owner", status=AccountStatus.ACTIVE))
+    preferred_account = cast(Any, account_fixture(id="acc-owner", status=AccountStatus.ACTIVE))
     select_account = AsyncMock(
         side_effect=[
             proxy_service.AccountSelection(account=preferred_account, error_message=None, error_code=None),
@@ -28034,7 +28035,7 @@ async def test_create_http_bridge_session_does_not_classify_post_selection_failu
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-connect-failure", None)
-    preferred_account = cast(Any, SimpleNamespace(id="acc-owner", status=AccountStatus.ACTIVE))
+    preferred_account = cast(Any, account_fixture(id="acc-owner", status=AccountStatus.ACTIVE))
     select_account = AsyncMock(
         return_value=proxy_service.AccountSelection(
             account=preferred_account,
@@ -28362,7 +28363,7 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-fallback", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-fallback", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -28643,7 +28644,7 @@ async def test_stream_via_http_bridge_recovers_dead_owner_with_replayable_full_r
         captured_keys.append(key)
         captured_kwargs.append(kwargs)
         session = _make_bridge_session(key=key, key_value=key.affinity_key)
-        session.account = cast(Any, SimpleNamespace(id="acc-fallback", status=AccountStatus.ACTIVE))
+        session.account = cast(Any, account_fixture(id="acc-fallback", status=AccountStatus.ACTIVE))
         session.request_model = payload.model
         return session
 
@@ -28769,7 +28770,7 @@ async def test_durable_model_transition_preserves_owner_provenance_when_replacin
         first_session = _make_bridge_session(key=key)
         first_session.account = cast(
             Any,
-            SimpleNamespace(id="acc-model-owner", status=AccountStatus.ACTIVE),
+            account_fixture(id="acc-model-owner", status=AccountStatus.ACTIVE),
         )
         first_session.request_model = payload.model
         return first_session
@@ -28905,7 +28906,7 @@ async def test_stream_via_http_bridge_forks_account_neutral_model_transition_aft
         session = _make_bridge_session(key=key)
         session.account = cast(
             Any,
-            SimpleNamespace(id="acc-model-alternate", status=AccountStatus.ACTIVE),
+            account_fixture(id="acc-model-alternate", status=AccountStatus.ACTIVE),
         )
         session.request_model = payload.model
         return session
@@ -29115,7 +29116,7 @@ async def test_stream_via_http_bridge_model_transition_owner_conflict_fork_does_
         session = _make_bridge_session(key=key)
         session.account = cast(
             Any,
-            SimpleNamespace(id="acc-model-alternate", status=AccountStatus.ACTIVE),
+            account_fixture(id="acc-model-alternate", status=AccountStatus.ACTIVE),
         )
         session.request_model = payload.model
         return session
@@ -29202,7 +29203,7 @@ async def test_stream_via_http_bridge_preserves_verified_replay_kind_for_durable
         captured_keys.append(key)
         captured_kwargs.append(kwargs)
         session = _make_bridge_session(key=key)
-        session.account = cast(Any, SimpleNamespace(id="acc-replay", status=AccountStatus.ACTIVE))
+        session.account = cast(Any, account_fixture(id="acc-replay", status=AccountStatus.ACTIVE))
         session.request_model = payload.model
         return session
 
@@ -29288,7 +29289,7 @@ async def test_get_or_create_http_bridge_session_prompt_cache_mismatch_stays_loc
         headers={},
         affinity=proxy_service._AffinityPolicy(key="cache-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-fresh", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -29402,7 +29403,7 @@ async def test_get_or_create_http_bridge_session_replaces_live_session_when_scop
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4-mini",
-        account=cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -29417,7 +29418,7 @@ async def test_get_or_create_http_bridge_session_replaces_live_session_when_scop
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-fresh", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -30170,7 +30171,7 @@ async def test_http_bridge_reader_marks_session_closed_before_reconnect_close(
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -30484,7 +30485,7 @@ async def test_retry_http_bridge_model_fallback_excludes_rejected_hard_affinity_
         pending_requests=deque([request_state]),
         queued_request_count=1,
     )
-    session.account = cast(Any, SimpleNamespace(id="acc-rejected", status=AccountStatus.ACTIVE))
+    session.account = cast(Any, account_fixture(id="acc-rejected", status=AccountStatus.ACTIVE))
     session.last_upstream_close_code = 1011
     session.upstream = cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock()))
     old_lease = request_state.account_response_create_lease
@@ -30527,7 +30528,7 @@ async def test_retry_http_bridge_fresh_hard_request_excludes_silent_account(
         pending_requests=deque([request_state]),
         queued_request_count=1,
     )
-    session.account = cast(Any, SimpleNamespace(id="acc-silent", status=AccountStatus.ACTIVE))
+    session.account = cast(Any, account_fixture(id="acc-silent", status=AccountStatus.ACTIVE))
     session.last_upstream_close_code = 1011
     session.upstream = cast(Any, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock()))
     old_lease = request_state.account_response_create_lease
@@ -33875,7 +33876,7 @@ async def test_http_bridge_reader_failed_precreated_replay_retires_registered_se
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -33974,7 +33975,7 @@ async def test_http_bridge_reader_retirement_recovers_concurrent_gate_waiter(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([old_request_state]),
@@ -34671,7 +34672,7 @@ async def test_stream_via_http_bridge_same_owner_fresh_replay_pins_owner_without
     session.codex_session = True
     session.durable_session_id = lookup.session_id
     session.durable_owner_epoch = lookup.owner_epoch
-    session.account = cast(Any, SimpleNamespace(id="acc-owner", status=AccountStatus.ACTIVE, plan_type="plus"))
+    session.account = cast(Any, account_fixture(id="acc-owner", status=AccountStatus.ACTIVE, plan_type="plus"))
     session.last_completed_response_id = lookup.latest_response_id
     session.last_completed_response_account_id = lookup.account_id
     session.last_completed_input_count = lookup.latest_input_item_count or 0
@@ -34684,7 +34685,7 @@ async def test_stream_via_http_bridge_same_owner_fresh_replay_pins_owner_without
     recovery_session.durable_owner_epoch = lookup.owner_epoch
     recovery_session.account = cast(
         Any,
-        SimpleNamespace(id="acc-owner", status=AccountStatus.ACTIVE, plan_type="plus"),
+        account_fixture(id="acc-owner", status=AccountStatus.ACTIVE, plan_type="plus"),
     )
     alternate_session = _make_bridge_session(
         key=proxy_service._HTTPBridgeSessionKey("internal_request_parallel", "alternate-replay", None),
@@ -34692,7 +34693,7 @@ async def test_stream_via_http_bridge_same_owner_fresh_replay_pins_owner_without
     )
     alternate_session.account = cast(
         Any,
-        SimpleNamespace(id="acc-alternate", status=AccountStatus.ACTIVE, plan_type="plus"),
+        account_fixture(id="acc-alternate", status=AccountStatus.ACTIVE, plan_type="plus"),
     )
     get_or_create_calls: list[dict[str, object]] = []
 
@@ -35052,7 +35053,7 @@ async def test_http_bridge_reader_retirement_skips_concurrent_prewarm_waiter(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([old_request_state]),
@@ -35135,7 +35136,7 @@ async def test_maybe_prewarm_http_bridge_session_skips_unregistered_session_afte
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -35213,7 +35214,7 @@ async def test_maybe_prewarm_replaced_session_cleanup_preserves_visible_queue_co
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(send_text=AsyncMock(), close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([held_request]),
@@ -35298,7 +35299,7 @@ async def test_http_bridge_reader_failed_precreated_replay_retires_when_request_
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key-log-fails"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -35396,7 +35397,7 @@ async def test_http_bridge_reader_unexpected_processing_error_fails_pending_requ
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -35489,7 +35490,7 @@ async def test_http_bridge_reader_crash_rejects_concurrent_gate_waiter(
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key-reader-crash"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([old_request_state]),
@@ -35595,7 +35596,7 @@ async def test_http_bridge_reader_crash_rejects_concurrent_prewarm_waiter(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([old_request_state]),
@@ -35681,7 +35682,7 @@ async def test_http_bridge_reader_crash_marks_session_closed_before_releasing_pe
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key-reader-crash-order"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -35733,7 +35734,7 @@ async def test_http_bridge_reader_uses_bridge_request_budget(
         headers={},
         affinity=proxy_service._AffinityPolicy(key="bridge-key"),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -35809,7 +35810,7 @@ async def test_websocket_reader_unexpected_processing_error_fails_pending_reques
     await service._relay_upstream_websocket_messages(
         websocket,
         upstream,
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         account_id_value="acc-1",
         pending_requests=pending_requests,
         pending_lock=pending_lock,
@@ -36069,7 +36070,7 @@ async def test_stream_http_bridge_or_retry_spills_unanchored_fork_from_capped_pr
     replacement_session = _make_bridge_session(key=fork_key, key_value=fork_key.affinity_key)
     replacement_session.account = cast(
         Any,
-        SimpleNamespace(id="acc-available", status=AccountStatus.ACTIVE),
+        account_fixture(id="acc-available", status=AccountStatus.ACTIVE),
     )
     cap_error = ProxyResponseError(
         429,
@@ -37148,7 +37149,7 @@ async def test_http_bridge_has_live_local_session_treats_quarantined_as_absent()
 @pytest.mark.asyncio
 async def test_http_bridge_eventless_timeout_signal_drains_after_repeated_sessions() -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account = SimpleNamespace(id="acc-eventless-timeouts")
+    account = account_fixture(id="acc-eventless-timeouts")
     session = cast(proxy_service._HTTPBridgeSession, SimpleNamespace(account=account))
     record_errors = AsyncMock()
     service._load_balancer.record_errors = record_errors
@@ -37699,12 +37700,12 @@ async def test_settle_failed_creation_releases_a_row_rebound_away_from_the_winne
     winner.key = key
     winner.durable_session_id = "durable-account-handover"
     winner.durable_owner_epoch = 4
-    winner.account = cast(Any, SimpleNamespace(id="acc-winner", status=AccountStatus.ACTIVE, plan_type="plus"))
+    winner.account = cast(Any, account_fixture(id="acc-winner", status=AccountStatus.ACTIVE, plan_type="plus"))
     stale_creator = _make_bridge_session(key_value="sid-account-handover-stale")
     stale_creator.key = key
     stale_creator.durable_session_id = "durable-account-handover"
     stale_creator.durable_owner_epoch = 5
-    stale_creator.account = cast(Any, SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus"))
+    stale_creator.account = cast(Any, account_fixture(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus"))
     service._http_bridge_sessions[key] = winner
 
     superseded = await http_bridge_helpers_module._settle_failed_http_bridge_creation(
@@ -39077,7 +39078,7 @@ async def test_stream_via_http_bridge_probe_after_poisoned_circuit_is_unanchored
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -39278,7 +39279,7 @@ def _make_terminal_error_bridge_fixture(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -43729,7 +43730,7 @@ async def test_an_abandoned_tombstone_fails_deltas_closed(monkeypatch: pytest.Mo
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -45555,7 +45556,7 @@ async def test_an_unanchored_delta_fails_closed_under_poison_evidence(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=cast(Any, account_fixture(id="acc-1", status=AccountStatus.ACTIVE)),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -46055,7 +46056,7 @@ async def test_release_reservation_drains_deferred_keyed_health_after_release(
     """Deferred keyed health writes apply only after the reservation's fallback
     release commits, in settle-then-health order."""
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account = SimpleNamespace(id="acc-deferred-health")
+    account = account_fixture(id="acc-deferred-health")
     request_state = proxy_service._WebSocketRequestState(
         request_id="req-deferred-health-release",
         model="gpt-5.5",
@@ -46107,7 +46108,7 @@ async def test_release_reservation_leaves_deferred_health_unapplied_when_release
     )
     request_state.deferred_keyed_stream_health.append(
         proxy_support_module._DeferredKeyedStreamHealthPenalty(
-            account=cast(Any, SimpleNamespace(id="acc-unapplied")),
+            account=cast(Any, account_fixture(id="acc-unapplied")),
             error={"message": "The usage limit has been reached"},
             code="usage_limit_reached",
         )
@@ -46131,7 +46132,7 @@ async def test_release_reservation_drains_deferred_health_when_backoff_drain_fai
     """Backoffs and deferred stream-health penalties own independent lanes:
     a failed backoff write must not orphan the deferred health write."""
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    account = SimpleNamespace(id="acc-independent-lanes")
+    account = account_fixture(id="acc-independent-lanes")
     request_state = proxy_service._WebSocketRequestState(
         request_id="req-independent-lanes",
         model="gpt-5.5",
@@ -46140,7 +46141,7 @@ async def test_release_reservation_drains_deferred_health_when_backoff_drain_fai
         api_key_reservation=cast(Any, object()),
         started_at=1.0,
     )
-    request_state.deferred_account_error_backoffs["acc-backoff"] = cast(Any, SimpleNamespace(id="acc-backoff"))
+    request_state.deferred_account_error_backoffs["acc-backoff"] = cast(Any, account_fixture(id="acc-backoff"))
     request_state.deferred_keyed_stream_health.append(
         proxy_support_module._DeferredKeyedStreamHealthPenalty(
             account=cast(Any, account),
@@ -46184,7 +46185,7 @@ async def test_drain_deferred_keyed_health_drains_full_queue_under_cancellation(
     for index in ("first", "second"):
         request_state.deferred_keyed_stream_health.append(
             proxy_support_module._DeferredKeyedStreamHealthPenalty(
-                account=cast(Any, SimpleNamespace(id=f"acc-cancelled-{index}")),
+                account=cast(Any, account_fixture(id=f"acc-cancelled-{index}")),
                 error={"message": "The usage limit has been reached"},
                 code=f"usage_limit_reached_{index}",
             )
@@ -46232,7 +46233,7 @@ async def test_drain_deferred_keyed_health_drops_failed_write_and_continues(
     for code in ("usage_limit_reached", "server_is_overloaded"):
         request_state.deferred_keyed_stream_health.append(
             proxy_support_module._DeferredKeyedStreamHealthPenalty(
-                account=cast(Any, SimpleNamespace(id=f"acc-{code}")),
+                account=cast(Any, account_fixture(id=f"acc-{code}")),
                 error={"message": code},
                 code=code,
             )
@@ -46281,7 +46282,7 @@ async def test_finalize_waits_for_settlement_when_keyed_health_penalties_are_que
     )
     request_state.deferred_keyed_stream_health.append(
         proxy_support_module._DeferredKeyedStreamHealthPenalty(
-            account=cast(Any, SimpleNamespace(id="acc-wait-queued")),
+            account=cast(Any, account_fixture(id="acc-wait-queued")),
             error={"message": "The usage limit has been reached"},
             code="usage_limit_reached",
         )
@@ -46347,7 +46348,7 @@ async def test_concurrent_drains_apply_each_deferred_penalty_exactly_once(
     for code in ("usage_limit_reached", "server_is_overloaded"):
         request_state.deferred_keyed_stream_health.append(
             proxy_support_module._DeferredKeyedStreamHealthPenalty(
-                account=cast(Any, SimpleNamespace(id=f"acc-{code}")),
+                account=cast(Any, account_fixture(id=f"acc-{code}")),
                 error={"message": code},
                 code=code,
             )
@@ -47529,7 +47530,7 @@ async def test_wait_before_http_bridge_model_capacity_retry_runs_on_injected_sch
 async def test_http_bridge_eventless_timeout_signal_window_follows_injected_clock() -> None:
     clock = VirtualClock(monotonic_value=10_000.0)
     service = proxy_service.ProxyService(cast(Any, nullcontext()), clock=clock)
-    account = SimpleNamespace(id="acc-eventless-timeouts-virtual")
+    account = account_fixture(id="acc-eventless-timeouts-virtual")
     session = cast(proxy_service._HTTPBridgeSession, SimpleNamespace(account=account))
     record_errors = AsyncMock()
     service._load_balancer.record_errors = record_errors

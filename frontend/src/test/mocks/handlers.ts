@@ -68,6 +68,18 @@ import {
 } from "@/test/mocks/factories";
 
 const MODEL_OPTION_DELIMITER = ":::";
+const AccountModelPayloadSchema = z.object({
+  allModels: z.boolean(),
+  selectedModels: z.array(z.string()),
+});
+const accountModelCatalog = ["gpt-6-astra", "gpt-5.4"].map((model) => ({
+  model,
+  displayName: model,
+  contextWindow: 272000,
+  supportsTools: true,
+  supportsVision: true,
+  supportsReasoning: true,
+}));
 const STATUS_ORDER = ["ok", "cancelled", "rate_limit", "quota", "error"] as const;
 
 // ── Zod schemas for mock request bodies ──
@@ -388,6 +400,7 @@ function reservedUsernameRefusal(username: string | null | undefined): Response 
 }
 
 type MockState = {
+  accountModels: Record<string, { allModels: boolean; selectedModels: string[] }>;
   accounts: AccountSummary[];
   requestLogs: RequestLogEntry[];
   conversations: ConversationEntry[];
@@ -482,6 +495,7 @@ type MockState = {
 
 function createInitialState(): MockState {
   return {
+    accountModels: {},
     accounts: createDefaultAccounts(),
     requestLogs: createDefaultRequestLogs(),
     conversations: createDefaultConversations(),
@@ -1009,6 +1023,20 @@ export const handlers = [
 
   http.get("/api/accounts", () => {
     return HttpResponse.json({ accounts: state.accounts });
+  }),
+
+  http.get("/api/accounts/:accountId/models", ({ params }) => {
+    const settings = state.accountModels[String(params.accountId)] ?? { allModels: true, selectedModels: [] };
+    return HttpResponse.json({ ...settings, catalog: accountModelCatalog });
+  }),
+
+  http.put("/api/accounts/:accountId/models", async ({ params, request }) => {
+    const settings = await parseJsonBody(request, AccountModelPayloadSchema);
+    if (!settings) {
+      return HttpResponse.json({ error: { code: "validation_error", message: "Invalid model settings" } }, { status: 422 });
+    }
+    state.accountModels[String(params.accountId)] = settings;
+    return HttpResponse.json({ ...settings, catalog: accountModelCatalog });
   }),
 
   http.post("/api/accounts/import", async () => {

@@ -32,7 +32,8 @@ from app.core.clients.usage import (
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.openai.host_models import resolve_default_host_model
-from app.core.plan_types import coerce_account_plan_type
+from app.core.openai.model_registry import MODEL_SOURCE_KIND_SUBSCRIPTION, get_model_registry
+from app.core.plan_types import account_plan_matches_allowed, coerce_account_plan_type
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.upstream_proxy.cache import get_upstream_route_cache
 from app.core.upstream_proxy.resolver import _is_missing_upstream_proxy_schema
@@ -49,7 +50,10 @@ from app.modules.accounts.schemas import (
     AccountAdditionalWindow,
     AccountAuthExportResponse,
     AccountAuthExportTokens,
+    AccountCatalogModel,
     AccountImportResponse,
+    AccountModelSelectionRequest,
+    AccountModelSettings,
     AccountOpenCodeAuthExportAccount,
     AccountProbeResponse,
     AccountRequestUsage,
@@ -67,6 +71,7 @@ from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.proxy.account_cache import (
     clear_account_routing_unavailable,
     get_account_selection_cache,
+    get_routing_availability_cache,
     mark_account_routing_unavailable,
     propagate_account_routing_change,
 )
@@ -650,6 +655,56 @@ class AccountsService:
         result = await self._repo.update_limit_warmup_enabled(account_id, enabled)
         if result:
             get_account_selection_cache().invalidate()
+        return result
+
+    async def model_settings(self, account_id: str) -> AccountModelSettings | None:
+        account = await self._repo.get_by_id_fresh(account_id)
+        if account is None or account.delete_requested_at is not None:
+            return None
+        registry = get_model_registry()
+        catalog = []
+        for model in registry.get_models_with_fallback().values():
+            if model.source_kind != MODEL_SOURCE_KIND_SUBSCRIPTION:
+                continue
+            if not account_plan_matches_allowed(account.plan_type, model.available_in_plans):
+                continue
+            owners = registry.account_ids_for_model(model.slug)
+            if owners is not None and account.id not in owners:
+                continue
+            catalog.append(
+                AccountCatalogModel(
+                    model=model.slug,
+                    display_name=model.display_name,
+                    context_window=model.context_window,
+                    supports_tools=True,
+                    supports_vision="image" in model.input_modalities,
+                    supports_reasoning=bool(model.supported_reasoning_levels),
+                )
+            )
+        return AccountModelSettings(
+            all_models=account.all_models, selected_models=account.selected_models, catalog=catalog
+        )
+
+    async def set_model_selection(self, account_id: str, payload: AccountModelSelectionRequest) -> bool:
+        settings = await self.model_settings(account_id)
+        if settings is None:
+            return False
+        known = {model.model for model in settings.catalog} | set(settings.selected_models)
+        if len(payload.selected_models) != len(set(payload.selected_models)) or set(payload.selected_models) - known:
+            from app.core.exceptions import DashboardBadRequestError
+
+            raise DashboardBadRequestError(
+                "Select each model once from the account catalog", code="invalid_model_selection"
+            )
+        result = await self._repo.update_model_selection(
+            account_id, all_models=payload.all_models, selected_models=payload.selected_models
+        )
+        if result:
+            get_routing_availability_cache().set_model_selection(
+                account_id, payload.all_models, payload.selected_models
+            )
+            get_account_selection_cache().invalidate()
+            await propagate_account_routing_change()
         return result
 
     async def set_routing_policy(self, account_id: str, routing_policy: str) -> bool:

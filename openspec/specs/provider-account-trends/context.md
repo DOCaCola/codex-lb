@@ -6,6 +6,12 @@ reduced-motion behavior are shared. The native wrapper keeps its existing series
 percent axis and dashed weekly plan. Provider cards use the same border, padding,
 heading and legend classes as native account usage.
 
+Series share a numeric chronological axis, but provider measurements and dashed
+guidelines retain independent samples. A guideline beginning at 10:23 must not
+insert an unknown observation between measured quota at 10:00 and 11:00. An
+explicitly unknown 12:00 measurement still interrupts that line; the chart does
+not carry quota across it. Native measured-series interpolation is unchanged.
+
 OpenRouter reads the last seven days of retained request logs by model_source_id.
 Counts include successes and failures, exclude soft-deleted rows, and aggregate in
 SQL into UTC hours. This is local gateway activity, not authoritative OpenRouter

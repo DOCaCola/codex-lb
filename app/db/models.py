@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -100,6 +101,8 @@ class Account(Base):
     workspace_label: Mapped[str | None] = mapped_column(String, nullable=True)
     seat_type: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_type: Mapped[str] = mapped_column(String, nullable=False)
+    all_models: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    selected_models: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"), nullable=False)
     routing_policy: Mapped[str] = mapped_column(
         String,
         default="normal",
@@ -2098,6 +2101,7 @@ class OpenRouterCooldown(Base):
 class OpenRouterAccount(Base):
     __tablename__ = "openrouter_accounts"
 
+    routing_policy: Mapped[str] = mapped_column(String, default="normal", server_default="normal", nullable=False)
     source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
     management_key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     state_json: Mapped[str] = mapped_column(Text, nullable=False)

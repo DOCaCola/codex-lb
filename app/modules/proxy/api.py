@@ -3914,7 +3914,7 @@ async def _build_codex_models_response_body(
     context_window_overrides = await _effective_context_window_overrides()
 
     registry = get_model_registry()
-    models = registry.get_models_with_fallback()
+    models = await _operator_available_native_models(registry.get_models_with_fallback(), api_key)
     metadata_models = registry.get_models_for_metadata()
     source_models = [
         model
@@ -4070,7 +4070,7 @@ async def _build_models_response_body(
     context_window_overrides = await _effective_context_window_overrides()
 
     registry = get_model_registry()
-    models = registry.get_models_with_fallback()
+    models = await _operator_available_native_models(registry.get_models_with_fallback(), api_key)
     source_models = await _list_enabled_source_catalog_models(api_key)
 
     if not models and not source_models:
@@ -4098,6 +4098,29 @@ async def _build_models_response_body(
         )
         seen_slugs.add(model.slug)
     return JSONResponse(content=_dump_v1_models_response(ModelListResponse(data=items)))
+
+
+async def _operator_available_native_models(
+    models: dict[str, UpstreamModel],
+    api_key: ApiKeyData | None,
+) -> dict[str, UpstreamModel]:
+    from app.modules.proxy.account_cache import is_account_model_allowed
+
+    async with get_background_session() as session:
+        accounts = await AccountsRepository(session).list_accounts()
+        detach_session_objects(session)
+    if not accounts and not (api_key and api_key.account_assignment_scope_enabled):
+        return models
+    if api_key and api_key.account_assignment_scope_enabled:
+        accounts = [account for account in accounts if account.id in api_key.assigned_account_ids]
+    registry = get_model_registry()
+    available = {}
+    for slug, model in models.items():
+        owners = registry.account_ids_for_model(slug)
+        candidates = [account for account in accounts if owners is None or account.id in owners]
+        if any(is_account_model_allowed(account, slug) for account in candidates):
+            available[slug] = model
+    return available
 
 
 async def _list_enabled_source_catalog_models(

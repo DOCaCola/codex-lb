@@ -8,6 +8,38 @@ from app.modules.openrouter.schemas import AccountState, CatalogModel, ModelPric
 pytestmark = pytest.mark.unit
 
 
+def test_all_mode_preserves_overrides_removed_claims_and_explicit_image_selection():
+    model = CatalogModel.model_validate(
+        {"id": "text", "name": "Text", "context_length": 1000000, "architecture": {}, "pricing": {}, "top_provider": {}}
+    )
+    image = CatalogModel.model_validate(
+        {
+            "id": "image",
+            "name": "Image",
+            "architecture": {"output_modalities": ["image"]},
+            "pricing": {},
+            "top_provider": {},
+            "image": {
+                "id": "image",
+                "name": "Image",
+                "architecture": {"output_modalities": ["image"]},
+                "supported_parameters": {},
+            },
+        }
+    )
+    state = AccountState(all_models=True, catalog=[model, image], selections=[ModelSelection(model="removed")])
+    projected = project_models(state)
+    assert [(row.model, row.is_enabled) for row in projected] == [
+        ("openrouter/removed", False),
+        ("openrouter/text", True),
+    ]
+    assert state.selections == [ModelSelection(model="removed")]
+    state.selections.append(ModelSelection(model="text", context_window=100000))
+    assert project_models(state)[1].context_window == 100000
+    state.selections.append(ModelSelection(model="image"))
+    assert project_models(state)[-1].model == "openrouter/image"
+
+
 @pytest.mark.parametrize(
     "efforts, expected",
     [(None, ["minimal", "low", "medium", "high", "xhigh", "max"]), ([], []), (["high", "none"], ["high"])],

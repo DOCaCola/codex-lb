@@ -25,6 +25,7 @@ from app.modules.claude.metadata import (
     MetadataHTTPError,
     refresh_due,
 )
+from app.modules.claude.model_selection import effective_selections
 from app.modules.claude.quota import quota_status
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import (
@@ -197,6 +198,8 @@ class ClaudeService:
             row.source.name = payload.name.strip()
         if payload.is_enabled is not None:
             row.source.is_enabled = payload.is_enabled
+        if payload.all_models is not None:
+            state.all_models = payload.all_models
         if payload.routing_policy is not None:
             row.routing_policy = payload.routing_policy.value
         if "max_concurrency" in payload.model_fields_set:
@@ -210,7 +213,7 @@ class ClaudeService:
             if any(item.id in newly_selected and item.token_limits is None for item in state.catalog):
                 raise ClaudeError("Model token limits are unavailable; refresh the catalog before selecting this model")
             state.selections = payload.selections
-        await self._save(row, state, project=payload.selections is not None)
+        await self._save(row, state, project=payload.selections is not None or payload.all_models is not None)
         return self._response(row)
 
     async def refresh(self, source_id: str, *, catalog: bool = True, force: bool = True) -> ClaudeAccountResponse:
@@ -383,7 +386,7 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
 
     catalog = {model.id: model for model in state.catalog}
     result: list[ModelSourceModel] = []
-    for selection in state.selections:
+    for selection in effective_selections(state):
         model = catalog.get(selection.model)
         limits = model.token_limits if model else None
         reasoning = catalog_reasoning(state, selection.model)

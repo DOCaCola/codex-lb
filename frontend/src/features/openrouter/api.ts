@@ -53,11 +53,13 @@ const CatalogSchema = z.object({
     .nullable(),
 });
 const AccountSchema = z.object({
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
   id: z.string(),
   name: z.string(),
   isEnabled: z.boolean(),
   hasManagementKey: z.boolean(),
   state: z.object({
+    all_models: z.boolean(),
     selections: z.array(SelectionSchema),
     catalog: z.array(CatalogSchema),
     catalog_updated_at: z.string().nullable(),
@@ -92,6 +94,8 @@ const AccountSchema = z.object({
 });
 export type OpenRouterAccount = z.infer<typeof AccountSchema>;
 export type AccountUpdate = {
+  allModels?: boolean;
+  routingPolicy?: "normal" | "burn_first" | "preserve";
   name?: string;
   isEnabled?: boolean;
   apiKey?: string;

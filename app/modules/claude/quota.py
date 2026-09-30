@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from app.modules.claude.model_selection import effective_selections
 from app.modules.claude.schemas import AccountState, ModelQuota, QuotaStatus, QuotaWindow, WindowName, WindowStatus
 
 QUOTA_FRESHNESS = timedelta(minutes=5)
@@ -80,5 +81,5 @@ def quota_status(state: AccountState, *, now: datetime) -> QuotaStatus:
     return QuotaStatus(
         observed_at=max((window.observed_at for window in windows if window.observed_at is not None), default=None),
         windows=windows,
-        models=[model_quota(selection.model, windows) for selection in state.selections],
+        models=[model_quota(selection.model, windows) for selection in effective_selections(state)],
     )

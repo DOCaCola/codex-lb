@@ -6,6 +6,8 @@ import {
   AccountAliasResponseSchema,
   AccountAuthExportResponseSchema,
   AccountImportResponseSchema,
+  AccountModelSettingsSchema,
+  AccountModelSelectionRequestSchema,
   AccountLimitWarmupUpdateRequestSchema,
   AccountLimitWarmupUpdateResponseSchema,
   AccountUpdateRequestSchema,
@@ -30,12 +32,23 @@ import {
   RuntimeConnectAddressResponseSchema,
 } from "@/features/accounts/schemas";
 import type {
+  AccountModelSelectionRequest,
   AccountRoutingPolicy,
   AccountUsageResetConsumeRequest,
 } from "@/features/accounts/schemas";
 
 const ACCOUNTS_BASE_PATH = "/api/accounts";
 const OAUTH_BASE_PATH = "/api/oauth";
+
+export function getAccountModelSettings(accountId: string, options?: { signal: AbortSignal }) {
+  return get(`${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/models`, AccountModelSettingsSchema, options);
+}
+
+export function updateAccountModels(accountId: string, body: AccountModelSelectionRequest) {
+  return put(`${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/models`, AccountModelSettingsSchema, {
+    body: AccountModelSelectionRequestSchema.parse(body),
+  });
+}
 
 export function listAccounts() {
   return get(ACCOUNTS_BASE_PATH, AccountsResponseSchema);

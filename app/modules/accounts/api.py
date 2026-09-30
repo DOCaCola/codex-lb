@@ -33,6 +33,8 @@ from app.modules.accounts.schemas import (
     AccountImportResponse,
     AccountLimitWarmupUpdateRequest,
     AccountLimitWarmupUpdateResponse,
+    AccountModelSelectionRequest,
+    AccountModelSettings,
     AccountPauseResponse,
     AccountProbeRequest,
     AccountProbeResponse,
@@ -390,6 +392,30 @@ async def update_account_limit_warmup(
         status="enabled" if payload.enabled else "disabled",
         enabled=payload.enabled,
     )
+
+
+@router.get("/{account_id}/models", response_model=AccountModelSettings)
+async def account_model_settings(
+    account_id: str,
+    _access=Depends(require_dashboard_permission(Permission.ACCOUNTS_READ)),
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountModelSettings:
+    settings = await context.service.model_settings(account_id)
+    if settings is None:
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    return settings
+
+
+@router.put("/{account_id}/models", response_model=AccountModelSettings)
+async def update_account_models(
+    account_id: str,
+    payload: AccountModelSelectionRequest,
+    _access=Depends(require_dashboard_permission(Permission.ACCOUNTS_WRITE)),
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountModelSettings:
+    if not await context.service.set_model_selection(account_id, payload):
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    return await account_model_settings(account_id, context=context)
 
 
 @router.put("/{account_id}/routing-policy", response_model=AccountRoutingPolicyUpdateResponse)

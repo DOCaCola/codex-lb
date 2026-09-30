@@ -160,6 +160,7 @@ class MetadataRefreshState(BaseModel):
 
 
 class AccountState(BaseModel):
+    all_models: bool = False
     metadata_refresh: dict[MetadataEndpoint, MetadataRefreshState] = Field(default_factory=dict)
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
@@ -208,6 +209,7 @@ class ClaudeImport(DashboardModel):
 
 
 class ClaudeUpdate(DashboardModel):
+    all_models: bool | None = None
     routing_policy: AccountRoutingPolicy | None = None
     max_concurrency: int | None = Field(default=None, gt=0, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=128)

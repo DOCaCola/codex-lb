@@ -14,6 +14,7 @@ export const ClaudeAccountSchema = z.object({
   credentialStatus: z.string(),
   expiresAt: z.string(),
   state: z.object({
+    all_models: z.boolean(),
     selections: z.array(SelectionSchema),
     catalog: z.array(z.object({
       id: z.string(), display_name: z.string(),
@@ -52,6 +53,7 @@ export const ClaudeAccountSchema = z.object({
 });
 export type ClaudeAccount = z.infer<typeof ClaudeAccountSchema>;
 export type ClaudeUpdate = {
+  allModels?: boolean;
   routingPolicy?: "normal" | "burn_first" | "preserve";
   maxConcurrency?: number | null;
   name?: string;

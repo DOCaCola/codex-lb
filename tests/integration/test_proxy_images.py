@@ -1153,7 +1153,10 @@ async def test_native_images_preserve_status_body_and_do_not_replay(
     "result", ["success", "zero_usage", "missing_usage", "invalid_usage", "error", "transport", "cancel"]
 )
 @pytest.mark.parametrize("operation", ["generations", "edits"])
-async def test_native_images_release_capacity_and_settle_scoped_key(async_client, monkeypatch, result, operation):
+@pytest.mark.parametrize("all_models", [True, False])
+async def test_native_images_release_capacity_and_settle_scoped_key(
+    async_client, monkeypatch, result, operation, all_models
+):
     from app.core.clients.proxy import ProxyResponseError
     from app.db.models import Account
 
@@ -1164,6 +1167,9 @@ async def test_native_images_release_capacity_and_settle_scoped_key(async_client
             await session.execute(select(Account).where(Account.chatgpt_account_id == "native-scope"))
         ).scalar_one()
         assigned_id = account.id
+        account.all_models = all_models
+        account.selected_models = []
+        await session.commit()
     await _enable_api_key_auth(async_client)
     created = await async_client.post(
         "/api/api-keys/",

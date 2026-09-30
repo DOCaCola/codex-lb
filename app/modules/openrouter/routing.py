@@ -10,7 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import ModelSource, OpenRouterCooldown
+from app.db.models import ModelSource, OpenRouterAccount, OpenRouterCooldown
 from app.db.session import get_background_session
 
 _rotation: OrderedDict[str, int] = OrderedDict()
@@ -41,6 +41,18 @@ async def select_available(
         # Preserve ownership while cooling down. Dispatch reports the actual
         # condition; returning None would incorrectly select ChatGPT instead.
         return sources[0]
+    policies = dict(
+        (
+            await session.execute(
+                select(OpenRouterAccount.source_id, OpenRouterAccount.routing_policy).where(
+                    OpenRouterAccount.source_id.in_([source.id for source in candidates])
+                )
+            )
+        ).all()
+    )
+    rank = {"burn_first": 0, "normal": 1, "preserve": 2}
+    priority = min(rank[policies[source.id]] for source in candidates)
+    candidates = [source for source in candidates if rank[policies[source.id]] == priority]
     if not advance_rotation:
         return candidates[0]
     index = _rotation.pop(model, 0)

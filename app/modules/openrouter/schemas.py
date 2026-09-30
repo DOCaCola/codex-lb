@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from app.db.models import AccountRoutingPolicy
 from app.modules.shared.schemas import DashboardModel
 
 OPENROUTER_KIND = "openrouter"
@@ -151,6 +152,7 @@ class ModelSelection(DashboardModel):
 
 class AccountState(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    all_models: bool = False
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
     catalog_updated_at: datetime | None = None
@@ -170,6 +172,8 @@ class OpenRouterCreate(DashboardModel):
 
 
 class OpenRouterUpdate(DashboardModel):
+    all_models: bool | None = None
+    routing_policy: AccountRoutingPolicy | None = None
     name: str | None = Field(default=None, min_length=1, max_length=128)
     is_enabled: bool | None = None
     api_key: SecretStr | None = None
@@ -178,6 +182,7 @@ class OpenRouterUpdate(DashboardModel):
 
 
 class OpenRouterAccountResponse(DashboardModel):
+    routing_policy: AccountRoutingPolicy = AccountRoutingPolicy.NORMAL
     id: str
     name: str
     is_enabled: bool

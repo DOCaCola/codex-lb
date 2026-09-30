@@ -11,6 +11,9 @@ import { formatDateTimeInline } from "@/utils/formatters";
 import type { OpenRouterAccount } from "./api";
 import { OpenRouterName, OpenRouterTier, OpenRouterMetrics } from "./account-display";
 import { modelSelectionKind } from "./model-selection";
+import { AccountModelMode } from "@/features/accounts/components/account-model-mode";
+import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
+import type { AccountRoutingPolicy } from "@/features/accounts/schemas";
 
 export function OpenRouterAccountDetail({
   account,
@@ -24,6 +27,8 @@ export function OpenRouterAccountDetail({
   onRefresh,
   onToggle,
   onDelete,
+  onAllModels,
+  onRoutingPolicy,
 }: {
   account: OpenRouterAccount;
   readOnly: boolean;
@@ -36,6 +41,8 @@ export function OpenRouterAccountDetail({
   onRefresh: () => void;
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
+  onAllModels: (value: boolean) => void;
+  onRoutingPolicy: (value: AccountRoutingPolicy) => void;
 }) {
   const { t } = useTranslation();
   const dateFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
@@ -62,7 +69,7 @@ export function OpenRouterAccountDetail({
           <OpenRouterName account={account} />
         </AccountNameEditor>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          OpenRouter | <OpenRouterTier account={account} /> | {state.selections.length} models selected
+          OpenRouter | <OpenRouterTier account={account} /> | {state.all_models ? "All conversation models" : `${state.selections.length} ${state.selections.length === 1 ? "model" : "models"} selected`}
         </p>
       </div>
       {error && <AlertMessage variant="error">{error}</AlertMessage>}
@@ -91,7 +98,10 @@ export function OpenRouterAccountDetail({
         { label: "Catalog updated", value: updated(state.catalog_updated_at) },
       ]} />
       {/* Actions last, matching the Codex account detail. */}
-      <div className="flex flex-wrap gap-2 border-t pt-4">
+      <div className="space-y-3 border-t pt-4">
+        <AccountModelMode allModels={state.all_models} disabled={readOnly || busy} onChange={onAllModels} />
+        <AccountRoutingPolicyControl policy={account.routingPolicy} disabled={readOnly || busy} onChange={onRoutingPolicy} />
+        <div className="flex flex-wrap gap-2">
         <AccountPauseButton
           paused={!account.isEnabled}
           disabled={readOnly || busy}
@@ -99,7 +109,7 @@ export function OpenRouterAccountDetail({
         />
         <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onModels}>
           <Layers className="h-3.5 w-3.5" />
-          Models ({state.selections.length - imageCount})
+          Models ({state.all_models ? "All" : state.selections.length - imageCount})
         </Button>
         <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={onImageModels}>
           <Image className="h-3.5 w-3.5" />
@@ -117,6 +127,7 @@ export function OpenRouterAccountDetail({
           <Trash2 className="h-3.5 w-3.5" />
           {t("common.actions.delete")}
         </Button>
+        </div>
       </div>
     </section>
   );

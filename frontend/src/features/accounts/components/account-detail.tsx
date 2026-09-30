@@ -5,6 +5,7 @@ import { isEmailLabel } from "@/components/blur-email";
 import { cn } from "@/lib/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountActions } from "@/features/accounts/components/account-actions";
+import { CodexModelControls } from "./codex-model-controls";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
@@ -170,22 +171,28 @@ export function AccountDetail({
         onReset={onResetUsage}
       />
       <AccountTokenInfo account={account} />
-      <AccountActions
-        account={account}
-        busy={busy}
-        readOnly={readOnly}
-        onPause={onPause}
-        onResume={onResume}
-        onProbe={onProbe}
-        onDelete={onDelete}
-        onReauth={onReauth}
-        onExportAuth={onExportAuth}
-        onResetCredit={onResetCredit}
-        showResetCreditExpiryBadge={showResetCreditExpiryBadge}
-        onLimitWarmupChange={onLimitWarmupChange}
-        onRoutingPolicyChange={onRoutingPolicyChange}
-        onSecurityWorkAuthorizedChange={onSecurityWorkAuthorizedChange}
-      />
+      <CodexModelControls key={account.accountId} accountId={account.accountId} name={localLabel} disabled={busy || readOnly}>
+        {({ mode, action }) => (
+          <AccountActions
+            modelControls={mode}
+            modelAction={action}
+            account={account}
+            busy={busy}
+            readOnly={readOnly}
+            onPause={onPause}
+            onResume={onResume}
+            onProbe={onProbe}
+            onDelete={onDelete}
+            onReauth={onReauth}
+            onExportAuth={onExportAuth}
+            onResetCredit={onResetCredit}
+            showResetCreditExpiryBadge={showResetCreditExpiryBadge}
+            onLimitWarmupChange={onLimitWarmupChange}
+            onRoutingPolicyChange={onRoutingPolicyChange}
+            onSecurityWorkAuthorizedChange={onSecurityWorkAuthorizedChange}
+          />
+        )}
+      </CodexModelControls>
     </div>
   );
 }

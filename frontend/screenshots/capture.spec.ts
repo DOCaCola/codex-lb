@@ -34,6 +34,76 @@ const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? `http://localhost:${SCREENSH
 const THEME_KEY = "codex-lb-theme";
 const SETTLE_MS = 1500;
 
+test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) => {
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  const native = { ...accounts[0], alias: "Codex Research" };
+  let nativeModels = {
+    allModels: true, selectedModels: ["gpt-6-astra"],
+    catalog: [
+      { model: "gpt-6-astra", displayName: "GPT-6 Astra", contextWindow: 272000, supportsTools: true, supportsVision: true, supportsReasoning: true },
+      { model: "gpt-6-sol", displayName: "GPT-6 Sol", contextWindow: 272000, supportsTools: true, supportsVision: true, supportsReasoning: true },
+    ],
+  };
+  const provider = createOpenRouterAccount({ name: "OpenRouter Research" });
+  provider.state.catalog = [{ id: "vendor/coder", name: "Coder", context_length: 1000000, image: null,
+    pricing: { prompt: 0.0000005, input_cache_read: 0.00000005, completion: 0.000002 }, supported_parameters: ["tools", "reasoning"],
+    architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
+    top_provider: { context_length: 1000000, max_completion_tokens: 64000 }, reasoning: null }];
+  provider.state.selections = [{ model: "vendor/coder", contextWindow: 262144, maxOutputTokens: null, displayName: null }];
+  await interceptApi(page, authSession, [native]);
+  await page.route("**/health/ready", route => fulfill(route, { status: "ok" }));
+  await page.route(`**/api/accounts/${native.accountId}/models`, async (route) => {
+    if (route.request().method() === "PUT") nativeModels = { ...nativeModels, ...route.request().postDataJSON() };
+    return fulfill(route, nativeModels);
+  });
+  await page.route("**/api/openrouter-accounts**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith("/trends")) return fulfill(route, { series: [{ key: "requests", label: "Requests", colorIndex: 0, dashed: false,
+      points: [{ t: "2026-09-29T10:00:00Z", v: 5 }, { t: "2026-09-29T11:00:00Z", v: 10 }] }] });
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON();
+      if (body.allModels !== undefined) provider.state.all_models = body.allModels;
+      if (body.routingPolicy !== undefined) provider.routingPolicy = body.routingPolicy;
+      if (body.selections !== undefined) provider.state.selections = body.selections;
+      return fulfill(route, provider);
+    }
+    return fulfill(route, { accounts: [provider] });
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await applyTheme(page, "light");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const [id, label, expectedAll] of [[native.accountId, "codex", true], [provider.id, "openrouter", false]] as const) {
+      await page.goto(`${BASE_URL}/accounts?selected=${id}`);
+      await expect(page.getByRole("switch", { name: /All models/ })).toBeChecked({ checked: expectedAll });
+      if (label === "openrouter") {
+        const curve = page.locator('[aria-label="OpenRouter activity"] .recharts-area-curve');
+        await expect(curve).toHaveCount(1);
+        expect(await curve.getAttribute("d")).not.toContain("NaN");
+      } else {
+        await expect(page.locator(".recharts-area-curve").first()).toBeVisible();
+        for (const curve of await page.locator(".recharts-area-curve").all()) {
+          expect(await curve.getAttribute("d")).not.toContain("NaN");
+        }
+      }
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`${label}-detail-${width}.png`), fullPage: true, animations: "disabled" });
+      await page.getByRole("button", { name: label === "codex" ? "Models (All)" : "Models (1)", exact: true }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`${label}-models-${width}.png`), animations: "disabled" });
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    }
+  }
+  await page.goto(`${BASE_URL}/accounts?selected=${native.accountId}`);
+  await page.getByRole("switch", { name: /All models/ }).click();
+  await expect(page.getByRole("button", { name: "Models (1)", exact: true })).toBeVisible();
+  expect(nativeModels.selectedModels).toEqual(["gpt-6-astra"]);
+  await page.getByRole("switch", { name: /All models/ }).click();
+  await expect(page.getByRole("button", { name: "Models (All)", exact: true })).toBeVisible();
+  expect(browserErrors).toEqual([]);
+});
+
 test("Claude automatic models and shared account presentation", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -42,6 +112,7 @@ test("Claude automatic models and shared account presentation", async ({ page },
     maxConcurrency: null, routingPolicy: "burn_first", credentialStatus: "ready",
     expiresAt: "2026-10-01T12:00:00Z",
     state: {
+      all_models: false,
       selections: [{ model: "claude-opus-5" }],
       catalog: [
         { id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 },
@@ -68,13 +139,15 @@ test("Claude automatic models and shared account presentation", async ({ page },
     });
     if (p.endsWith("/trends")) return fulfill(route, { series: [
       { key: "five_hour", label: "5-hour", points: [
-        { t: "2026-09-28T08:00:00Z", v: 92 }, { t: "2026-09-29T08:00:00Z", v: 76 },
+        { t: "2026-09-29T08:00:00Z", v: 92 }, { t: "2026-09-29T09:00:00Z", v: 76 },
+        { t: "2026-09-29T10:00:00Z", v: null }, { t: "2026-09-29T11:00:00Z", v: 68 }, { t: "2026-09-29T12:00:00Z", v: 60 },
       ], dashed: false, colorIndex: 0 },
       { key: "seven_day", label: "Weekly", points: [
-        { t: "2026-09-28T08:00:00Z", v: 54 }, { t: "2026-09-29T08:00:00Z", v: 38 },
+        { t: "2026-09-29T08:00:00Z", v: 54 }, { t: "2026-09-29T09:00:00Z", v: 50 },
+        { t: "2026-09-29T10:00:00Z", v: null }, { t: "2026-09-29T11:00:00Z", v: 42 }, { t: "2026-09-29T12:00:00Z", v: 38 },
       ], dashed: false, colorIndex: 1 },
       { key: "weekly_plan", label: "Weekly plan", dashed: true, colorIndex: 1, points: [
-        { t: "2026-09-28T08:00:00Z", v: 76.19 }, { t: "2026-09-29T08:00:00Z", v: 61.90 },
+        { t: "2026-09-29T08:30:00Z", v: 76.19 }, { t: "2026-09-29T12:00:00Z", v: 61.90 },
       ] },
     ] });
     return route.abort();
@@ -83,16 +156,29 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`${BASE_URL}/accounts?selected=claude-preview`);
   await expect(page.getByRole("combobox", { name: "Routing policy" })).toBeVisible();
-  await expect(page.getByText(/1M context.*128K maximum output.*64K default output/i)).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: "Model awaiting metadata" })).toBeDisabled();
+  await expect(page.getByRole("switch", { name: /All models/ })).not.toBeChecked();
   await expect(page.locator('[aria-label="Claude quota history"] .recharts-surface')).toBeVisible();
   await expect(page.getByText("Weekly plan", { exact: true })).toBeVisible();
   await expect(page.getByText(/Weekly Opus/)).toHaveCount(0);
+  const curves = page.locator('[aria-label="Claude quota history"] .recharts-area-curve');
+  await expect(curves).toHaveCount(2);
+  for (const curve of await curves.all()) {
+    expect((await curve.getAttribute("d"))!.match(/M/g)).toHaveLength(2);
+    expect(await curve.getAttribute("d")).not.toContain("NaN");
+  }
   await page.screenshot({ path: testInfo.outputPath("claude-detail-desktop.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("claude-detail-mobile.png"), fullPage: true, animations: "disabled" });
+  await page.getByRole("button", { name: "Models (1)", exact: true }).click();
+  await expect(page.getByText(/1M context.*128K maximum output.*64K default output/i)).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Model awaiting metadata — Unavailable" })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("claude-models-mobile.png"), animations: "disabled" });
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Models (1)", exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath("claude-models-desktop.png"), animations: "disabled" });
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.goto(BASE_URL);
   await expect(page.getByTestId("claude-account-card")).toBeVisible();
   await page.getByTestId("claude-account-card").scrollIntoViewIfNeeded();
@@ -549,7 +635,7 @@ for (const width of [1440, 390]) {
     await page.route("**/api/claude-accounts", route => fulfill(route, { accounts: [{
       id: "claude-routing", name: "Claude research", isEnabled: true, credentialStatus: "ready",
       maxConcurrency: null, expiresAt: "2026-10-01T12:00:00Z",
-      state: { selections: [], catalog: [], catalog_updated_at: null, catalog_error: null, usage_updated_at: null, usage_error: null },
+      state: { all_models: false, selections: [], catalog: [], catalog_updated_at: null, catalog_error: null, usage_updated_at: null, usage_error: null },
       quota: { observedAt: null, windows: [], models: [] },
     }] }));
     await page.goto(`${BASE_URL}/settings`);
@@ -575,7 +661,7 @@ for (const width of [1440, 390]) {
     await interceptApi(page);
     const account = {
       id: "src_claude_demo", name: "Research Claude", isEnabled: true, maxConcurrency: null, routingPolicy: "normal", credentialStatus: "ready", expiresAt: "2026-09-26T12:00:00Z",
-      state: { selections: [{ model: "claude-opus-5" }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
+      state: { all_models: false, selections: [{ model: "claude-opus-5" }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
       quota: { observedAt: null, models: [], windows: [
         { name: "five_hour", utilization: 32, resetsAt: "2026-09-25T17:00:00Z", freshness: "fresh", exhausted: false },
         { name: "seven_day", utilization: null, resetsAt: null, freshness: "unknown", exhausted: false },
@@ -621,8 +707,9 @@ for (const width of [1440, 390]) {
     await applyTheme(page, "light");
     await interceptApi(page);
     const account = {
-      id: "src_openrouter_demo", name: "Research", isEnabled: true, hasManagementKey: true,
+      id: "src_openrouter_demo", name: "Research", isEnabled: true, hasManagementKey: true, routingPolicy: "normal",
       state: {
+        all_models: false,
         catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null,
         key_updated_at: "2026-09-25T12:00:00Z", key_error: null,
         credits_updated_at: "2026-09-25T12:00:00Z", credits_error: null,

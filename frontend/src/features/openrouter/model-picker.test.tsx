@@ -5,11 +5,13 @@ import type { OpenRouterAccount } from "./api";
 import { ModelPicker } from "./model-picker";
 
 const account: OpenRouterAccount = {
+  routingPolicy: "normal",
   id: "src_test",
   name: "Test",
   isEnabled: true,
   hasManagementKey: false,
   state: {
+    all_models: false,
     selections: [],
     catalog_updated_at: null,
     catalog_error: null,
@@ -82,7 +84,7 @@ describe("OpenRouter model selection", () => {
       await user.click(screen.getByRole("checkbox", { name: edited }));
       await user.click(
         screen.getByRole("button", {
-          name: kind === "images" ? "Save 0 image models" : "Save 1 models",
+          name: kind === "images" ? "Save 0 image models" : "Save 1 model",
         }),
       );
       const removedId =
@@ -190,7 +192,7 @@ describe("OpenRouter model selection", () => {
       screen.queryByText("vendor/retired — Unavailable"),
     ).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Save 1 image models" }),
+      screen.getByRole("button", { name: "Save 1 image model" }),
     );
     expect(save).toHaveBeenCalledWith(filtered.state.selections);
   });
@@ -252,7 +254,7 @@ describe("OpenRouter model selection", () => {
     expect(screen.getByLabelText("Context cap for vendor/test")).toHaveValue(
       262144,
     );
-    await user.click(screen.getByRole("button", { name: "Save 1 models" }));
+    await user.click(screen.getByRole("button", { name: "Save 1 model" }));
     expect(save).toHaveBeenCalledWith([
       {
         model: "vendor/test",

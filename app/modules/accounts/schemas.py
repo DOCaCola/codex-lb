@@ -171,6 +171,24 @@ class AccountUpdateRequest(DashboardModel):
     security_work_authorized: bool | None = None
 
 
+class AccountModelSelectionRequest(DashboardModel):
+    all_models: bool
+    selected_models: list[str] = Field(max_length=1000)
+
+
+class AccountCatalogModel(DashboardModel):
+    model: str
+    display_name: str
+    context_window: int
+    supports_tools: bool
+    supports_vision: bool
+    supports_reasoning: bool
+
+
+class AccountModelSettings(AccountModelSelectionRequest):
+    catalog: list[AccountCatalogModel]
+
+
 class AccountUpdateResponse(DashboardModel):
     status: str
 

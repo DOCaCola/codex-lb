@@ -6,6 +6,7 @@ import {
 } from "@/components/account-surfaces";
 import { StatusBadge } from "@/components/status-badge";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
+import { RoutingPolicyBadge } from "@/features/accounts/components/routing-policy";
 import { Button } from "@/components/ui/button";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -191,9 +192,10 @@ export function OpenRouterListItem({
             <OpenRouterName account={account} />
           </p>
           <p className="truncate text-xs text-muted-foreground">
-            OpenRouter | <OpenRouterTier account={account} /> | {account.state.selections.length} models
+            OpenRouter | <OpenRouterTier account={account} /> | {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"}`}
           </p>
         </div>
+        <RoutingPolicyBadge policy={account.routingPolicy} />
         <StatusBadge status={openRouterStatus(account)} />
       </div>
       <div className="mt-2 space-y-1">
@@ -237,7 +239,7 @@ export function OpenRouterAccountCard({
             <OpenRouterName account={account} />
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            OpenRouter · <OpenRouterTier account={account} /> · {account.state.selections.length} models selected
+            OpenRouter · <OpenRouterTier account={account} /> · {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
           </p>
         </div>
         <StatusBadge status={openRouterStatus(account)} />

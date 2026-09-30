@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { LogIn, RefreshCw, Trash2 } from "lucide-react";
+import { Layers, LogIn, RefreshCw, Trash2 } from "lucide-react";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { ClaudeVersionControls } from "./version-controls";
 import { ClaudeCapacitySettings } from "./capacity-settings";
 import { ClaudeResetGrants } from "./reset-grants";
 import { ModelSelection } from "./model-selection";
+import { AccountModelMode } from "@/features/accounts/components/account-model-mode";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
@@ -47,6 +48,7 @@ export function ClaudeAccountControls({
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [modelAccountId, setModelAccountId] = useState<string | null>(null);
   const busy = Object.values(api).some((mutation) => mutation.isPending);
   async function run(action: () => Promise<unknown>) {
     setError(null);
@@ -85,7 +87,7 @@ export function ClaudeAccountControls({
         >
           <ClaudeName account={account} />
         </AccountNameEditor>
-        <p className="mt-0.5 text-xs text-muted-foreground">Claude OAuth | {account.state.selections.length} models selected</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">Claude OAuth | {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}</p>
       </div>
       {[error, account.state.catalog_error, account.state.usage_error]
         .filter(Boolean)
@@ -105,31 +107,30 @@ export function ClaudeAccountControls({
         are not subscription charges. OAuth acceptance and included-plan billing
         require live qualification.
       </p>
-      <AccountInfoPanel title="Credentials" rows={[
+      <AccountInfoPanel title="Monitoring" rows={[
         { label: "Status", value: formatSlug(account.credentialStatus) },
         { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
         { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
         { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
       ]} />
-      <ModelSelection
-        key={account.id + JSON.stringify(account.state.selections)}
-        account={account}
-        readOnly={readOnly}
-        onSave={(selections) =>
-          api.update.mutateAsync({ id: account.id, body: { selections } })
-        }
-      />
-      <ClaudeCapacitySettings
-        key={`${account.id}:${account.maxConcurrency}`}
-        value={account.maxConcurrency}
-        readOnly={readOnly}
-        onSave={(maxConcurrency) =>
-          api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })
-        }
-      />
-      <ClaudeVersionControls readOnly={readOnly} />
+      <details className="min-w-0 rounded-lg border bg-muted/30 p-4">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">Provider settings</summary>
+        <div className="mt-4 space-y-4">
+          <ClaudeCapacitySettings
+            key={`${account.id}:${account.maxConcurrency}`}
+            value={account.maxConcurrency}
+            readOnly={readOnly}
+            onSave={(maxConcurrency) =>
+              api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })
+            }
+          />
+          <ClaudeVersionControls readOnly={readOnly} />
+        </div>
+      </details>
       {/* Actions last, matching the Codex account detail. */}
       <div className="space-y-3 border-t pt-4">
+        <AccountModelMode allModels={account.state.all_models} disabled={readOnly || busy}
+          onChange={(allModels) => void run(() => api.update.mutateAsync({ id: account.id, body: { allModels } }))} />
         <AccountRoutingPolicyControl
           policy={account.routingPolicy}
           disabled={readOnly || busy}
@@ -144,6 +145,9 @@ export function ClaudeAccountControls({
               body: { isEnabled: !account.isEnabled },
             }))}
           />
+          <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={readOnly || busy} onClick={() => setModelAccountId(account.id)}>
+            <Layers className="h-3.5 w-3.5" />Models ({account.state.all_models ? "All" : account.state.selections.length})
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -195,6 +199,9 @@ export function ClaudeAccountControls({
         },
         detail,
       })}
+      {account && modelAccountId === account.id && <ModelSelection
+        key={account.id + JSON.stringify(account.state.selections)} account={account} readOnly={readOnly || busy}
+        onClose={() => setModelAccountId(null)} onSave={(selections) => api.update.mutateAsync({ id: account.id, body: { selections } })} />}
       <Dialog
         open={open}
         onOpenChange={(value) => {

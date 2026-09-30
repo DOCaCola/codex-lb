@@ -7,7 +7,7 @@ Transport contract: [model-source routing](../openspec/specs/model-source-routin
 
 1. Open **Accounts → Add account → OpenRouter**. Enter a name and an inference API key.
 2. Optionally enter a separate management API key for account-credit monitoring. It is not used for inference.
-3. Select the account in the shared Accounts list, open **Models**, select the models to expose, and save. New accounts expose no models until explicitly selected.
+3. Select the account in the shared Accounts list, open **Models**, select the models to expose, and save. New accounts expose no models until selected or **All models** is enabled.
 4. Clients use `openrouter/<upstream-model-id>`. Source-restricted client keys must include the new account's source assignment.
 
 Credentials are encrypted with the deployment's existing encryption key. Keep that key and the database together when moving the installation. Credentials never appear in account API responses.
@@ -22,7 +22,18 @@ OpenRouter accounts appear alongside Codex accounts in the dashboard's existing 
 
 Authenticated discovery uses OpenRouter's `/api/v1/models/user`. Catalog refresh runs every six hours and on **Refresh**. Prices, modalities, tool support and reasoning efforts follow the provider catalog. Context defaults to 262,144 tokens and is capped by upstream limits. Operators can set a smaller context cap, an output cap, and a display name.
 
-Removed models retain their selection but stop routing; new models stay unselected. A failed catalog refresh retains the previous snapshot and displays an error. Concurrent updates cannot silently overwrite newer selections.
+Removed models retain their selection but stop routing; new models stay unselected
+by default. **All models** automatically makes eligible conversation models
+available, including new catalog entries, without erasing selections or overrides.
+Image models still require explicit selection. See
+[shared model controls](../openspec/specs/account-model-controls/spec.md).
+A failed catalog refresh retains the previous snapshot and displays an error.
+Concurrent updates cannot silently overwrite newer selections.
+
+**Routing policy** offers Normal, Burn first and Preserve within the OpenRouter
+pool. Eligible Burn first accounts take priority over Normal, then Preserve;
+accounts rotate within that pool. Cooldowns, pause state, model availability and
+client-key restrictions apply before priority.
 
 Catalog prices are estimates in USD per million tokens. The provider's `usage.cost` takes precedence in request accounting. OpenRouter's dynamic-price sentinel is shown as unknown, not free. Requests default to price-first provider selection with required-parameter support.
 

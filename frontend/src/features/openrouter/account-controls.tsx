@@ -80,6 +80,8 @@ export function OpenRouterAccountControls({
               update.mutate({ id: account.id, body: { isEnabled } })
             }
             onDelete={() => setDeleting(account)}
+            onAllModels={(allModels) => update.mutate({ id: account.id, body: { allModels } })}
+            onRoutingPolicy={(routingPolicy) => update.mutate({ id: account.id, body: { routingPolicy } })}
           />
         ) : null,
       })}

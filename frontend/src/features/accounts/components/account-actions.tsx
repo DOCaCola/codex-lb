@@ -8,6 +8,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
@@ -24,6 +25,8 @@ export type AccountActionsProps = {
   account: AccountSummary;
   busy: boolean;
   readOnly?: boolean;
+  modelControls?: ReactNode;
+  modelAction?: ReactNode;
   onPause: (accountId: string) => void;
   onResume: (accountId: string) => void;
   onProbe: (accountId: string) => void;
@@ -44,6 +47,8 @@ export function AccountActions({
   account,
   busy,
   readOnly = false,
+  modelControls,
+  modelAction,
   onPause,
   onResume,
   onProbe,
@@ -80,6 +85,7 @@ export function AccountActions({
 
   return (
     <div className="space-y-3 border-t pt-4">
+      {modelControls}
       {!showOperatorRecoveryAction ? (
         <AccountRoutingPolicyControl
           policy={account.routingPolicy ?? "normal"}
@@ -113,6 +119,8 @@ export function AccountActions({
           disabled={busy || readOnly}
           onClick={() => canResume ? onResume(account.accountId) : onPause(account.accountId)}
         />}
+
+        {modelAction}
 
         {showOperatorRecoveryAction ? (
           <Button

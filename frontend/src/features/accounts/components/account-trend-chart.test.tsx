@@ -5,14 +5,14 @@ import { render, screen } from "@testing-library/react";
 import { AccountSeriesChart, AccountTrendChart } from "@/features/accounts/components/account-trend-chart";
 
 vi.mock("@/components/lazy-recharts", () => ({
-  Area: () => null,
+  Area: ({ dataKey, data }: { dataKey: string; data?: unknown }) => <output data-testid={`samples-${dataKey}`}>{JSON.stringify(data)}</output>,
   AreaChart: ({ children, data }: { children: ReactNode; data: unknown }) => (
     <div data-testid="chart-data" data-points={JSON.stringify(data)}>
       <output data-testid="chart-observations">{JSON.stringify(data)}</output>{children}
     </div>
   ),
   CartesianGrid: () => null,
-  Line: ({ stroke, strokeDasharray }: { stroke: string; strokeDasharray: string }) => <div data-testid="plan-line" data-color={stroke} data-dash={strokeDasharray} />,
+  Line: ({ stroke, strokeDasharray, data }: { stroke: string; strokeDasharray: string; data?: unknown }) => <div data-testid="plan-line" data-color={stroke} data-dash={strokeDasharray} data-samples={JSON.stringify(data)} />,
   ResponsiveContainer: ({ children }: { children: ReactNode }) => (
     <div data-testid="responsive-container" style={{ width: 400, height: 200 }}>
       {children}
@@ -33,6 +33,16 @@ function makePoints(count: number, baseValue: number) {
 }
 
 describe("AccountTrendChart", () => {
+  it("keeps measured samples independent of mid-hour plan timestamps and preserves unknown hours", () => {
+    const points = [{ t: "2026-09-30T00:00:00Z", v: 70 }, { t: "2026-09-30T01:00:00Z", v: 60 },
+      { t: "2026-09-30T02:00:00Z", v: null }, { t: "2026-09-30T03:00:00Z", v: 50 }];
+    render(<AccountSeriesChart series={[
+      { key: "quota", label: "Quota", points },
+      { key: "plan", label: "Plan", dashed: true, points: [{ t: "2026-09-30T00:30:00Z", v: 80 }, { t: "2026-09-30T02:30:00Z", v: null }] },
+    ]} />);
+    expect(JSON.parse(screen.getByTestId("samples-quota").textContent!)).toEqual(points.map((point) => ({ t: point.t, quota: point.v })));
+    expect(JSON.parse(screen.getByTestId("plan-line").getAttribute("data-samples")!)).toHaveLength(2);
+  });
   it("renders the weekly pacing series as a dashed line with explicit null reset boundaries", () => {
     const points = [
       { t: "2026-09-30T00:00:00Z", v: 70 },

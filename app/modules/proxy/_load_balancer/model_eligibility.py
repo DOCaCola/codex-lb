@@ -6,6 +6,7 @@ from datetime import datetime
 from app.core.openai.model_registry import ModelRegistry, canonical_service_tier_value
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
 from app.db.models import Account, AdditionalUsageHistory
+from app.modules.proxy.account_cache import is_account_model_allowed
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
@@ -47,6 +48,7 @@ def _filter_accounts_for_model_with_catalog_evidence(
     service_tier: str | None = None,
     additional_quota_can_override_account_catalog: bool = False,
 ) -> _ModelAccountFilterResult:
+    accounts = [account for account in accounts if is_account_model_allowed(account, model)]
     account_indexes_cover_selection = True
     get_snapshot = getattr(registry, "get_snapshot", None)
     if callable(get_snapshot):

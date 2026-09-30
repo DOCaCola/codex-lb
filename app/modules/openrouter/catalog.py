@@ -10,7 +10,12 @@ _EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ul
 
 def project_models(state: AccountState) -> list[ModelSourceModel]:
     catalog = {model.id: model for model in state.catalog}
-    return [_project(selection, catalog.get(selection.model)) for selection in state.selections]
+    selections = {selection.model: selection for selection in state.selections}
+    if state.all_models:
+        for model in state.catalog:
+            if model.image is None and "text" in model.architecture.output_modalities:
+                selections.setdefault(model.id, ModelSelection(model=model.id))
+    return [_project(selection, catalog.get(selection.model)) for selection in selections.values()]
 
 
 def _project(selection: ModelSelection, model: CatalogModel | None) -> ModelSourceModel:

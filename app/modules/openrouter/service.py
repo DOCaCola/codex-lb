@@ -6,7 +6,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import ModelSource, OpenRouterAccount
+from app.db.models import AccountRoutingPolicy, ModelSource, OpenRouterAccount
 from app.modules.model_sources.service import ModelSourceNotFoundError
 from app.modules.openrouter.catalog import project_models
 from app.modules.openrouter.client import OpenRouterClient, OpenRouterError
@@ -79,6 +79,10 @@ class OpenRouterService:
             row.source.name = payload.name.strip()
         if payload.is_enabled is not None:
             row.source.is_enabled = payload.is_enabled
+        if payload.all_models is not None:
+            state.all_models = payload.all_models
+        if payload.routing_policy is not None:
+            row.routing_policy = payload.routing_policy.value
         if payload.api_key is not None:
             key = payload.api_key.get_secret_value().strip()
             info = await self.client.key_info(key)
@@ -173,6 +177,7 @@ class OpenRouterService:
     @staticmethod
     def _response(row: OpenRouterAccount) -> OpenRouterAccountResponse:
         return OpenRouterAccountResponse(
+            routing_policy=AccountRoutingPolicy(row.routing_policy),
             id=row.source_id,
             name=row.source.name,
             is_enabled=row.source.is_enabled,

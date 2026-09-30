@@ -150,7 +150,11 @@ from app.modules.proxy._load_balancer.unbound_selection import (
     UnboundSelectionRequest,
     run_unbound_selection_path,
 )
-from app.modules.proxy.account_cache import get_account_selection_cache, mark_account_routing_unavailable
+from app.modules.proxy.account_cache import (
+    get_account_selection_cache,
+    is_account_model_allowed,
+    mark_account_routing_unavailable,
+)
 from app.modules.proxy.account_eligibility import (
     account_access_token_expires_at,
     all_accounts_require_reauthentication,
@@ -1223,6 +1227,8 @@ class LoadBalancer:
                 allowed_account_ids = set(account_ids)
                 scoped_accounts = [account for account in scoped_accounts if account.id in allowed_account_ids]
             sticky_mutation_authority_account_ids = frozenset(account.id for account in scoped_accounts)
+            if model:
+                scoped_accounts = [account for account in scoped_accounts if is_account_model_allowed(account, model)]
             accounts = _selectable_accounts(scoped_accounts)
             pre_model_filter_accounts = accounts
             model_catalog_omitted_account_ids: frozenset[str] = frozenset()

@@ -58,6 +58,8 @@ DASHBOARD_AUTH_GATED: dict[tuple[str, str], PermissionRequirement] = {
 
 #: Routes whose permission requirement is part of the security contract.
 EXPECTED_REQUIREMENTS: dict[tuple[str, str], PermissionRequirement] = {
+    ("GET", "/api/accounts/{account_id}/models"): PermissionRequirement(Permission.ACCOUNTS_READ),
+    ("PUT", "/api/accounts/{account_id}/models"): PermissionRequirement(Permission.ACCOUNTS_WRITE),
     ("POST", "/api/accounts/{account_id}/export/auth"): PermissionRequirement(Permission.ACCOUNTS_EXPORT),
     ("GET", "/api/audit-logs"): PermissionRequirement(Permission.AUDIT_READ),
     ("GET", "/api/conversation-archive/records"): PermissionRequirement(Permission.CONVERSATIONS_READ),

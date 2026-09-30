@@ -60,11 +60,13 @@ describe("Unified provider accounts", () => {
       onDelete: vi.fn(),
       onRename: vi.fn(),
       onToggle,
+      onAllModels: vi.fn(),
+      onRoutingPolicy: vi.fn(),
     };
     const view = render(
       <OpenRouterAccountDetail account={account} {...props} />,
     );
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /All models/ })).not.toBeChecked();
     expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent("Paid");
     await userEvent.click(
       screen.getByRole("button", { name: "Image models (0)" }),
@@ -110,6 +112,8 @@ describe("Unified provider accounts", () => {
         onImageModels={vi.fn()}
         onRefresh={vi.fn()}
         onToggle={vi.fn()}
+        onAllModels={vi.fn()}
+        onRoutingPolicy={vi.fn()}
         onDelete={vi.fn()}
       />,
     );

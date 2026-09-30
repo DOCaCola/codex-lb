@@ -262,6 +262,24 @@ export const AccountRoutingPolicyUpdateRequestSchema = z.object({
   routingPolicy: AccountRoutingPolicySchema,
 });
 
+export const AccountModelSelectionRequestSchema = z.object({
+  allModels: z.boolean(),
+  selectedModels: z.array(z.string()).max(1000),
+});
+
+export const AccountModelSettingsSchema = AccountModelSelectionRequestSchema.extend({
+  catalog: z.array(z.object({
+    model: z.string(),
+    displayName: z.string(),
+    contextWindow: z.number(),
+    supportsTools: z.boolean(),
+    supportsVision: z.boolean(),
+    supportsReasoning: z.boolean(),
+  })),
+});
+
+export type AccountModelSelectionRequest = z.infer<typeof AccountModelSelectionRequestSchema>;
+
 export const AccountRoutingPolicyUpdateResponseSchema = z.object({
   accountId: z.string(),
   routingPolicy: AccountRoutingPolicySchema,
