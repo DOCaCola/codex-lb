@@ -900,7 +900,6 @@ def build_terminal_compact_request(payload: ResponsesRequest) -> ResponsesCompac
     if payload.conversation is not None:
         compact_payload_data["conversation"] = payload.conversation
     compact_payload = ResponsesCompactRequest.model_validate(compact_payload_data)
-    compact_payload.to_payload()
     return compact_payload
 
 

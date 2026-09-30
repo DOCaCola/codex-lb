@@ -12,7 +12,7 @@ vi.mock("@/components/lazy-recharts", () => ({
     </div>
   ),
   CartesianGrid: () => null,
-  Line: () => null,
+  Line: ({ stroke, strokeDasharray }: { stroke: string; strokeDasharray: string }) => <div data-testid="plan-line" data-color={stroke} data-dash={strokeDasharray} />,
   ResponsiveContainer: ({ children }: { children: ReactNode }) => (
     <div data-testid="responsive-container" style={{ width: 400, height: 200 }}>
       {children}
@@ -33,6 +33,18 @@ function makePoints(count: number, baseValue: number) {
 }
 
 describe("AccountTrendChart", () => {
+  it("renders the weekly pacing series as a dashed line with explicit null reset boundaries", () => {
+    const points = [
+      { t: "2026-09-30T00:00:00Z", v: 70 },
+      { t: "2026-09-30T01:00:00Z", v: null },
+      { t: "2026-09-30T02:00:00Z", v: 90 },
+    ];
+    render(<AccountSeriesChart series={[
+      { key: "weekly_plan", label: "Weekly plan", dashed: true, colorIndex: 1, points },
+    ]} />);
+    expect(screen.getByTestId("plan-line")).toHaveAttribute("data-dash", "5 5");
+    expect(JSON.parse(screen.getByTestId("chart-data").getAttribute("data-points")!)[1].weekly_plan).toBeNull();
+  });
   it("keeps unknown quota gaps and the union of series timestamps", () => {
     render(<AccountSeriesChart series={[
       { key: "a", label: "5h", points: [{ t: "2026-01-15T00:00:00Z", v: 70 }] },

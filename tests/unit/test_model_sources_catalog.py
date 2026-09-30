@@ -89,6 +89,52 @@ def test_source_models_to_upstream_models_preserves_source_identity() -> None:
     assert model.prefer_websockets is False
 
 
+@pytest.mark.parametrize("capacity,default", [(1000000, 272000), (750000, 272000), (200000, 200000), (64000, 64000)])
+@pytest.mark.parametrize("kind", ["claude", "openrouter", MODEL_SOURCE_KIND_OPENAI_COMPATIBLE])
+def test_claude_client_budget_is_distinct_from_provider_capacity(capacity: int, default: int, kind: str) -> None:
+    entry = ModelSourceModel(
+        model="anthropic/claude-opus-5-5",
+        context_window=capacity,
+        max_output_tokens=128000,
+        is_enabled=True,
+        supports_streaming=True,
+        supports_tools=True,
+        supports_vision=True,
+        raw_metadata_json=json.dumps({"auto_compact_token_limit": capacity * 9 // 10}),
+    )
+    source = ModelSource(id="src_budget", name="Budget", kind=kind, is_enabled=True, models=[entry])
+    [model] = source_models_to_upstream_models([source])
+    expected = default if kind == "claude" else capacity
+    assert model.context_window == expected
+    assert model.raw["max_context_window"] == capacity
+    assert model.raw["auto_compact_token_limit"] == expected * 9 // 10
+    assert model.raw["max_output_tokens"] == 128000
+    if kind == "claude":
+        assert model.raw["effective_context_window_percent"] == 95
+    assert entry.context_window == capacity
+    assert json.loads(entry.raw_metadata_json)["auto_compact_token_limit"] == capacity * 9 // 10
+
+
+@pytest.mark.parametrize("override,expected", [(None, 272000), (200000, 200000), (500000, 500000), (1500000, 1000000)])
+def test_claude_wire_compaction_budget_follows_explicit_context_override(override: int | None, expected: int) -> None:
+    from app.modules.claude.schemas import AccountState, CatalogModel, ModelSelection
+    from app.modules.claude.service import project_models
+    from app.modules.proxy.api import _to_codex_model_entry
+
+    state = AccountState(
+        catalog=[CatalogModel(id="claude-opus-5-5", display_name="Opus")],
+        selections=[ModelSelection(model="claude-opus-5-5")],
+    )
+    source = ModelSource(id="src_wire", name="Wire", kind="claude", is_enabled=True, models=project_models(state))
+    [model] = source_models_to_upstream_models([source])
+    settings = {model.slug: override} if override is not None else {}
+    entry = _to_codex_model_entry(model, context_window_overrides=settings).model_dump()
+    assert entry["context_window"] == expected
+    assert entry["auto_compact_token_limit"] == expected * 9 // 10
+    assert source.models[0].context_window == 1000000
+    assert model.raw["max_context_window"] == 1000000
+
+
 def test_source_models_to_upstream_models_defaults_missing_context_window() -> None:
     source = ModelSource(
         id="src_ollama",

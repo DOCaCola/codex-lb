@@ -22,3 +22,12 @@ explicit zero rate is free. Cost-limited API keys with unpriced usage retain
 their admission reservation estimate as the limit debit, while the request log
 keeps cost unknown. Historical rows without provenance keep their stored values,
 but even a stored zero is presented as unknown rather than claimed as free.
+
+Known monetary subtotals use ordinary currency text even when coverage is
+incomplete: for example, one priced $2 request and one unpriced request display
+$2.00, not ≥$2.00. Existing report descriptions and tooltips retain coverage
+information; unknown remains Unknown and free remains $0.00. Dashboard's
+Est. API Cost (7d) card uses its usual Avg/day description instead of request
+coverage counts, and incomplete period comparisons stay suppressed. This is a
+presentation change, not repricing or a claim that subscription invoices equal
+API-equivalent estimates. The non-monetary burn-rate lower bound is unchanged.

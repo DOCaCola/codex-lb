@@ -1,6 +1,6 @@
 import { Activity, AlertTriangle, Coins, DollarSign, Flame, MessageSquare, type LucideIcon } from "lucide-react";
 
-import { formatCostCoverageNote, formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import i18n from "@/i18n";
 import type {
   AccountSummary,
@@ -760,9 +760,9 @@ export function buildDashboardView(
     timeframeHours <= 24
       ? t("dashboard.stats.avgPerHour", { value: formatCurrency(avgPerUnit(cost, timeframeHours)) })
       : t("dashboard.stats.avgPerDay", { value: formatCurrency(avgPerUnit(cost, timeframeDays)) });
-  // An average or period-over-period delta of an incomplete subtotal would
-  // imply total spend, so incomplete coverage shows its label instead.
-  const costMeta = costComplete ? costAverage : (formatCostCoverageNote(costCoverage) ?? costAverage);
+  const costMeta = costLabel === "Unknown" || costLabel === "No usage"
+    ? t("dashboard.stats.apiCostDescription", { defaultValue: "API-equivalent estimate" })
+    : costAverage;
   const trends = overview.trends;
   const primaryBurnLabel = formatBurnWindowLabel("primary", overview.summary.primaryWindow.windowMinutes);
   const secondaryBurnLabel = formatBurnWindowLabel("secondary", overview.summary.secondaryWindow?.windowMinutes);

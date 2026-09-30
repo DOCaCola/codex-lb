@@ -9,6 +9,8 @@ import re
 
 from pydantic import BaseModel
 
+DEFAULT_CLIENT_CONTEXT_WINDOW = 272_000
+
 
 class ModelTokenLimits(BaseModel):
     context_window: int
@@ -42,3 +44,8 @@ def default_output_tokens(maximum: int) -> int:
     # OpenCodex #3332/#3474: 8192 truncated answers and provoked client retries.
     # A request budget is not the model ceiling; explicit budgets remain intact.
     return min(64_000, maximum)
+
+
+def default_client_context_window(capacity: int) -> int:
+    """Conservative client working budget; never changes the provider ceiling."""
+    return min(DEFAULT_CLIENT_CONTEXT_WINDOW, capacity)

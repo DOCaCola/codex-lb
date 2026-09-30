@@ -502,11 +502,20 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
 async def test_source_compaction_uses_selected_provider(async_client, provider, path):
+    history = [
+        {"role": "user", "content": "EARLIEST: original task"},
+        {"role": "user", "content": "MIDDLE: " + "x" * 600_000},
+        {"role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}]},
+        {"role": "user", "content": "LATEST: final constraint"},
+    ]
+
     async def upstream(request):
         payload = await request.json()
         assert payload["model"] == "vendor/test"
         assert payload["stream"] is False
         assert payload["store"] is False
+        assert payload["truncation"] == "disabled"
+        assert payload["input"][:-1] == history
         assert payload["input"][-1]["role"] == "user"
         return web.json_response(
             {
@@ -537,7 +546,7 @@ async def test_source_compaction_uses_selected_provider(async_client, provider, 
             source.base_url = url
             await session.commit()
         result = await async_client.post(
-            path, json={"model": "openrouter/vendor/test", "instructions": "Summarize", "input": "Hello"}
+            path, json={"model": "openrouter/vendor/test", "instructions": "Summarize", "input": history}
         )
         assert result.status_code == 200, result.text
         body = result.json()

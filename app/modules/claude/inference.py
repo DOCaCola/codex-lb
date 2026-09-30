@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 from pydantic import JsonValue as PydanticJsonValue
@@ -48,6 +48,7 @@ async def prepare_responses(
     retry_source_id: str | None = None,
     chat_reasoning: bool = False,
     chat_history: ChatHistory | None = None,
+    require_complete_history: bool = False,
 ) -> ClaudeAttempt:
     model = payload.get("model")
     if not isinstance(model, str):
@@ -99,11 +100,21 @@ async def prepare_responses(
                 {**payload, "input": chat_plan.project(source_id=account.source_id)},
             )
             replay = authenticate_replay(
-                logical, opaque, model=model, client_scope=client_scope, conversation_id=conversation_id
+                logical,
+                opaque,
+                model=model,
+                client_scope=client_scope,
+                conversation_id=conversation_id,
+                require_complete_history=require_complete_history,
             )
         else:
             replay = authenticate_replay(
-                logical, opaque, model=model, client_scope=client_scope, conversation_id=conversation_id
+                logical,
+                opaque,
+                model=model,
+                client_scope=client_scope,
+                conversation_id=conversation_id,
+                require_complete_history=require_complete_history,
             )
             account = await select_account(
                 session,
@@ -138,6 +149,7 @@ async def prepare_responses(
             translated=True,
             owner_source_id=account.source_id,
         )
+        prepared = replace(prepared, require_complete_history=require_complete_history)
         detach_session_objects(session)
     continuation.source_id = prepared.source.id
     reasoning = logical.get("reasoning")

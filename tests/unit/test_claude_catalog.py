@@ -59,7 +59,7 @@ def test_projection_only_selected_models_and_retains_missing_selection():
     assert observed.selections[0].model == "missing"
 
 
-def test_discovery_limits_override_registry_and_project_compaction_separately():
+def test_discovery_limits_override_registry_without_persisted_client_budgets():
     model = CatalogModel(id="claude-opus-5", display_name="Opus", max_input_tokens=750000, max_tokens=96000)
     state = AccountState(catalog=[model], selections=[ModelSelection(model=model.id)])
     projected = project_models(state)[0]
@@ -68,8 +68,8 @@ def test_discovery_limits_override_registry_and_project_compaction_separately():
     assert projected.is_enabled
     assert projected.raw_metadata_json is not None
     metadata = json.loads(projected.raw_metadata_json)
-    assert metadata["auto_compact_token_limit"] == 675000
-    assert metadata["effective_context_window_percent"] == 95
+    assert "auto_compact_token_limit" not in metadata
+    assert "effective_context_window_percent" not in metadata
     assert state.model_dump()["selections"] == [{"model": "claude-opus-5"}]
 
 

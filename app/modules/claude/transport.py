@@ -69,6 +69,10 @@ async def open_responses(
     try:
         return await _open_responses(prepared, projection, scheduler=scheduler, clock=clock)
     except ModelSourceForwardingError as exc:
+        if prepared.require_complete_history:
+            # Signature recovery removes historical thinking. That is not a
+            # valid retry for a complete-history compaction request.
+            raise
         recovered = historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
         if recovered is None or prepared.budget.remaining == 0:
             raise

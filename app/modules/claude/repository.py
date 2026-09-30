@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudeQuotaHistory
@@ -66,17 +66,28 @@ class ClaudeRepository:
             ("seven_day_sonnet", usage.seven_day_sonnet),
         ):
             if window is not None:
+                reset = window.resets_at.astimezone(UTC).replace(tzinfo=None) if window.resets_at else None
                 if sample_seconds:
                     last = await self.session.scalar(
-                        select(func.max(ClaudeQuotaHistory.observed_at)).where(
-                            ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == name
-                        )
+                        select(ClaudeQuotaHistory)
+                        .where(ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == name)
+                        .order_by(ClaudeQuotaHistory.observed_at.desc())
+                        .limit(1)
                     )
-                    if last is not None and observed_at - last < timedelta(seconds=sample_seconds):
-                        continue
+                    if last is not None and observed_at - last.observed_at < timedelta(seconds=sample_seconds):
+                        previous_reset = (
+                            round(last.resets_at.replace(tzinfo=UTC).timestamp()) if last.resets_at else None
+                        )
+                        current_reset = round(reset.replace(tzinfo=UTC).timestamp()) if reset else None
+                        if previous_reset == current_reset:
+                            continue
                 self.session.add(
                     ClaudeQuotaHistory(
-                        source_id=source_id, observed_at=observed_at, window=name, used_percent=window.utilization
+                        source_id=source_id,
+                        observed_at=observed_at,
+                        window=name,
+                        used_percent=window.utilization,
+                        resets_at=reset,
                     )
                 )
         await self.session.execute(

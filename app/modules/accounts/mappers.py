@@ -6,6 +6,7 @@ from app.core import usage as usage_core
 from app.core.auth import DEFAULT_EMAIL, DEFAULT_PLAN, extract_id_token_claims, token_expiry_epoch_ms
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.usage.pacing import scheduled_remaining_percent
 from app.core.usage.quota import apply_usage_quota
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
@@ -642,12 +643,10 @@ def _fill_scheduled_secondary_points(
             continue
 
         window_seconds = current_window_minutes * 60
-        remaining_seconds = max(0, min(window_seconds, current_reset_at - epoch))
-        scheduled_remaining = 100.0 * remaining_seconds / window_seconds
         points.append(
             UsageTrendPoint(
                 t=datetime.fromtimestamp(epoch, tz=timezone.utc),
-                v=round(scheduled_remaining, 2),
+                v=scheduled_remaining_percent(at=epoch, reset_at=current_reset_at, window_seconds=window_seconds),
             )
         )
 

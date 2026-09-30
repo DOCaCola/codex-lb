@@ -18,11 +18,14 @@ def history(opaque, *, kind="thinking", completed=True):
     return {"input": items}
 
 
-def read(payload, opaque, **overrides):
+def read(payload, opaque, *, require_complete_history=False, **overrides):
     return authenticate_replay(
         payload,
         opaque,
-        **{"model": scope().model, "client_scope": "key-a", "conversation_id": "thread-a", **overrides},
+        model=overrides.get("model", scope().model),
+        client_scope=overrides.get("client_scope", "key-a"),
+        conversation_id=overrides.get("conversation_id", "thread-a"),
+        require_complete_history=require_complete_history,
     )
 
 
@@ -95,6 +98,28 @@ def test_conflicting_active_owners_fail():
     payload["input"].append({"type": "reasoning", "encrypted_content": other})
     with pytest.raises(ClientPayloadError):
         read(payload, opaque)
+
+
+@pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
+def test_compaction_preserves_completed_signed_history_or_fails(kind):
+    opaque = codec()
+    payload = history(opaque, kind=kind)
+    replay = read(payload, opaque, require_complete_history=True)
+    assert replay.owner_source_id == "source-a"
+    assert replay.project(payload, source_id="source-a", model=scope().model) == payload
+    with pytest.raises(ClientPayloadError):
+        replay.project(payload, source_id="source-b", model=scope().model)
+    with pytest.raises(ClientPayloadError, match="compaction requires its original model"):
+        read(payload, opaque, model="other", require_complete_history=True)
+
+
+def test_compaction_does_not_discard_conflicting_completed_signed_owners():
+    opaque = codec()
+    payload = history(opaque)
+    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a", "thread-a"), {"type": "thinking"})
+    payload["input"].insert(1, {"type": "reasoning", "encrypted_content": other})
+    with pytest.raises(ClientPayloadError, match="conflicting signed history owners"):
+        read(payload, opaque, require_complete_history=True)
 
 
 @pytest.mark.parametrize("pairing", [{}, {"call_id": None}, {"call_id": ""}, {"call_id": " \t"}])

@@ -2017,6 +2017,7 @@ class ClaudeQuotaHistory(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
     window: Mapped[str] = mapped_column(String, primary_key=True)
     used_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    resets_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ClaudeResourceOrigin(Base):

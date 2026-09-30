@@ -69,9 +69,12 @@ test("Claude automatic models and shared account presentation", async ({ page },
     if (p.endsWith("/trends")) return fulfill(route, { series: [
       { key: "five_hour", label: "5-hour", points: [
         { t: "2026-09-28T08:00:00Z", v: 92 }, { t: "2026-09-29T08:00:00Z", v: 76 },
-      ] },
+      ], dashed: false, colorIndex: 0 },
       { key: "seven_day", label: "Weekly", points: [
         { t: "2026-09-28T08:00:00Z", v: 54 }, { t: "2026-09-29T08:00:00Z", v: 38 },
+      ], dashed: false, colorIndex: 1 },
+      { key: "weekly_plan", label: "Weekly plan", dashed: true, colorIndex: 1, points: [
+        { t: "2026-09-28T08:00:00Z", v: 76.19 }, { t: "2026-09-29T08:00:00Z", v: 61.90 },
       ] },
     ] });
     return route.abort();
@@ -83,6 +86,8 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await expect(page.getByText(/1M context.*128K maximum output.*64K default output/i)).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Model awaiting metadata" })).toBeDisabled();
   await expect(page.locator('[aria-label="Claude quota history"] .recharts-surface')).toBeVisible();
+  await expect(page.getByText("Weekly plan", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Weekly Opus/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("claude-detail-desktop.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

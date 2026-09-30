@@ -1,0 +1,3 @@
+- [x] 1. Separate native serialization from source history materialization and preserve images/input.
+- [x] 2. Add large-history endpoint/WS/continuation and failure-atomicity regressions.
+- [x] 3. Verify native compact compatibility, lint/types/tests and sync/validate specs/context.

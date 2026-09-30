@@ -42,6 +42,36 @@ def test_missing_usage_and_null_windows_are_unknown_not_denied_entitlement():
     status = quota_status(state(), now=NOW)
     assert all(window.utilization is None and window.freshness == "unknown" for window in status.windows)
     assert not any(model.blocked for model in status.models)
+    assert [window.name for window in status.windows] == ["five_hour", "seven_day"]
+
+
+def test_initial_failed_metadata_retains_unknown_windows():
+    initial = AccountState(usage_error="unavailable")
+    status = quota_status(initial, now=NOW)
+    assert len(status.windows) == 4
+    assert all(window.freshness == "unknown" for window in status.windows)
+
+
+def test_successful_absent_scoped_windows_do_not_reappear_after_failure():
+    observed = state(five_hour=QuotaWindow(utilization=20), seven_day=QuotaWindow(utilization=30))
+    observed.usage_error = "unavailable"
+    status = quota_status(observed, now=NOW)
+    assert [window.name for window in status.windows] == ["five_hour", "seven_day"]
+    assert all(window.freshness == "stale" for window in status.windows)
+
+
+@pytest.mark.parametrize("condition", ["stale", "expired", "barrier"])
+def test_known_scoped_window_remains_visible_when_unusable(condition):
+    observed = state(seven_day_opus=QuotaWindow(utilization=40, resets_at=NOW + timedelta(hours=1)))
+    at = NOW
+    if condition == "stale":
+        observed.usage_error = "unavailable"
+    elif condition == "expired":
+        at += timedelta(hours=1)
+    else:
+        observed.reset_barriers["seven_day_opus"] = NOW
+    window = next(window for window in quota_status(observed, now=at).windows if window.name == "seven_day_opus")
+    assert window.freshness == ("stale" if condition == "stale" else "unknown")
 
 
 def test_stale_exhaustion_remains_blocked_until_reset_without_invented_zero():

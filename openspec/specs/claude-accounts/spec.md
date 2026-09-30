@@ -436,12 +436,31 @@ Unsupported native file/container resource references SHALL fail explicitly.
 - **WHEN** a new resource origin cannot be committed
 - **THEN** its identifying output is not delivered and generation is not retried
 
+### Requirement: Optional model-specific quota presentation
+Claude quota responses SHALL omit null Opus/Sonnet weekly windows when a successful retained usage snapshot establishes they were not reported. Shared windows SHALL retain unknown states when unavailable. Before any successful usage snapshot, scoped windows MAY remain unknown. Known scoped observations SHALL remain visible under stale, expired or reset-barrier states. Missing scoped windows MUST NOT imply model unavailability, unlimited entitlement or shared-quota duplication.
+
+#### Scenario: Pro account without scoped windows
+- **WHEN** a successful usage response includes shared windows and null model-specific windows
+- **THEN** account details show the shared limits without unknown Opus/Sonnet quota rows
+
+#### Scenario: Previously reported scoped quota is stale
+- **WHEN** a scoped observation exists but a subsequent refresh fails
+- **THEN** that observation remains visible as stale rather than disappearing
+
 ### Requirement: Automatic Claude token capabilities
-Claude model selections SHALL contain model identifiers only. Token limits SHALL derive from authenticated discovery with explicitly maintained model metadata for absent fields. Discovery SHALL take precedence. Unknown models missing either limit SHALL remain unavailable with a diagnostic. The dashboard SHALL display effective limits without token editors. Existing selected IDs SHALL survive upgrade, but old manual limits MUST NOT remain active. Native explicit output budgets SHALL be accepted within the effective model ceiling; omitted translated budgets SHALL use the lesser of 64000 and the resolved model maximum. Codex catalogs SHALL advertise the full discovered context capacity, 95% effective context, and a separate 90% auto-compaction threshold.
+Claude model selections SHALL contain model identifiers only. Token limits SHALL derive from authenticated discovery with explicitly maintained model metadata for absent fields. Discovery SHALL take precedence. Unknown models missing either limit SHALL remain unavailable with a diagnostic. The dashboard SHALL display resolved provider capabilities without token editors. Existing selected IDs SHALL survive upgrade, but old manual limits MUST NOT remain active. Native explicit output budgets SHALL be accepted within the effective model ceiling; omitted translated budgets SHALL use the lesser of 64000 and the resolved model maximum. Client catalogs SHALL advertise a default Claude context of the lesser of 272000 and discovered capacity, retaining actual capacity separately as max_context_window, with 95% effective context and a separate 90% default auto-compaction threshold. This policy SHALL apply to existing projections at catalog construction without altering persisted capabilities. Existing explicit context overrides SHALL retain their shared override behavior.
 
 #### Scenario: Discovered limits
 - **WHEN** discovery reports 1000000 input and 128000 output tokens
-- **THEN** selecting the model advertises and enforces those values without manual entry
+- **THEN** provider capability remains 1000000/128000 while clients receive 272000 default context, 1000000 maximum context, 244800 default compaction and 95% effective context
+
+#### Scenario: Smaller model capacity
+- **WHEN** discovery reports 200000 input tokens
+- **THEN** the default and maximum context remain 200000 with 180000 default compaction
+
+#### Scenario: Existing account projection
+- **WHEN** an existing projection contains a 1M capacity and old 900000 compaction hint
+- **THEN** catalog construction advertises the current conservative default without rewriting its provider capability
 
 #### Scenario: Unknown limits
 - **WHEN** a model lacks discovered and maintained limits

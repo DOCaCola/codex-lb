@@ -72,7 +72,11 @@ def quota_status(state: AccountState, *, now: datetime) -> QuotaStatus:
         ("seven_day_opus", usage.seven_day_opus if usage else None),
         ("seven_day_sonnet", usage.seven_day_sonnet if usage else None),
     )
-    windows = [_window(name, value, state, now) for name, value in values]
+    windows = [
+        _window(name, value, state, now)
+        for name, value in values
+        if name in {"five_hour", "seven_day"} or value is not None or usage is None or state.usage_updated_at is None
+    ]
     return QuotaStatus(
         observed_at=max((window.observed_at for window in windows if window.observed_at is not None), default=None),
         windows=windows,

@@ -12,3 +12,7 @@ See the [specification](../openspec/specs/provider-account-trends/spec.md) and
 
 Refreshes accumulate Claude history automatically. Changes in its quota—including
 resets—are observed changes, not predicted replenishment.
+Claude also shows a dashed **Weekly plan**: the same even-consumption guideline
+as Codex, based on retained weekly reset deadlines. It is not reported quota,
+begins at its first observed deadline and stops when the deadline expires or is
+no longer known. Legacy history without deadlines has no guideline.

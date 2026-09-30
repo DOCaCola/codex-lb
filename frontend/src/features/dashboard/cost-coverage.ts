@@ -13,14 +13,14 @@ export function isCostCoverageComplete(coverage: CostCoverage): boolean {
 
 /**
  * Compact form for values, cells and chart labels. An incomplete known
- * subtotal is a lower bound on the real cost, so it reads "≥ $X"; pair it
+ * subtotal uses plain currency formatting; pair it
  * with `formatCoveredCost` as a tooltip or `formatCostCoverageNote` as a
  * detail line.
  */
 export function formatCoveredCostShort(costUsd: number, coverage: CostCoverage): string {
   const full = formatCoveredCost(costUsd, coverage);
   if (full === "No usage" || full === "Unknown" || isCostCoverageComplete(coverage)) return full;
-  return `≥ ${formatCurrency(costUsd)}`;
+  return formatCurrency(costUsd);
 }
 
 /** Short detail line for an incomplete subtotal, or null when coverage is complete. */

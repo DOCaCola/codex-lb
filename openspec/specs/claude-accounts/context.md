@@ -368,6 +368,13 @@ not part of this policy.
 
 ## Automatic model capabilities and account parity (2026-09-29)
 
+Successfully retained usage determines optional model-specific windows. A Pro
+snapshot reporting only five-hour and shared weekly usage omits the unreported
+Opus/Sonnet rows, rather than displaying misleading unknown percentages. This
+does not establish unlimited access or model entitlement. Before successful
+discovery, genuinely unknown rows remain; known scoped samples remain visible
+when stale or temporarily invalidated by a reset barrier.
+
 Authenticated read-only Models API discovery on the connected account returned
 HTTP 200 with token limits on every listed model, including Opus 5 at
 1,000,000 input / 128,000 output and Haiku 4.5 at 200,000 / 64,000.
@@ -383,10 +390,16 @@ invalidated catalogs; a failed refresh remains visible.
 
 A model ceiling and a default request budget are different contracts. The
 translated default is min(64,000, output maximum); valid explicit budgets survive.
-Codex metadata preserves full context with 90% auto-compaction and 95% effective
-context. Neither threshold is a Claude quality benchmark. No arbitrary 350k cap
-or provider-specific token override editor is retained. The existing global
-model-context policy is outside this change and remains an operator-level control.
+Client metadata now separates the default working context from true capacity:
+min(272000, capacity), 90% default auto-compaction and 95% effective context.
+Opus at 1M advertises 272000 default / 1000000 maximum, with 244800 compaction
+and 258400 usable tokens. Smaller 200k models remain at 200k. The 272k default
+is the operator-approved policy aligned with the local Codex catalog; neither
+threshold is a Claude quality benchmark. Discovered capabilities remain intact
+in account state and model-source storage. Derivation at catalog construction
+also updates existing projections without waiting for discovery. No arbitrary
+350k cap or provider-specific token editor is retained. Existing global context
+overrides remain an operator-level control through the shared catalog path.
 
 Historical evidence (source/comments inspected at the following revisions):
 

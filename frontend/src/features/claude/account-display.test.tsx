@@ -58,6 +58,20 @@ afterEach(() => {
   useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
 });
 describe("Claude shared account surfaces", () => {
+  it("renders only returned quota windows, including genuine unknown or stale scoped observations", () => {
+    const { rerender } = render(<ClaudeQuota account={account} detailed />);
+    expect(screen.queryByText("Weekly Opus remaining")).not.toBeInTheDocument();
+    expect(screen.queryByText("Weekly Sonnet remaining")).not.toBeInTheDocument();
+    rerender(<ClaudeQuota account={{ ...account, quota: {
+      ...account.quota, windows: [
+        ...account.quota.windows,
+        { name: "seven_day_opus", utilization: null, resetsAt: null, freshness: "unknown", exhausted: false },
+        { name: "seven_day_sonnet", utilization: 50, resetsAt: null, freshness: "stale", exhausted: false },
+      ],
+    } }} detailed />);
+    expect(screen.getByText("Weekly Opus remaining")).toBeInTheDocument();
+    expect(screen.getByText("Weekly Sonnet remaining")).toBeInTheDocument();
+  });
   it("preserves usage overshoot while bounding the remaining bar", () => {
     render(
       <ClaudeQuota account={{

@@ -18,7 +18,7 @@ describe("cost coverage formatting", () => {
 
   it("has a compact form and a short note for tight spaces", () => {
     const coverage = { pricedRequests: 442, unmeteredRequests: 23, coverageUnknown: true };
-    expect(formatCoveredCostShort(5095.99, coverage)).toBe("≥ $5,095.99");
+    expect(formatCoveredCostShort(5095.99, coverage)).toBe("$5,095.99");
     expect(formatCostCoverageNote(coverage)).toBe("Known cost only · 23 unmetered · older totals unverified");
     expect(formatCoveredCostShort(12, { pricedRequests: 3 })).toBe("$12.00");
     expect(formatCostCoverageNote({ pricedRequests: 3 })).toBeNull();

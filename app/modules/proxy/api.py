@@ -4301,6 +4301,10 @@ def _to_codex_model_entry(
     effective_cw = _resolved_context_window(model, context_window_overrides)
     if effective_cw != model.context_window and "max_context_window" in extra:
         extra["max_context_window"] = effective_cw
+    if model.source_kind == "claude":
+        # A global context override changes the working budget, not the
+        # discovered capability. Its default compaction hint must follow it.
+        extra["auto_compact_token_limit"] = effective_cw * 9 // 10
 
     return CodexModelEntry(
         slug=model.slug,
@@ -5273,11 +5277,6 @@ async def _source_synthetic_compaction_response(
     context: ProxyContext | None = None,
 ) -> Response:
     try:
-        if source.kind in {"openrouter", "claude"}:
-            expanded = await SourceContinuation(request, api_key, source.id).expand(payload.model_dump_for_forwarding())
-            payload = payload.model_copy(
-                update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
-            )
         compact_payload = build_terminal_compact_request(payload)
         if compact_payload is None:
             raise RuntimeError("source compaction requires a terminal compaction trigger")
@@ -5308,7 +5307,9 @@ async def _source_compaction_response(
 ) -> Response:
     try:
         if source.kind in {"openrouter", "claude"}:
-            expanded = await SourceContinuation(request, api_key, source.id).expand(dict(payload.to_payload()))
+            expanded = await SourceContinuation(request, api_key, source.id).expand(
+                payload.model_dump(mode="json", exclude_none=True)
+            )
             payload = ResponsesCompactRequest.model_validate(expanded)
         source_request = build_source_compaction_request(payload)
     except ClientPayloadError as exc:
@@ -5321,6 +5322,7 @@ async def _source_compaction_response(
         rate_limit_headers=rate_limit_headers,
         pre_normalization_effort=pre_normalization_effort,
         context=context,
+        require_complete_history=True,
     )
     if source_response.status_code != 200:
         return source_response
@@ -5391,6 +5393,7 @@ async def _source_responses_response(
     chat_projection: bool = False,
     chat_history: ChatHistory | None = None,
     chat_include_usage: bool = False,
+    require_complete_history: bool = False,
 ) -> Response:
     from app.modules.openrouter.routing import cooldown_remaining, record_failure
 
@@ -5422,6 +5425,7 @@ async def _source_responses_response(
                     chat_projection=chat_projection,
                     chat_history=chat_history,
                     chat_include_usage=chat_include_usage,
+                    require_complete_history=require_complete_history,
                 )
             except ModelSourceForwardingError as exc:
                 error = exc
@@ -5467,6 +5471,7 @@ async def _dispatch_source_responses_response(
     chat_projection: bool = False,
     chat_history: ChatHistory | None = None,
     chat_include_usage: bool = False,
+    require_complete_history: bool = False,
 ) -> Response:
     from app.modules.claude.admission import ClaudeCapacityBusy
     from app.modules.claude.failover import (
@@ -5502,6 +5507,7 @@ async def _dispatch_source_responses_response(
                 chat_projection=chat_projection,
                 chat_history=chat_history,
                 chat_include_usage=chat_include_usage,
+                require_complete_history=require_complete_history,
                 claude_recovery=recovery,
             )
         except ClaudeCapacityBusy as exc:
@@ -5574,6 +5580,7 @@ async def _dispatch_source_responses_attempt(
     chat_projection: bool = False,
     chat_history: ChatHistory | None = None,
     chat_include_usage: bool = False,
+    require_complete_history: bool = False,
 ) -> Response:
     """Serve a Responses request from an OpenAI-compatible model source.
 
@@ -5614,7 +5621,9 @@ async def _dispatch_source_responses_attempt(
                 update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
             )
         source_payload = (
-            _shape_source_responses_payload(payload, source, api_key=api_key)
+            _shape_source_responses_payload(
+                payload, source, api_key=api_key, require_complete_history=require_complete_history
+            )
             if native_request is None
             else cast(dict[str, JsonValue], native_request.body)
         )
@@ -5651,6 +5660,7 @@ async def _dispatch_source_responses_attempt(
                 retry_source_id=claude_recovery.retry_source_id if claude_recovery else None,
                 chat_reasoning=chat_projection,
                 chat_history=chat_history,
+                require_complete_history=require_complete_history,
             )
             source = claude_attempt.prepared.source
         if claude_attempt is not None and claude_recovery is not None:
@@ -5961,6 +5971,7 @@ def _shape_source_responses_payload(
     source: ModelSource,
     *,
     api_key: ApiKeyData | None,
+    require_complete_history: bool = False,
 ) -> dict[str, JsonValue]:
     """Project the client body onto what the source may see (telemetry stripped, reasoning aliases resolved)."""
 
@@ -6000,7 +6011,15 @@ def _shape_source_responses_payload(
     if source.kind not in {"openrouter", "claude"}:
         strip_replayed_tool_call_namespaces_from_payload(source_payload)
     source_payload["stream"] = bool(payload.stream)
-    _apply_source_response_request_overrides(source_payload, source_model_request_overrides(source, payload.model))
+    _apply_source_response_request_overrides(
+        source_payload,
+        source_model_request_overrides(source, payload.model),
+        protected_keys=(
+            _SOURCE_COMPACTION_OVERRIDE_PROTECTED_KEYS
+            if require_complete_history
+            else _SOURCE_RESPONSE_OVERRIDE_PROTECTED_KEYS
+        ),
+    )
     if source.kind != "claude":
         _drop_unsupported_source_response_tools(
             source_payload,
@@ -6086,14 +6105,30 @@ def _model_source_busy_error() -> OpenAIErrorEnvelope:
 # is owned by source selection, and the stream flag drives SSE-vs-JSON response
 # handling on the proxy side.
 _SOURCE_RESPONSE_OVERRIDE_PROTECTED_KEYS = frozenset({"model", "stream"})
+_SOURCE_COMPACTION_OVERRIDE_PROTECTED_KEYS = _SOURCE_RESPONSE_OVERRIDE_PROTECTED_KEYS | frozenset(
+    {
+        "input",
+        "instructions",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "text",
+        "truncation",
+        "store",
+        "previous_response_id",
+        "conversation",
+    }
+)
 
 
 def _apply_source_response_request_overrides(
     payload: dict[str, JsonValue],
     overrides: Mapping[str, JsonValue],
+    *,
+    protected_keys: frozenset[str] = _SOURCE_RESPONSE_OVERRIDE_PROTECTED_KEYS,
 ) -> None:
     for key, value in overrides.items():
-        if key in _SOURCE_RESPONSE_OVERRIDE_PROTECTED_KEYS:
+        if key in protected_keys:
             continue
         if key == "options" and isinstance(value, Mapping):
             existing_options = payload.get("options")
@@ -7088,6 +7123,9 @@ async def _stream_responses(
     if codex_session_affinity:
         try:
             compact_payload = build_terminal_compact_request(payload)
+            if compact_payload is not None:
+                # Validate the native compact wire budget only on native dispatch.
+                compact_payload.to_payload()
         except ClientPayloadError as exc:
             error = openai_client_payload_error(exc)
             return _logged_error_json_response(request, 400, error)

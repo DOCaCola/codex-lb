@@ -1,0 +1,2 @@
+- [x] 1. Remove mathematical prefix from all shared monetary subtotal displays while retaining coverage descriptions and unknown/free distinction.
+- [x] 2. Update regression tests and specs/context; run frontend checks.

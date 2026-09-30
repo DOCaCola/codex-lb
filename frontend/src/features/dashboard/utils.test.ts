@@ -1310,7 +1310,7 @@ describe("buildDashboardView", () => {
     expect(view.stats[view.stats.length - 1]?.comparison).toBeUndefined();
   });
 
-  it("labels an incomplete cost subtotal and withholds its average and comparison", () => {
+  it("shows a plain estimated subtotal and average without an incomplete comparison", () => {
     const overview = createDashboardOverview();
     const incomplete = { ...pricedCoverage(15), pricedRequests: 3, unpricedRequests: 2 };
 
@@ -1330,8 +1330,9 @@ describe("buildDashboardView", () => {
       false,
     );
 
-    expect(view.stats[2]?.value).toBe("≥ $15.00");
-    expect(view.stats[2]?.meta).toBe("Known cost only · 2 unpriced");
+    expect(view.stats[2]?.value).toBe("$15.00");
+    expect(view.stats[2]?.label).toBe("Est. API Cost (7d)");
+    expect(view.stats[2]?.meta).toBe("Avg/day $2.14");
     expect(view.stats[2]?.comparison).toBeUndefined();
   });
 
@@ -1349,6 +1350,7 @@ describe("buildDashboardView", () => {
     );
 
     expect(view.stats[2]?.value).toBe("Unknown");
+    expect(view.stats[2]?.meta).toBe("API-equivalent estimate");
   });
 
   it("hides comparison indicators for sub-percent deltas that would round to 0%", () => {

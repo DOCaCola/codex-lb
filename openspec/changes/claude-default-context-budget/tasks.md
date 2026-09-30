@@ -1,0 +1,3 @@
+- [x] 1. Separate provider capability from the derived client context default and compaction hints.
+- [x] 2. Cover account/catalog persistence, existing projection metadata, smaller capacities and unrelated providers.
+- [x] 3. Sync specs/context/docs; run targeted tests, lint/type checks and strict OpenSpec validation.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.core.openai.compaction import (
@@ -156,8 +158,70 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
     assert "additional_tools" not in str(wire["input"])
     assert "desktop_tool" not in str(wire["input"])
     assert "retained history" in str(wire["input"])
-    assert "[image omitted for compaction]" in str(wire["input"])
+    assert isinstance(compact.input, list) and isinstance(wire["input"], list)
+    assert compact.input[2] in wire["input"]
+    assert wire["truncation"] == "disabled"
     assert "CONTEXT CHECKPOINT COMPACTION" in str(wire["input"])
+
+
+def test_source_compaction_preserves_history_above_native_wire_budget() -> None:
+    items = [
+        {"role": "user", "content": "EARLIEST: preserve this decision"},
+        {"type": "function_call", "name": "inspect", "namespace": "functions", "call_id": "call_1", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "MIDDLE: " + "x" * 600_000},
+        {"role": "assistant", "content": "tool work completed"},
+        {"role": "user", "content": "LATEST: resume this task"},
+        {"type": "compaction_trigger"},
+    ]
+    compact = ResponsesCompactRequest.model_validate({"model": "source", "instructions": "summarize", "input": items})
+    original = compact.model_dump(mode="json")
+    request = build_source_compaction_request(compact)
+    assert isinstance(compact.input, list) and isinstance(request.input, list)
+    assert request.input[:-1] == compact.input[:-1]
+    assert compact.model_dump(mode="json") == original
+
+
+def test_source_compaction_overrides_cannot_replace_history_or_enable_truncation_tools() -> None:
+    from app.db.models import ModelSource, ModelSourceModel
+    from app.modules.proxy.api import _shape_source_responses_payload
+
+    compact = ResponsesCompactRequest.model_validate(
+        {"model": "source", "instructions": "summarize", "input": "all original history"}
+    )
+    request = build_source_compaction_request(compact)
+    source = ModelSource(
+        id="compact-source",
+        name="Compact",
+        kind="openai_compatible",
+        supports_responses=True,
+        models=[
+            ModelSourceModel(
+                model="source",
+                is_enabled=True,
+                raw_metadata_json=json.dumps(
+                    {
+                        "source_request_overrides": {
+                            "input": [],
+                            "instructions": "different task",
+                            "tools": [{"type": "function", "name": "execute"}],
+                            "truncation": "auto",
+                            "text": {"format": {"type": "json_object"}},
+                            "previous_response_id": "missing",
+                            "store": True,
+                            "reasoning": {"effort": "high"},
+                        }
+                    }
+                ),
+            )
+        ],
+    )
+    wire = _shape_source_responses_payload(request, source, api_key=None, require_complete_history=True)
+    assert wire["input"] == request.input
+    assert wire["instructions"] == "summarize"
+    assert wire["truncation"] == "disabled"
+    assert wire["store"] is False
+    assert "tools" not in wire and "text" not in wire and "previous_response_id" not in wire
+    assert wire["reasoning"] == {"effort": "high"}
 
 
 @pytest.mark.parametrize("handle", ["previous_response_id", "conversation"])

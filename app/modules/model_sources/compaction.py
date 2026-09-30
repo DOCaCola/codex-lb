@@ -8,7 +8,6 @@ from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
-_SOURCE_COMPACTION_IMAGE_NOTE = "[image omitted for compaction]"
 _SOURCE_COMPACTION_EXCLUDED_INPUT_TYPES = frozenset({"additional_tools", "compaction_trigger"})
 _TRUNCATED_STOP_REASONS = frozenset(
     {
@@ -41,7 +40,9 @@ class SourceCompactionResultError(ValueError):
 
 
 def build_source_compaction_request(payload: ResponsesCompactRequest) -> ResponsesRequest:
-    compact_payload = dict(payload.to_payload())
+    # Native compact serialization reduces history to a provider-specific wire
+    # budget. A source summarizer must see the complete materialized history.
+    compact_payload = payload.model_dump(mode="json", exclude_none=True)
     for handle in ("previous_response_id", "conversation"):
         if compact_payload.get(handle) is not None:
             raise ClientPayloadError(
@@ -52,7 +53,7 @@ def build_source_compaction_request(payload: ResponsesCompactRequest) -> Respons
     input_value = compact_payload.get("input")
     input_items = input_value if is_json_list(input_value) else [input_value]
     history = [
-        _replace_compaction_images(item)
+        item
         for item in input_items
         if not (is_json_mapping(item) and item.get("type") in _SOURCE_COMPACTION_EXCLUDED_INPUT_TYPES)
     ]
@@ -69,6 +70,7 @@ def build_source_compaction_request(payload: ResponsesCompactRequest) -> Respons
         ],
         "store": False,
         "stream": False,
+        "truncation": "disabled",
     }
     if payload.reasoning is not None:
         source_payload["reasoning"] = payload.reasoning.model_dump(mode="json", exclude_none=True)
@@ -126,13 +128,3 @@ def _truncation_reason(payload: Mapping[str, JsonValue]) -> str | None:
             if normalized in _TRUNCATED_STOP_REASONS:
                 return normalized
     return None
-
-
-def _replace_compaction_images(value: JsonValue) -> JsonValue:
-    if is_json_list(value):
-        return [_replace_compaction_images(item) for item in value]
-    if not is_json_mapping(value):
-        return value
-    if value.get("type") == "input_image":
-        return {"type": "input_text", "text": _SOURCE_COMPACTION_IMAGE_NOTE}
-    return {key: _replace_compaction_images(item) for key, item in value.items()}

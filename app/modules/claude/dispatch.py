@@ -44,6 +44,7 @@ class PreparedClaudeRequest:
     credential_generation: int
     native_binding: NativeSessionBinding | None
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
+    require_complete_history: bool = False
 
 
 class ClaudeDispatchPreparer:

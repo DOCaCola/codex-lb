@@ -40,15 +40,28 @@ the output limit must exceed the budget and is never raised automatically.
 
 ## Model budgets
 
-Codex receives the full discovered context capacity, a 95% effective-context
-percentage and a separate auto-compaction threshold at 90% of capacity. These are
-client hints, not a guarantee about quality at maximum context. For example,
-a 1,000,000-token context advertises a 900,000-token compaction threshold.
+Clients receive a default context of the smaller of 272,000 tokens and discovered
+capacity. Codex receives the true maximum separately, a 95% usable-context hint
+and a 90% default auto-compaction threshold. A 1M-capacity Opus therefore defaults
+to 258,400 usable tokens and 244,800-token compaction; a 200K Haiku keeps its
+190,000 usable and 180,000 compaction budgets. This working default is aligned
+with Codex, not a measured Claude quality limit. Account discovery still shows
+the true provider capacity; output ceilings and explicit budgets are unchanged.
 
 Translated requests without an output budget use the smaller of 64,000 tokens and
 the model's maximum output. Explicit native or translated budgets remain accepted
 up to that maximum. A 128,000-token output capability therefore does not force every
 request to reserve 128,000 tokens.
+
+Claude compaction sends complete materialized text, tool results and images to
+the summarizer; it does not inherit native OpenAI's 100k compact wire trim.
+The provider enforces actual capacity, not the conservative client default.
+Oversized requests or incomplete summaries return an error without a checkpoint
+or replacement of the original retained history. Signed Claude history must
+remain on its original account/model; unavailable or conflicting owners and
+signature rejection fail rather than silently removing reasoning. A short
+summary alone does not indicate failed compaction. See
+[source compaction safety](../openspec/specs/model-source-routing/spec.md#requirement-source-compaction-history-safety).
 
 Request details show cache reads and cache writes separately when Claude reports
 them, along with total duration, first generated-content latency and upstream
@@ -63,6 +76,10 @@ Existing projections stay disabled until a successful catalog refresh resolves
 their limits. Discovery errors remain visible; no guessed generic limits are used.
 
 ## Operate and recover
+
+Model-specific Opus/Sonnet weekly rows appear only when
+reported after a successful usage refresh; missing rows do not imply unlimited
+quota or unavailable models. Known stale observations remain visible.
 
 Pause/resume, quota monitoring, model selection and reconnect are in the shared
 account detail. Routing policy offers Normal, Burn first and Preserve within the

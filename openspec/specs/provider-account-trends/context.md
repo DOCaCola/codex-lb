@@ -21,9 +21,22 @@ reads always cover only the last seven days.
 
 SQL reads hourly averages, displayed as 100 minus utilization (clamped 0–100).
 Missing observations remain null; there is no fabricated prehistory, interpolation
-across missing hours, or scheduled replenishment estimate. For example a lone 30%
+across missing hours, or predicted replenishment. For example a lone 30%
 used five-hour observation appears as one 70% remaining point, not a full week at
 70%. Weekly Opus and Sonnet are separate series when actually reported.
+
+New quota samples retain their reported reset deadline. Old rows remain unknown;
+the current deadline is never backfilled into historical cycles. Claude's dashed
+Weekly plan uses the same even-consumption calculation and weekly color as Codex,
+separate from measured remaining quota. For example, an observation three days
+before a seven-day reset starts a 42.86% guideline at that observation, not earlier
+in its hourly bucket. The guideline stops at expiration or an observed unknown
+deadline and breaks on changed reset cycles. Whole-second comparison tolerates
+API/header timestamp precision without changing stored evidence. It predicts
+neither replenishment nor future reset cycles. OpenRouter has no quota guideline.
+
+The provider trend contract includes explicit dashed and colorIndex fields so
+optional quota series retain their native colors even when earlier rows are absent.
 
 The charts poll once per minute while mounted, keep query keys scoped by provider
 and account, and distinguish loading/error states from an empty history. Chart reads

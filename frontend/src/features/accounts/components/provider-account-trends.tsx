@@ -8,6 +8,7 @@ import { useChartColors } from "@/hooks/use-chart-colors";
 const Chart = lazy(() => import("./account-trend-chart").then((m) => ({ default: m.AccountSeriesChart })));
 const schema = z.object({ series: z.array(z.object({
   key: z.string(), label: z.string(), points: z.array(z.object({ t: z.string(), v: z.number().nullable() })),
+  dashed: z.boolean(), colorIndex: z.number().int().nonnegative(),
 })) });
 
 export function ProviderAccountTrends({ provider, accountId, embedded = false }: { provider: "openrouter" | "claude"; accountId: string; embedded?: boolean }) {
@@ -24,8 +25,9 @@ export function ProviderAccountTrends({ provider, accountId, embedded = false }:
         {quota ? "Quota remaining · 7 days" : "Request activity · 7 days"}
       </h4>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-        {query.data?.series.map((s, i) => <span key={s.key} className="flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: colors[i % colors.length] }} />
+        {query.data?.series.map((s) => <span key={s.key} className="flex items-center gap-1.5">
+          <span className={s.dashed ? "inline-block h-0 w-4 border-t border-dashed" : "inline-block h-2 w-2 rounded-full"}
+            style={s.dashed ? { borderColor: colors[s.colorIndex % colors.length] } : { backgroundColor: colors[s.colorIndex % colors.length] }} />
           {s.label}
         </span>)}
       </div>
@@ -37,7 +39,7 @@ export function ProviderAccountTrends({ provider, accountId, embedded = false }:
         <Chart series={query.data.series} percentage={quota} />
       </Suspense>}
     <p className="mt-2 text-xs text-muted-foreground">
-      {quota ? "Hourly averages of observed quota. Gaps mean no observations; history begins with recorded refreshes."
+      {quota ? "Hourly averages of observed quota. Gaps mean no observations. Weekly plan is an even-consumption guideline based on recorded reset deadlines, not reported quota."
         : "Hourly requests recorded by codex-lb, including errors. Other OpenRouter activity is not included; history depends on log retention."}
     </p>
   </section>;

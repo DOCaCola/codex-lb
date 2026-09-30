@@ -404,14 +404,6 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
                 output_per_1m=price.output_per_1m if price is not None else None,
                 raw_metadata_json=json.dumps(
                     {
-                        **(
-                            {
-                                "auto_compact_token_limit": limits.context_window * 9 // 10,
-                                "effective_context_window_percent": 95,
-                            }
-                            if limits
-                            else {}
-                        ),
                         "upstream_model": selection.model,
                         "supports_reasoning": reasoning is not None,
                         "supported_reasoning_levels": list(reasoning.levels) if reasoning else [],

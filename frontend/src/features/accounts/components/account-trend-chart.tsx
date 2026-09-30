@@ -30,7 +30,7 @@ function mergeSeries(series: AccountChartSeries[]) {
   const values = series.map((s) => {
     if (s.interpolate) return interpolatePoints(s.points, times);
     const points = new Map(s.points.map((p) => [Date.parse(p.t), p.v]));
-    return times.map((time) => points.get(time) ?? (s.dashed ? undefined : null));
+    return times.map((time) => points.has(time) ? points.get(time) : (s.dashed ? undefined : null));
   });
   return times.map((time, index) => Object.assign(
     { t: new Date(time).toISOString() },

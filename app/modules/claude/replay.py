@@ -53,6 +53,7 @@ def authenticate_replay(
     model: str,
     client_scope: str,
     conversation_id: str,
+    require_complete_history: bool = False,
 ) -> ClaudeReplay:
     items = payload.get("input")
     if not isinstance(items, list):
@@ -81,12 +82,24 @@ def authenticate_replay(
         if not isinstance(token, str):
             continue
         envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
-        strict = envelope.block.get("type") == "web_search" or index >= last_user
+        # Summarization must not silently discard even completed signed history
+        # when the preferred account/model is unavailable.
+        strict = require_complete_history or envelope.block.get("type") == "web_search" or index >= last_user
         if strict:
             if envelope.model != model:
-                raise ClientPayloadError("Active Claude reasoning or search requires its original model", param="input")
+                raise ClientPayloadError(
+                    "Claude compaction requires its original model for signed history"
+                    if require_complete_history
+                    else "Active Claude reasoning or search requires its original model",
+                    param="input",
+                )
             if owner is not None and owner != envelope.source_id:
-                raise ClientPayloadError("Active Claude history contains conflicting account owners", param="input")
+                raise ClientPayloadError(
+                    "Claude compaction contains conflicting signed history owners"
+                    if require_complete_history
+                    else "Active Claude history contains conflicting account owners",
+                    param="input",
+                )
             owner = envelope.source_id
         elif envelope.model == model:
             preferred = envelope.source_id
