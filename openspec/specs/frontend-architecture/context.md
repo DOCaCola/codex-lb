@@ -1,7 +1,15 @@
 # Context: frontend-architecture
 
 Normative requirements live in [`spec.md`](./spec.md). This document currently
-covers the progressive-disclosure navigation and settings model.
+covers the progressive-disclosure navigation, settings and shared dashboard presentation.
+
+## Dashboard provider card presentation
+
+Codex, Claude and OpenRouter card presenters supply identity/status, provider content and actions to one shared shell. It owns header typography and space for an optional identity description, body spacing, notice styling and the bottom action footer. Quota windows share a card-specific grid for Codex and Claude; provider units and unknown/stale states remain distinct. Details/list surfaces retain their existing layout.
+
+All card types receive the same flexible animation wrapper. At multi-column breakpoints, intrinsic equal-height grid rows size themselves from the tallest rendered content; no fixed row height, viewport cap or card scrollbar is used. A Claude-only last row therefore matches the preceding Codex row without fake credit or warm-up fields. Single-column mobile uses natural heights instead of padding every sparse card to the tallest one. Long action groups can wrap and increase the required content height safely.
+
+For example, a Codex alias with an email subtitle, a plain Codex identity and an OpenRouter balance card align at their body start and footer despite different content. Mobile Codex/Claude cards with two windows both keep two quota columns. Browser tests measure bounds and containment in light/dark themes at 1440, 768, 390 and 320 pixels.
 
 ## Progressive disclosure (nav + settings)
 

@@ -1,9 +1,14 @@
 import { Clock } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
 import { cn } from "@/lib/utils";
 import { quotaBarColor, quotaBarTrack } from "@/utils/account-status";
 import { formatPercentNullable, formatQuotaResetLabel } from "@/utils/formatters";
+
+export function CardQuotaGrid({ children, columns }: { children: ReactNode; columns: 1 | 2 }) {
+  return <div className={cn("grid min-w-0 gap-3", columns === 1 ? "grid-cols-1" : "grid-cols-2")}>{children}</div>;
+}
 
 export function QuotaBar({
   label,

@@ -64,6 +64,18 @@ afterEach(() => {
   useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
 });
 describe("Claude shared account surfaces", () => {
+  it("uses two card quota columns without changing the list and detail layout", () => {
+    const view = render(<ClaudeQuota account={account} variant="card" />);
+    expect(view.container.firstElementChild).toHaveClass("grid-cols-2");
+    expect(view.container.firstElementChild).not.toHaveClass("sm:grid-cols-2");
+    view.rerender(<ClaudeQuota account={{ ...account, quota: { ...account.quota, windows: [account.quota.windows[1]] } }} variant="card" />);
+    expect(view.container.firstElementChild).toHaveClass("grid-cols-1");
+    view.rerender(<ClaudeQuota account={account} />);
+    expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
+    view.rerender(<ClaudeQuota account={account} detailed />);
+    expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
+  });
+
   it("shows All models on both the card and account list", () => {
     const automatic = {
       ...account,

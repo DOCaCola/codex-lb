@@ -34,6 +34,195 @@ const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? `http://localhost:${SCREENSH
 const THEME_KEY = "codex-lb-theme";
 const SETTLE_MS = 1500;
 
+test("dashboard provider cards share sizing and anatomy", async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const native = [
+    createAccountSummary({
+      accountId: "native-alias",
+      displayName: "Codex alias with email",
+      email: "alias@example.com",
+      availableResetCredits: 3,
+    }),
+    createAccountSummary({
+      accountId: "native-plain",
+      displayName: "plain@example.com",
+      email: "plain@example.com",
+    }),
+    createAccountSummary({
+      accountId: "native-actions",
+      displayName: "Codex requiring recovery",
+      status: "deactivated",
+      availableResetCredits: 2,
+    }),
+  ];
+  const openrouter = [
+    createOpenRouterAccount({ id: "router-ready", name: "OpenRouter" }),
+    createOpenRouterAccount({
+      id: "router-stale",
+      name: "OpenRouter stale balance",
+    }),
+  ];
+  openrouter[1].state.key_error = "Monitoring failed";
+  const claude: ClaudeAccount = {
+    id: "claude-two",
+    name: "Claude quotas",
+    isEnabled: true,
+    maxConcurrency: null,
+    routingPolicy: "normal",
+    credentialStatus: "ready",
+    expiresAt: "2026-10-01T12:00:00Z",
+    state: {
+      all_models: true,
+      reasoning_restrictions: {},
+      selections: [],
+      catalog: [],
+      catalog_updated_at: null,
+      catalog_error: null,
+      usage_updated_at: null,
+      usage_error: null,
+    },
+    quota: {
+      observedAt: null,
+      models: [],
+      windows: [
+        {
+          name: "five_hour",
+          utilization: null,
+          resetsAt: null,
+          freshness: "unknown",
+          exhausted: false,
+        },
+        {
+          name: "seven_day",
+          utilization: 104,
+          resetsAt: "2026-10-03T12:00:00Z",
+          freshness: "stale",
+          exhausted: false,
+        },
+      ],
+    },
+  };
+  const claudeAccounts = [
+    claude,
+    {
+      ...claude,
+      id: "claude-weekly",
+      name: "Claude weekly only",
+      quota: { ...claude.quota, windows: [claude.quota.windows[1]] },
+    },
+  ];
+  await interceptApi(page, authSession, native);
+  await page.route("**/health/ready", (route) =>
+    fulfill(route, { status: "ok" }),
+  );
+  await page.route("**/api/dashboard/overview**", (route) =>
+    fulfill(route, { ...overview, accounts: native }),
+  );
+  await page.route("**/api/openrouter-accounts", (route) =>
+    fulfill(route, { accounts: openrouter }),
+  );
+  await page.route("**/api/claude-accounts", (route) =>
+    fulfill(route, { accounts: claudeAccounts }),
+  );
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const theme of ["light", "dark"] as const) {
+    await applyTheme(page, theme);
+    await page.goto(BASE_URL);
+    const grid = page.getByTestId("dashboard-account-cards");
+    await expect(grid.locator(".card-hover")).toHaveCount(7);
+    for (const width of [1440, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const bounds = await grid.evaluate((element) =>
+        Array.from(element.children).map((wrapper) => {
+          const card = wrapper.querySelector<HTMLElement>(".card-hover")!;
+          const rect = card.getBoundingClientRect();
+          const body = card.querySelector<HTMLElement>(
+            '[data-slot="account-card-body"]',
+          )!;
+          const footer = card.querySelector<HTMLElement>(
+            '[data-slot="account-card-actions"]',
+          )!;
+          return {
+            height: rect.height,
+            width: rect.width,
+            top: rect.top,
+            bodyOffset: body.getBoundingClientRect().top - rect.top,
+            footerInset: rect.bottom - footer.getBoundingClientRect().bottom,
+            contained: Array.from(
+              card.querySelectorAll<HTMLElement>("p, button, a, [data-slot]"),
+            ).every((child) => {
+              const r = child.getBoundingClientRect();
+              return (
+                r.left >= rect.left - 1 &&
+                r.right <= rect.right + 1 &&
+                r.top >= rect.top &&
+                r.bottom <= rect.bottom + 1
+              );
+            }),
+          };
+        }),
+      );
+      expect(bounds.every((card) => card.contained)).toBe(true);
+      expect(
+        Math.max(...bounds.map((card) => card.width)) -
+          Math.min(...bounds.map((card) => card.width)),
+      ).toBeLessThan(1);
+      expect(
+        Math.max(...bounds.map((card) => card.bodyOffset)) -
+          Math.min(...bounds.map((card) => card.bodyOffset)),
+      ).toBeLessThan(1);
+      expect(
+        Math.max(...bounds.map((card) => card.footerInset)) -
+          Math.min(...bounds.map((card) => card.footerInset)),
+      ).toBeLessThan(1);
+      const heightDifference =
+        Math.max(...bounds.map((card) => card.height)) -
+        Math.min(...bounds.map((card) => card.height));
+      if (width >= 640) expect(heightDifference).toBeLessThan(1);
+      else expect(heightDifference).toBeGreaterThan(20);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+      for (const provider of ["codex", "claude"]) {
+        const card = grid.getByTestId(`${provider}-account-card`).first();
+        expect(
+          await card
+            .locator('[data-slot="account-card-body"] > div')
+            .first()
+            .evaluate(
+              (el) =>
+                getComputedStyle(el).gridTemplateColumns.split(" ").length,
+            ),
+        ).toBe(2);
+      }
+      if (width === 1440)
+        await grid.screenshot({
+          path: testInfo.outputPath(`provider-cards-${theme}-desktop.png`),
+          animations: "disabled",
+          style: "header, footer { visibility: hidden !important; }",
+        });
+      if (width === 390) {
+        await grid
+          .getByTestId("claude-account-card")
+          .first()
+          .screenshot({
+            path: testInfo.outputPath(`provider-cards-${theme}-mobile.png`),
+            animations: "disabled",
+            style: "header, footer { visibility: hidden !important; }",
+          });
+      }
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
 test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));

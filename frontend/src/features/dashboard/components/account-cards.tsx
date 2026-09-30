@@ -50,28 +50,41 @@ export function AccountCards({
     );
   }
 
+  const cards = [
+    ...accounts.map((account) => (
+      <AccountCard
+        key={`codex:${account.accountId}`}
+        account={account}
+        showAccountId={account.isEmailDuplicate === true}
+        readOnly={readOnly}
+        onAction={onAction}
+      />
+    )),
+    ...openRouterAccounts.map((account) => (
+      <OpenRouterAccountCard
+        key={`openrouter:${account.id}`}
+        account={account}
+      />
+    )),
+    ...claudeAccounts.map((account) => (
+      <ClaudeAccountCard key={`claude:${account.id}`} account={account} />
+    )),
+  ];
+
   return (
-    // Every account card is shown in full: no height cap or inner scrolling.
-    <div data-testid="dashboard-account-cards" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {accounts.map((account, index) => (
+    // Intrinsic equal-height rows on multi-column screens; no cap or inner scroll.
+    <div
+      data-testid="dashboard-account-cards"
+      className="grid gap-4 sm:auto-rows-fr sm:grid-cols-2 lg:grid-cols-3"
+    >
+      {cards.map((card, index) => (
         <div
-          key={account.accountId}
-          className="animate-fade-in-up"
+          key={card.key}
+          className="animate-fade-in-up flex min-w-0"
           style={{ animationDelay: `${index * 75}ms` }}
         >
-          <AccountCard
-            account={account}
-            showAccountId={account.isEmailDuplicate === true}
-            readOnly={readOnly}
-            onAction={onAction}
-          />
+          {card}
         </div>
-      ))}
-      {openRouterAccounts.map((account) => (
-        <OpenRouterAccountCard key={account.id} account={account} />
-      ))}
-      {claudeAccounts.map((account) => (
-        <ClaudeAccountCard key={account.id} account={account} />
       ))}
     </div>
   );

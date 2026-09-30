@@ -1,13 +1,19 @@
 import { ExternalLink, Play, RotateCcw, Zap } from "lucide-react";
-import { QuotaBar } from "@/features/accounts/components/quota-display";
+import {
+  CardQuotaGrid,
+  QuotaBar,
+} from "@/features/accounts/components/quota-display";
 import { useTranslation } from "react-i18next";
 
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { useSmoothPercent } from "@/hooks/use-smooth-percent";
-import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
-import { AccountCardSurface } from "@/components/account-surfaces";
+import {
+  AccountCardAction,
+  AccountCardNotice,
+  AccountCardSurface,
+} from "@/components/account-surfaces";
 import {
   accountSubscriptionCredits,
   formatCreditValue,
@@ -16,9 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { AccountSummary } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
-import {
-  normalizeStatus,
-} from "@/utils/account-status";
+import { normalizeStatus } from "@/utils/account-status";
 import {
   formatDateTimeInline,
   formatQuotaResetLabel,
@@ -26,7 +30,12 @@ import {
   formatSlug,
 } from "@/utils/formatters";
 
-export type AccountAction = "details" | "resume" | "reauth" | "warmup-toggle" | "reset-credit";
+export type AccountAction =
+  | "details"
+  | "resume"
+  | "reauth"
+  | "warmup-toggle"
+  | "reset-credit";
 
 export type AccountCardProps = {
   account: AccountSummary;
@@ -39,27 +48,51 @@ function formatWarmupWindow(window: string): string {
   return window === "primary" || window === "primary_idle" ? "5h" : "weekly";
 }
 
-export function AccountCard({ account, showAccountId = false, readOnly = false, onAction }: AccountCardProps) {
+export function AccountCard({
+  account,
+  showAccountId = false,
+  readOnly = false,
+  onAction,
+}: AccountCardProps) {
   const { t } = useTranslation();
   const blurred = usePrivacyStore((s) => s.blurred);
-  const dateDisplayFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
+  const dateDisplayFormat = useDateDisplayFormatStore(
+    (s) => s.dateDisplayFormat,
+  );
   const status = normalizeStatus(account.status);
-  const primaryState = useSmoothPercent(account.usage?.primaryRemainingPercent ?? null);
-  const secondaryState = useSmoothPercent(account.usage?.secondaryRemainingPercent ?? null);
-  const monthlyState = useSmoothPercent(account.usage?.monthlyRemainingPercent ?? null);
+  const primaryState = useSmoothPercent(
+    account.usage?.primaryRemainingPercent ?? null,
+  );
+  const secondaryState = useSmoothPercent(
+    account.usage?.secondaryRemainingPercent ?? null,
+  );
+  const monthlyState = useSmoothPercent(
+    account.usage?.monthlyRemainingPercent ?? null,
+  );
   const primaryRemaining = primaryState.percent;
   const secondaryRemaining = secondaryState.percent;
   const monthlyRemaining = monthlyState.percent;
-  const hasPrimaryWindow = account.windowMinutesPrimary != null || primaryState.everKnown;
-  const hasSecondaryWindow = account.windowMinutesSecondary != null || secondaryState.everKnown;
-  const hasMonthlyWindow = account.windowMinutesMonthly != null || monthlyState.everKnown;
+  const hasPrimaryWindow =
+    account.windowMinutesPrimary != null || primaryState.everKnown;
+  const hasSecondaryWindow =
+    account.windowMinutesSecondary != null || secondaryState.everKnown;
+  const hasMonthlyWindow =
+    account.windowMinutesMonthly != null || monthlyState.everKnown;
   const weeklyOnly = !hasPrimaryWindow && hasSecondaryWindow;
-  const monthlyOnly = hasMonthlyWindow && !hasPrimaryWindow && !hasSecondaryWindow;
-  const subscriptionCreditsLabel = formatCreditValue(accountSubscriptionCredits(account));
-  const purchasedCreditsLabel = formatPurchasedCredits(account, t("common.states.unlimited"));
+  const monthlyOnly =
+    hasMonthlyWindow && !hasPrimaryWindow && !hasSecondaryWindow;
+  const subscriptionCreditsLabel = formatCreditValue(
+    accountSubscriptionCredits(account),
+  );
+  const purchasedCreditsLabel = formatPurchasedCredits(
+    account,
+    t("common.states.unlimited"),
+  );
 
   const primaryReset = formatQuotaResetLabel(account.resetAtPrimary ?? null);
-  const secondaryReset = formatQuotaResetLabel(account.resetAtSecondary ?? null);
+  const secondaryReset = formatQuotaResetLabel(
+    account.resetAtSecondary ?? null,
+  );
   const monthlyReset = formatQuotaResetLabel(account.resetAtMonthly ?? null);
 
   const title = account.displayName || account.email;
@@ -70,7 +103,9 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
       ? account.email
       : null;
   const idSuffix = showAccountId ? ` | ID ${compactId}` : "";
-  const warmupStatus = account.limitWarmupEnabled ? t("accounts.listItem.warmupOn") : t("accounts.listItem.warmupOff");
+  const warmupStatus = account.limitWarmupEnabled
+    ? t("accounts.listItem.warmupOn")
+    : t("accounts.listItem.warmupOff");
   const warmupToggleLabel = account.limitWarmupEnabled
     ? t("dashboard.accounts.disableWarmupFor", { account: title })
     : t("dashboard.accounts.enableWarmupFor", { account: title });
@@ -80,7 +115,10 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
   const availableResetCredits = account.availableResetCredits ?? 0;
   const hasResetCredits = availableResetCredits > 0;
   const resetCreditDisabled =
-    readOnly || status === "paused" || status === "reauth" || status === "deactivated";
+    readOnly ||
+    status === "paused" ||
+    status === "reauth" ||
+    status === "deactivated";
   const resetCountdown = account.resetCreditNearestExpiresAt
     ? formatSingleUnitRemaining(account.resetCreditNearestExpiresAt)
     : null;
@@ -91,58 +129,141 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
         ? t("dashboard.accounts.resetCreditTitles.reauthRequired")
         : t("dashboard.accounts.resetCreditTitles.unavailable")
     : resetCountdown
-      ? t("dashboard.accounts.resetCreditTitles.withCountdown", { count: availableResetCredits, countdown: resetCountdown.label })
-      : t("dashboard.accounts.resetWithCount", { count: availableResetCredits });
+      ? t("dashboard.accounts.resetCreditTitles.withCountdown", {
+          count: availableResetCredits,
+          countdown: resetCountdown.label,
+        })
+      : t("dashboard.accounts.resetWithCount", {
+          count: availableResetCredits,
+        });
+
+  const actions = (
+    <>
+      <AccountCardAction
+        type="button"
+        onClick={() => onAction?.(account, "details")}
+      >
+        <ExternalLink className="h-3 w-3" />
+        {t("common.actions.details")}
+      </AccountCardAction>
+      {hasResetCredits ? (
+        <AccountCardAction
+          type="button"
+          className="relative pr-8"
+          title={resetButtonTitle}
+          disabled={resetCreditDisabled}
+          onClick={() => onAction?.(account, "reset-credit")}
+        >
+          <RotateCcw className="h-3 w-3" />
+          {t("dashboard.accounts.resetWithCount", {
+            count: availableResetCredits,
+          })}
+          {resetCountdown ? (
+            <span
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute -top-1 right-1 text-[10px] tabular-nums",
+                resetCountdown.expiringSoon
+                  ? "text-destructive"
+                  : "text-muted-foreground",
+              )}
+            >
+              {resetCountdown.label}
+            </span>
+          ) : null}
+        </AccountCardAction>
+      ) : null}
+      {(status === "paused" || status === "deactivated") && (
+        <AccountCardAction
+          type="button"
+          className="text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+          disabled={readOnly}
+          onClick={() => onAction?.(account, "resume")}
+        >
+          <Play className="h-3 w-3" />
+          {t("common.actions.resume")}
+        </AccountCardAction>
+      )}
+      {(status === "reauth" || status === "deactivated") && (
+        <AccountCardAction
+          type="button"
+          className="text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+          disabled={readOnly}
+          onClick={() => onAction?.(account, "reauth")}
+        >
+          <RotateCcw className="h-3 w-3" />
+          {t("common.actions.reauthenticateShort")}
+        </AccountCardAction>
+      )}
+    </>
+  );
 
   return (
-    <AccountCardSurface>
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">
-            {blurred
-              ? <span className="privacy-blur">{title}</span>
-              : title}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {planLabel}
-            {!emailSubtitle ? idSuffix : ""}
-          </p>
-          {emailSubtitle ? (
-            <p
-              className="mt-0.5 truncate text-xs text-muted-foreground"
-              title={showAccountId ? t("accounts.detail.accountIdTitle", { accountId: account.accountId }) : undefined}
-            >
-              <span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span>{showAccountId ? ` | ID ${compactId}` : ""}
-            </p>
-          ) : null}
-        </div>
-        <StatusBadge status={status} />
-      </div>
-
+    <AccountCardSurface
+      data-testid="codex-account-card"
+      title={blurred ? <span className="privacy-blur">{title}</span> : title}
+      subtitle={
+        <>
+          {planLabel}
+          {!emailSubtitle ? idSuffix : ""}
+        </>
+      }
+      description={
+        emailSubtitle ? (
+          <>
+            <span className={blurred ? "privacy-blur" : undefined}>
+              {emailSubtitle}
+            </span>
+            {idSuffix}
+          </>
+        ) : undefined
+      }
+      descriptionTitle={
+        showAccountId
+          ? t("accounts.detail.accountIdTitle", {
+              accountId: account.accountId,
+            })
+          : undefined
+      }
+      status={<StatusBadge status={status} />}
+      actions={actions}
+    >
       {/* Quota bars */}
-      <div className={cn("mt-3.5 grid gap-3", weeklyOnly || monthlyOnly ? "grid-cols-1" : "grid-cols-2")}>
+      <CardQuotaGrid columns={weeklyOnly || monthlyOnly ? 1 : 2}>
         {monthlyOnly ? (
-          <QuotaBar label={t("common.time.monthly")} percent={monthlyRemaining} resetLabel={monthlyReset} />
+          <QuotaBar
+            label={t("common.time.monthly")}
+            percent={monthlyRemaining}
+            resetLabel={monthlyReset}
+          />
         ) : (
           <>
-            {!weeklyOnly && <QuotaBar label="5h" percent={primaryRemaining} resetLabel={primaryReset} />}
-            <QuotaBar label={t("common.time.weekly")} percent={secondaryRemaining} resetLabel={secondaryReset} />
+            {!weeklyOnly && (
+              <QuotaBar
+                label="5h"
+                percent={primaryRemaining}
+                resetLabel={primaryReset}
+              />
+            )}
+            <QuotaBar
+              label={t("common.time.weekly")}
+              percent={secondaryRemaining}
+              resetLabel={secondaryReset}
+            />
           </>
         )}
-      </div>
+      </CardQuotaGrid>
 
-      <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-2.5 py-2 text-xs">
+      <AccountCardNotice>
         <div className="min-w-0">
           <p className="font-medium">{warmupStatus}</p>
-          <p className="truncate text-[11px] text-muted-foreground">{warmupDetail}</p>
+          <p className="truncate text-[11px] text-muted-foreground">
+            {warmupDetail}
+          </p>
         </div>
-        <Button
+        <AccountCardAction
           type="button"
-          size="sm"
-          variant="ghost"
           className={cn(
-            "h-7 gap-1.5 rounded-lg text-xs",
             account.limitWarmupEnabled
               ? "text-primary hover:bg-primary/10 hover:text-primary"
               : "text-muted-foreground hover:text-foreground",
@@ -152,11 +273,13 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
           onClick={() => onAction?.(account, "warmup-toggle")}
         >
           <Zap className="h-3 w-3" aria-hidden="true" />
-          {account.limitWarmupEnabled ? t("common.states.on") : t("common.states.off")}
-        </Button>
-      </div>
+          {account.limitWarmupEnabled
+            ? t("common.states.on")
+            : t("common.states.off")}
+        </AccountCardAction>
+      </AccountCardNotice>
 
-      <div className="mt-3 grid gap-1 text-xs text-muted-foreground">
+      <div className="grid gap-1 text-xs text-muted-foreground">
         <p>
           {t("dashboard.accounts.subscriptionCredits")}:{" "}
           <span className="font-medium tabular-nums text-foreground">
@@ -169,71 +292,6 @@ export function AccountCard({ account, showAccountId = false, readOnly = false, 
             {purchasedCreditsLabel}
           </span>
         </p>
-      </div>
-
-      {/* Actions */}
-      <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground"
-          onClick={() => onAction?.(account, "details")}
-        >
-          <ExternalLink className="h-3 w-3" />
-          {t("common.actions.details")}
-        </Button>
-        {hasResetCredits ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="relative h-7 gap-1.5 rounded-lg pr-8 text-xs text-muted-foreground hover:text-foreground"
-            title={resetButtonTitle}
-            disabled={resetCreditDisabled}
-            onClick={() => onAction?.(account, "reset-credit")}
-          >
-            <RotateCcw className="h-3 w-3" />
-            {t("dashboard.accounts.resetWithCount", { count: availableResetCredits })}
-            {resetCountdown ? (
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "pointer-events-none absolute -top-1 right-1 text-[10px] tabular-nums",
-                  resetCountdown.expiringSoon ? "text-destructive" : "text-muted-foreground",
-                )}
-              >
-                {resetCountdown.label}
-              </span>
-            ) : null}
-          </Button>
-        ) : null}
-        {(status === "paused" || status === "deactivated") && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1.5 rounded-lg text-xs text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
-            disabled={readOnly}
-            onClick={() => onAction?.(account, "resume")}
-          >
-            <Play className="h-3 w-3" />
-            {t("common.actions.resume")}
-          </Button>
-        )}
-        {(status === "reauth" || status === "deactivated") && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1.5 rounded-lg text-xs text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
-            disabled={readOnly}
-            onClick={() => onAction?.(account, "reauth")}
-          >
-            <RotateCcw className="h-3 w-3" />
-            {t("common.actions.reauthenticateShort")}
-          </Button>
-        )}
       </div>
     </AccountCardSurface>
   );

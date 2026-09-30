@@ -1,13 +1,15 @@
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
+  AccountCardAction,
+  AccountCardNotice,
   AccountCardSurface,
   AccountSelectionSurface,
 } from "@/components/account-surfaces";
 import { StatusBadge } from "@/components/status-badge";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
 import { RoutingPolicyBadge } from "@/features/accounts/components/routing-policy";
-import { Button } from "@/components/ui/button";
+import { useTranslation } from "react-i18next";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { formatDateTimeInline } from "@/utils/formatters";
@@ -226,51 +228,48 @@ export function OpenRouterAccountCard({
 }: {
   account: OpenRouterAccount;
 }) {
+  const { t } = useTranslation();
   const stale = !!(
     account.state.key_error ||
     account.state.credits_error ||
     account.state.catalog_error
   );
   return (
-    <AccountCardSurface data-testid="openrouter-account-card">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">
-            <OpenRouterName account={account} />
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            OpenRouter · <OpenRouterTier account={account} /> · {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
-          </p>
-        </div>
-        <StatusBadge status={openRouterStatus(account)} />
-      </div>
-      <div className="mt-3.5">
-        <OpenRouterMetrics account={account} />
-      </div>
-      <div className="mt-3 rounded-lg bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-        Used today{" "}
-        <span className="font-medium tabular-nums text-foreground">
-          {money(account.state.key?.usage_daily)}
-        </span>
+    <AccountCardSurface
+      data-testid="openrouter-account-card"
+      title={<OpenRouterName account={account} />}
+      subtitle={
+        <>
+          OpenRouter · <OpenRouterTier account={account} /> ·{" "}
+          {account.state.all_models
+            ? "All models"
+            : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
+        </>
+      }
+      status={<StatusBadge status={openRouterStatus(account)} />}
+      actions={
+        <AccountCardAction asChild>
+          <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
+            <ExternalLink className="h-3 w-3" />
+            {t("common.actions.details")}
+          </Link>
+        </AccountCardAction>
+      }
+    >
+      <OpenRouterMetrics account={account} />
+      <AccountCardNotice className="text-muted-foreground">
+        <p>
+          Used today{" "}
+          <span className="font-medium tabular-nums text-foreground">
+            {money(account.state.key?.usage_daily)}
+          </span>
+        </p>
         {stale && (
-          <span className="ml-2 text-amber-600 dark:text-amber-400">
+          <span className="text-amber-600 dark:text-amber-400">
             Monitoring needs attention
           </span>
         )}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3">
-        <Button
-          asChild
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground"
-        >
-          <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
-            <ExternalLink className="h-3 w-3" />
-            Details
-          </Link>
-        </Button>
-      </div>
+      </AccountCardNotice>
     </AccountCardSurface>
   );
 }
