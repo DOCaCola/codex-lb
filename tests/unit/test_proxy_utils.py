@@ -26324,7 +26324,7 @@ async def test_prepare_websocket_response_create_request_logs_affinity_metadata(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("history_mode", ["fresh", "expanded", "unresolved"])
 async def test_websocket_replay_snapshot_owns_pre_normalization_history(monkeypatch, tmp_path, history_mode):
-    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     store = HTTPFallbackReplayStore(tmp_path)

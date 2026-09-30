@@ -568,7 +568,7 @@ async def test_claude_chat_owner_unavailable_reconstructs_on_other_account(async
 async def test_claude_chat_ambiguous_signed_replay_reconstructs_visible_cycle(async_client, pool, monkeypatch):
     from app.core.config.settings import get_settings
     from app.modules.claude.protocol import ToolIdentity
-    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
     await _enable_api_key_auth(async_client)
     key, key_id = await _create_limited_key(async_client, pool[0], name="claude-chat-ambiguous-replay")

@@ -468,7 +468,6 @@ from app.modules.proxy._service.websocket.helpers import (
     _wrapped_websocket_error_event,
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
-from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.account_cache import is_account_model_allowed, is_account_reasoning_allowed
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
@@ -494,6 +493,7 @@ from app.modules.proxy.capability_routing import (
     reject_capability_signal_outside_response_create,
     strip_capability_metadata,
 )
+from app.modules.proxy.checkpoint_history import checkpoint_store, is_checkpoint_request, retain_streamed_checkpoint
 from app.modules.proxy.continuity import resolve_required_account_id
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
@@ -512,6 +512,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease, effective_account_concurrency_caps
 from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     apply_enforced_service_tier_model_fallback,
@@ -1376,6 +1377,7 @@ class _WebSocketMixin:
 
     async def sweep_http_fallback_replay(self) -> None:
         await self._http_fallback_replay_store.sweep()
+        await checkpoint_store().sweep()
 
     @cached_property
     def _source_websocket_fallback_registry(self) -> SourceWebSocketFallbackRegistry:
@@ -5724,8 +5726,10 @@ class _WebSocketMixin:
                     upstream_control.suppress_downstream_event = True
                     return text
                 if (
-                    upstream_transport == "http"
-                    and request_state.http_replay_conversation_id is not None
+                    (
+                        (upstream_transport == "http" and request_state.http_replay_conversation_id is not None)
+                        or is_checkpoint_request(request_state.http_replay_input)
+                    )
                     and event_type == "response.output_item.done"
                     and payload is not None
                 ):
@@ -6917,6 +6921,29 @@ class _WebSocketMixin:
                         account_id=account_id_value,
                         session_id=request_state.session_id,
                     )
+
+        checkpoint_conversation = request_state.conversation_id or request_state.session_id
+        checkpoint_request_text = request_state.fresh_upstream_request_text or request_state.request_text
+        completed_response = payload.get("response") if payload is not None else None
+        if (
+            settlement_committed
+            and event_type == "response.completed"
+            and settlement.record_success
+            and api_key is not None
+            and checkpoint_conversation is not None
+            and checkpoint_request_text is not None
+            and isinstance(completed_response, dict)
+            and is_checkpoint_request(request_state.http_replay_input)
+        ):
+            output = request_state.http_replay_output.finish(completed_response.get("output"))
+            if output is not None:
+                await retain_streamed_checkpoint(
+                    checkpoint_request_text,
+                    request_state.http_replay_input,
+                    {**completed_response, "output": output},
+                    ReplayScope(api_key.id, checkpoint_conversation),
+                    account_id_value,
+                )
 
     async def _write_websocket_connect_failure(
         self,

@@ -89,36 +89,43 @@ def lower_opaque_compaction_items_for_model_source(payload: MutableJsonObject) -
         if not is_json_mapping(item) or item.get("type") not in _COMPACTION_ITEM_TYPES:
             lowered.append(item)
             continue
-        encrypted = item.get("encrypted_content")
-        unsupported_marker = item.get("type") == "context_compaction" and not item.keys() <= _LOCAL_MARKER_KEYS
-        if not unsupported_marker:
-            summary = _proxy_compaction_summary(item, index)
-            if summary is not None:
-                lowered.append(_summary_message(summary))
-                changed = True
-                continue
-        if item.get("type") == "context_compaction" and encrypted is None and not unsupported_marker:
-            # Local summaries are independent ordinary messages, not in this marker.
+        projected = project_source_compaction_item(item, index)
+        if projected is None:
             omitted += 1
-            continue
-        reason = "opaque_checkpoint"
-        if unsupported_marker:
-            reason = "unsupported_marker_payload"
-        elif encrypted is not None and (not isinstance(encrypted, str) or not encrypted):
-            reason = "invalid_ciphertext"
-        elif encrypted is None:
-            reason = "missing_checkpoint_payload"
-        raise _checkpoint_error(
-            item,
-            index,
-            reason=reason,
-            message="This model source cannot read the compaction checkpoint; use the original provider or resend "
-            "the complete materialized history.",
-        )
+        else:
+            lowered.append(projected)
+            changed = True
     if omitted or changed:
         payload["input"] = lowered
     if omitted:
         logger.info("source_compaction_markers_skipped request_id=%s count=%d", get_request_id(), omitted)
+
+
+def project_source_compaction_item(item: Mapping[str, JsonValue], index: int) -> MutableJsonObject | None:
+    """Validate one checkpoint using its original logical-input position."""
+    encrypted = item.get("encrypted_content")
+    unsupported_marker = item.get("type") == "context_compaction" and not item.keys() <= _LOCAL_MARKER_KEYS
+    if not unsupported_marker:
+        summary = _proxy_compaction_summary(item, index)
+        if summary is not None:
+            return _summary_message(summary)
+    if item.get("type") == "context_compaction" and encrypted is None and not unsupported_marker:
+        # Local summaries are independent ordinary messages, not in this marker.
+        return None
+    reason = "opaque_checkpoint"
+    if unsupported_marker:
+        reason = "unsupported_marker_payload"
+    elif encrypted is not None and (not isinstance(encrypted, str) or not encrypted):
+        reason = "invalid_ciphertext"
+    elif encrypted is None:
+        reason = "missing_checkpoint_payload"
+    raise _checkpoint_error(
+        item,
+        index,
+        reason=reason,
+        message="This model source cannot read the compaction checkpoint; use the original provider or resend "
+        "the complete materialized history.",
+    )
 
 
 def _proxy_compaction_summary(item: Mapping[str, JsonValue], index: int) -> str | None:

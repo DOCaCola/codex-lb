@@ -16,9 +16,10 @@ from app.core.types import JsonValue
 from app.core.utils.sse import parse_sse_data_json
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._service.support import _request_log_client_fields
-from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.affinity import _owner_lookup_session_id_from_headers
+from app.modules.proxy.checkpoint_history import materialize_source_checkpoints
 from app.modules.proxy.replay_output import ReplayOutputCollector
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
 
 class SourceContinuation:
@@ -36,6 +37,8 @@ class SourceContinuation:
         self.chat_input: list[JsonValue] | None = None
         self.chat_instructions: str | None = None
         self.retain_incomplete = retain_incomplete
+        self.headers = request.headers
+        self.api_key = api_key
 
     async def expand(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         result = deepcopy(payload)
@@ -56,6 +59,7 @@ class SourceContinuation:
             result["input"] = history.expand(cast(list[JsonValue], delta))
             result.pop("previous_response_id", None)
         result["store"] = False
+        result = await materialize_source_checkpoints(result, self.headers, self.api_key)
         self.payload = result
         return deepcopy(result)
 

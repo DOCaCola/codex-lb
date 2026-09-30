@@ -14,7 +14,7 @@ from app.modules.api_keys.service import ApiKeysService
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.proxy import service as proxy_service
 from app.modules.proxy._service.websocket import mixin as websocket_mixin
-from app.modules.proxy._service.websocket.replay_store import ReplayScope
+from app.modules.proxy.replay_store import ReplayScope
 from tests.integration.test_proxy_affinity_observation import _import_synthetic_account
 from tests.integration.test_proxy_affinity_websocket_observation import SyntheticUpstream, seed_account
 from tests.unit.test_proxy_utils import _repo_factory, _RequestLogsRecorder

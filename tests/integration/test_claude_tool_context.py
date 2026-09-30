@@ -138,7 +138,7 @@ async def test_http_external_task_preserves_text_images_in_established_history(
     async_client, pool, monkeypatch, path, stream
 ):
     from app.core.config.settings import get_settings
-    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
     captured, closed = install_upstream(monkeypatch)
     headers = {"session_id": "established-task"}
@@ -182,7 +182,7 @@ async def test_http_external_task_preserves_text_images_in_established_history(
 async def test_http_continuation_restores_real_tool_pair_after_seed(async_client, pool, monkeypatch, path, seed):
     from app.core.config.settings import get_settings
     from app.modules.claude.protocol import ToolIdentity
-    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
     captured, _ = install_upstream(
         monkeypatch,

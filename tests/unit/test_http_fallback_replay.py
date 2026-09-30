@@ -7,7 +7,7 @@ import pytest
 
 from app.core.clock import RealClock
 from app.core.types import JsonValue
-from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
 
 @pytest.mark.asyncio

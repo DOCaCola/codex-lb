@@ -65,6 +65,7 @@ from app.modules.proxy.affinity import (
 )
 from app.modules.proxy.affinity_observation import AffinityObservation
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
+from app.modules.proxy.checkpoint_history import retain_native_checkpoint
 from app.modules.proxy.continuity import (
     resolve_required_account_id,
     without_http_bridge_session_affinity_headers,
@@ -1719,6 +1720,7 @@ class _CompactMixin:
                             request_service_tier=request_service_tier,
                         )
                         log_status = "success"
+                        await retain_native_checkpoint(payload, response, headers, api_key, account.id)
                         return response
                     except ProxyResponseError as exc:
                         if exc.failure_phase == "usage_settlement":

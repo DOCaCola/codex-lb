@@ -14,7 +14,7 @@ from app.core.openai.compaction import decode_codex_lb_compaction_summary, encod
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.openai.requests import sanitize_native_responses_input
 from app.modules.proxy import service as proxy_service
-from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from tests.integration import test_claude_provider_history as provider_fixtures
 from tests.integration.model_source_helpers import _create_model_source, stub_source_upstreams
 from tests.integration.test_claude_inference import install_upstream

@@ -295,6 +295,7 @@ from app.modules.proxy._service.support import (
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.capability_routing import required_capability_metadata_values
+from app.modules.proxy.checkpoint_history import materialize_source_checkpoints
 from app.modules.proxy.downstream_delivery import DeliveryTracedStreamingResponse
 from app.modules.proxy.helpers import _openai_error_param, _parse_openai_error, _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import (
@@ -5349,6 +5350,11 @@ async def _source_compaction_response(
                 payload.model_dump(mode="json", exclude_none=True)
             )
             payload = ResponsesCompactRequest.model_validate(expanded)
+        else:
+            expanded = await materialize_source_checkpoints(
+                payload.model_dump(mode="json", exclude_none=True), request.headers, api_key
+            )
+            payload = ResponsesCompactRequest.model_validate(expanded)
         source_request = build_source_compaction_request(payload)
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
@@ -5671,6 +5677,11 @@ async def _dispatch_source_responses_attempt(
             payload = payload.model_copy(
                 update={"input": expanded.get("input"), "previous_response_id": None, "store": False}
             )
+        elif native_request is None:
+            expanded = await materialize_source_checkpoints(
+                payload.model_dump_for_forwarding(), request.headers, api_key
+            )
+            payload = payload.model_copy(update={"input": expanded.get("input")})
         source_payload = (
             _shape_source_responses_payload(
                 payload, source, api_key=api_key, require_complete_history=require_complete_history

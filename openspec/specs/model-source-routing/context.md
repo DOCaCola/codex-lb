@@ -29,7 +29,8 @@ user("Readable summary"), user("Continue")]` sends the two readable messages.
 Native OpenAI requests keep the original marker.
 
 An encrypted native checkpoint is different: it may contain the entire compacted
-conversation. It still fails explicitly, as do empty/wrong-typed ciphertext,
+conversation. Without a verified readable recovery record it fails explicitly,
+as do empty/wrong-typed ciphertext,
 unknown marker payload fields and corrupt `clb1:` summaries. There is no attempt
 to decrypt it, invent a summary, silently discard history or modify client files.
 Projection validates the whole input before replacing it; rejection identifies
@@ -44,6 +45,53 @@ local markers because their summary follows as an ordinary message. Its fallback
 note for unreadable native checkpoints is not adopted. The production rejection
 at 2026-09-30T16:53:37Z lacked subtype/body diagnostics; it does not prove that
 particular request was marker-only.
+
+## Verified readable checkpoint recovery
+
+Successful native compact-service calls and full-input native WebSocket compaction
+completions bind the checkpoint's SHA-256 digest to the readable logical input.
+Publication follows usage settlement and precedes returning the compact result.
+This is recovery of visible input, not decryption of native private state.
+An authenticated API key and a real conversation/session identity are required;
+anonymous requests and generic source fallback scopes do not seed shared records.
+
+Messages, original instructions, readable reasoning, direct tool call/result pairs
+and attachments remain intact. Transport IDs/status/telemetry, tool advertisements,
+payload-free local markers and reasoning ciphertext are not retained. Mirrored
+reasoning summary/content is kept once. No old task messages or tool evidence are
+discarded on a guess that they are unimportant. Unknown semantic state, hosted
+resources, unresolved native handles, unpaired outputs and empty readable input
+make the checkpoint ineligible rather than publishing partial recovery.
+
+Records live in the private checkpoint-history namespace and reuse atomic,
+integrity-checked replay storage: one-hour TTL, up to 1000 entries, 256 MiB per
+entry and 1 GiB total, with bounded memory and periodic cleanup. Reads do not
+extend expiry. Native encrypted checkpoints are never stored in the record body;
+the key is a digest, scoped by API key and conversation. A chained compact stores
+its complete materialized readable input, so expiration of its predecessor does
+not invalidate the new record.
+
+For example, compacting [user(task), tool-call, tool-result] through the native
+compact endpoint returns the unchanged OpenAI checkpoint. Switching to Claude
+with [checkpoint, user(continue)] in the same scope restores the retained visible
+context before policy checks. A v1 preserved-message prefix is replaced only if
+it exactly matches the recorded compact result, preventing duplication without
+heuristic text deduplication. Source continuation then retains the materialized
+input, so later expiry of the native record does not erase that successful switch.
+
+This does not recover unobserved legacy checkpoints, native handle-only history,
+or provider-private resources. Generic native V1 generation streams remain
+unchanged; their compact endpoint is the capture surface. If recovered history
+exceeds the destination's capacity, its refusal is returned without truncation or
+a silently billed extra summarization call. Logs contain counts and bounded
+reasons, never messages, identifiers or ciphertext.
+
+Source inspection on 2026-09-30 found omission rather than readable recovery in
+Sub2API 42bc7f6c (#5084 merged July 31; #6397 merged September 5), and warnings plus
+omission in CLIProxyAPI 97f244b8 (#5516 closed without merging). OmniRoute dbe703a0
+rejects unsupported types on the normal translation path and uses a placeholder
+in its ChatGPT-web bridge. None establishes native checkpoint decoding; their
+gateway-owned portable envelopes remain distinct from this retained-input mapping.
 
 ## Complete source compaction input
 

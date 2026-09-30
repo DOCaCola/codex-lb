@@ -11,7 +11,7 @@ from app.core.crypto import TokenEncryptor
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.schemas import CatalogModel, UsageSnapshot
-from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from tests.integration.test_claude_accounts import import_body, install_profile_stub
 from tests.integration.test_claude_inference import install_upstream
 from tests.integration.test_claude_routing import ADAPTIVE_XHIGH

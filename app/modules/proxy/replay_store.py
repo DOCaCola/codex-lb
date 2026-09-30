@@ -1,4 +1,4 @@
-"""Private, bounded continuation storage for stateless HTTP fallback turns.
+"""Private, bounded retention for continuation and checkpoint materialization.
 
 Port of OpenCodex's input-plus-output retention and identity-checked full resend
 rules (state.ts at 9a27e86992d7a014e0aa92c046199b9fac148201). Small serialized

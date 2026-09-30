@@ -9297,7 +9297,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
     from app.core.clients.responses_transport import ResponsesTransport
     from app.core.utils.sse import format_sse_event
-    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore
 
     limit = 2048
     http_bodies = []
@@ -9496,7 +9496,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
 def test_backend_http_replay_cache_miss_requests_full_history_before_upstream(
     app_instance, monkeypatch, tmp_path, endpoint, expected_code
 ):
-    from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore
     from app.modules.request_logs.repository import PreviousResponseOwnerRecord, RequestLogsRepository
 
     connect = AsyncMock(side_effect=AssertionError("Cache miss must not dispatch upstream"))

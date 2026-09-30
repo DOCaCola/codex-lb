@@ -13,7 +13,7 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.message_coercion import coerce_messages
 from app.core.types import JsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState
-from app.modules.proxy._service.websocket.replay_store import HTTPFallbackReplayStore, ReplayHistory, ReplayScope
+from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayHistory, ReplayScope
 
 logger = logging.getLogger(__name__)
 
