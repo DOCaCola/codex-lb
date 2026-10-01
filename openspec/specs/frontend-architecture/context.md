@@ -63,6 +63,20 @@ sections with their controls disabled by the existing `canWrite` gating.
 - The accounts reset-credits badge stays on the core Accounts item in both
   desktop and mobile navs.
 
+## Direct conversation details from request details
+
+Request details expose two distinct actions: the conversation ID retains its
+existing request-log filtering behavior, while the adjacent Details link opens
+the same Conversation Details dialog used by the Conversations view. Both reuse
+the existing `conversations:read` gate. The details dialog is mounted only after
+selection, so viewing request metadata alone does not issue a conversation query.
+
+For example, an operator inspecting a request from `conv / a` can open that
+conversation's activity and model breakdown without leaving a filtered request
+list or resetting its page. The existing query encodes the opaque ID and owns
+loading/error handling; closing the dialog clears the local selection. No new
+route, permission, API, or conversation storage is introduced.
+
 ## Dashboard partial-failure isolation
 
 ### Purpose and scope

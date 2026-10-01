@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaginationControls } from "@/features/dashboard/components/filters/pagination-controls";
+import { ConversationDetailsDialog } from "@/features/dashboard/components/conversation-details-dialog";
 import { RequestArchivePanel } from "@/features/conversation-archive/components/request-archive-panel";
 import {
   ALL_REQUEST_LOG_COLUMNS,
@@ -305,6 +306,7 @@ export function RecentRequestsTable({
 }: RecentRequestsTableProps) {
   const { t } = useTranslation();
   const [selectedRequest, setSelectedRequest] = useState<RequestLog | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const blurred = usePrivacyStore((s) => s.blurred);
   // User agent, client IP and the archive panel are served only with `conversations:read`.
   const canReadConversations = usePermission("conversations:read");
@@ -725,6 +727,21 @@ export function RecentRequestsTable({
                       ) : (
                         <p className="min-w-0 flex-1 break-all text-sm leading-relaxed">—</p>
                       )}
+                      {selectedRequest?.conversationId ? (
+                        <Button
+                          type="button"
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0 text-xs"
+                          aria-label={t("dashboard.conversations.viewDetailsAria", { id: selectedRequest.conversationId })}
+                          onClick={() => {
+                            setSelectedConversationId(selectedRequest.conversationId);
+                            setSelectedRequest(null);
+                          }}
+                        >
+                          {t("dashboard.conversations.viewDetails")}
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -766,6 +783,15 @@ export function RecentRequestsTable({
           <DialogFooter showCloseButton />
         </DialogContent>
       </Dialog>
+      {canReadConversations && selectedConversationId !== null ? (
+        <ConversationDetailsDialog
+          open
+          conversationId={selectedConversationId}
+          onOpenChange={(open) => {
+            if (!open) setSelectedConversationId(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

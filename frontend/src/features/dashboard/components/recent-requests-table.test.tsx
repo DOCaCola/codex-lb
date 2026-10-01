@@ -1,9 +1,12 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpResponse, http } from "msw";
 
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { usePrivacyStore } from "@/hooks/use-privacy";
-import { ADMIN_PERMISSIONS, OPERATOR_PERMISSIONS, createRequestLogEntry } from "@/test/mocks/factories";
+import { ADMIN_PERMISSIONS, OPERATOR_PERMISSIONS, createConversationDetails, createRequestLogEntry } from "@/test/mocks/factories";
+import { server } from "@/test/mocks/server";
+import { renderWithProviders } from "@/test/utils";
 import { RecentRequestsTable } from "@/features/dashboard/components/recent-requests-table";
 import { formatGenerationSpeed } from "@/features/dashboard/generation-speed";
 import {
@@ -1453,6 +1456,67 @@ describe("RecentRequestsTable", () => {
     const costSection = within(dialog).getByText("Cost").closest("div.space-y-2");
     expect(costSection).toHaveTextContent("1K Input");
     expect(costSection).toHaveTextContent("500 Output");
+  });
+
+  it("opens conversation details lazily without changing filters and can select another conversation", async () => {
+    const ids = ["conv / encoded?#", "conv-next"];
+    const fetchedIds: string[] = [];
+    const onConversationClick = vi.fn();
+    const onOffsetChange = vi.fn();
+    const onLimitChange = vi.fn();
+    const originalLocation = window.location.href;
+    server.use(http.get("/api/conversations/:id", ({ params }) => {
+      const id = String(params.id);
+      fetchedIds.push(id);
+      return HttpResponse.json(createConversationDetails({ conversationId: id }));
+    }));
+    renderWithProviders(
+      <RecentRequestsTable
+        {...PAGINATION_PROPS}
+        offset={25}
+        total={27}
+        accounts={[]}
+        requests={ids.map((conversationId) => createRequestLogEntry({ requestId: `req-${conversationId}`, conversationId }))}
+        onConversationClick={onConversationClick}
+        onOffsetChange={onOffsetChange}
+        onLimitChange={onLimitChange}
+      />,
+    );
+
+    for (const [index, id] of ids.entries()) {
+      fireEvent.click(screen.getAllByRole("button", { name: "View Details" })[index]);
+      const requestDialog = screen.getByRole("dialog");
+      expect(fetchedIds).toHaveLength(index);
+      fireEvent.click(within(requestDialog).getByRole("button", { name: `View details for conversation ${id}` }));
+      expect(await screen.findByText(id)).toBeInTheDocument();
+      const detailsDialog = screen.getByRole("dialog");
+      expect(within(detailsDialog).getByText(id)).toBeInTheDocument();
+      expect(within(detailsDialog).getByRole("heading", { name: "Conversation Details" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Request Details" })).not.toBeInTheDocument();
+      fireEvent.click(within(detailsDialog).getAllByRole("button", { name: "Close" })[0]);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    }
+
+    expect(fetchedIds).toEqual(ids);
+    expect(onConversationClick).not.toHaveBeenCalled();
+    expect(onOffsetChange).not.toHaveBeenCalled();
+    expect(onLimitChange).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(originalLocation);
+  });
+
+  it.each([
+    { conversationId: null, permissions: ADMIN_PERMISSIONS },
+    { conversationId: "restricted-conversation", permissions: OPERATOR_PERMISSIONS },
+  ])("does not offer or fetch conversation details without an ID or permission: $conversationId", ({ conversationId, permissions }) => {
+    const fetchDetails = vi.fn(() => HttpResponse.json(createConversationDetails()));
+    server.use(http.get("/api/conversations/:id", fetchDetails));
+    useAuthStore.setState({ permissions });
+    renderWithProviders(
+      <RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[createRequestLogEntry({ conversationId })]} />,
+    );
+    const dialog = openRequestDetails();
+    expect(within(dialog).queryByRole("button", { name: /View details for conversation/ })).not.toBeInTheDocument();
+    expect(fetchDetails).not.toHaveBeenCalled();
   });
 
   it("closes the dialog when conversation ID button is clicked and fires handler", () => {

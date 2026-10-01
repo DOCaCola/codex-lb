@@ -922,6 +922,49 @@ for (const width of [1440, 390]) {
   });
 }
 
+for (const width of [1440, 390]) {
+  test(`request conversation details link — ${width}`, async ({ page }, testInfo) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.setViewportSize({ width, height: 1000 });
+    await applyTheme(page, "light");
+    await interceptApi(page);
+    const request = { ...requestLogs[0], conversationId: "conv_abc" };
+    await page.route("**/health/ready", (route) => fulfill(route, { status: "ok" }));
+    await page.route("**/api/request-logs?*", (route) =>
+      fulfill(route, createRequestLogsResponse([request], 1, false)),
+    );
+    let detailsFetches = 0;
+    await page.route("**/api/conversations/conv_abc", (route) => {
+      detailsFetches += 1;
+      return fulfill(route, createConversationDetails({ conversationId: "conv_abc" }));
+    });
+    await page.goto(`${BASE_URL}/dashboard`);
+    await page.getByRole("button", { name: "View Details", exact: true }).click();
+    const requestDialog = page.getByRole("dialog");
+    const action = requestDialog.getByRole("button", { name: "View details for conversation conv_abc" });
+    await expect(action).toBeVisible();
+    expect(detailsFetches).toBe(0);
+    await action.scrollIntoViewIfNeeded();
+    await requestDialog.screenshot({ animations: "disabled", path: testInfo.outputPath("request-conversation-link.png") });
+    const originalUrl = page.url();
+    await action.focus();
+    await page.keyboard.press("Enter");
+    const detailsDialog = page.getByRole("dialog");
+    await expect(detailsDialog.getByRole("heading", { name: "Conversation Details", exact: true })).toBeVisible();
+    await expect(detailsDialog.getByTestId("conversation-details-information")).toBeVisible();
+    await expect(detailsDialog.getByText("conv_abc", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    expect(detailsFetches).toBe(1);
+    expect(page.url()).toBe(originalUrl);
+    await detailsDialog.screenshot({ animations: "disabled", path: testInfo.outputPath("request-conversation-details.png") });
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "View Details", exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
 test("provider request attribution", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await applyTheme(page, "light");
