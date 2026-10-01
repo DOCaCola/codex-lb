@@ -68,13 +68,19 @@ class ClaudeRepository:
             if window is not None:
                 reset = window.resets_at.astimezone(UTC).replace(tzinfo=None) if window.resets_at else None
                 if sample_seconds:
+                    # Only an unchanged reading is redundant: a value that moved
+                    # within the interval (e.g. 99% to 100%) is new evidence.
                     last = await self.session.scalar(
                         select(ClaudeQuotaHistory)
                         .where(ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == name)
                         .order_by(ClaudeQuotaHistory.observed_at.desc())
                         .limit(1)
                     )
-                    if last is not None and observed_at - last.observed_at < timedelta(seconds=sample_seconds):
+                    if (
+                        last is not None
+                        and observed_at - last.observed_at < timedelta(seconds=sample_seconds)
+                        and last.used_percent == window.utilization
+                    ):
                         previous_reset = (
                             round(last.resets_at.replace(tzinfo=UTC).timestamp()) if last.resets_at else None
                         )

@@ -180,6 +180,33 @@ async def test_sampling_preserves_reset_changes_within_interval(async_client, mo
         ]
 
 
+async def test_sampling_preserves_utilization_changes_within_interval(async_client, monkeypatch):
+    install_profile_stub(monkeypatch)
+    source = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    at = datetime(2026, 10, 1, 17, 16, 18, tzinfo=UTC)
+    reset = datetime(2026, 10, 1, 17, 20, tzinfo=UTC)
+    async with SessionLocal() as session:
+        repository = ClaudeRepository(session)
+        # The 100% reading arrived 27 s after 99% and must not be dropped.
+        for seconds, used in [(0, 99), (27, 100), (40, 100)]:
+            await repository.record_quota(
+                source,
+                UsageSnapshot(five_hour=QuotaWindow(utilization=used, resets_at=reset)),
+                at + timedelta(seconds=seconds),
+                sample_seconds=60,
+            )
+            await session.flush()
+        await session.commit()
+        rows = list(
+            await session.scalars(
+                select(ClaudeQuotaHistory)
+                .where(ClaudeQuotaHistory.source_id == source)
+                .order_by(ClaudeQuotaHistory.observed_at)
+            )
+        )
+        assert [(row.observed_at.second, row.used_percent) for row in rows] == [(18, 99), (45, 100)]
+
+
 def test_deadline_migration_preserves_legacy_rows(tmp_path):
     from alembic import command
     from sqlalchemy import create_engine, inspect, text

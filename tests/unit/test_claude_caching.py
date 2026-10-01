@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from app.modules.claude.caching import cache_translated
+from app.modules.claude.caching import cache_translated, retain_thinking
 from app.modules.claude.profile import RequestProfile
 from app.modules.claude.wire_identity import project_session
 
@@ -36,6 +36,26 @@ def test_translated_cache_markers_do_not_touch_signed_server_blocks():
     once = deepcopy(body)
     cache_translated(body)
     assert body == once
+
+
+@pytest.mark.parametrize(
+    "thinking,retained",
+    [
+        ({"type": "adaptive"}, True),
+        ({"type": "enabled", "budget_tokens": 4096}, True),
+        ({"type": "disabled"}, False),
+        (None, False),
+    ],
+)
+def test_earlier_turn_thinking_is_kept_only_when_thinking_is_on(thinking, retained):
+    body = {"messages": []} if thinking is None else {"messages": [], "thinking": thinking}
+    assert retain_thinking(body) is retained
+    if retained:
+        # Claude Code's value: the default strips earlier-turn thinking and
+        # moves the cached prefix at every new user turn.
+        assert body["context_management"] == {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]}
+    else:
+        assert "context_management" not in body
 
 
 def test_synthesized_identity_is_stable_scoped_and_not_a_provider_account():

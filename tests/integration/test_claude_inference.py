@@ -676,10 +676,15 @@ async def test_haiku_continues_unsigned_tool_turn_with_thinking_disabled(async_c
     assert response.status_code == 200, response.text
     assert captured[0][2]["thinking"] == {"type": "disabled"}
     assert "interleaved-thinking-2025-05-14" not in captured[0][3].get("anthropic-beta", "")
+    # The keep-all edit is rejected upstream unless thinking is on.
+    assert "context_management" not in captured[0][2]
+    assert "context-management-2025-06-27" not in captured[0][3].get("anthropic-beta", "")
     next_turn = [*loop, {"role": "assistant", "content": "Done"}, {"role": "user", "content": "now summarize"}]
     response = await async_client.post("/v1/responses", json={**body, "input": next_turn})
     assert response.status_code == 200, response.text
     assert captured[1][2]["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+    assert captured[1][2]["context_management"] == {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]}
+    assert "context-management-2025-06-27" in captured[1][3]["anthropic-beta"].split(",")
     async with SessionLocal() as session:
         rows = (await session.scalars(select(RequestLog).order_by(RequestLog.id))).all()
         assert [(row.reasoning_effort, row.upstream_thinking_mode) for row in rows] == [

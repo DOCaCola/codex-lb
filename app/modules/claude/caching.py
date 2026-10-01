@@ -4,12 +4,18 @@ Breakpoints use the 1-hour TTL Claude Code itself sends: agent turns routinely
 pause longer than 5 minutes for tool work and review, and a 5-minute entry then
 rewrites the whole prefix. Every breakpoint here is gateway-owned and shares one
 TTL, so the API's rule that a longer TTL never follows a shorter one holds.
+
+Earlier-turn thinking is kept the same way Claude Code keeps it. By default the
+API strips thinking from previous assistant turns, so the replayed prefix
+changes whenever a user turn starts and everything after the tools is rewritten.
 """
 
 from pydantic import JsonValue
 
 EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
+CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 _BREAKPOINT: dict[str, JsonValue] = {"type": "ephemeral", "ttl": "1h"}
+_KEEP_THINKING = {"type": "clear_thinking_20251015", "keep": "all"}
 
 
 def cache_translated(body: dict[str, JsonValue]) -> None:
@@ -35,3 +41,12 @@ def cache_translated(body: dict[str, JsonValue]) -> None:
         targets.extend(users[-2:])
     for block in targets:
         block["cache_control"] = dict(_BREAKPOINT)
+
+
+def retain_thinking(body: dict[str, JsonValue]) -> bool:
+    """Keep earlier-turn thinking; the API rejects the edit unless thinking is on."""
+    thinking = body.get("thinking")
+    if not isinstance(thinking, dict) or thinking.get("type") not in ("enabled", "adaptive"):
+        return False
+    body["context_management"] = {"edits": [dict(_KEEP_THINKING)]}
+    return True

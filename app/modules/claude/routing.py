@@ -56,8 +56,17 @@ class ClaudePoolUnavailable(ClaudeError):
     def error_detail(self) -> OpenAIErrorDetail:
         detail = super().error_detail
         if self.retry_at is not None:
-            detail["resets_at"] = self.retry_at.timestamp()
+            detail["resets_at"] = math.ceil(self.retry_at.timestamp())
             detail["resets_in_seconds"] = int(self.response_headers["Retry-After"])
+        return detail
+
+    @property
+    def responses_error_detail(self) -> OpenAIErrorDetail:
+        detail = self.error_detail
+        if self.status_code == 429:
+            # 429 is quota-only exhaustion. Codex presents only this type as a
+            # usage limit with its reset time; other 429s are retried blindly.
+            detail["type"] = "usage_limit_reached"
         return detail
 
 

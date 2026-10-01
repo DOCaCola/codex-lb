@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -45,7 +46,7 @@ async def test_latest_per_account_earliest_across_pool_and_owner(pool):
     assert caught.value.retry_at == now + timedelta(hours=5)
     assert "five_hour" in str(caught.value)
     assert "seven_day_overage_included" in str(caught.value)
-    assert caught.value.error_detail["resets_at"] == (now + timedelta(hours=5)).timestamp()
+    assert caught.value.error_detail["resets_at"] == math.ceil((now + timedelta(hours=5)).timestamp())
     scoped = key(source_assignment_scope_enabled=True, assigned_source_ids=[pool[0]])
     with pytest.raises(ClaudePoolUnavailable) as caught:
         await choose(api_key=scoped, now=now)
@@ -113,9 +114,11 @@ async def test_pool_error_at_http_boundary(async_client, pool, path):
     response = await async_client.post(path, json=body)
     assert response.status_code == 429, response.text
     assert response.json()["error"]["code"] == "claude_pool_rate_limited"
-    assert response.json()["error"]["type"] == "rate_limit_error"
+    native = "/messages" in path
+    assert response.json()["error"]["type"] == ("rate_limit_error" if native else "usage_limit_reached")
+    assert "plan_type" not in response.json()["error"]
     assert 290 <= int(response.headers["retry-after"]) <= 300
-    assert response.json()["error"]["resets_at"] == (now + timedelta(minutes=5)).timestamp()
+    assert response.json()["error"]["resets_at"] == math.ceil((now + timedelta(minutes=5)).timestamp())
     assert 290 <= response.json()["error"]["resets_in_seconds"] <= 300
     assert "five_hour" in response.json()["error"]["message"]
 
@@ -179,6 +182,6 @@ async def test_owner_retry_requires_every_exhausted_window_to_recover(pool, know
         assert "resets_at" not in error.error_detail
         assert error.response_headers == {}
     else:
-        assert error.error_detail["resets_at"] == weekly_reset.timestamp()
+        assert error.error_detail["resets_at"] == math.ceil(weekly_reset.timestamp())
         # Passing both deadlines permits the same owner, without moving history.
         assert await choose(owner_source_id=pool[0], now=weekly_reset + timedelta(seconds=1)) == pool[0]

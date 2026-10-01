@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
@@ -35,9 +36,10 @@ def owned_history(source):
     ]
 
 
-def assert_quota_detail(error, deadline):
-    assert error["type"] == "rate_limit_error"
+def assert_quota_detail(error, deadline, *, native=False):
+    assert error["type"] == ("rate_limit_error" if native else "usage_limit_reached")
     assert error["code"] == "previous_response_owner_unavailable"
+    assert "plan_type" not in error
     assert "quota-exhausted" in error["message"]
     assert "five_hour" in error["message"]
     assert "private" not in json.dumps(error)
@@ -45,7 +47,7 @@ def assert_quota_detail(error, deadline):
         assert "resets_at" not in error
         assert "resets_in_seconds" not in error
     else:
-        assert error["resets_at"] == deadline.timestamp()
+        assert error["resets_at"] == math.ceil(deadline.timestamp())
         assert 290 <= error["resets_in_seconds"] <= 300
 
 
@@ -156,7 +158,7 @@ async def test_native_resource_owner_quota_is_429(async_client, pool, monkeypatc
     )
     assert response.status_code == 429, response.text
     assert response.json()["type"] == "error"
-    assert_quota_detail(response.json()["error"], deadline)
+    assert_quota_detail(response.json()["error"], deadline, native=True)
     assert 290 <= int(response.headers["retry-after"]) <= 300
     assert captured == []
     async with SessionLocal() as session:

@@ -36,6 +36,11 @@ class ClaudeError(ValueError):
     def error_detail(self) -> OpenAIErrorDetail:
         return {"type": self.error_type, "code": self.code, "message": str(self)}
 
+    @property
+    def responses_error_detail(self) -> OpenAIErrorDetail:
+        """Detail in the OpenAI dialect; ``error_detail`` is the Anthropic one."""
+        return self.error_detail
+
 
 @dataclass(frozen=True)
 class PKCE:

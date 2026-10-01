@@ -1,0 +1,4 @@
+- [x] 1. Send `clear_thinking_20251015` `keep: "all"` and the context-management beta on translated requests whose thinking is enabled or adaptive.
+- [x] 2. Store quota samples whose utilization or reset deadline changed; bound only unchanged repeats.
+- [x] 3. Present quota-only Claude refusals as `usage_limit_reached` with integer `resets_at` on Responses surfaces; keep native Messages `rate_limit_error`.
+- [x] 4. Unit and integration tests for each; lint, types, affected suites; validate OpenSpec.

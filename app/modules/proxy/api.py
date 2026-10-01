@@ -5806,7 +5806,7 @@ async def _dispatch_source_responses_attempt(
         return _logged_error_json_response(
             request,
             exc.status_code,
-            {"error": exc.error_detail},
+            {"error": exc.responses_error_detail},
             headers={**rate_limit_headers, **exc.response_headers},
         )
     claims = try_claim_source_admission(source)

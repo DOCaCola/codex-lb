@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -27,9 +28,13 @@ def test_reset_details_share_ceil_rounded_retry_timing(monkeypatch, seconds, exp
         "type": "rate_limit_error",
         "code": "previous_response_owner_unavailable",
         "message": "quota blocked",
-        "resets_at": deadline.timestamp(),
+        "resets_at": math.ceil(deadline.timestamp()),
         "resets_in_seconds": expected,
     }
+    # Codex parses resets_at as integer seconds and only usage_limit_reached
+    # as a usage limit; the Anthropic dialect keeps rate_limit_error.
+    assert error.responses_error_detail == {**error.error_detail, "type": "usage_limit_reached"}
+    assert isinstance(error.responses_error_detail["resets_at"], int)
 
 
 def test_unknown_reset_is_not_invented():
@@ -40,6 +45,12 @@ def test_unknown_reset_is_not_invented():
         "code": "previous_response_owner_unavailable",
         "message": "quota blocked",
     }
+    assert error.responses_error_detail["type"] == "usage_limit_reached"
+
+
+def test_non_quota_pool_error_keeps_its_type_in_both_dialects():
+    error = ClaudePoolUnavailable("claude_pool_unavailable", "unavailable")
+    assert error.error_detail["type"] == error.responses_error_detail["type"] == "server_error"
 
 
 def test_ordinary_claude_error_retains_its_public_shape():
@@ -49,4 +60,5 @@ def test_ordinary_claude_error_retains_its_public_shape():
         "code": "claude_invalid_request",
         "message": "invalid request",
     }
+    assert error.responses_error_detail == error.error_detail
     assert error.response_headers == {}
