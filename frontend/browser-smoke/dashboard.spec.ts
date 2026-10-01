@@ -239,13 +239,21 @@ for (const width of [390, 1440]) {
         createRequestLogEntry({ accountId: "acc_primary", requestId: "image", model: "gpt-image-2", requestOperation: "image_edit" }),
         createRequestLogEntry({ accountId: "acc_primary", requestId: "count", requestOperation: "count_tokens", requestKind: "count_tokens" }),
         createRequestLogEntry({ accountId: "acc_primary", requestId: "legacy", requestOperation: null }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "normal-responses", requestOperation: "responses" }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "normal-messages", requestOperation: "messages" }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "compact", requestOperation: "compaction" }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "handoff", requestOperation: "checkpoint_handoff" }),
       ];
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify(createRequestLogsResponse(requests, 5, false)) });
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(createRequestLogsResponse(requests, requests.length, false)) });
     });
     await page.goto("/dashboard");
     const table = page.getByRole("table").first();
     await expect(table.getByText("Web search", { exact: true })).toBeVisible();
-    await expect(table.getByText("Responses · Warmup", { exact: true })).toBeVisible();
+    await expect(table.getByText("Warmup", { exact: true })).toBeVisible();
+    await expect(table.getByText("Responses", { exact: true })).toHaveCount(0);
+    await expect(table.getByText("Messages", { exact: true })).toHaveCount(0);
+    await expect(table.getByText("Compaction", { exact: true })).toBeVisible();
+    await expect(table.getByText("Checkpoint handoff", { exact: true })).toBeVisible();
     await expect(table.getByText("Image edit", { exact: true })).toBeVisible();
     await expect(table.getByText("Token count", { exact: true })).toBeVisible();
     await expect(table.getByText("Unknown", { exact: true })).toBeVisible();

@@ -444,6 +444,7 @@ export function RecentRequestsTable({
               const planLabel = requestPlanLabel(request, "--");
               const upstreamTransport = request.upstreamTransport;
               const generationSpeed = formatGenerationSpeed(request);
+              const typeLabel = requestTypeLabel(request, t);
 
               return (
                 <TableRow key={request.requestId}>
@@ -483,9 +484,11 @@ export function RecentRequestsTable({
                         {modelDisplayName(request.model, modelNames.get(request.model))}
                         {modelMetadata ? <> <span className="text-muted-foreground">{modelMetadata}</span></> : null}
                       </span>
-                      <div className="mt-1 truncate text-xs text-muted-foreground" title={requestTypeLabel(request, t)}>
-                        {requestTypeLabel(request, t)}
-                      </div>
+                      {typeLabel ? (
+                        <div className="mt-1 truncate text-xs text-muted-foreground" title={typeLabel}>
+                          {typeLabel}
+                        </div>
+                      ) : null}
                       {showRequestedTier ? (
                         <div className="text-[11px] text-muted-foreground">
                           {t("dashboard.requests.requestedTier", { tier: request.requestedServiceTier })}

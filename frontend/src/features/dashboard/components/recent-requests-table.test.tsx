@@ -26,12 +26,39 @@ it("shows operation and workload in the existing model-cell label area", () => {
     createRequestLogEntry({ requestId: "count", requestOperation: "count_tokens", requestKind: "count_tokens" }),
   ]} />);
   expect(screen.getByText("Web search")).toBeInTheDocument();
-  expect(screen.getByText("Responses · Warmup")).toBeInTheDocument();
+  expect(screen.getByText("Warmup")).toBeInTheDocument();
   expect(screen.getByText("Token count")).toBeInTheDocument();
   expect(screen.queryByRole("columnheader", { name: "Type" })).not.toBeInTheDocument();
   expect(screen.getAllByRole("columnheader")).toHaveLength(ALL_REQUEST_LOG_COLUMNS.length);
   const cell = screen.getByText("Web search").closest("td");
   expect(cell).toHaveTextContent("--");
+});
+
+it.each([
+  ["responses", "gpt-6-astra", "Responses"],
+  ["responses", "anthropic/claude-opus-5-5", "Responses"],
+  ["messages", "anthropic/claude-opus-5-5", "Messages"],
+] as const)("hides ordinary %s labels for %s but retains details", (operation, model, label) => {
+  render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
+    createRequestLogEntry({ model, requestOperation: operation, requestKind: "normal" }),
+  ]} />);
+  const modelCell = screen.getByTitle(model).closest("td");
+  expect(modelCell?.querySelector(".mt-1")).toBeNull();
+  expect(screen.queryByText(label)).not.toBeInTheDocument();
+  const dialog = openRequestDetails();
+  expect(within(dialog).getByText(label)).toBeInTheDocument();
+});
+
+it("retains special events and Messages prewarm without standard operation noise", () => {
+  render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
+    createRequestLogEntry({ requestId: "compact", requestOperation: "compaction", requestKind: "normal" }),
+    createRequestLogEntry({ requestId: "handoff", requestOperation: "checkpoint_handoff", requestKind: "normal" }),
+    createRequestLogEntry({ requestId: "prewarm", requestOperation: "messages", requestKind: "prewarm" }),
+  ]} />);
+  expect(screen.getByText("Compaction")).toBeInTheDocument();
+  expect(screen.getByText("Checkpoint handoff")).toBeInTheDocument();
+  expect(screen.getByText("Prewarm")).toBeInTheDocument();
+  expect(screen.queryByText("Messages")).not.toBeInTheDocument();
 });
 const NULL_FAILURE_METADATA = {
   failurePhase: null,

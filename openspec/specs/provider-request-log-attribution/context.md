@@ -67,10 +67,19 @@ and existing native realtime metadata redaction remains unchanged.
 
 For example, a standalone alpha/search request with no model displays `--` with
 `Web search` beneath it; an embedded search tool remains a `Responses` request,
-not a new log row. A Responses warmup displays `Responses · Warmup`. An image edit
+not a new log row. A Responses warmup displays `Warmup`. An image edit
 implemented upstream with Responses still displays `Image edit`. These labels
 reuse the former Warmup line in the Model cell and do not add a table column.
 Request details expose operation separately from accounting workload.
+
+Standard Responses and Messages operations are omitted only from the table's
+secondary model line to reduce routine traffic noise. A normal request renders no
+empty subtitle or margin; a Messages prewarm displays Prewarm alone. Special
+operations such as Compaction, Checkpoint handoff, Chat Completions and Token count
+remain visible. Suppression follows the classified operation, not the model or
+provider: Claude through Codex is still Responses. Explicit operation labels remain
+available in request details and API/storage metadata. No routing or accounting
+behavior changes.
 
 For example, terminal compaction arriving at `/backend-api/codex/responses`
 displays Compaction rather than Responses, even when a provider adapter removes

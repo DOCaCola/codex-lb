@@ -7,11 +7,15 @@ export function requestOperationLabel(request: RequestLog, t: TFunction): string
 }
 
 export function requestTypeLabel(request: RequestLog, t: TFunction): string {
-  const operation = requestOperationLabel(request, t);
+  const standardOperation = request.requestOperation === "responses" || request.requestOperation === "messages";
+  const operation = standardOperation ? "" : requestOperationLabel(request, t);
   const kind = request.requestKind;
   if (kind === "normal" || kind === "count_tokens" || kind === "realtime_live") {
     return operation;
   }
   const workload = t(`dashboard.requests.workloads.${kind === "limit_warmup" ? "warmup" : kind}`);
+  if (!operation) {
+    return workload;
+  }
   return request.requestOperation === kind ? operation : `${operation} · ${workload}`;
 }
