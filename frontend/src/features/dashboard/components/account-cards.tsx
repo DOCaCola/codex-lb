@@ -60,14 +60,14 @@ export function AccountCards({
         onAction={onAction}
       />
     )),
+    ...claudeAccounts.map((account) => (
+      <ClaudeAccountCard key={`claude:${account.id}`} account={account} />
+    )),
     ...openRouterAccounts.map((account) => (
       <OpenRouterAccountCard
         key={`openrouter:${account.id}`}
         account={account}
       />
-    )),
-    ...claudeAccounts.map((account) => (
-      <ClaudeAccountCard key={`claude:${account.id}`} account={account} />
     )),
   ];
 

@@ -21,7 +21,8 @@ class ClaudeRepository:
         return await self.session.get(ClaudeAccount, source_id, populate_existing=True)
 
     async def list_accounts(self) -> list[ClaudeAccount]:
-        return list((await self.session.scalars(select(ClaudeAccount))).unique())
+        rows = await self.session.scalars(select(ClaudeAccount))
+        return sorted(rows.unique(), key=lambda row: (row.source.name, row.source_id))
 
     async def mutate_state(
         self, source_id: str, generation: int, mutate: Callable[[AccountState], AccountState | None]

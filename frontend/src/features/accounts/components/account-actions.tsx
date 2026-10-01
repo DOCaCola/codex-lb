@@ -8,6 +8,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -15,11 +16,17 @@ import { AccountPauseButton } from "@/components/account-pause-button";
 import { AccountRoutingPolicyControl } from "./routing-policy";
 import { Switch } from "@/components/ui/switch";
 import { usePermission } from "@/features/auth/hooks/use-auth";
+import { formatLimitWarmupWindow } from "@/features/accounts/limit-warmup";
+import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import type {
   AccountRoutingPolicy,
   AccountSummary,
 } from "@/features/accounts/schemas";
-import { formatSingleUnitRemaining } from "@/utils/formatters";
+import {
+  formatDateTimeInline,
+  formatSingleUnitRemaining,
+  formatSlug,
+} from "@/utils/formatters";
 
 export type AccountActionsProps = {
   account: AccountSummary;
@@ -35,6 +42,8 @@ export type AccountActionsProps = {
   onExportAuth: (accountId: string) => void;
   onResetCredit: (accountId: string) => void;
   showResetCreditExpiryBadge?: boolean;
+  /** Unknown while settings load; the hint appears only once the global switch is known to be off. */
+  limitWarmupGloballyEnabled?: boolean;
   onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
   onLimitWarmupChange: (accountId: string, enabled: boolean) => void;
   onRoutingPolicyChange: (
@@ -57,11 +66,13 @@ export function AccountActions({
   onExportAuth,
   onResetCredit,
   showResetCreditExpiryBadge = true,
+  limitWarmupGloballyEnabled,
   onSecurityWorkAuthorizedChange,
   onLimitWarmupChange,
   onRoutingPolicyChange,
 }: AccountActionsProps) {
   const { t } = useTranslation();
+  const dateDisplayFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
   // Credential export is its own permission (`accounts:export`), not part of account writes.
   const canExport = usePermission("accounts:export");
   const showOperatorRecoveryAction =
@@ -82,6 +93,11 @@ export function AccountActions({
     readOnly ||
     account.status === "paused" ||
     showOperatorRecoveryAction;
+  const warmup = account.limitWarmup;
+  const warmupDetail = warmup
+    ? `${formatSlug(warmup.status)} | ${formatLimitWarmupWindow(warmup.window)} | ${formatSlug(warmup.model)} | ${formatDateTimeInline(warmup.completedAt ?? warmup.attemptedAt, dateDisplayFormat)}`
+    : t("accounts.listItem.noAttempts");
+  const warmupId = `limit-warmup-${account.accountId}`;
 
   return (
     <div className="space-y-3 border-t pt-4">
@@ -112,6 +128,37 @@ export function AccountActions({
           }
         />
       </label>
+
+      <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2">
+        <div className="min-w-0">
+          <label htmlFor={warmupId} className="flex min-w-0 items-center gap-2 text-xs font-medium">
+            <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{t("settings.routing.limitWarmup.label")}</span>
+          </label>
+          <p id={`${warmupId}-detail`} className="mt-0.5 truncate pl-5.5 text-[11px] text-muted-foreground">
+            {warmupDetail}
+          </p>
+          {limitWarmupGloballyEnabled === false ? (
+            <p className="mt-0.5 pl-5.5 text-[11px] text-amber-600 dark:text-amber-400">
+              {t("accounts.actions.limitWarmupGloballyOff")}{" "}
+              <Link to="/settings" className="underline underline-offset-2 hover:text-foreground">
+                {t("nav.settings")}
+              </Link>
+            </p>
+          ) : null}
+        </div>
+        <Switch
+          id={warmupId}
+          className="shrink-0"
+          aria-describedby={`${warmupId}-detail`}
+          aria-label={t("accounts.actions.limitWarmupFor", {
+            account: account.alias?.trim() || account.displayName || account.email,
+          })}
+          checked={account.limitWarmupEnabled}
+          disabled={busy || readOnly}
+          onCheckedChange={(checked) => onLimitWarmupChange(account.accountId, checked)}
+        />
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {(canResume || !showOperatorRecoveryAction) && <AccountPauseButton
@@ -146,20 +193,6 @@ export function AccountActions({
         >
           <Activity className="h-3.5 w-3.5" />
           {t("accounts.actions.forceProbe")}
-        </Button>
-
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 gap-1.5 text-xs"
-          onClick={() =>
-            onLimitWarmupChange(account.accountId, !account.limitWarmupEnabled)
-          }
-          disabled={busy || readOnly}
-        >
-          <Zap className="h-3.5 w-3.5" />
-          {account.limitWarmupEnabled ? t("accounts.actions.disableWarmup") : t("accounts.actions.enableWarmup")}
         </Button>
 
         {canExport ? (

@@ -104,6 +104,7 @@ export function AccountsPage() {
     settingsQuery.data?.showResetCreditBadges ?? true;
   const showResetCreditExpiryBadge =
     settingsQuery.data?.showResetCreditExpiryBadge ?? true;
+  const limitWarmupGloballyEnabled = settingsQuery.data?.limitWarmupEnabled;
   const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
   const sortedAccounts = useMemo(
     () => sortAccountsForDisplay(accounts, quotaDisplay, accountSortMode),
@@ -328,6 +329,7 @@ export function AccountsPage() {
                         });
                       }}
                       showResetCreditExpiryBadge={showResetCreditExpiryBadge}
+                      limitWarmupGloballyEnabled={limitWarmupGloballyEnabled}
                       onLimitWarmupChange={(accountId, enabled) =>
                         void limitWarmupMutation.mutateAsync({
                           accountId,

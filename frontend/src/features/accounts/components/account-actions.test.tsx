@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { AccountActions } from "@/features/accounts/components/account-actions";
@@ -32,6 +33,103 @@ describe("AccountActions", () => {
 
     expect(screen.queryByRole("button", { name: /Export/ }) !== null).toBe(visible);
     useAuthStore.setState({ permissions: [] });
+  });
+
+  it("shows window warm-up as a setting with its latest attempt", async () => {
+    const onLimitWarmupChange = vi.fn();
+    const attemptedAt = new Date("2026-06-03T12:00:00Z").toISOString();
+    const account = createAccountSummary({
+      displayName: "Warm Account",
+      limitWarmupEnabled: false,
+      limitWarmup: {
+        window: "primary_idle",
+        resetAt: 18_000,
+        status: "succeeded",
+        model: "gpt-5.1-codex-mini",
+        attemptedAt,
+        completedAt: attemptedAt,
+        errorCode: null,
+        errorMessage: null,
+      },
+    });
+
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onResetCredit={vi.fn()}
+        onSecurityWorkAuthorizedChange={vi.fn()}
+        onLimitWarmupChange={onLimitWarmupChange}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Window warm-up for Warm Account" });
+    expect(toggle).toHaveAccessibleDescription(expect.stringContaining("Succeeded | 5h | Gpt-5.1-codex-mini"));
+    expect(screen.queryByRole("button", { name: /Warmup/ })).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    expect(onLimitWarmupChange).toHaveBeenCalledWith(account.accountId, true);
+  });
+
+  it.each([
+    [false, true],
+    [true, false],
+    [undefined, false],
+  ])("with global warm-up %s shows the disabled-globally hint: %s", (globallyEnabled, hinted) => {
+    render(
+      <MemoryRouter>
+        <AccountActions
+          account={createAccountSummary({ limitWarmupEnabled: true })}
+          busy={false}
+          limitWarmupGloballyEnabled={globallyEnabled}
+          onPause={vi.fn()}
+          onResume={vi.fn()}
+          onProbe={vi.fn()}
+          onDelete={vi.fn()}
+          onReauth={vi.fn()}
+          onExportAuth={vi.fn()}
+          onResetCredit={vi.fn()}
+          onSecurityWorkAuthorizedChange={vi.fn()}
+          onLimitWarmupChange={vi.fn()}
+          onRoutingPolicyChange={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText(/Disabled globally/) !== null).toBe(hinted);
+    if (hinted) {
+      expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+    }
+  });
+
+  it("reports no warm-up attempts and disables the switch for read-only users", () => {
+    render(
+      <AccountActions
+        account={createAccountSummary({ displayName: "Cold Account", limitWarmup: null })}
+        busy={false}
+        readOnly
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onResetCredit={vi.fn()}
+        onSecurityWorkAuthorizedChange={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Window warm-up for Cold Account" });
+    expect(toggle).toHaveAccessibleDescription("No attempts");
+    expect(toggle).toBeDisabled();
   });
 
   it("renders an explicit routing policy selector", async () => {

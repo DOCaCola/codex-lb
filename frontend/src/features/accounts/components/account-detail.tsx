@@ -40,6 +40,7 @@ export type AccountDetailProps = {
   onExportAuth: (accountId: string) => void;
   onResetCredit: (accountId: string) => void;
   showResetCreditExpiryBadge?: boolean;
+  limitWarmupGloballyEnabled?: boolean;
   onLimitWarmupChange: (accountId: string, enabled: boolean) => void;
   onRoutingPolicyChange: (
     accountId: string,
@@ -69,6 +70,7 @@ export function AccountDetail({
   onExportAuth,
   onResetCredit,
   showResetCreditExpiryBadge = true,
+  limitWarmupGloballyEnabled,
   onLimitWarmupChange,
   onRoutingPolicyChange,
   onSecurityWorkAuthorizedChange,
@@ -188,6 +190,7 @@ export function AccountDetail({
             onExportAuth={onExportAuth}
             onResetCredit={onResetCredit}
             showResetCreditExpiryBadge={showResetCreditExpiryBadge}
+            limitWarmupGloballyEnabled={limitWarmupGloballyEnabled}
             onLimitWarmupChange={onLimitWarmupChange}
             onRoutingPolicyChange={onRoutingPolicyChange}
             onSecurityWorkAuthorizedChange={onSecurityWorkAuthorizedChange}

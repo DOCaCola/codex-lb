@@ -678,7 +678,7 @@ describe("RoutingSettings", () => {
     });
   });
 
-  it("names limit warm-up controls for assistive technology", () => {
+  it("names window warm-up controls for assistive technology", () => {
     render(
       <RoutingSettings
         settings={{ ...BASE_SETTINGS, limitWarmupEnabled: true }}
@@ -687,7 +687,7 @@ describe("RoutingSettings", () => {
       />,
     );
 
-    expect(screen.getByRole("switch", { name: "Enable limit warm-up" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Enable window warm-up" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Enable staggered idle warm-up" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Prefer earlier reset accounts" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Reset preference window" })).toBeInTheDocument();
@@ -933,13 +933,15 @@ describe("RoutingSettings", () => {
     ).toBeInTheDocument();
   });
 
-  it("describes what limit warm-up sends and that probes consume quota", () => {
+  it("describes that window warm-up starts usage windows early and consumes quota", () => {
     render(<RoutingSettings settings={BASE_SETTINGS} busy={false} onSave={vi.fn().mockResolvedValue(undefined)} />);
 
+    expect(screen.getByText("Window warm-up")).toBeInTheDocument();
+    expect(screen.getByText(/starts opted-in accounts' usage windows early/i)).toBeInTheDocument();
     expect(screen.getByText(/consume a small amount of quota/i)).toBeInTheDocument();
   });
 
-  it("saves staggered idle warm-up when limit warm-up is enabled", async () => {
+  it("saves staggered idle warm-up when window warm-up is enabled", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(

@@ -3,7 +3,9 @@
 ## Purpose
 
 Define dashboard surface contracts so settings, account management, and operational views stay coherent across the SPA.
+
 ## Requirements
+
 ### Requirement: Settings page
 
 The Settings page SHALL include sections for: routing settings (sticky threads,
@@ -579,7 +581,7 @@ The account delete confirmation dialog SHALL include a checkbox labeled "Delete 
 
 ### Requirement: Dashboard limit warm-up controls
 
-The dashboard SHALL expose global limit warm-up controls in Settings and per-account opt-in/status in account views. The global default SHALL be disabled. Settings SHALL include an exhausted-threshold percent control that determines which pre-reset usage samples count as exhausted for reset-confirmed warm-up.
+The dashboard SHALL expose global limit warm-up controls in Settings and per-account opt-in/status in the Accounts page account settings and the dashboard list view. Dashboard account cards SHALL NOT show limit warm-up state or controls. The global default SHALL be disabled. Settings SHALL include an exhausted-threshold percent control that determines which pre-reset usage samples count as exhausted for reset-confirmed warm-up.
 
 #### Scenario: Configure warm-up behavior
 - **WHEN** an operator opens Settings
@@ -590,9 +592,17 @@ The dashboard SHALL expose global limit warm-up controls in Settings and per-acc
 - **THEN** the dashboard enforces the same non-empty, max-length, percent, and integer cooldown bounds as the backend API before enabling save
 
 #### Scenario: Show per-account opt-in and last attempt
-- **WHEN** account summaries include limit warm-up status
-- **THEN** the dashboard shows whether warm-up is enabled for that account
-- **AND** it shows the latest attempt window, status, model, and completion/attempt time when available
+- **WHEN** an operator selects a Codex account on the Accounts page
+- **THEN** its settings show a limit warm-up switch reflecting the opt-in
+- **AND** the latest attempt status, window, model, and completion/attempt time when available, or that no attempt was made
+
+#### Scenario: Opt-in while warm-up is disabled globally
+- **WHEN** global limit warm-up is known to be disabled
+- **THEN** the account's warm-up switch states that nothing is sent and links to Settings
+
+#### Scenario: Dashboard cards omit warm-up
+- **WHEN** the dashboard renders Codex account cards
+- **THEN** the cards show no limit warm-up state or toggle
 
 #### Scenario: Warm-up controls are accessible by name
 - **WHEN** an operator navigates the dashboard with assistive technology
@@ -3721,10 +3731,12 @@ temporary in-flight pressure on top of reported usage).
 ### Requirement: Prefer-earlier-reset and limit warm-up copy describe actual behavior
 
 The routing settings SHALL describe `Prefer earlier reset` as preferring
-otherwise-eligible accounts whose selected quota window resets sooner, and
-SHALL describe limit warm-up as sending one small probe request that consumes
-a small amount of quota when an opted-in account's quota window is confirmed
-to have newly reset.
+otherwise-eligible accounts whose selected quota window resets sooner. The
+limit warm-up feature SHALL be labeled "Window warm-up" throughout the dashboard,
+and its description SHALL state that it starts opted-in accounts' usage windows
+early so they reset sooner, and that its requests are real and consume a small
+amount of quota. Internal API, database and request-log identifiers keep the
+`limit_warmup` name.
 
 #### Scenario: Prefer earlier reset help copy
 
@@ -3735,8 +3747,9 @@ to have newly reset.
 #### Scenario: Limit warm-up help copy
 
 - **WHEN** the routing settings section renders
-- **THEN** the limit warm-up description says a probe is sent when an opted-in account's quota window is confirmed to have newly reset
-- **AND** it states that probes are real requests and consume a small amount of quota
+- **THEN** the feature is labeled "Window warm-up"
+- **AND** its description says it starts opted-in accounts' usage windows early so they reset sooner
+- **AND** it states that the requests are real and consume a small amount of quota
 
 ### Requirement: Active status is presented as displayed status, not per-request eligibility
 
@@ -4341,3 +4354,10 @@ Request-log model cells SHALL display catalog names when available and readable 
 #### Scenario: No reasoning metadata
 - **WHEN** a request has no reasoning effort and no non-default service tier
 - **THEN** only the model name is shown without empty metadata or dangling punctuation
+
+### Requirement: Dashboard provider cards follow provider order
+Dashboard account cards SHALL render Codex accounts first, then Claude accounts, then OpenRouter accounts, each group in its API order.
+
+#### Scenario: Mixed providers
+- **WHEN** Codex, Claude and OpenRouter accounts exist
+- **THEN** the dashboard renders Codex cards, then Claude cards, then OpenRouter cards

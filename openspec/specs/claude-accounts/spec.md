@@ -907,3 +907,10 @@ The Claude Responses stream projection SHALL treat an empty `input_json_delta` f
 #### Scenario: Malformed argument JSON
 - **WHEN** a tool block streams non-empty argument JSON that does not parse
 - **THEN** the response fails with an invalid tool JSON error
+
+### Requirement: Claude accounts are listed by name
+The Claude account API SHALL return accounts ordered by account name, with the source ID breaking ties.
+
+#### Scenario: Several Claude accounts
+- **WHEN** Claude accounts named Zulu, Alpha and Mike exist
+- **THEN** the account list returns Alpha, Mike, Zulu

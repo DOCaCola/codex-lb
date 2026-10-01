@@ -94,7 +94,7 @@ describe("AccountCard", () => {
     expect(screen.queryByText("Weekly")).not.toBeInTheDocument();
   });
 
-  it("labels staggered idle warm-up attempts as 5h", () => {
+  it("omits window warm-up state and controls", () => {
     const attemptedAt = new Date("2026-06-03T12:00:00Z").toISOString();
     const account = createAccountSummary({
       limitWarmupEnabled: true,
@@ -112,9 +112,9 @@ describe("AccountCard", () => {
 
     render(<AccountCard account={account} />);
 
-    expect(
-      screen.getByText((text) => text.includes("Succeeded | 5h | Gpt-5.1-codex-mini")),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/warm-up/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Gpt-5.1-codex-mini/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /warm-up/i })).not.toBeInTheDocument();
   });
 
   it("blurs the dashboard card title when privacy mode is enabled", () => {
@@ -166,17 +166,6 @@ describe("AccountCard", () => {
 
     expect(screen.getByText("Re-auth required")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Re-auth" })).toBeInTheDocument();
-  });
-
-  it("disables the limit warm-up toggle for read-only guests", () => {
-    const account = createAccountSummary({
-      displayName: "Read Only Account",
-      limitWarmupEnabled: false,
-    });
-
-    render(<AccountCard account={account} readOnly />);
-
-    expect(screen.getByRole("button", { name: "Enable limit warm-up for Read Only Account" })).toBeDisabled();
   });
 
   it("shows reset action when reset credits are available", () => {

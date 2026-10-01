@@ -1,4 +1,4 @@
-import { ExternalLink, Play, RotateCcw, Zap } from "lucide-react";
+import { ExternalLink, Play, RotateCcw } from "lucide-react";
 import {
   CardQuotaGrid,
   QuotaBar,
@@ -7,12 +7,10 @@ import { useTranslation } from "react-i18next";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
 
 import { usePrivacyStore } from "@/hooks/use-privacy";
-import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { useSmoothPercent } from "@/hooks/use-smooth-percent";
 import { StatusBadge } from "@/components/status-badge";
 import {
   AccountCardAction,
-  AccountCardNotice,
   AccountCardSurface,
 } from "@/components/account-surfaces";
 import {
@@ -25,7 +23,6 @@ import type { AccountSummary } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { normalizeStatus } from "@/utils/account-status";
 import {
-  formatDateTimeInline,
   formatQuotaResetLabel,
   formatSingleUnitRemaining,
   formatSlug,
@@ -45,10 +42,6 @@ export type AccountCardProps = {
   onAction?: (account: AccountSummary, action: AccountAction) => void;
 };
 
-function formatWarmupWindow(window: string): string {
-  return window === "primary" || window === "primary_idle" ? "5h" : "weekly";
-}
-
 export function AccountCard({
   account,
   showAccountId = false,
@@ -57,9 +50,6 @@ export function AccountCard({
 }: AccountCardProps) {
   const { t } = useTranslation();
   const blurred = usePrivacyStore((s) => s.blurred);
-  const dateDisplayFormat = useDateDisplayFormatStore(
-    (s) => s.dateDisplayFormat,
-  );
   const status = normalizeStatus(account.status);
   const primaryState = useSmoothPercent(
     account.usage?.primaryRemainingPercent ?? null,
@@ -104,15 +94,6 @@ export function AccountCard({
       ? account.email
       : null;
   const idSuffix = showAccountId ? ` · ID ${compactId}` : "";
-  const warmupStatus = account.limitWarmupEnabled
-    ? t("accounts.listItem.warmupOn")
-    : t("accounts.listItem.warmupOff");
-  const warmupToggleLabel = account.limitWarmupEnabled
-    ? t("dashboard.accounts.disableWarmupFor", { account: title })
-    : t("dashboard.accounts.enableWarmupFor", { account: title });
-  const warmupDetail = account.limitWarmup
-    ? `${formatSlug(account.limitWarmup.status)} | ${formatWarmupWindow(account.limitWarmup.window)} | ${formatSlug(account.limitWarmup.model)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt, dateDisplayFormat)}`
-    : t("accounts.listItem.noAttempts");
   const availableResetCredits = account.availableResetCredits ?? 0;
   const hasResetCredits = availableResetCredits > 0;
   const resetCreditDisabled =
@@ -254,31 +235,6 @@ export function AccountCard({
           </>
         )}
       </CardQuotaGrid>
-
-      <AccountCardNotice>
-        <div className="min-w-0">
-          <p className="font-medium">{warmupStatus}</p>
-          <p className="truncate text-[11px] text-muted-foreground">
-            {warmupDetail}
-          </p>
-        </div>
-        <AccountCardAction
-          type="button"
-          className={cn(
-            account.limitWarmupEnabled
-              ? "text-primary hover:bg-primary/10 hover:text-primary"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-          aria-label={warmupToggleLabel}
-          disabled={readOnly}
-          onClick={() => onAction?.(account, "warmup-toggle")}
-        >
-          <Zap className="h-3 w-3" aria-hidden="true" />
-          {account.limitWarmupEnabled
-            ? t("common.states.on")
-            : t("common.states.off")}
-        </AccountCardAction>
-      </AccountCardNotice>
 
       <div className="grid gap-1 text-xs text-muted-foreground">
         <p>

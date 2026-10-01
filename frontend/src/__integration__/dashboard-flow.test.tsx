@@ -46,16 +46,34 @@ describe("dashboard flow integration", () => {
     server.use(
       http.get("/api/dashboard/overview", ({ request }) => {
         overviewCalls += 1;
-        const timeframe = (new URL(request.url).searchParams.get("timeframe") ?? "7d") as "1d" | "7d" | "30d";
+        const timeframe = (new URL(request.url).searchParams.get("timeframe") ??
+          "7d") as "1d" | "7d" | "30d";
         overviewTimeframes.push(timeframe);
-        return HttpResponse.json(createDashboardOverview({
-          timeframe:
-            timeframe === "1d"
-              ? { key: "1d", windowMinutes: 1440, bucketSeconds: 3600, bucketCount: 24 }
-              : timeframe === "30d"
-                ? { key: "30d", windowMinutes: 43200, bucketSeconds: 86400, bucketCount: 30 }
-                : { key: "7d", windowMinutes: 10080, bucketSeconds: 21600, bucketCount: 28 },
-        }));
+        return HttpResponse.json(
+          createDashboardOverview({
+            timeframe:
+              timeframe === "1d"
+                ? {
+                    key: "1d",
+                    windowMinutes: 1440,
+                    bucketSeconds: 3600,
+                    bucketCount: 24,
+                  }
+                : timeframe === "30d"
+                  ? {
+                      key: "30d",
+                      windowMinutes: 43200,
+                      bucketSeconds: 86400,
+                      bucketCount: 30,
+                    }
+                  : {
+                      key: "7d",
+                      windowMinutes: 10080,
+                      bucketSeconds: 21600,
+                      bucketCount: 28,
+                    },
+          }),
+        );
       }),
       http.get("/api/request-logs", ({ request }) => {
         requestLogCalls += 1;
@@ -73,8 +91,12 @@ describe("dashboard flow integration", () => {
     window.history.pushState({}, "", "/dashboard");
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Request Logs" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Request Logs" }),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(overviewCalls).toBeGreaterThan(0);
@@ -99,7 +121,9 @@ describe("dashboard flow integration", () => {
     const overviewAfterTimeframe = overviewCalls;
 
     await user.type(
-      screen.getByPlaceholderText("Search request id, account, API key, model, error..."),
+      screen.getByPlaceholderText(
+        "Search request id, account, API key, model, error...",
+      ),
       "quota",
     );
 
@@ -148,7 +172,9 @@ describe("dashboard flow integration", () => {
       remainingCreditsPrimary: 6_055,
       remainingCreditsSecondary: 6_675.48,
     });
-    const baseOverview = createDashboardOverview({ accounts: [healthyAccount] });
+    const baseOverview = createDashboardOverview({
+      accounts: [healthyAccount],
+    });
     const overview = createDashboardOverview({
       accounts: [healthyAccount],
       summary: {
@@ -208,7 +234,9 @@ describe("dashboard flow integration", () => {
         }
 
         await recoveredResponseGate;
-        return HttpResponse.json(createRequestLogsResponse([recoveredLog], 1, false));
+        return HttpResponse.json(
+          createRequestLogsResponse([recoveredLog], 1, false),
+        );
       }),
     );
 
@@ -221,8 +249,12 @@ describe("dashboard flow integration", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
-    const requestLogsHeading = await screen.findByRole("heading", { name: "Request Logs" });
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard" }),
+    ).toBeInTheDocument();
+    const requestLogsHeading = await screen.findByRole("heading", {
+      name: "Request Logs",
+    });
     const requestLogsSection = requestLogsHeading.closest("section");
 
     expect(requestLogsSection).not.toBeNull();
@@ -239,20 +271,35 @@ describe("dashboard flow integration", () => {
     const expectHealthySurfaces = () => {
       expect(screen.getByText("Requests (7d)")).toBeInTheDocument();
       expect(screen.getByText("424.24K")).toBeInTheDocument();
-      expect(screen.getByText("Account burn projection (5h/7d)")).toBeInTheDocument();
-      expect(screen.getByText("0.4 / 0.1")).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "5-Hour Credits" })).toBeInTheDocument();
-      expect(screen.getByText("6,055")).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Enable limit warm-up for Healthy Overview Account" }),
+        screen.getByText("Account burn projection (5h/7d)"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("0.4 / 0.1")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "5-Hour Credits" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("6,055")).toBeInTheDocument();
+      const accountsSection = screen
+        .getByRole("heading", { name: "Accounts" })
+        .closest("section");
+      expect(
+        within(accountsSection as HTMLElement).getByText(
+          "Healthy Overview Account",
+        ),
       ).toBeInTheDocument();
     };
 
     await waitFor(expectHealthySurfaces);
-    expect(screen.getByRole("heading", { name: "Accounts" })).toBeInTheDocument();
-    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0);
+    expect(
+      screen.getByRole("heading", { name: "Accounts" }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(
+      0,
+    );
     expect(errorAlert).toHaveTextContent(REQUEST_LOG_OUTAGE_MESSAGE);
-    expect(requestLogs.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(
+      requestLogs.getByRole("button", { name: "Retry" }),
+    ).toBeInTheDocument();
 
     const overviewCallsBeforeRetry = overviewCalls;
     const projectionsCallsBeforeRetry = projectionsCalls;
@@ -269,16 +316,22 @@ describe("dashboard flow integration", () => {
     });
 
     expectHealthySurfaces();
-    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(
+      0,
+    );
     expect(overviewCalls).toBe(overviewCallsBeforeRetry);
     expect(projectionsCalls).toBe(projectionsCallsBeforeRetry);
     expect(optionsCalls).toBe(optionsCallsBeforeRetry);
 
     releaseRecoveredResponse();
     expect(await screen.findByText("Recovered API Key")).toBeInTheDocument();
-    expect(screen.queryByText(REQUEST_LOG_OUTAGE_MESSAGE)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(REQUEST_LOG_OUTAGE_MESSAGE),
+    ).not.toBeInTheDocument();
     expectHealthySurfaces();
-    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(
+      0,
+    );
     expect(overviewCalls).toBe(overviewCallsBeforeRetry);
     expect(projectionsCalls).toBe(projectionsCallsBeforeRetry);
     expect(optionsCalls).toBe(optionsCallsBeforeRetry);
@@ -313,7 +366,11 @@ describe("dashboard flow integration", () => {
           );
         }
         return HttpResponse.json(
-          createRequestLogsResponse([recovered ? recoveredLog : retainedLog], 1, false),
+          createRequestLogsResponse(
+            [recovered ? recoveredLog : retainedLog],
+            1,
+            false,
+          ),
         );
       }),
     );
@@ -322,7 +379,9 @@ describe("dashboard flow integration", () => {
     const { queryClient: testQueryClient } = renderWithProviders(<App />);
 
     expect(await screen.findByText("Retained API Key")).toBeInTheDocument();
-    const section = screen.getByRole("heading", { name: "Request Logs" }).closest("section");
+    const section = screen
+      .getByRole("heading", { name: "Request Logs" })
+      .closest("section");
     expect(section).not.toBeNull();
     const requestLogs = within(section as HTMLElement);
     expect(requestLogs.getByRole("table")).toBeVisible();
@@ -334,7 +393,9 @@ describe("dashboard flow integration", () => {
         queryKey: ["dashboard", "request-logs"],
       });
     });
-    await waitFor(() => expect(requestLogCalls).toBeGreaterThan(callsBeforeRefresh));
+    await waitFor(() =>
+      expect(requestLogCalls).toBeGreaterThan(callsBeforeRefresh),
+    );
     const alert = await requestLogs.findByRole("alert");
 
     expect(alert).toHaveTextContent(REQUEST_LOG_OUTAGE_MESSAGE);
@@ -357,9 +418,15 @@ describe("dashboard flow integration", () => {
     server.use(
       http.get("/api/conversations", () =>
         HttpResponse.json(
-          createConversationsResponse([
-            createConversationEntry({ conversationId: "opencode_conversation" }),
-          ], 1, false),
+          createConversationsResponse(
+            [
+              createConversationEntry({
+                conversationId: "opencode_conversation",
+              }),
+            ],
+            1,
+            false,
+          ),
         ),
       ),
     );
@@ -371,11 +438,17 @@ describe("dashboard flow integration", () => {
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Request Logs" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Request Logs" }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Request Logs" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Conversations" }));
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Conversations" }),
+    );
 
-    expect(await screen.findByText("opencode_conversation")).toBeInTheDocument();
+    expect(
+      await screen.findByText("opencode_conversation"),
+    ).toBeInTheDocument();
     expect(window.location.search).toContain("view=conversations");
     expect(window.location.search).toContain("search=requestlog");
     expect(window.location.search).toContain("limit=10");
@@ -386,9 +459,13 @@ describe("dashboard flow integration", () => {
     expect(window.location.search).toContain("conversationOffset=7");
 
     await user.click(screen.getByRole("button", { name: "Conversations" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Request Logs" }));
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Request Logs" }),
+    );
 
-    await waitFor(() => expect(window.location.search).not.toContain("view=conversations"));
+    await waitFor(() =>
+      expect(window.location.search).not.toContain("view=conversations"),
+    );
     expect(window.location.search).toContain("search=requestlog");
     expect(window.location.search).toContain("limit=10");
     expect(window.location.search).toContain("offset=25");
@@ -406,35 +483,69 @@ describe("dashboard flow integration", () => {
     server.use(
       http.get("/api/dashboard/overview", ({ request }) => {
         overviewCalls += 1;
-        const timeframe = (new URL(request.url).searchParams.get("timeframe") ?? "7d") as string;
+        const timeframe = (new URL(request.url).searchParams.get("timeframe") ??
+          "7d") as string;
         overviewTimeframes.push(timeframe);
-        return HttpResponse.json(createDashboardOverview({
-          timeframe:
-            timeframe === "1d"
-              ? { key: "1d", windowMinutes: 1440, bucketSeconds: 3600, bucketCount: 24 }
-              : timeframe === "30d"
-                ? { key: "30d", windowMinutes: 43200, bucketSeconds: 86400, bucketCount: 30 }
-                : { key: "7d", windowMinutes: 10080, bucketSeconds: 21600, bucketCount: 28 },
-        }));
+        return HttpResponse.json(
+          createDashboardOverview({
+            timeframe:
+              timeframe === "1d"
+                ? {
+                    key: "1d",
+                    windowMinutes: 1440,
+                    bucketSeconds: 3600,
+                    bucketCount: 24,
+                  }
+                : timeframe === "30d"
+                  ? {
+                      key: "30d",
+                      windowMinutes: 43200,
+                      bucketSeconds: 86400,
+                      bucketCount: 30,
+                    }
+                  : {
+                      key: "7d",
+                      windowMinutes: 10080,
+                      bucketSeconds: 21600,
+                      bucketCount: 28,
+                    },
+          }),
+        );
       }),
       http.get("/api/conversations", () =>
-        HttpResponse.json(createConversationsResponse([
-          createConversationEntry({ conversationId: "opencode_conversation" }),
-        ], 1, false)),
+        HttpResponse.json(
+          createConversationsResponse(
+            [
+              createConversationEntry({
+                conversationId: "opencode_conversation",
+              }),
+            ],
+            1,
+            false,
+          ),
+        ),
       ),
     );
 
-    window.history.pushState({}, "", "/dashboard?view=conversations&overviewTimeframe=1d");
+    window.history.pushState(
+      {},
+      "",
+      "/dashboard?view=conversations&overviewTimeframe=1d",
+    );
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(overviewCalls).toBeGreaterThan(0));
     expect(overviewTimeframes.at(-1)).toBe("7d");
 
     const overviewAfterLoad = overviewCalls;
 
     // Change the date range from the conversations-mode selector (top right).
-    const timeframeSelect = screen.getByRole("combobox", { name: "Conversation timeframe" });
+    const timeframeSelect = screen.getByRole("combobox", {
+      name: "Conversation timeframe",
+    });
     await user.click(timeframeSelect);
     await user.click(await screen.findByRole("option", { name: "30d" }));
 
@@ -449,7 +560,9 @@ describe("dashboard flow integration", () => {
     expect(window.location.search).not.toContain("overviewTimeframe=30d");
 
     await user.click(screen.getByRole("button", { name: "Conversations" }));
-    await user.click(await screen.findByRole("menuitemradio", { name: "Request Logs" }));
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Request Logs" }),
+    );
 
     await waitFor(() => {
       expect(overviewTimeframes.at(-1)).toBe("1d");

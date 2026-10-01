@@ -16,6 +16,7 @@ import { Link } from "react-router-dom";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { formatLimitWarmupWindow } from "@/features/accounts/limit-warmup";
 import type { AccountAction } from "@/features/dashboard/components/account-card";
 import {
   accountSubscriptionCredits,
@@ -101,10 +102,6 @@ const SORTABLE_HEADER_KEY: Record<AccountListSortKey, string> = {
   purchasedCredits: "dashboard.accountList.headers.purchasedCredits",
   warmup: "dashboard.accountList.headers.warmup",
 };
-
-function formatWarmupWindow(window: string): string {
-  return window === "primary" || window === "primary_idle" ? "5h" : "weekly";
-}
 
 function quotaLabel(
   label: string,
@@ -594,7 +591,7 @@ export function AccountList({
           const compactId = formatCompactAccountId(account.accountId);
           const showAccountId = account.isEmailDuplicate === true;
           const warmupDetail = account.limitWarmup
-            ? `${formatSlug(account.limitWarmup.status)} | ${formatWarmupWindow(account.limitWarmup.window)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt, dateDisplayFormat)}`
+            ? `${formatSlug(account.limitWarmup.status)} | ${formatLimitWarmupWindow(account.limitWarmup.window)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt, dateDisplayFormat)}`
             : t("accounts.listItem.noAttempts");
           const availableResetCredits = account.availableResetCredits ?? 0;
           const hasResetCredits = availableResetCredits > 0;

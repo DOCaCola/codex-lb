@@ -116,6 +116,15 @@ async def test_rotated_grant_cannot_duplicate_authenticated_account(async_client
     assert len((await async_client.get("/api/claude-accounts")).json()["accounts"]) == 1
 
 
+async def test_accounts_are_listed_by_name(async_client):
+    for name in ("Zulu", "Alpha", "Mike"):
+        body = import_body(refresh=name.lower())
+        body["name"] = name
+        assert (await async_client.post("/api/claude-accounts/import", json=body)).status_code == 200
+    accounts = (await async_client.get("/api/claude-accounts")).json()["accounts"]
+    assert [account["name"] for account in accounts] == ["Alpha", "Mike", "Zulu"]
+
+
 async def test_reconnect_preserves_identity_and_invalidates_old_refresh_generation(async_client):
     source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
     async with SessionLocal() as session:

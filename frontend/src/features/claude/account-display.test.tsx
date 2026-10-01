@@ -19,6 +19,8 @@ import { server } from "@/test/mocks/server";
 import { ClaudeAccountControls } from "./account-controls";
 import { ModelSelection } from "./model-selection";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
+import { createAccountSummary } from "@/test/mocks/factories";
+import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
 
 const account: ClaudeAccount = {
   planType: "pro",
@@ -440,6 +442,22 @@ describe("Claude shared account surfaces", () => {
       "true",
     );
   });
+  it("orders dashboard cards Codex, Claude, then OpenRouter", () => {
+    render(
+      <MemoryRouter>
+        <AccountCards
+          accounts={[createAccountSummary()]}
+          claudeAccounts={[account]}
+          openRouterAccounts={[createOpenRouterAccount()]}
+        />
+      </MemoryRouter>,
+    );
+    const cards = screen.getByTestId("dashboard-account-cards").children;
+    expect(
+      Array.from(cards, (card) => card.firstElementChild?.getAttribute("data-testid")),
+    ).toEqual(["codex-account-card", "claude-account-card", "openrouter-account-card"]);
+  });
+
   it.each([AccountCards, DashboardList])(
     "includes provider-only accounts in dashboard layouts",
     (Component) => {

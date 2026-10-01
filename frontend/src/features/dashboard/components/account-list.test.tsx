@@ -94,7 +94,7 @@ describe("AccountList", () => {
 
     await user.click(screen.getByRole("button", { name: "View details for Paused Account" }));
     await user.click(resetButton);
-    await user.click(screen.getByRole("button", { name: "Enable limit warm-up for Paused Account" }));
+    await user.click(screen.getByRole("button", { name: "Enable window warm-up for Paused Account" }));
     await user.click(screen.getByRole("button", { name: "Resume Paused Account" }));
 
     expect(onAction).toHaveBeenNthCalledWith(1, account, "details");
