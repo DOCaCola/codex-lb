@@ -5,6 +5,7 @@ import pytest
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.replay import authenticate_replay, project_foreign_replay
+from app.modules.model_sources.compaction import source_compaction_instruction
 from tests.claude_json_helpers import array, at
 from tests.unit.test_claude_protocol import TASK_INPUT, codec, scope
 
@@ -29,6 +30,10 @@ def history(*, token="gAAAA_native_openai", summary="Sol context", content="Dist
     if completed:
         items.append({"role": "user", "content": "Continue on Opus"})
     return {"model": scope().model, "input": items}
+
+
+def compact(payload):
+    return {**payload, "input": [*payload["input"], source_compaction_instruction()]}
 
 
 def test_historical_foreign_reasoning_becomes_text_without_mutating_tools_or_history(caplog):
@@ -80,14 +85,57 @@ def test_completed_opaque_only_state_has_no_wire_block_but_keeps_original_histor
     assert payload == original
 
 
-@pytest.mark.parametrize("complete,completed", [(False, False), (True, True), (True, False)])
+@pytest.mark.parametrize("compaction", [False, True])
 @pytest.mark.parametrize("readable", [False, True])
-def test_foreign_encrypted_active_and_complete_history_fail(complete, completed, readable):
-    payload = history(completed=completed) if readable else history(completed=completed, summary=None, content=None)
+def test_foreign_encrypted_reasoning_in_open_tool_loop_fails(compaction, readable):
+    payload = history(completed=False) if readable else history(completed=False, summary=None, content=None)
     with pytest.raises(ClientPayloadError) as error:
-        project_foreign_replay(payload, require_complete_history=complete)
+        project_foreign_replay(compact(payload) if compaction else payload, require_complete_history=compaction)
     assert error.value.code == "nonportable_provider_history"
     assert error.value.param == "input[1]"
+    assert str(error.value).startswith("Active reasoning continuation")
+
+
+@pytest.mark.parametrize("ending", ["user", "assistant", "turn_aborted", "task"])
+@pytest.mark.parametrize("readable", [False, True])
+def test_compaction_projects_foreign_reasoning_of_closed_turns(ending, readable, caplog):
+    payload = (
+        history(completed=ending == "user")
+        if readable
+        else history(completed=ending == "user", summary=None, content=None)
+    )
+    if ending == "assistant":
+        payload["input"].append({"type": "message", "role": "assistant", "content": "Sol final answer"})
+    elif ending == "turn_aborted":
+        payload["input"].append({"role": "user", "content": "<turn_aborted>\nThe user interrupted\n</turn_aborted>"})
+    elif ending == "task":
+        payload["input"].append(TASK_INPUT)
+    request = compact(payload)
+    original = deepcopy(request)
+    with caplog.at_level("INFO"):
+        projected = project_foreign_replay(request, require_complete_history=True)
+    if readable:
+        assert at(projected["input"], 1, "role") == "assistant"
+        assert at(projected["input"], 1, "content", 0, "text") == "Sol context"
+    else:
+        assert at(projected["input"], 1) == {"type": "reasoning", "summary": []}
+    assert array(projected["input"])[2:] == request["input"][2:]
+    assert at(projected["input"], -1) == source_compaction_instruction()
+    assert "gAAAA" not in str(projected)
+    assert request == original
+
+
+def test_commentary_inside_open_foreign_tool_loop_does_not_close_compaction_turn():
+    payload = history(completed=False)
+    payload["input"][2:2] = [{"type": "message", "role": "assistant", "content": "Checking the lookup"}]
+    with pytest.raises(ClientPayloadError) as error:
+        project_foreign_replay(compact(payload), require_complete_history=True)
+    assert error.value.param == "input[1]"
+
+
+def test_compaction_requires_the_built_summarization_instruction():
+    with pytest.raises(AssertionError):
+        project_foreign_replay(history(), require_complete_history=True)
 
 
 @pytest.mark.parametrize("readable", [False, True])
@@ -106,7 +154,7 @@ def test_canonical_external_task_closes_foreign_history_but_tool_results_do_not(
 @pytest.mark.parametrize("complete", [False, True])
 def test_plaintext_only_history_needs_no_provider_signature_even_for_compaction(complete):
     payload = history(token=None, completed=False)
-    projected = project_foreign_replay(payload, require_complete_history=complete)
+    projected = project_foreign_replay(compact(payload) if complete else payload, require_complete_history=complete)
     assert at(projected["input"], 1, "content", 0, "text") == "Sol context"
 
 

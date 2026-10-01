@@ -673,7 +673,7 @@ Native sanitation SHALL remove invalid known item-type ID prefixes without fabri
 
 Translated Claude Responses SHALL classify provider-specific reasoning before signed-history authentication and account selection. Completed foreign reasoning with readable summary or reasoning_text content SHALL become ordinary historical assistant text, preserving distinct text and ordering without ciphertext, lookup IDs or fabricated thinking signatures. Completed foreign encrypted reasoning without readable text SHALL produce no Claude wire block, without blocking the surrounding portable conversation. Plaintext-only reasoning SHALL follow the same portable projection. Logical retained history, user/assistant messages and tool pairing MUST remain unchanged. Input positions SHALL remain stable for indexed diagnostics. The policy SHALL apply after expansion to HTTP and WebSocket, including replayed continuation.
 
-Foreign encrypted active reasoning and foreign ciphertext in complete-history compaction MUST fail before dispatch with nonportable_provider_history and the affected input index. A paired tool output MUST NOT count as a new user turn. Purely plaintext compaction SHALL preserve all readable reasoning. Genuine Claude envelopes, including empty-display signed blocks, MUST retain existing client/conversation authentication and account/model ownership. Authentication failures SHALL expose invalid_provider_history with an input index rather than a generic payload message. Conversion and opaque-omission diagnostics MUST contain counts only, never reasoning or opaque contents.
+Foreign encrypted reasoning in the active turn MUST fail before dispatch with nonportable_provider_history and the affected input index. A paired tool output MUST NOT count as a new user turn. Complete-history compaction SHALL apply the same rule to the client-supplied history, excluding its summarization instruction: a history ending with an assistant message is a closed turn with no active reasoning; otherwise the active turn starts at the last user or external task input. Purely plaintext compaction SHALL preserve all readable reasoning. Genuine Claude envelopes, including empty-display signed blocks, MUST retain existing client/conversation authentication and account/model ownership. Authentication failures SHALL expose invalid_provider_history with an input index rather than a generic payload message. Conversion and opaque-omission diagnostics MUST contain counts only, never reasoning or opaque contents.
 
 #### Scenario: Sol-to-Opus historical switch
 - **WHEN** completed OpenAI reasoning has a readable summary and encrypted_content before a new user message
@@ -689,8 +689,12 @@ Foreign encrypted active reasoning and foreign ciphertext in complete-history co
 - **THEN** preparation fails explicitly instead of fabricating a signed continuation
 
 #### Scenario: Complete compaction
-- **WHEN** a complete-history compact request contains foreign ciphertext with or without a display summary
-- **THEN** it fails explicitly without claiming the full provider state was preserved
+- **WHEN** a Claude compact request contains foreign encrypted reasoning before the last user input, or in a closed turn ending with an assistant message
+- **THEN** it summarizes the readable conversation without foreign ciphertext, exactly as a normal turn would project it
+
+#### Scenario: Compaction inside an open foreign tool loop
+- **WHEN** a Claude compact request ends in tool output of a turn whose foreign encrypted reasoning follows the last user input
+- **THEN** it fails with nonportable_provider_history at that input index without upstream dispatch
 - **AND** a plaintext-only history can compact with all its readable reasoning
 
 #### Scenario: Mixed-provider round trip

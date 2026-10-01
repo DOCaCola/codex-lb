@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 
 import pytest
 from pydantic import JsonValue
@@ -20,6 +21,7 @@ IMAGE = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
 )
 TOOL_OUTPUT = "MIDDLE: critical tool evidence\n" + "x" * 600_000
+FOREIGN_TOKEN = "gAAAA_sol_private_state"
 
 
 def complete_history() -> list[JsonValue]:
@@ -48,6 +50,75 @@ def assert_complete_messages(payload: dict[str, JsonValue]) -> None:
     assert "CONTEXT CHECKPOINT COMPACTION" in serialized
     assert "tools" not in payload
     assert "tool_choice" not in payload
+
+
+def switched_history(ending: str) -> list[JsonValue]:
+    """Sol history (readable and opaque-only reasoning) continued on Claude."""
+    items: list[JsonValue] = [
+        {"role": "user", "content": "Original Sol task"},
+        {
+            "type": "reasoning",
+            "id": "rs_sol",
+            "summary": [{"type": "summary_text", "text": "Sol readable context"}],
+            "encrypted_content": FOREIGN_TOKEN,
+        },
+        {"type": "function_call", "name": "inspect", "call_id": "call_sol", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_sol", "output": "Sol tool evidence"},
+        {"type": "reasoning", "id": "rs_sol_opaque", "summary": [], "encrypted_content": FOREIGN_TOKEN},
+    ]
+    if ending == "assistant":
+        items.append({"type": "message", "role": "assistant", "content": "Sol final answer"})
+    elif ending == "user":
+        items.append({"type": "message", "role": "assistant", "content": "Sol final answer"})
+        items.append({"role": "user", "content": "Continue on Opus"})
+        items.append({"type": "message", "role": "assistant", "content": "Opus answer"})
+    return items
+
+
+@asynccontextmanager
+async def websocket_session(async_client, path, session_id):
+    incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "ws",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"user-agent", b"codex_cli_rs/0.157.0"), (b"session_id", session_id.encode())],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+        "subprotocols": [],
+    }
+    task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
+
+    async def turn(payload, *, allow_error=False):
+        await incoming.put(
+            {"type": "websocket.receive", "text": json.dumps({"type": "response.create", "model": MODEL, **payload})}
+        )
+        while True:
+            frame = await asyncio.wait_for(outgoing.get(), 10)
+            assert frame["type"] == "websocket.send", frame
+            event = json.loads(frame["text"])
+            if event["type"] in ("error", "response.failed"):
+                assert allow_error, event
+                return event
+            if event["type"] == "response.completed":
+                return event["response"]
+
+    try:
+        await incoming.put({"type": "websocket.connect"})
+        assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
+        yield turn
+    finally:
+        await incoming.put({"type": "websocket.disconnect", "code": 1000})
+        try:
+            await asyncio.wait_for(task, 5)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
@@ -84,52 +155,66 @@ async def test_complete_claude_compact_history_and_continuation(async_client, po
 @pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
 async def test_websocket_compact_materializes_complete_history(async_client, pool, monkeypatch, path):
     captured, closed = install_upstream(monkeypatch)
-    incoming, outgoing = asyncio.Queue(), asyncio.Queue()
-    scope = {
-        "type": "websocket",
-        "asgi": {"version": "3.0"},
-        "scheme": "ws",
-        "path": path,
-        "raw_path": path.encode(),
-        "query_string": b"",
-        "root_path": "",
-        "headers": [(b"user-agent", b"codex_cli_rs/0.157.0"), (b"session_id", b"complete-source-ws")],
-        "client": ("127.0.0.1", 12345),
-        "server": ("testserver", 80),
-        "subprotocols": [],
-    }
-    task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
-
-    async def turn(payload):
-        await incoming.put(
-            {"type": "websocket.receive", "text": json.dumps({"type": "response.create", "model": MODEL, **payload})}
-        )
-        while True:
-            frame = await asyncio.wait_for(outgoing.get(), 10)
-            assert frame["type"] == "websocket.send", frame
-            event = json.loads(frame["text"])
-            assert event["type"] not in ("error", "response.failed"), event
-            if event["type"] == "response.completed":
-                return event["response"]
-
-    try:
-        await incoming.put({"type": "websocket.connect"})
-        assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
+    async with websocket_session(async_client, path, "complete-source-ws") as turn:
         first = await turn({"input": complete_history()})
         compact = await turn({"previous_response_id": first["id"], "input": [{"type": "compaction_trigger"}]})
         assert_complete_messages(captured[-1][2])
         assert [item["type"] for item in compact["output"]] == ["compaction"]
         await turn({"input": [*compact["output"], {"role": "user", "content": "Resume the task"}]})
         assert "Hello from Claude" in json.dumps(captured[-1][2]["messages"])
-    finally:
-        await incoming.put({"type": "websocket.disconnect", "code": 1000})
-        try:
-            await asyncio.wait_for(task, 5)
-        finally:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
     assert len(closed) == len(captured) == 3
+
+
+def assert_portable_switch_summary(payload: dict[str, JsonValue]) -> None:
+    serialized = json.dumps(payload["messages"])
+    assert "Sol readable context" in serialized and "Sol tool evidence" in serialized
+    assert "CONTEXT CHECKPOINT COMPACTION" in serialized
+    assert FOREIGN_TOKEN not in serialized and "rs_sol" not in serialized
+    assert '"thinking"' not in serialized
+
+
+@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
+@pytest.mark.parametrize("ending", ["assistant", "user"])
+async def test_compaction_after_provider_switch_projects_closed_foreign_turns(
+    async_client, pool, monkeypatch, path, ending
+):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        path, json={"model": MODEL, "instructions": "summarize", "input": switched_history(ending)}
+    )
+    assert response.status_code == 200, response.text
+    assert len(captured) == 1
+    assert_portable_switch_summary(captured[0][2])
+    assert response.json()["output"][0]["type"] == "compaction"
+
+
+@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
+async def test_compaction_refuses_open_foreign_tool_loop_without_dispatch(async_client, pool, monkeypatch, path):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        path, json={"model": MODEL, "instructions": "summarize", "input": switched_history("open")[:4]}
+    )
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert (error["code"], error["param"]) == ("nonportable_provider_history", "input[1]")
+    assert error["message"].startswith("Active reasoning continuation")
+    assert not captured
+
+
+@pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
+@pytest.mark.parametrize("ending", ["assistant", "open"])
+async def test_websocket_compaction_trigger_after_provider_switch(async_client, pool, monkeypatch, path, ending):
+    captured, _ = install_upstream(monkeypatch)
+    history = switched_history(ending) if ending == "assistant" else switched_history(ending)[:4]
+    async with websocket_session(async_client, path, f"switch-compact-{ending}") as turn:
+        result = await turn({"input": [*history, {"type": "compaction_trigger"}]}, allow_error=ending == "open")
+    if ending == "assistant":
+        assert [item["type"] for item in result["output"]] == ["compaction"]
+        assert len(captured) == 1
+        assert_portable_switch_summary(captured[0][2])
+    else:
+        assert "nonportable_provider_history" in json.dumps(result)
+        assert not captured
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])

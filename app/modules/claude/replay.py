@@ -12,6 +12,7 @@ from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX, append_reasoning_
 from app.core.types import JsonValue as NativeJsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
 from app.modules.claude.task_input import is_external_task_input
+from app.modules.model_sources.compaction import source_compaction_history
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,19 @@ def _last_user_index(items: list[JsonValue]) -> int:
     )
 
 
+def _active_turn_start(items: list[JsonValue], *, compaction: bool) -> int:
+    """Index from which reasoning belongs to the turn Claude continues."""
+    if not compaction:
+        return _last_user_index(items)
+    # The summarizer instruction is not a client turn. Compacting a turn that
+    # ended with an assistant message is equivalent to starting a new one.
+    history = source_compaction_history(items)
+    final = history[-1] if history else None
+    if isinstance(final, dict) and final.get("role") == "assistant" and final.get("type", "message") == "message":
+        return len(history)
+    return _last_user_index(history)
+
+
 def project_foreign_replay(
     payload: dict[str, JsonValue], *, require_complete_history: bool = False
 ) -> dict[str, JsonValue]:
@@ -39,7 +53,7 @@ def project_foreign_replay(
     items = payload.get("input")
     if not isinstance(items, list):
         return payload
-    last_user = _last_user_index(items)
+    active_start = _active_turn_start(items, compaction=require_complete_history)
     projected: list[JsonValue] = []
     converted = 0
     omitted = 0
@@ -56,11 +70,10 @@ def project_foreign_replay(
         if isinstance(token, str) and token.startswith(CLAUDE_REASONING_PREFIX):
             projected.append(item)
             continue
-        if token and (require_complete_history or index >= last_user):
-            reason = "Complete compaction" if require_complete_history else "Active reasoning continuation"
+        if token and index >= active_start:
             raise ClientPayloadError(
-                f"{reason} contains encrypted state from another provider that Claude cannot recover; "
-                "continue with its original provider or supply portable context.",
+                "Active reasoning continuation contains encrypted state from another provider that Claude "
+                "cannot recover; continue with its original provider or supply portable context.",
                 param=param,
                 code="nonportable_provider_history",
             )

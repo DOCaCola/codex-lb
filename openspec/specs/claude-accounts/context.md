@@ -646,10 +646,24 @@ unchanged in retained logical history. Its temporary projection keeps an empty
 plaintext reasoning item so later diagnostics retain their input indices. The
 existing protocol renderer emits no block for that item. Active foreign encrypted
 continuations fail explicitly with `nonportable_provider_history` and the input
-index. Complete compaction also
-rejects foreign ciphertext, even with a summary: a display summary cannot prove
-the full encrypted state survived. Plaintext-only compaction preserves readable
-reasoning. Genuine Claude envelopes, including empty-display signed thinking,
+index. Compaction applies the same boundary to the client-supplied history, with
+the appended summarization instruction split off structurally. A history ending
+with an assistant message is a closed turn; otherwise the last user or task
+input starts the active turn. Codex records interrupts as a `<turn_aborted>` user
+message, so interrupted turns are closed too. Only foreign ciphertext inside an
+open tool loop is refused. Plaintext-only compaction preserves readable
+reasoning.
+
+An earlier rule rejected all foreign ciphertext during compaction, because a
+display summary cannot prove the full encrypted state survived. Production on
+2026-10-01 (14:20–14:22 Berlin) showed the cost: an Opus turn projected 66
+opaque-only Sol items successfully, then auto compaction on the same history was
+refused and the user had to switch back to Sol. A Claude summary can only cover
+what Claude can read, which is also all that every normal Opus turn uses. Failed
+compaction still leaves the original history unchanged. OpenCodex `ef0297f`,
+Sub2API `d6adebd`, CLIProxyAPI `fd48ea6` and OmniRoute `dbe703a0` (inspected
+2026-10-01) all drop foreign opaque reasoning; none refuses compaction for it.
+Genuine Claude envelopes, including empty-display signed thinking,
 retain client/conversation authentication and account/model ownership. Invalid
 authentication returns `invalid_provider_history` rather than a generic payload
 error. Conversion logs contain only conversion and opaque-omission counts.

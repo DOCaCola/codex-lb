@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TypeVar
 
 from app.core.openai.compaction import COMPACTION_PROMPT, lower_opaque_compaction_items_for_model_source
 from app.core.openai.exceptions import ClientPayloadError
@@ -39,6 +40,23 @@ class SourceCompactionResultError(ValueError):
     pass
 
 
+_Item = TypeVar("_Item")
+
+
+def source_compaction_instruction() -> dict[str, JsonValue]:
+    return {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": COMPACTION_PROMPT}],
+    }
+
+
+def source_compaction_history(items: list[_Item]) -> list[_Item]:
+    """Return the client history of a built summarization request, without its instruction."""
+    assert items and items[-1] == source_compaction_instruction(), "not a source compaction request"
+    return items[:-1]
+
+
 def build_source_compaction_request(payload: ResponsesCompactRequest) -> ResponsesRequest:
     # Native compact serialization reduces history to a provider-specific wire
     # budget. A source summarizer must see the complete materialized history.
@@ -63,14 +81,7 @@ def build_source_compaction_request(payload: ResponsesCompactRequest) -> Respons
     source_payload: dict[str, JsonValue] = {
         "model": payload.model,
         "instructions": payload.instructions,
-        "input": [
-            *history,
-            {
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": COMPACTION_PROMPT}],
-            },
-        ],
+        "input": [*history, source_compaction_instruction()],
         "store": False,
         "stream": False,
         "truncation": "disabled",
