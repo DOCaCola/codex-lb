@@ -135,7 +135,7 @@ def test_source_compaction_preserves_plain_summary_without_local_marker():
         }
     )
     before = compact.model_dump(mode="json")
-    request = build_source_compaction_request(compact)
+    request = build_source_compaction_request(compact, keep_tool_declarations=False)
     assert "PORTABLE_SUMMARY" in str(request.input)
     assert "context_compaction" not in str(request.input)
     assert compact.model_dump(mode="json") == before
@@ -155,6 +155,6 @@ def test_source_compaction_rejection_indexes_before_removing_control_items():
     )
     before = compact.model_dump(mode="json")
     with pytest.raises(ClientPayloadError) as error:
-        build_source_compaction_request(compact)
+        build_source_compaction_request(compact, keep_tool_declarations=False)
     assert error.value.param == "input[2]"
     assert compact.model_dump(mode="json") == before

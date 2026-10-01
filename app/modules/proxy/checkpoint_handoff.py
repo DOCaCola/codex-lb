@@ -200,10 +200,7 @@ class CheckpointHandoff:
             output = result["output"]
             assert isinstance(output, list)  # Validated by the summary extractor.
             for message in output:
-                if not isinstance(message, dict) or message.get("type") not in {"reasoning", "message"}:
-                    raise ProxyResponseError(
-                        502, openai_error("compaction_handoff_invalid", "Native handoff returned unsupported output.")
-                    )
+                assert isinstance(message, dict)  # Only message/reasoning items pass the extractor.
                 content = message.get("content")
                 if isinstance(content, list) and any(
                     isinstance(part, dict) and part.get("type") == "refusal" for part in content

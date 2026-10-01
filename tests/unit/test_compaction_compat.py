@@ -21,6 +21,7 @@ from app.core.openai.requests import (
 )
 from app.core.types import JsonValue
 from app.modules.model_sources.compaction import (
+    SOURCE_COMPACTION_TOOL_REMINDER,
     SourceCompactionResultError,
     build_source_compaction_request,
     extract_completed_source_compaction_summary,
@@ -147,7 +148,7 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
         }
     )
 
-    request = build_source_compaction_request(compact)
+    request = build_source_compaction_request(compact, keep_tool_declarations=False)
     wire = request.model_dump_for_forwarding()
 
     assert wire["stream"] is False
@@ -162,6 +163,74 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
     assert compact.input[2] in wire["input"]
     assert wire["truncation"] == "disabled"
     assert "CONTEXT CHECKPOINT COMPACTION" in str(wire["input"])
+    assert SOURCE_COMPACTION_TOOL_REMINDER in str(wire["input"])
+
+
+def test_cache_preserving_source_compaction_keeps_conversation_tool_declarations() -> None:
+    tools: list[JsonValue] = [{"type": "function", "name": "do_work", "parameters": {"type": "object"}}]
+    compact = ResponsesCompactRequest.model_validate(
+        {
+            "model": "anthropic/claude-opus-5-5",
+            "instructions": "base instructions",
+            "input": [{"role": "user", "content": "history"}, {"type": "compaction_trigger"}],
+            "tools": tools,
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+            "text": {"format": {"type": "json_schema"}},
+        }
+    )
+
+    wire = build_source_compaction_request(compact, keep_tool_declarations=True).model_dump_for_forwarding()
+
+    assert (wire["tools"], wire["tool_choice"], wire["parallel_tool_calls"]) == (tools, "auto", True)
+    assert wire["instructions"] == "base instructions"
+    assert "text" not in wire
+    assert "compaction_trigger" not in str(wire["input"])
+    assert SOURCE_COMPACTION_TOOL_REMINDER in str(wire["input"][-1])
+
+
+def test_terminal_compaction_carries_tool_declarations_only_when_requested() -> None:
+    from app.modules.proxy.request_policy import build_terminal_compact_request
+
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "anthropic/claude-opus-5-5",
+            "instructions": "base instructions",
+            "input": [{"role": "user", "content": "history"}, {"type": "compaction_trigger"}],
+            "tools": [{"type": "function", "name": "do_work"}],
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+        }
+    )
+
+    source = build_terminal_compact_request(payload, include_tool_declarations=True)
+    native = build_terminal_compact_request(payload, include_tool_declarations=False)
+
+    assert source is not None and native is not None
+    assert source.model_dump(mode="json")["tools"] == [{"type": "function", "name": "do_work"}]
+    assert source.model_dump(mode="json")["parallel_tool_calls"] is True
+    assert not {"tools", "tool_choice", "parallel_tool_calls"} & native.model_dump(mode="json").keys()
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "function_call", "name": "do_work", "call_id": "call_1", "arguments": "{}"},
+        {"type": "custom_tool_call", "name": "apply_patch", "call_id": "call_2", "input": "patch"},
+        {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+    ],
+)
+def test_source_compaction_rejects_tool_calls_in_summary_output(item: dict[str, JsonValue]) -> None:
+    response: dict[str, JsonValue] = {
+        "status": "completed",
+        "output": [
+            {"type": "message", "status": "completed", "content": [{"type": "output_text", "text": "summary"}]},
+            item,
+        ],
+    }
+
+    with pytest.raises(SourceCompactionResultError, match="instead of a summary"):
+        extract_completed_source_compaction_summary(response)
 
 
 def test_source_compaction_preserves_history_above_native_wire_budget() -> None:
@@ -175,7 +244,7 @@ def test_source_compaction_preserves_history_above_native_wire_budget() -> None:
     ]
     compact = ResponsesCompactRequest.model_validate({"model": "source", "instructions": "summarize", "input": items})
     original = compact.model_dump(mode="json")
-    request = build_source_compaction_request(compact)
+    request = build_source_compaction_request(compact, keep_tool_declarations=False)
     assert isinstance(compact.input, list) and isinstance(request.input, list)
     assert request.input[:-1] == compact.input[:-1]
     assert compact.model_dump(mode="json") == original
@@ -188,7 +257,7 @@ def test_source_compaction_overrides_cannot_replace_history_or_enable_truncation
     compact = ResponsesCompactRequest.model_validate(
         {"model": "source", "instructions": "summarize", "input": "all original history"}
     )
-    request = build_source_compaction_request(compact)
+    request = build_source_compaction_request(compact, keep_tool_declarations=False)
     source = ModelSource(
         id="compact-source",
         name="Compact",
@@ -230,7 +299,7 @@ def test_source_compaction_requires_materialized_history(handle: str) -> None:
         {"model": "source", "instructions": "summarize", "input": [], handle: "stored_history"}
     )
     with pytest.raises(ClientPayloadError) as error:
-        build_source_compaction_request(compact)
+        build_source_compaction_request(compact, keep_tool_declarations=False)
     assert error.value.code == "compaction_history_unavailable"
     assert error.value.param == handle
 

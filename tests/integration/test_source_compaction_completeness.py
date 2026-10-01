@@ -75,6 +75,32 @@ def switched_history(ending: str) -> list[JsonValue]:
     return items
 
 
+TOOLS: list[JsonValue] = [
+    {"type": "function", "name": "inspect", "parameters": {"type": "object", "properties": {}}},
+    {"type": "custom", "name": "apply_patch", "description": "Edit files"},
+]
+
+
+def without_cache_markers(value: JsonValue) -> JsonValue:
+    if isinstance(value, list):
+        return [without_cache_markers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: without_cache_markers(item) for key, item in value.items() if key != "cache_control"}
+    return value
+
+
+def assert_reuses_turn_prefix(turn: dict[str, JsonValue], compaction: dict[str, JsonValue]) -> None:
+    """Claude caches tools -> system -> messages; compaction must extend the turn's prefix."""
+    for field in ("tools", "tool_choice", "system"):
+        assert without_cache_markers(compaction[field]) == without_cache_markers(turn[field])
+    turn_messages = without_cache_markers(turn["messages"])
+    compaction_messages = without_cache_markers(compaction["messages"])
+    assert isinstance(turn_messages, list) and isinstance(compaction_messages, list)
+    assert compaction_messages[: len(turn_messages)] == turn_messages
+    serialized = json.dumps(compaction_messages[-1])
+    assert "CONTEXT CHECKPOINT COMPACTION" in serialized and "Do not call any tools" in serialized
+
+
 @asynccontextmanager
 async def websocket_session(async_client, path, session_id):
     incoming, outgoing = asyncio.Queue(), asyncio.Queue()
@@ -163,6 +189,75 @@ async def test_websocket_compact_materializes_complete_history(async_client, poo
         await turn({"input": [*compact["output"], {"role": "user", "content": "Resume the task"}]})
         assert "Hello from Claude" in json.dumps(captured[-1][2]["messages"])
     assert len(closed) == len(captured) == 3
+
+
+@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
+async def test_claude_compact_endpoint_reuses_conversation_tool_prefix(async_client, pool, monkeypatch, path):
+    captured, _ = install_upstream(monkeypatch)
+    headers = {"session_id": "cache-preserving-compact"}
+    body = {"model": MODEL, "instructions": "Keep the task context", "tools": TOOLS, "parallel_tool_calls": True}
+    first = await async_client.post("/v1/responses", headers=headers, json={**body, "input": complete_history()})
+    assert first.status_code == 200, first.text
+    response = await async_client.post(
+        path,
+        headers=headers,
+        json={**body, "input": [], "previous_response_id": first.json()["id"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["output"][0]["type"] == "compaction"
+    assert len(captured) == 2
+    assert_reuses_turn_prefix(captured[0][2], captured[1][2])
+
+
+@pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
+async def test_websocket_compaction_trigger_reuses_conversation_tool_prefix(async_client, pool, monkeypatch, path):
+    captured, _ = install_upstream(monkeypatch)
+    declarations = {"tools": TOOLS, "tool_choice": "auto", "parallel_tool_calls": True}
+    async with websocket_session(async_client, path, "cache-preserving-ws") as turn:
+        first = await turn({**declarations, "input": complete_history()})
+        compact = await turn(
+            {**declarations, "previous_response_id": first["id"], "input": [{"type": "compaction_trigger"}]}
+        )
+    assert [item["type"] for item in compact["output"]] == ["compaction"]
+    assert len(captured) == 2
+    assert_reuses_turn_prefix(captured[0][2], captured[1][2])
+
+
+@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
+async def test_claude_compaction_tool_call_fails_without_checkpoint(async_client, pool, monkeypatch, path):
+    from starlette.requests import Request
+
+    from app.modules.claude.protocol import ToolIdentity
+    from app.modules.model_sources.continuation import SourceContinuation
+
+    captured, _ = install_upstream(monkeypatch)
+    headers = {"session_id": "compaction-tool-call"}
+    body = {"model": MODEL, "instructions": "Keep the task context", "tools": TOOLS}
+    first = await async_client.post("/v1/responses", headers=headers, json={**body, "input": complete_history()})
+    assert first.status_code == 200, first.text
+    continuation = SourceContinuation(
+        Request({"type": "http", "headers": [(b"session_id", headers["session_id"].encode())]}), None, captured[0][0]
+    )
+    before = await continuation.store.load(continuation.scope, first.json()["id"])
+    assert before is not None
+    wire_name = ToolIdentity("inspect", None, False).wire_name
+    called, _ = install_upstream(
+        monkeypatch,
+        stop="tool_use",
+        message_id="msg_tool_compact",
+        content=[
+            {"type": "text", "text": "Let me look first"},
+            {"type": "tool_use", "id": "toolu_compact", "name": wire_name, "input": {}},
+        ],
+    )
+    response = await async_client.post(
+        path, headers=headers, json={**body, "input": [], "previous_response_id": first.json()["id"]}
+    )
+    assert response.status_code == 502, response.text
+    assert response.json()["error"]["code"] == "model_source_compaction_invalid"
+    assert "output" not in response.json()
+    assert len(called) == 1
+    assert await continuation.store.load(continuation.scope, first.json()["id"]) == before
 
 
 def assert_portable_switch_summary(payload: dict[str, JsonValue]) -> None:

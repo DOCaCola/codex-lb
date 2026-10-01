@@ -112,12 +112,31 @@ live qualification. No client changes are required.
 
 Native compact serialization retains its upstream-specific 100k estimated-token
 wire reduction. Source summarization does not use that serializer: continuation
-is materialized from the validated complete request first, and a stateless,
-tool-free summarization request preserves readable text/tool/image history.
+is materialized from the validated complete request first, and a stateless
+summarization request preserves readable text/tool/image history.
 Control-only trigger and additional-tools declarations are removed, not history.
+Claude summarization keeps the conversation's tools, tool_choice and
+parallel_tool_calls unchanged; OpenRouter and other sources stay tool-free.
 Automatic input truncation is disabled and source model overrides cannot replace
 history/instructions, enable tools/structured output or restore continuation
 handles. Compatible generation controls such as reasoning still apply.
+
+Claude caches the prompt prefix in tools -> system -> messages order. The
+earlier tool-free summary (inherited from OpenCodex's summarization effect)
+changed the first prefix segment, so every Opus compaction rewrote the whole
+conversation: production conversation 01a0e444 on 2026-10-01 compacted 161,933
+input tokens with 0 cache reads and 161,929 cache writes ($0.94), while the
+surrounding turns read 98% and 74% from cache. Codex CLI's remote compaction v2
+(`compact_remote_v2_attempt.rs`) sends model-visible tools with
+`parallel_tool_calls: true`, the same as normal turns. Claude Code 2.1.286
+`/compact` forks with cache-safe parameters (same system, tools and messages),
+denies tool use and appends a plain-text-only reminder. codex-lb follows that
+pattern: the summarization instruction carries a short no-tools reminder at the
+tail, and any tool, custom-tool or hosted-search output fails compaction with
+model_source_compaction_invalid without a checkpoint. `tool_choice: none` is not
+used because changing tool choice invalidates Claude's cached messages. Hosted
+search remains declared when the client declared it; a search during
+summarization is rejected like any other tool call.
 
 Provider capacity, not the conservative client default, determines whether the
 complete request fits. No JSON-character admission guess or shortened-history

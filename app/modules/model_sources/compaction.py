@@ -10,6 +10,14 @@ from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
 _SOURCE_COMPACTION_EXCLUDED_INPUT_TYPES = frozenset({"additional_tools", "compaction_trigger"})
+# Declarations the client sent with the conversation. Claude caches the prompt
+# prefix in tools -> system -> messages order, so a summarization turn without
+# them misses the whole cached conversation.
+_SOURCE_COMPACTION_TOOL_FIELDS = ("tools", "tool_choice", "parallel_tool_calls")
+_SOURCE_COMPACTION_OUTPUT_TYPES = frozenset({"message", "reasoning"})
+SOURCE_COMPACTION_TOOL_REMINDER = (
+    "Do not call any tools. Respond with the summary as plain text only; tool calls will be rejected."
+)
 _TRUNCATED_STOP_REASONS = frozenset(
     {
         "blocklist",
@@ -47,7 +55,10 @@ def source_compaction_instruction() -> dict[str, JsonValue]:
     return {
         "type": "message",
         "role": "user",
-        "content": [{"type": "input_text", "text": COMPACTION_PROMPT}],
+        "content": [
+            {"type": "input_text", "text": COMPACTION_PROMPT},
+            {"type": "input_text", "text": SOURCE_COMPACTION_TOOL_REMINDER},
+        ],
     }
 
 
@@ -57,7 +68,16 @@ def source_compaction_history(items: list[_Item]) -> list[_Item]:
     return items[:-1]
 
 
-def build_source_compaction_request(payload: ResponsesCompactRequest) -> ResponsesRequest:
+def build_source_compaction_request(
+    payload: ResponsesCompactRequest, *, keep_tool_declarations: bool
+) -> ResponsesRequest:
+    """Build the summarization turn sent to a model source.
+
+    With ``keep_tool_declarations`` the turn carries the conversation's tool
+    declarations unchanged so a prefix-cached source reuses the conversation
+    cache; the instruction forbids tool calls and the result is rejected if the
+    model calls one anyway.
+    """
     # Native compact serialization reduces history to a provider-specific wire
     # budget. A source summarizer must see the complete materialized history.
     compact_payload = payload.model_dump(mode="json", exclude_none=True)
@@ -90,6 +110,10 @@ def build_source_compaction_request(payload: ResponsesCompactRequest) -> Respons
         source_payload["reasoning"] = payload.reasoning.model_dump(mode="json", exclude_none=True)
     if payload.service_tier is not None:
         source_payload["service_tier"] = payload.service_tier
+    if keep_tool_declarations:
+        for field in _SOURCE_COMPACTION_TOOL_FIELDS:
+            if field in compact_payload:
+                source_payload[field] = compact_payload[field]
     return ResponsesRequest.model_validate(source_payload)
 
 
@@ -110,7 +134,12 @@ def extract_completed_source_compaction_summary(payload: Mapping[str, JsonValue]
         raise SourceCompactionResultError("source compaction returned malformed output")
     text_parts: list[str] = []
     for item in output:
-        if not is_json_mapping(item) or item.get("type") != "message":
+        if not is_json_mapping(item):
+            raise SourceCompactionResultError("source compaction returned malformed output")
+        item_type = item.get("type")
+        if item_type not in _SOURCE_COMPACTION_OUTPUT_TYPES:
+            raise SourceCompactionResultError(f"source compaction returned {item_type} output instead of a summary")
+        if item_type != "message":
             continue
         item_status = item.get("status")
         if isinstance(item_status, str) and item_status != "completed":

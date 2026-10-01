@@ -170,6 +170,11 @@ successful compaction checkpoint or replacement of retained original history.
 Native OpenAI compact wire behavior SHALL remain unchanged.
 Source model request overrides MUST NOT replace compaction history/instructions,
 enable tools or automatic truncation, or attach persisted continuation handles.
+Claude summarization SHALL carry the client's tools, tool_choice and
+parallel_tool_calls unchanged so its prompt prefix matches ordinary turns; other
+sources SHALL summarize without tool declarations. The summarization instruction
+SHALL forbid tool calls, and tool, custom-tool or hosted-search output MUST fail
+compaction without a checkpoint or replacement of retained original history.
 Claude compaction MUST authenticate signed history and SHALL prefer its original
 account and model, replaying signed blocks verbatim there. Completed signed
 thinking that cannot keep its signature on the selected account or model, or
@@ -199,6 +204,18 @@ model or fail explicitly.
 #### Scenario: Native compaction compatibility
 - **WHEN** native OpenAI compact serialization is used
 - **THEN** its existing normalization and wire-budget behavior remain active
+
+#### Scenario: Claude compaction reuses the conversation prefix
+- **WHEN** Claude compacts a conversation whose requests declare tools, over the compact endpoint or a terminal compaction trigger
+- **THEN** the summarizer receives the same tools, tool choice and system as an ordinary turn, with the turn's messages as an unchanged prefix followed by the summarization instruction
+
+#### Scenario: Summarizer calls a tool
+- **WHEN** the source returns a tool, custom-tool or hosted-search call during compaction
+- **THEN** the proxy returns model_source_compaction_invalid without a checkpoint and retained original history remains usable
+
+#### Scenario: Tool-free source summarization
+- **WHEN** OpenRouter or another non-Claude source compacts a conversation that declares tools
+- **THEN** the summarization request contains no tool declarations
 
 #### Scenario: Signed Claude history on another route
 - **WHEN** compaction runs on another account or model than completed signed thinking, its owner is unavailable, completed owners differ or the upstream rejects a historical signature

@@ -5338,7 +5338,7 @@ async def _source_synthetic_compaction_response(
     context: ProxyContext | None = None,
 ) -> Response:
     try:
-        compact_payload = build_terminal_compact_request(payload)
+        compact_payload = build_terminal_compact_request(payload, include_tool_declarations=True)
         if compact_payload is None:
             raise RuntimeError("source compaction requires a terminal compaction trigger")
     except ClientPayloadError as exc:
@@ -5381,7 +5381,7 @@ async def _source_compaction_response(
                 resolve=resolve_checkpoint,
             )
             payload = ResponsesCompactRequest.model_validate(expanded)
-        source_request = build_source_compaction_request(payload)
+        source_request = build_source_compaction_request(payload, keep_tool_declarations=source.kind == "claude")
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     except ProxyResponseError as exc:
@@ -7241,7 +7241,7 @@ async def _stream_responses(
     compact_payload: ResponsesCompactRequest | None = None
     if codex_session_affinity:
         try:
-            compact_payload = build_terminal_compact_request(payload)
+            compact_payload = build_terminal_compact_request(payload, include_tool_declarations=False)
             if compact_payload is not None:
                 # Validate the native compact wire budget only on native dispatch.
                 compact_payload.to_payload()

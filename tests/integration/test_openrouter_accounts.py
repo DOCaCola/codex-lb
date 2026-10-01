@@ -744,6 +744,8 @@ async def test_source_compaction_uses_selected_provider(async_client, provider, 
         assert payload["truncation"] == "disabled"
         assert payload["input"][:-1] == history
         assert payload["input"][-1]["role"] == "user"
+        # OpenRouter summarization stays tool-free even when the client declares tools.
+        assert not {"tools", "tool_choice", "parallel_tool_calls"} & payload.keys()
         return web.json_response(
             {
                 "id": "resp_summary",
@@ -772,7 +774,14 @@ async def test_source_compaction_uses_selected_provider(async_client, provider, 
             assert source is not None
             source.base_url = url
             await session.commit()
-        request_body = {"model": "openrouter/vendor/test", "instructions": "Summarize", "input": history}
+        request_body = {
+            "model": "openrouter/vendor/test",
+            "instructions": "Summarize",
+            "input": history,
+            "tools": [{"type": "function", "name": "inspect", "parameters": {"type": "object"}}],
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+        }
         if not path.endswith("/compact"):
             request_body["input"] = [*history, {"type": "compaction_trigger"}]
             request_body["stream"] = False

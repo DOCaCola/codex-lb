@@ -1,0 +1,5 @@
+- [x] 1. Carry tool declarations through source terminal compaction and keep them for Claude summarization only.
+- [x] 2. Append the no-tools reminder and reject tool/custom-tool/hosted-search summary output.
+- [x] 3. Cover prefix parity on HTTP compact and WebSocket triggers, tool-call failure, tool-free OpenRouter and native compact fields.
+- [x] 4. Sync spec and context; run targeted tests, lint, format, type checks and strict OpenSpec validation.
+- [ ] 5. Confirm cache reads on the next live Claude compaction after deployment.
