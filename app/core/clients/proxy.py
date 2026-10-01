@@ -95,6 +95,7 @@ from app.core.openai.requests import (
     sanitize_native_responses_input,
     validate_compact_input_wire_budget,
 )
+from app.core.openai.subagent_messages import UPSTREAM_NAMESPACE, restore_native_collaboration
 from app.core.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
@@ -2287,6 +2288,22 @@ def _non_streaming_response_event(payload: JsonValue) -> tuple[str, str]:
     return format_sse_event({"type": event_type, "response": response}), event_type
 
 
+def _restore_native_collaboration_block(event_block: str) -> str:
+    """Return the client's collaboration names for one native event block."""
+    if UPSTREAM_NAMESPACE not in event_block:
+        return event_block
+    payload = parse_sse_data_json(event_block)
+    restored = restore_native_collaboration(payload) if payload is not None else None
+    if not isinstance(restored, dict):
+        return event_block
+    return ParsedSseBlock(
+        format_sse_event(restored),
+        restored,
+        is_local=isinstance(event_block, ParsedSseBlock) and event_block.is_local,
+        response_id_is_local=isinstance(event_block, ParsedSseBlock) and event_block.response_id_is_local,
+    )
+
+
 def _to_websocket_upstream_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme == "https":
@@ -3653,6 +3670,7 @@ async def stream_responses(
         ) as upstream_events,
     ):
         async for event_block in upstream_events:
+            event_block = _restore_native_collaboration_block(event_block)
             if not suppress_live_usage and (codex_lb_account_id or account_id) and EVENT_MARKER in event_block:
                 publish_live_usage(
                     parse_rate_limit_event_text(event_block),

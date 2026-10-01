@@ -2956,7 +2956,9 @@ def test_backend_responses_websocket_forwards_client_tools_byte_identical(app_in
     # fixture mirrors the gpt-5.6 ``multi_agent_version: v2`` reserved
     # collaboration namespace tool (codex-rs rust-v0.144.1): ``strict: false``,
     # a non-standard ``encrypted`` marker, non-alphabetical ``required`` order,
-    # and leading whitespace in the description.
+    # and leading whitespace in the description. The only intended change is
+    # the plaintext collaboration projection: the namespace is renamed and its
+    # ``encrypted`` marker dropped, with everything else byte-identical.
     upstream_messages = [
         _FakeUpstreamMessage(
             "text",
@@ -3086,7 +3088,10 @@ def test_backend_responses_websocket_forwards_client_tools_byte_identical(app_in
     assert second["type"] == "response.completed"
     assert len(fake_upstream.sent_text) == 1
     frame = fake_upstream.sent_text[0]
-    expected_tools_bytes = '"tools":' + json.dumps(client_tools, ensure_ascii=True, separators=(",", ":"))
+    upstream_tools = json.loads(json.dumps(client_tools))
+    upstream_tools[0]["name"] = "collaboration-optimize"
+    upstream_tools[0]["tools"][0]["parameters"]["properties"]["message"] = {"type": "string"}
+    expected_tools_bytes = '"tools":' + json.dumps(upstream_tools, ensure_ascii=True, separators=(",", ":"))
     assert expected_tools_bytes in frame
 
 

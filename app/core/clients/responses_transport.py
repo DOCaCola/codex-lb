@@ -7,14 +7,31 @@ import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
 from contextlib import aclosing
+from dataclasses import replace
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocket, UpstreamWebSocketMessage
 from app.core.errors import synthetic_stream_failure_event
+from app.core.openai.subagent_messages import UPSTREAM_NAMESPACE, restore_native_collaboration
 from app.core.utils.request_id import get_request_id
-from app.core.utils.sse import parse_sse_data_json
+from app.core.utils.sse import parse_sse_data_json, parse_sse_data_json_text
 
 logger = logging.getLogger(__name__)
+
+
+def _restore_native_collaboration_message(message: UpstreamWebSocketMessage) -> UpstreamWebSocketMessage:
+    """Return the client's collaboration names for one upstream frame."""
+    if message.kind != "text" or message.text is None or UPSTREAM_NAMESPACE not in message.text:
+        return message
+    payload = message.payload if message.payload is not None else parse_sse_data_json_text(message.text)
+    restored = restore_native_collaboration(payload) if payload is not None else None
+    if not isinstance(restored, dict):
+        return message
+    return replace(
+        message,
+        text=json.dumps(restored, separators=(",", ":")),
+        payload=restored if message.payload is not None else None,
+    )
 
 
 class ResponsesTransport:
@@ -55,7 +72,7 @@ class ResponsesTransport:
     async def _read_websocket(self, websocket: UpstreamWebSocket) -> None:
         try:
             while True:
-                message = await websocket.receive()
+                message = _restore_native_collaboration_message(await websocket.receive())
                 if message.kind in {"close", "closed", "error"}:
                     self._websocket_ended = True
                     # A WS close cannot cancel an independently running HTTP

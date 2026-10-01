@@ -174,6 +174,7 @@ from app.core.openai.requests import (
     strip_replayed_tool_call_namespaces_from_payload,
     strip_unstored_lookup_item_ids,
 )
+from app.core.openai.subagent_messages import lower_agent_messages
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.request_locality import (
     FORWARDED_CHAIN_HEADER_NAMES,
@@ -6094,7 +6095,7 @@ def _shape_source_responses_payload(
 ) -> dict[str, JsonValue]:
     """Project the client body onto what the source may see (telemetry stripped, reasoning aliases resolved)."""
 
-    source_payload = strip_source_telemetry(payload.model_dump_for_forwarding())
+    source_payload = lower_agent_messages(strip_source_telemetry(payload.model_dump_for_forwarding()))
     lower_opaque_compaction_items_for_model_source(source_payload)
     preserve_materialized_provider_alias = payload._codex_lb_provider_reasoning_effort_materialized and (
         api_key is None or (api_key.enforced_reasoning_effort is None and api_key.allowed_reasoning_efforts is None)

@@ -21,6 +21,7 @@ from app.core.openai.compaction import lower_codex_lb_compaction_items
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import sanitize_native_reasoning_input as sanitize_native_reasoning_input
 from app.core.openai.reasoning import strip_invalid_native_item_ids
+from app.core.openai.subagent_messages import project_native_collaboration_tools
 from app.core.openai.tool_call_safety import is_downstream_side_effect_tool_call_item
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
@@ -1894,7 +1895,9 @@ def strip_unstored_lookup_item_ids(payload: Mapping[str, JsonValue]) -> MutableJ
 def sanitize_native_responses_input(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
     """Normalize stateless input for the native ChatGPT Responses boundary."""
 
-    return sanitize_native_reasoning_input(strip_unstored_lookup_item_ids(strip_invalid_native_item_ids(payload)))
+    return project_native_collaboration_tools(
+        sanitize_native_reasoning_input(strip_unstored_lookup_item_ids(strip_invalid_native_item_ids(payload)))
+    )
 
 
 def normalize_reasoning_aliases(payload: MutableJsonObject) -> None:
