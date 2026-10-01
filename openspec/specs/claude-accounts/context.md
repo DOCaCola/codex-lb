@@ -769,3 +769,36 @@ c7f83276e4c8af0d7735adb6524fc68d34a97732 returns 429 with quota recovery
 metadata. These support error semantics, not cross-account signed-state
 portability. Route mocks verify no dispatch or history mutation; live client
 backoff behavior is not independently qualified by these tests.
+
+## Interrupted assistant turn recovery (2026-10-01)
+
+Codex may retry after receiving only an assistant progress message. Anthropic
+interprets an assistant-ending Messages request as prefill; Opus 5.5 rejects
+that ending. Translated Responses/Chat therefore preserve all projected history
+and append a user `(continue)` on the wire. For example, `user: implement` then
+`assistant: Writing the proposal` becomes those same messages followed by
+`user: (continue)`. Explicit user/tool-result endings need no synthetic turn.
+The logical replay store never receives that marker, so empty-delta continuations
+do not accumulate artificial user turns. Normal wire caching still applies.
+
+Pending tool calls and search state are validated first. The continuation cannot
+supply a missing result or make active signed history portable to another owner.
+Native Messages remains caller-owned; compaction already supplies its own user
+summary instruction. No client patch, automatic generation replay or history
+deletion is involved.
+
+An undeclared tool still fails explicitly. The diagnostic records source/model,
+response ID, content index, declaration count and a 12-character SHA-256 name
+fingerprint. Only names matching `[A-Za-z0-9_-]{1,128}` are logged in plaintext;
+arguments and call IDs are excluded. This makes unexpected tools diagnosable
+without guessing aliases or permitting undeclared execution. Structured stream
+error delivery is described in `../model-source-routing/spec.md`.
+
+Source evidence inspected October 1, 2026: OpenCodex
+`8a005dd98ff12cdc000c6f4961cbf71a592d6b6b`, `src/adapters/anthropic.ts`,
+appends `(continue)` for assistant tails. CLIProxyAPI
+`d33f63f8e3d98428440ebca5a5b6a981a61ff71e` instead drops unsupported assistant
+prefill in its Responses translator; `6f25b9a1` introduced its Opus 5/Sonnet 4.6
+rule on August 29. We adopt the history-preserving behavior, not deletion. No
+third-party code is copied. Public route/socket mocks verify projection and
+recovery, not live upstream OAuth acceptance or the unknown tool's actual origin.

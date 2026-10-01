@@ -7,7 +7,6 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from app.modules.claude import transport
-from app.modules.model_sources.forwarding import ModelSourceForwardingError
 from tests.integration.test_claude_inference import MODEL
 from tests.integration.test_claude_inference import pool as pool
 from tests.unit.test_claude_tool_schema import declaration
@@ -145,23 +144,16 @@ async def test_native_messages_does_not_adapt_tools(async_client, pool, monkeypa
 
 async def test_invalid_generated_arguments_do_not_complete(async_client, pool, monkeypatch):
     captured, closed = install_tools(monkeypatch, invalid=True)
-    sent = []
-    app = async_client._transport.app
-
-    async def capture(scope, receive, send):
-        async def record(message):
-            sent.append(message)
-            await send(message)
-
-        await app(scope, receive, record)
-
-    monkeypatch.setattr(async_client._transport, "app", capture)
-    with pytest.raises(ModelSourceForwardingError):
-        await async_client.post(
-            "/v1/responses",
-            json={"model": MODEL, "input": "Hi", "tools": declaration(), "stream": True},
-        )
-    body = b"".join(message.get("body", b"") for message in sent)
+    response = await async_client.post(
+        "/v1/responses",
+        json={"model": MODEL, "input": "Hi", "tools": declaration(), "stream": True},
+    )
+    assert response.status_code == 200
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert events[-1]["type"] == "error"
+    assert events[-1]["status"] == 502
+    assert events[-1]["error"]["code"] == "invalid_upstream_response"
+    body = response.content
     assert b"response.completed" not in body
     assert b"response.function_call_arguments.delta" not in body
     assert b"response.function_call_arguments.done" not in body

@@ -382,6 +382,7 @@ from app.modules.proxy.source_dispatch import (
     open_with_disconnect_watch,
     relayed_frame_delivers_content,
     relayed_terminal_kind,
+    responses_error_stream,
     settlement_stream,
     source_usage_cost_usd,
 )
@@ -5941,6 +5942,8 @@ async def _dispatch_source_responses_attempt(
                         _chat_source_delivers_content if chat_projection else relayed_frame_delivers_content
                     ),
                 )
+                if not chat_projection:
+                    body = responses_error_stream(body, scheduler=owner.scheduler)
             return SourceStreamingResponse(
                 body,
                 owner=owner,

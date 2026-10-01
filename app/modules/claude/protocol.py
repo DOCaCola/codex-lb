@@ -335,6 +335,12 @@ def project_responses(
         raise invalid("Claude tool calls require their outputs before continuing")
     if not messages:
         raise invalid("Claude requests require at least one message")
+    if isinstance(messages[-1], dict) and messages[-1].get("role") == "assistant":
+        # Responses can resume after partial assistant output without new user
+        # input. Claude interprets that ending as prefill, not a continuation.
+        # Preserve the entire turn; never invent results for pending tools.
+        append("user", [{"type": "text", "text": "(continue)"}])
+        logger.info("claude_continuation_projected request_id=%s reason=assistant_tail", get_request_id())
     limit = payload.get("max_output_tokens", default_output_tokens(max_output_tokens))
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit > max_output_tokens:
         raise invalid("Requested output limit exceeds the Claude model capability", "max_output_tokens")

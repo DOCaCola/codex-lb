@@ -120,6 +120,96 @@ def codec():
     return ClaudeOpaqueState(TokenEncryptor(key=Fernet.generate_key()))
 
 
+@pytest.mark.parametrize("signed", [False, True])
+@pytest.mark.parametrize("model", ["anthropic/claude-opus-5", "anthropic/claude-opus-5-5"])
+def test_assistant_tail_preserves_history_and_appends_wire_only_continuation(signed, model):
+    opaque = codec()
+    block = {"type": "thinking", "thinking": "preserve", "signature": "signed"}
+    history = [{"role": "user", "content": "Hello"}]
+    if signed:
+        history.append({"type": "reasoning", "encrypted_content": opaque.encode(scope(), block)})
+    history.append({"role": "assistant", "content": [{"type": "output_text", "text": "Progress"}]})
+    payload = request(input=history, model=model)
+    original = deepcopy(payload)
+    projected = project(
+        payload,
+        max_output_tokens=8192,
+        restore_reasoning=lambda token: (
+            opaque.decode(
+                token, model=scope().model, client_scope=scope().client_scope, conversation_id=scope().conversation_id
+            ).block
+        ),
+    )
+    assert projected.body["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+        {"role": "assistant", "content": ([block] if signed else []) + [{"type": "text", "text": "Progress"}]},
+        {"role": "user", "content": [{"type": "text", "text": "(continue)"}]},
+    ]
+    assert payload == original
+
+
+def test_reasoning_only_tail_gets_continuation_without_losing_summary():
+    body = project(
+        request(input=[{"type": "reasoning", "summary": [{"type": "summary_text", "text": "Preserve reason"}]}]),
+        max_output_tokens=8192,
+    ).body
+    assert body["messages"][-1] == {"role": "user", "content": [{"type": "text", "text": "(continue)"}]}
+    assert "Preserve reason" in json.dumps(body["messages"][0])
+
+
+@pytest.mark.parametrize("result", [False, True])
+def test_user_or_tool_result_tail_needs_no_synthetic_continuation(result):
+    history = [{"role": "user", "content": "Hello"}]
+    if result:
+        history.extend(
+            [
+                {"type": "function_call", "name": "run", "call_id": "call1", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call1", "output": "done"},
+            ]
+        )
+    body = project(request(input=history), max_output_tokens=8192).body
+    assert body["messages"][-1]["role"] == "user"
+    assert "(continue)" not in json.dumps(body)
+
+
+def test_continuation_never_supplies_a_missing_tool_result():
+    history = [
+        {"role": "user", "content": "Hello"},
+        {"type": "function_call", "name": "run", "call_id": "call1", "arguments": "{}"},
+        {"role": "assistant", "content": "Progress"},
+    ]
+    with pytest.raises(ClientPayloadError, match="require their outputs"):
+        project(request(input=history), max_output_tokens=8192)
+
+
+@pytest.mark.parametrize("name", ["unknown_tool", "bad\nprivate-name", "a" * 129, "\ud800"])
+def test_undeclared_tool_is_rejected_with_bounded_content_free_diagnostics(caplog, name):
+    adapter = ResponsesProjection(scope(), {}, codec())
+    adapter.consume({"type": "message_start", "message": {"id": "msg_fixture", "usage": {}}})
+    with pytest.raises(ClaudeError, match="undeclared tool"):
+        adapter.consume(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "private-call",
+                    "name": name,
+                    "input": {"secret": "private-argument"},
+                },
+            }
+        )
+    assert "claude_undeclared_tool source_id=source-a" in caplog.text
+    assert "content_index=0 declared_count=0" in caplog.text
+    assert "tool_name_hash=" in caplog.text
+    assert "private-call" not in caplog.text and "private-argument" not in caplog.text
+    if name == "unknown_tool":
+        assert "tool_name=unknown_tool" in caplog.text
+    else:
+        assert "tool_name=None" in caplog.text
+        assert name not in caplog.text
+
+
 def test_text_and_inline_image_projection_does_not_mutate_input():
     payload = request(
         instructions="Keep instructions",

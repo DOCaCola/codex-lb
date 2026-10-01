@@ -181,6 +181,211 @@ async def test_responses_route_reaches_claude_with_owned_cleanup(async_client, p
         assert response.json()["usage"]["total_tokens"] == 17
 
 
+@pytest.mark.parametrize(
+    "path", ["/v1/responses", "/backend-api/codex/responses", "/v1/chat/completions", "/v1/messages"]
+)
+async def test_assistant_tail_continuation_is_only_applied_to_translated_routes(async_client, pool, monkeypatch, path):
+    captured, closed = install_upstream(monkeypatch)
+    history = [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Progress"}]
+    body = {"model": MODEL, "stream": True}
+    if path.endswith("messages"):
+        body.update(messages=history, max_tokens=100)
+    elif path.endswith("completions"):
+        body["messages"] = history
+    else:
+        body["input"] = history
+    response = await async_client.post(path, json=body, headers=native_headers() if path.endswith("messages") else {})
+    assert response.status_code == 200, response.text
+    messages = captured[0][2]["messages"]
+    if path.endswith("messages"):
+        assert messages == history
+    else:
+        assert messages[1] == {"role": "assistant", "content": [{"type": "text", "text": "Progress"}]}
+        assert len(messages) == 3
+        assert messages[2] == {
+            "role": "user",
+            "content": [{"type": "text", "text": "(continue)", "cache_control": {"type": "ephemeral"}}],
+        }
+    assert len(closed) == 1
+
+
+async def test_empty_delta_signed_continuation_does_not_retain_synthetic_user_input(async_client, pool, monkeypatch):
+    from tests.integration.model_source_helpers import _enable_api_key_auth
+
+    await _enable_api_key_auth(async_client)
+    created = await async_client.post(
+        "/api/api-keys/", json={"name": "signed-continuation", "assignedSourceIds": [pool[0]]}
+    )
+    assert created.status_code == 200, created.text
+    headers = {"Authorization": f"Bearer {created.json()['key']}", "session_id": "empty-delta"}
+    previous = None
+    for turn in range(3):
+        captured, closed = install_upstream(
+            monkeypatch,
+            message_id=f"msg_continuation_{turn}",
+            content=[
+                {"type": "thinking", "thinking": "preserve", "signature": "signed"},
+                {"type": "text", "text": "Progress"},
+            ],
+        )
+        body = {"model": MODEL, "stream": False, "input": "Hello" if turn == 0 else []}
+        if previous:
+            body["previous_response_id"] = previous
+        response = await async_client.post("/v1/responses", headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        previous = response.json()["id"]
+        messages = captured[0][2]["messages"]
+        if turn:
+            # The normal wire caching policy decorates the final user block.
+            messages = [
+                {
+                    **message,
+                    "content": [
+                        {key: value for key, value in block.items() if key != "cache_control"}
+                        for block in message["content"]
+                    ],
+                }
+                for message in messages
+            ]
+            assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+            assert messages[0]["content"] == [{"type": "text", "text": "Hello"}]
+            assert messages[-1]["content"] == [{"type": "text", "text": "(continue)"}]
+            assert messages[1]["content"] == [
+                block
+                for _ in range(turn)
+                for block in [
+                    {"type": "thinking", "thinking": "preserve", "signature": "signed"},
+                    {"type": "text", "text": "Progress"},
+                ]
+            ]
+        assert len(captured) == len(closed) == 1
+
+
+@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_undeclared_tool_failure_is_structured_and_logged_after_partial_output(
+    async_client, pool, monkeypatch, path, stream
+):
+    captured, closed = install_upstream(
+        monkeypatch,
+        content=[
+            {"type": "text", "text": "Progress"},
+            {"type": "tool_use", "id": "call_bad", "name": "unknown_tool", "input": {"secret": "private"}},
+        ],
+    )
+    headers = {"session_id": "projection-failure"}
+    response = await async_client.post(path, headers=headers, json={"model": MODEL, "input": "Hello", "stream": stream})
+    assert response.status_code == (200 if stream else 502), response.text
+    if stream:
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        assert events[-1] == {
+            "type": "error",
+            "status": 502,
+            "error": {
+                "type": "upstream_error",
+                "code": "invalid_upstream_response",
+                "message": "Claude returned an undeclared tool",
+            },
+        }
+        assert any(event["type"] == "response.output_item.done" for event in events)
+        assert not any(event["type"] == "response.completed" for event in events)
+    else:
+        assert response.json()["error"]["code"] == "invalid_upstream_response"
+    assert len(captured) == len(closed) == 1
+    logs = (await async_client.get("/api/request-logs")).json()["requests"]
+    rows = [row for row in logs if row["model"] == MODEL]
+    assert len(rows) == 1 and rows[0]["errorCode"] == "invalid_upstream_response"
+    replay = await async_client.post(
+        path,
+        headers=headers,
+        json={
+            "model": MODEL,
+            "input": [],
+            "previous_response_id": "resp_msg_fixture",
+            "stream": False,
+        },
+    )
+    assert replay.status_code == 400, replay.text
+    assert replay.json()["error"]["code"] == "previous_response_not_found"
+    assert len(captured) == 1
+
+
+@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
+async def test_websocket_projection_failure_then_assistant_tail_recovery_on_same_socket(
+    async_client, pool, monkeypatch, path
+):
+    captured, closed = install_upstream(
+        monkeypatch,
+        content=[
+            {"type": "text", "text": "Progress"},
+            {"type": "tool_use", "id": "call_bad", "name": "unknown_tool", "input": {}},
+        ],
+    )
+    incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "ws",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"user-agent", b"codex_cli_rs/0.157.0"), (b"session_id", b"interrupted-recovery")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+        "subprotocols": [],
+    }
+    task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
+    try:
+        await incoming.put({"type": "websocket.connect"})
+        assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
+        for turn in range(2):
+            if turn:
+                recovered, recovered_closed = install_upstream(monkeypatch, message_id="msg_recovered")
+            body = {
+                "type": "response.create",
+                "model": MODEL,
+                "input": "Hello"
+                if turn == 0
+                else [
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": [{"type": "output_text", "text": "Progress"}]},
+                ],
+            }
+            await incoming.put({"type": "websocket.receive", "text": json.dumps(body)})
+            events = []
+            while True:
+                frame = await asyncio.wait_for(outgoing.get(), 5)
+                assert frame["type"] == "websocket.send", frame
+                event = json.loads(frame["text"])
+                events.append(event)
+                if event["type"] in {"error", "response.completed"}:
+                    break
+            assert events[-1]["type"] == ("response.completed" if turn else "error")
+            if not turn:
+                assert events[-1]["error"]["code"] == "invalid_upstream_response"
+                assert any(event["type"] == "response.output_item.done" for event in events)
+                assert len(closed) == 1
+        assert len(captured) == len(recovered) == 1
+        messages = recovered[0][2]["messages"]
+        assert messages[1]["content"] == [{"type": "text", "text": "Progress"}]
+        assert messages[2]["content"] == [
+            {"type": "text", "text": "(continue)", "cache_control": {"type": "ephemeral"}}
+        ]
+    finally:
+        await incoming.put({"type": "websocket.disconnect", "code": 1000})
+        try:
+            await asyncio.wait_for(task, 5)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+    assert len(recovered_closed) == 1
+    rows = (await async_client.get("/api/request-logs")).json()["requests"]
+    rows = [row for row in rows if row["model"] == MODEL]
+    assert len(rows) == 2 and {row["status"] for row in rows} == {"error", "ok"}
+
+
 @pytest.mark.parametrize("surface", ["responses", "messages", "chat"])
 @pytest.mark.parametrize(
     "opaque_block",
@@ -476,14 +681,15 @@ async def test_claude_metadata_only_stream_has_duration_without_fabricated_ttft(
     from app.db.session import SessionLocal
 
     install_upstream(monkeypatch, content=[{"type": "text", "text": ""}], truncate=truncate)
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+    assert response.status_code == 200
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
     if truncate:
-        from app.modules.model_sources.forwarding import ModelSourceForwardingError
-
-        with pytest.raises(ModelSourceForwardingError):
-            await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+        assert events[-1]["type"] == "error"
+        assert events[-1]["error"]["code"] == "model_source_stream_truncated"
+        assert not any(event["type"] == "response.completed" for event in events)
     else:
-        response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
-        assert response.status_code == 200
+        assert events[-1]["type"] == "response.completed"
     async with SessionLocal() as session:
         row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
         assert row.latency_ms is not None

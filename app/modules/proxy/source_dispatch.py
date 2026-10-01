@@ -10,9 +10,9 @@ client that left during the open or before the body started (§6.4 table).
 
 Composition rules:
 
-* the settlement generator (``settlement_stream``) is the *outermost* body
-  layer for every composition: it sees the terminal outcome and the
-  cancellation first, and it owns the reservation;
+* the settlement generator (``settlement_stream``) is the outermost
+  outcome-owning body layer: it owns the reservation and cleanup before
+  an outer protocol-only serializer delivers forwarding errors;
 * ``SourceStreamingResponse.__call__`` wraps the transport in
   ``try/finally: _await_cleanup_deferring_cancellation(owner.finalize_transport(), scheduler=owner.scheduler)``
   so a client that leaves before Starlette starts the body still reaches one
@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -56,6 +56,7 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
+from app.core.clients.proxy import _safe_retry_after_header
 from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler
 from app.core.metrics.prometheus import (
     model_source_dispatch_abandoned_total,
@@ -73,7 +74,7 @@ from app.core.utils.shared_future import (
     _await_result_deferring_cancellation,
     _await_task_deferring_cancellation,
 )
-from app.core.utils.sse import _SSE_LINE_BOUNDARY, parse_sse_data_json
+from app.core.utils.sse import _SSE_LINE_BOUNDARY, format_sse_event, parse_sse_data_json
 from app.db.models import ModelSource
 from app.db.session import get_background_session
 from app.modules.api_keys.service import (
@@ -885,6 +886,30 @@ async def _aclose_best_effort(stream: object, *, scheduler: Scheduler) -> None:
         logger.debug("source stream layer close failed", exc_info=True)
 
 
+async def responses_error_stream(
+    body: AsyncIterator[str], *, scheduler: Scheduler = REAL_SCHEDULER
+) -> AsyncGenerator[str, None]:
+    """Serialize forwarding failures only after the inner settlement owns them."""
+    terminal_delivered = False
+    try:
+        async for frame in body:
+            terminal_delivered = terminal_delivered or relayed_terminal_kind(frame) is not None
+            yield frame
+    except ModelSourceForwardingError as exc:
+        if not terminal_delivered:
+            event: dict[str, JsonValue] = {
+                "type": "error",
+                "status": exc.status_code,
+                "error": exc.payload["error"],
+            }
+            retry_after = _safe_retry_after_header({"Retry-After": exc.retry_after}) if exc.retry_after else None
+            if retry_after is not None:
+                event["headers"] = {"retry-after": retry_after}
+            yield format_sse_event(event)
+    finally:
+        await _aclose_best_effort(body, scheduler=scheduler)
+
+
 async def settlement_stream(
     owner: SourceDispatch,
     wrapped: AsyncIterator[str],
@@ -926,7 +951,6 @@ async def settlement_stream(
     status: DispatchStatus = "success"
     error_code: str | None = None
     error_message: str | None = None
-    completed_normally = False
     timeout_phase: TimeoutPhase | None = None
     relayed_kind: str | None = None
     holder = owner.usage_holder
@@ -941,7 +965,6 @@ async def settlement_stream(
                 if not owner.content_delivered and content_classifier(chunk):
                     owner.content_delivered = True
             yield chunk
-        completed_normally = True
         holder = owner.observe_stream()
         if holder is not None:
             if holder.terminal_kind in _FAILURE_TERMINAL_KINDS:
@@ -1028,8 +1051,8 @@ async def settlement_stream(
                 ),
                 scheduler=owner.scheduler,
             )
-            if completed_normally and cancellation is not None:
+            if cancellation is not None:
                 # The client left while the settlement was being committed: the
-                # reservation is settled, the row is written; honour the
-                # cancellation instead of continuing to a departed transport.
+                # outcome and row retain their original cause, but neither a
+                # normal result nor a serialized failure should be sent now.
                 raise asyncio.CancelledError

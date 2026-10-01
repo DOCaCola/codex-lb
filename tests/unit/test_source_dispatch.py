@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Coroutine
 from contextlib import AsyncExitStack
@@ -49,6 +50,7 @@ from app.modules.proxy.source_dispatch import (
     SourceStreamingResponse,
     estimate_settlement_usage,
     open_with_disconnect_watch,
+    responses_error_stream,
     settlement_stream,
 )
 from tests.simulation.virtual_time import VirtualClock, VirtualScheduler
@@ -1131,6 +1133,124 @@ async def test_settlement_stream_forwarding_error_records_the_source_code_and_ti
     assert recorder.release_calls == [owner.reservation]
     assert recorder.rows[0]["status"] == "error"
     assert recorder.rows[0]["error_code"] == "model_source_idle_timeout"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_after,expected", [("12", "12"), ("bad\nheader", None), (None, None)])
+async def test_responses_error_is_delivered_only_after_original_failure_settlement(recorder, retry_after, expected):
+    owner = _owner(recorder, reservation=_reservation())
+    source_stream = _attach_stream(owner)
+    payload = {"error": {"code": "invalid_upstream_response", "message": "undeclared", "type": "upstream_error"}}
+
+    async def inner():
+        yield 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"Progress"}\n\n'
+        raise ModelSourceForwardingError(
+            status_code=502,
+            payload={**payload, "headers": {"authorization": "private-secret"}},
+            retry_after=retry_after,
+            upstream_headers={"set-cookie": "private-cookie"},
+        )
+
+    body = responses_error_stream(settlement_stream(owner, inner()), scheduler=owner.scheduler)
+    assert "Progress" in await anext(body)
+    event = json.loads((await anext(body)).split("data: ", 1)[1])
+    assert owner.finished and source_stream.closed == 1
+    assert recorder.release_calls == [owner.reservation]
+    assert recorder.settle_calls == []
+    assert len(recorder.rows) == 1 and recorder.rows[0]["error_code"] == "invalid_upstream_response"
+    assert event == {
+        "type": "error",
+        "status": 502,
+        **payload,
+        **({"headers": {"retry-after": expected}} if expected else {}),
+    }
+    with pytest.raises(StopAsyncIteration):
+        await anext(body)
+    await owner.finalize_transport()
+    assert source_stream.closed == 1 and len(recorder.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_responses_error_wrapper_closure_reaches_owned_cleanup(recorder):
+    owner = _owner(recorder, reservation=_reservation())
+    source_stream = _attach_stream(owner)
+    inner_closed = []
+
+    async def inner():
+        try:
+            yield 'event: response.created\ndata: {"type":"response.created"}\n\n'
+            raise AssertionError("must not resume after downstream closure")
+        finally:
+            inner_closed.append(True)
+
+    body = responses_error_stream(settlement_stream(owner, inner()), scheduler=owner.scheduler)
+    await anext(body)
+    await body.aclose()
+    assert inner_closed == [True] and source_stream.closed == 1
+    assert recorder.release_calls == [owner.reservation]
+    assert recorder.rows[0]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [asyncio.CancelledError, RuntimeError])
+async def test_responses_error_wrapper_does_not_serialize_cancellation_or_programming_errors(recorder, failure):
+    owner = _owner(recorder)
+    source_stream = _attach_stream(owner)
+
+    async def inner():
+        yield 'event: response.created\ndata: {"type":"response.created"}\n\n'
+        raise failure()
+
+    body = responses_error_stream(settlement_stream(owner, inner()), scheduler=owner.scheduler)
+    await anext(body)
+    with pytest.raises(failure):
+        await anext(body)
+    assert owner.finished and source_stream.closed == 1
+    assert len(recorder.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_responses_error_wrapper_never_emits_a_second_terminal(recorder):
+    owner = _owner(recorder)
+    _attach_stream(owner)
+
+    async def inner():
+        yield 'event: error\ndata: {"type":"error","error":{"message":"original"}}\n\n'
+        raise ModelSourceForwardingError(status_code=502, payload={"error": {"message": "later"}})
+
+    frames = [frame async for frame in responses_error_stream(settlement_stream(owner, inner()))]
+    assert len(frames) == 1 and "original" in frames[0]
+    assert recorder.rows[0]["error_message"] == "later"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_failed_settlement_does_not_become_an_error_event(recorder):
+    owner = _owner(recorder, reservation=_reservation())
+    source_stream = _attach_stream(owner)
+    releasing, allow_release = asyncio.Event(), asyncio.Event()
+
+    async def release(reservation):
+        releasing.set()
+        await allow_release.wait()
+        await recorder.release(reservation)
+
+    owner.release_reservation = release
+
+    async def inner():
+        yield 'event: response.created\ndata: {"type":"response.created"}\n\n'
+        raise ModelSourceForwardingError(status_code=502, payload={"error": {"code": "invalid_upstream_response"}})
+
+    body = responses_error_stream(settlement_stream(owner, inner()), scheduler=owner.scheduler)
+    await anext(body)
+    consumer = asyncio.create_task(anext(body))
+    await releasing.wait()
+    consumer.cancel()
+    allow_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    assert recorder.release_calls == [owner.reservation]
+    assert len(recorder.rows) == 1 and recorder.rows[0]["error_code"] == "invalid_upstream_response"
+    assert source_stream.closed == 1
 
 
 @pytest.mark.asyncio

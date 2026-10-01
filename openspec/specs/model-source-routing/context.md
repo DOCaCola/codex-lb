@@ -169,3 +169,21 @@ cookies or credentials. For example, source429 plus Retry-After12 remains429
 with headers={"retry-after":"12"} over WS. No successful completion is synthesized.
 OpenCodex's safe error-envelope forwarding is the reference; client retry policy
 is separate from the gateway's obligation to preserve the signal.
+
+## Post-start Responses forwarding failures
+
+Responses streams use an outer protocol-only error serializer around the shared
+settlement owner. A forwarding failure first closes the attempt, releases its
+reservation/admission and logs its original cause, then emits one `error` event.
+For example, a Claude projection error after assistant text becomes
+`{"type":"error","status":502,"error":{"code":"invalid_upstream_response",...}}`
+over both HTTP SSE and the in-process WebSocket bridge. Only validated
+Retry-After metadata may appear alongside it; arbitrary upstream headers do not.
+
+The error is not a successful completion, does not seed successful replay state,
+and does not initiate another generation. A later valid turn can use the same
+socket. Native Messages and Chat keep their existing protocol serializers.
+Cancellation and programming exceptions are not converted into protocol errors.
+If cancellation arrives during settlement, cleanup and the original failure log
+finish before cancellation propagates; no synthetic error goes to the departed
+client. An already delivered terminal is never followed by a second terminal.

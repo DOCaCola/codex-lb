@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import re
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -14,6 +17,9 @@ from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import ToolIdentity
 from app.modules.claude.search import url_citations
 from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
+
+logger = logging.getLogger(__name__)
+_LOGGABLE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 class Usage(BaseModel):
@@ -179,6 +185,19 @@ class ResponsesProjection:
             name = block.get("name")
             identity = self.tools.get(name) if isinstance(name, str) else None
             if identity is None:
+                logger.warning(
+                    "claude_undeclared_tool source_id=%s model=%s response_id=%s content_index=%d "
+                    "declared_count=%d tool_name=%s tool_name_hash=%s",
+                    self.scope.source_id,
+                    self.scope.model,
+                    self.response_id,
+                    index,
+                    len(self.tools),
+                    name if isinstance(name, str) and _LOGGABLE_TOOL_NAME.fullmatch(name) else None,
+                    hashlib.sha256(name.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+                    if isinstance(name, str)
+                    else None,
+                )
                 raise ClaudeError("Claude returned an undeclared tool")
             arguments = block.get("input", {})
             if not isinstance(arguments, dict):
