@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 
 from app.db.models import ClaudeAccount, ClaudeQuotaHistory
 from app.db.session import SessionLocal
@@ -74,16 +74,18 @@ async def test_generation_ordering_and_history_throttle(pool):
     await record_headers(source_id, generation, headers(0.7), requested_at=now)
     await record_headers(source_id, generation, headers(0.2), requested_at=now - timedelta(seconds=1))
     await record_headers(source_id, generation, headers(0.8), requested_at=now + timedelta(microseconds=1))
+    await record_headers(source_id, generation, headers(0.8), requested_at=now + timedelta(microseconds=2))
     _, state = await snapshot(source_id)
     assert state.header_usage["five_hour"].window.utilization == 80
     assert state.usage_updated_at == initial.usage_updated_at
     async with SessionLocal() as session:
-        count = await session.scalar(
-            select(func.count())
-            .select_from(ClaudeQuotaHistory)
+        samples = await session.scalars(
+            select(ClaudeQuotaHistory.used_percent)
             .where(ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == "five_hour")
+            .order_by(ClaudeQuotaHistory.observed_at)
         )
-        assert count == 1
+        # The out-of-order reading is ignored; the moved reading is new evidence; the repeat is throttled.
+        assert list(samples) == [70, 80]
         await session.execute(
             update(ClaudeAccount).where(ClaudeAccount.source_id == source_id).values(generation=generation + 1)
         )
