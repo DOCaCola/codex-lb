@@ -363,6 +363,76 @@ def test_opaque_state_cannot_cross_scope(field, value):
         opaque.decode(token, **args)
 
 
+COLLABORATION_TOOLS: list[JsonValue] = [
+    {
+        "type": "namespace",
+        "name": "collaboration",
+        "tools": [
+            {
+                "type": "function",
+                "name": "spawn_agent",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string", "encrypted": True}},
+                    "required": ["message"],
+                },
+            }
+        ],
+    },
+    {"type": "function", "name": "read", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}},
+]
+
+
+def _wire_names(projected) -> dict[str, str]:
+    return {identity.name: wire for wire, identity in projected.tools.items()}
+
+
+def test_translated_calls_to_encrypted_parameter_tools_declare_plaintext():
+    projected = project(request(tools=COLLABORATION_TOOLS), max_output_tokens=8192)
+    wires = _wire_names(projected)
+    response = ResponsesProjection(scope(), projected.tools, codec()).complete(
+        {
+            "id": "m",
+            "stop_reason": "tool_use",
+            "usage": {},
+            "content": [
+                {"type": "tool_use", "id": "a", "name": wires["spawn_agent"], "input": {"message": "Build it"}},
+                {"type": "tool_use", "id": "b", "name": wires["read"], "input": {"path": "x"}},
+            ],
+        }
+    )
+    spawn, read = array(response["output"])
+    assert isinstance(spawn, dict) and isinstance(read, dict)
+    assert (spawn["namespace"], spawn["name"], spawn["encrypted_function_args"]) == ("collaboration", "spawn_agent", [])
+    assert json.loads(str(spawn["arguments"])) == {"message": "Build it"}
+    assert "encrypted_function_args" not in read
+
+
+def test_streamed_translated_call_declares_plaintext_on_every_item():
+    projected = project(request(tools=COLLABORATION_TOOLS), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    events: list[dict[str, JsonValue]] = []
+    block = {"type": "tool_use", "id": "a", "name": _wire_names(projected)["spawn_agent"], "input": {}}
+    for event in [
+        {"type": "message_start", "message": {"id": "m", "usage": {}}},
+        {"type": "content_block_start", "index": 0, "content_block": block},
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": '{"message"'},
+        },
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": ':"Go"}'}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}},
+        {"type": "message_stop"},
+    ]:
+        events.extend(adapter.consume(event))
+    items = [event["item"] for event in events if event["type"].startswith("response.output_item.")]
+    items.append(at(events[-1], "response", "output", 0))
+    assert len(items) == 3
+    assert all(isinstance(item, dict) and item["encrypted_function_args"] == [] for item in items)
+
+
 @pytest.mark.parametrize(
     "stop,status",
     [("end_turn", "completed"), ("tool_use", "completed"), ("max_tokens", "incomplete"), ("pause_turn", "incomplete")],

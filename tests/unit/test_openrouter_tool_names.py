@@ -74,6 +74,55 @@ async def test_responses_stream_restores_item_terminal_and_preserves_text(ending
     assert closed == [True]
 
 
+@pytest.mark.parametrize("openrouter", [True, False])
+async def test_responses_stream_declares_plaintext_encrypted_parameter_calls(openrouter):
+    payload = {
+        "tools": [
+            {
+                "type": "namespace",
+                "name": "collaboration",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "spawn_agent",
+                        "parameters": {"type": "object", "properties": {"message": {"encrypted": True}}},
+                    }
+                ],
+            },
+            {"type": "function", "name": "read", "parameters": {"type": "object", "properties": {}}},
+        ]
+    }
+    names = ToolNames()
+    names.declare_plaintext_arguments(payload)
+    assert names.rewrites_output
+    spawn = {
+        "type": "function_call",
+        "namespace": "collaboration",
+        "name": "spawn_agent",
+        "arguments": '{"message":"Go"}',
+        "call_id": "a",
+    }
+    read = {"type": "function_call", "name": "read", "arguments": "{}", "call_id": "b"}
+    if openrouter:
+        projected = names.project({**payload, "input": [copy.deepcopy(spawn), copy.deepcopy(read)]}, responses=True)
+        wire_spawn, wire_read = projected["input"]
+    else:
+        wire_spawn, wire_read = copy.deepcopy(spawn), copy.deepcopy(read)
+    events = [
+        {"type": "response.output_item.done", "item": wire_spawn},
+        {"type": "response.completed", "response": {"output": [wire_spawn, wire_read]}},
+    ]
+    data = "".join("data: " + json.dumps(event) + "\n\n" for event in events).encode()
+
+    async def body():
+        yield data
+
+    restored = [parse_sse_data_json(chunk.decode()) async for chunk in names.restore_stream(body())]
+    marked = {**spawn, "encrypted_function_args": []}
+    assert restored[0]["item"] == marked
+    assert restored[1]["response"]["output"] == [marked, read]
+
+
 async def test_chat_fragmented_alias_and_history():
     name = "mcp__" + "long_" * 20
     names = ToolNames()

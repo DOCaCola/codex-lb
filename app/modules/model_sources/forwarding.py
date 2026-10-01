@@ -409,7 +409,7 @@ async def stream_chat_completion(
         clock=clock,
     )
     return SourceChatStream(
-        body=tool_names.restore_stream(body) if tool_names.originals else body,
+        body=tool_names.restore_stream(body) if tool_names.rewrites_output else body,
         usage_holder=usage_holder,
         upstream_status_code=response.status,
         transport=transport,
@@ -427,6 +427,7 @@ async def forward_responses(
 
     payload = project_request(source, payload, responses=True)
     tool_names = ToolNames()
+    tool_names.declare_plaintext_arguments(payload)
     if source.kind == "openrouter":
         payload = tool_names.project(payload, responses=True)
     started_at = REAL_CLOCK.monotonic()
@@ -558,6 +559,7 @@ async def stream_responses(
 
     payload = project_request(source, payload, responses=True)
     tool_names = ToolNames()
+    tool_names.declare_plaintext_arguments(payload)
     if source.kind == "openrouter":
         payload = tool_names.project(payload, responses=True)
     usage_holder = SourceUsageHolder()
@@ -589,7 +591,7 @@ async def stream_responses(
         clock=clock,
     )
     return SourceResponsesStream(
-        body=tool_names.restore_stream(body) if tool_names.originals else body,
+        body=tool_names.restore_stream(body) if tool_names.rewrites_output else body,
         usage_holder=usage_holder,
         upstream_status_code=response.status,
         transport=transport,

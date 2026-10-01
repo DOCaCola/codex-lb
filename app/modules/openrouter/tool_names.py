@@ -1,4 +1,8 @@
-"""Request-local OpenRouter wire identities; client history never stores aliases."""
+"""Request-local source tool-call restoration; client history never stores aliases.
+
+OpenRouter needs flattened wire aliases. Every Responses source also needs its
+plaintext calls to client tools with encrypted parameters marked as such.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,11 @@ from typing import cast
 
 from app.core.clients.proxy import MAX_SSE_EVENT_BYTES, StreamEventTooLargeError, _find_sse_separator
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.tool_argument_encryption import (
+    ToolKey,
+    mark_plaintext_arguments,
+    tools_with_encrypted_arguments,
+)
 from app.core.types import JsonValue
 from app.core.utils.sse import parse_sse_data_json
 
@@ -39,6 +48,15 @@ class ToolNames:
     originals: dict[str, ToolIdentity] = field(default_factory=dict)
     fragments: dict[tuple[int, int], str] = field(default_factory=dict)
     echoed_fields: dict[str, JsonValue] = field(default_factory=dict)
+    plaintext_arguments: frozenset[ToolKey] = frozenset()
+
+    @property
+    def rewrites_output(self) -> bool:
+        return bool(self.originals or self.plaintext_arguments)
+
+    def declare_plaintext_arguments(self, payload: dict[str, JsonValue]) -> None:
+        """Record the client's encrypted-parameter tools before any wire projection."""
+        self.plaintext_arguments = tools_with_encrypted_arguments(payload.get("tools"))
 
     def rename(self, item: dict[str, JsonValue], namespace: str | None = None) -> None:
         name = item.get("name")
@@ -115,6 +133,7 @@ class ToolNames:
             item["name"] = identity.name
             if identity.namespace is not None:
                 item["namespace"] = identity.namespace
+        mark_plaintext_arguments(item, self.plaintext_arguments)
 
     def restore(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         # Responses echoes request configuration on created/completed objects.
@@ -193,7 +212,7 @@ class ToolNames:
         return payload
 
     async def restore_stream(self, body: AsyncGenerator[bytes, None]) -> AsyncIterator[bytes]:
-        if not self.originals:
+        if not self.rewrites_output:
             async with aclosing(body):
                 async for chunk in body:
                     yield chunk

@@ -13,6 +13,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, model_policy
 from app.modules.claude.model_limits import default_output_tokens
@@ -69,6 +70,8 @@ class ToolIdentity:
     namespace: str | None
     custom: bool
     arguments: ToolArguments | None = None
+    # The client asked the OpenAI backend to encrypt some arguments; Claude returns them as plaintext.
+    encrypted_arguments: bool = False
 
     @property
     def wire_name(self) -> str:
@@ -192,12 +195,13 @@ def project_responses(
         if not isinstance(schema, dict):
             raise invalid(f"Tool '{name}' requires a JSON object schema", f"{param}.parameters")
         if kind == "function":
+            encrypted_arguments = declares_encrypted_arguments(schema)
             schema, arguments = adapt_tool_schema(
                 schema,
                 tool_name=f"{namespace}.{name}" if namespace else name,
                 param=f"{param}.parameters",
             )
-            identity = replace(identity, arguments=arguments)
+            identity = replace(identity, arguments=arguments, encrypted_arguments=encrypted_arguments)
         tools[identity.wire_name] = identity
         declarations.append(
             {"name": identity.wire_name, "description": tool.get("description", ""), "input_schema": schema}

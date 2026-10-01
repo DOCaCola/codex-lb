@@ -20,6 +20,7 @@ from aiohttp import web
 
 import app.core.clients.http as http_module
 from app.core.clients.http import HttpClient
+from app.core.utils.sse import parse_sse_data_json
 from app.db.models import ModelSource
 from app.modules.model_sources import forwarding as forwarding_module
 from app.modules.model_sources.forwarding import (
@@ -637,3 +638,51 @@ async def test_stream_yields_the_first_frame_and_settles_usage_through_the_real_
     assert opened.usage_holder.terminal_kind == "completed"
     assert opened.usage_holder.delta_chars == len("hello")
     assert _acquired(http_client, model_source=True) == 0
+
+
+@pytest.mark.asyncio
+async def test_generic_source_calls_to_encrypted_parameter_tools_declare_plaintext(
+    http_client: HttpClient, source_upstream
+) -> None:
+    tools = [
+        {
+            "type": "namespace",
+            "name": "collaboration",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "spawn_agent",
+                    "parameters": {"type": "object", "properties": {"message": {"type": "string", "encrypted": True}}},
+                }
+            ],
+        }
+    ]
+    call = {
+        "type": "function_call",
+        "namespace": "collaboration",
+        "name": "spawn_agent",
+        "arguments": '{"message":"Go"}',
+        "call_id": "a",
+    }
+    completed = {"id": "resp_tool", "output": [call], "usage": {"input_tokens": 2, "output_tokens": 1}}
+
+    async def respond(request: web.Request) -> web.StreamResponse:
+        if not (await request.json()).get("stream"):
+            return web.json_response(completed)
+        response = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(_sse({"type": "response.output_item.done", "item": call}))
+        await response.write(_sse({"type": "response.completed", "response": completed}))
+        await response.write_eof()
+        return response
+
+    base_url = await source_upstream(respond)
+    marked = {**call, "encrypted_function_args": []}
+
+    forwarded = await forwarding_module.forward_responses(_source(base_url), {"model": "m", "tools": tools})
+    opened = await forwarding_module.stream_responses(_source(base_url), {"model": "m", "stream": True, "tools": tools})
+    frames = [parse_sse_data_json(chunk.decode()) async for chunk in opened.body]
+
+    assert forwarded.payload["output"] == [marked]
+    assert frames[0]["item"] == marked
+    assert frames[1]["response"]["output"] == [marked]

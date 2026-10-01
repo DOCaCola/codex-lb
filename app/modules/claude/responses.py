@@ -220,6 +220,8 @@ class ResponsesProjection:
                 if final and identity.arguments is not None:
                     arguments = identity.arguments.decode(arguments)
                 result["arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":")) if final else ""
+                if identity.encrypted_arguments:
+                    result["encrypted_function_args"] = []
             return result
         raise ClaudeError("Claude returned an unsupported content block")
 
