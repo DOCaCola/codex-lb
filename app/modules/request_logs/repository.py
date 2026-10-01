@@ -61,6 +61,13 @@ from app.modules.accounts.usage_time_rollup_read import (
     read_hourly_window,
     sum_demand_window,
 )
+from app.modules.request_logs.observability import (
+    CacheActivityRow,
+    ConversationAnalyticsRows,
+    provider_account_expr,
+    read_cache_activity,
+    read_conversation_analytics,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,11 +232,15 @@ class ConversationDetailsResult:
     total_elapsed_ms: int
     useragent_group: str | None
     model_stats: list[ConversationModelStatRow]
+    analytics: ConversationAnalyticsRows
 
 
 class RequestLogsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def cache_activity(self, now: datetime) -> list[CacheActivityRow]:
+        return await read_cache_activity(self._session, now)
 
     @staticmethod
     def _exclude_warmup_clause() -> ColumnElement[bool]:
@@ -314,7 +325,7 @@ class RequestLogsRepository:
                 func.min(RequestLog.requested_at).label("first_requested_at"),
                 func.max(RequestLog.requested_at).label("last_requested_at"),
                 func.count().label("request_count"),
-                func.count(func.distinct(RequestLog.account_id)).label("account_count"),
+                func.count(func.distinct(provider_account_expr())).label("account_count"),
                 func.coalesce(func.sum(func.coalesce(RequestLog.input_tokens, 0) + output), 0).label("total_tokens"),
                 func.sum(cached).label("cached_input_tokens"),
                 *request_cost_expressions(RequestLog),
@@ -440,7 +451,7 @@ class RequestLogsRepository:
                 select(
                     func.min(RequestLog.requested_at).label("started_at"),
                     func.max(RequestLog.requested_at).label("last_requested_at"),
-                    func.count(func.distinct(RequestLog.account_id)).label("account_count"),
+                    func.count(func.distinct(provider_account_expr())).label("account_count"),
                     func.coalesce(func.sum(func.coalesce(RequestLog.latency_ms, 0)), 0).label("total_elapsed_ms"),
                 ).where(*conditions)
             )
@@ -493,6 +504,7 @@ class RequestLogsRepository:
             account_count=int(summary.account_count),
             total_elapsed_ms=int(summary.total_elapsed_ms),
             useragent_group=dominant,
+            analytics=await read_conversation_analytics(self._session, target, summary.last_requested_at),
             model_stats=[
                 ConversationModelStatRow(
                     model=row.model,

@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useConversationDetails } from "@/features/dashboard/hooks/use-conversation-details";
+import { ConversationActivityChart } from "./conversation-activity-chart";
 import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import type { ConversationModelStat } from "@/features/dashboard/schemas";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -129,6 +130,8 @@ export function ConversationDetailsDialog({
                 <DetailField label={t("dashboard.conversations.details.totalElapsed")} value={formatElapsed(detailsQuery.data.totalElapsedTime)} />
                 <DetailField label={t("dashboard.conversations.details.dominantUseragent")} value={detailsQuery.data.dominantUseragentGroup || "—"} />
               </div>
+              <ConversationActivityChart analytics={detailsQuery.data.analytics} />
+              <p className="text-xs text-muted-foreground">{t("dashboard.conversations.analytics.scope")}</p>
               <div className="rounded-md border">
                 <div className="relative overflow-x-auto">
                   <Table className="min-w-[760px]">
@@ -140,10 +143,16 @@ export function ConversationDetailsDialog({
                         <SortableHead label={t("dashboard.conversations.details.columns.totalInput")} sortKey="totalInputTokens" sort={sort} onSort={setSortKey} />
                         <SortableHead label={t("dashboard.conversations.details.columns.totalOutput")} sortKey="totalOutputTokens" sort={sort} onSort={setSortKey} />
                         <SortableHead label={t("dashboard.conversations.details.columns.totalCost")} sortKey="totalCostUsd" sort={sort} onSort={setSortKey} />
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">{t("dashboard.conversations.analytics.errors")}</TableHead>
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">{t("dashboard.conversations.analytics.speed")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedStats.map((stat) => (
+                      {sortedStats.map((stat) => {
+                        const performance = detailsQuery.data.analytics.models.find((item) =>
+                          item.model === stat.modelEffort.model && item.reasoningEffort === stat.modelEffort.reasoningEffort,
+                        );
+                        return (
                         <TableRow key={conversationStatKey(stat)}>
                           <TableCell className="font-mono text-xs"><span translate="no">{modelEffortLabel(stat)}</span></TableCell>
                           <TableCell className="font-mono text-xs tabular-nums">{formatCompactNumber(stat.reqs)}</TableCell>
@@ -153,11 +162,19 @@ export function ConversationDetailsDialog({
                             <div className="mt-1 text-[11px] font-sans text-muted-foreground">
                               ({t("dashboard.conversations.details.cache", { count: formatCachedTokenCount(stat.cachedInputTokens) })})
                             </div>
+                            <div className="mt-1 text-[11px] font-sans text-muted-foreground" title={t("dashboard.conversations.analytics.writeSamples", { measured: performance?.cacheWriteSamples ?? 0, requests: performance?.requests ?? 0 })}>
+                              {t("dashboard.conversations.analytics.writes", { count: performance?.cacheWriteSamples ? formatCompactNumber(performance.cacheWriteTokens) : "—" })}
+                            </div>
                           </TableCell>
                           <TableCell className="font-mono text-xs tabular-nums">{formatCompactNumber(stat.totalOutputTokens)}</TableCell>
                           <TableCell className="font-mono text-xs tabular-nums">{formatCoveredCostShort(stat.totalCostUsd, stat.costCoverage)}</TableCell>
+                          <TableCell className="font-mono text-xs tabular-nums">{performance ? `${performance.errors} / ${performance.cancelled}` : "—"}</TableCell>
+                          <TableCell className="font-mono text-xs tabular-nums" title={t("dashboard.conversations.analytics.samples", { ttft: performance?.ttftSamples ?? 0, tps: performance?.tpsSamples ?? 0 })}>
+                            <div>{performance?.meanTtftMs == null ? "—" : `${(performance.meanTtftMs / 1000).toFixed(2)}s`}</div>
+                            <div>{performance?.meanTps == null ? "—" : `${performance.meanTps.toFixed(1)} tok/s`}</div>
+                          </TableCell>
                         </TableRow>
-                      ))}
+                      ); })}
                     </TableBody>
                   </Table>
                 </div>

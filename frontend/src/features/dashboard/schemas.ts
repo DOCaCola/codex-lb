@@ -389,6 +389,53 @@ export const ConversationsResponseSchema = z.object({
   hasMore: z.boolean(),
 });
 
+export const ConversationAnalyticsSchema = z.object({
+  start: z.iso.datetime({ offset: true }),
+  end: z.iso.datetime({ offset: true }),
+  models: z.array(z.object({
+    model: z.string(),
+    reasoningEffort: z.string().nullable(),
+    requests: z.number().int().nonnegative(),
+    errors: z.number().int().nonnegative(),
+    cancelled: z.number().int().nonnegative(),
+    meanTtftMs: z.number().nonnegative().nullable(),
+    ttftSamples: z.number().int().nonnegative(),
+    meanTps: z.number().nonnegative().nullable(),
+    tpsSamples: z.number().int().nonnegative(),
+    cacheWriteTokens: z.number().int().nonnegative(),
+    cacheWriteSamples: z.number().int().nonnegative(),
+  })),
+  activity: z.array(z.object({
+    at: z.iso.datetime({ offset: true }),
+    requests: z.number().int().nonnegative(),
+    errors: z.number().int().nonnegative(),
+    cancelled: z.number().int().nonnegative(),
+  })),
+});
+
+export const ClaudeCacheActivitySchema = z.object({
+  generatedAt: z.iso.datetime({ offset: true }),
+  windowMinutes: z.number().int().positive(),
+  groups: z.array(z.object({
+    sourceId: z.string().nullable(),
+    model: z.string(),
+    current: cacheWindowSchema(),
+    previous: cacheWindowSchema(),
+    readRatioChange: z.number().nullable(),
+  })),
+});
+
+function cacheWindowSchema() {
+  return z.object({
+    requests: z.number().int().nonnegative(),
+    measuredRequests: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    cacheReadTokens: z.number().int().nonnegative(),
+    cacheWriteTokens: z.number().int().nonnegative(),
+    cacheReadRatio: z.number().min(0).max(1).nullable(),
+  });
+}
+
 export const ConversationDetailsSchema = z.object({
   conversationId: z.string(),
   start: z.iso.datetime({ offset: true }),
@@ -397,6 +444,7 @@ export const ConversationDetailsSchema = z.object({
   totalElapsedTime: z.number().int().nonnegative(),
   dominantUseragentGroup: z.string().nullable().optional().default(null),
   modelStats: z.array(ConversationModelStatSchema).default([]),
+  analytics: ConversationAnalyticsSchema,
 });
 
 export const ConversationFilterStateSchema = z.object({

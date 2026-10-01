@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Collection, Iterable, Literal
 
 from app.core.balancer.types import FailureClass, UpstreamError
+from app.core.routing_diagnostics import RoutingExclusion, explain_unavailable
 from app.core.usage import PLAN_CAPACITY_CREDITS_SECONDARY
 from app.core.utils.retry import backoff_seconds, parse_retry_after
 from app.db.models import AccountStatus
@@ -558,6 +559,8 @@ def select_account(
     current = now or time.time()
     available: list[AccountState] = []
     in_error_backoff: list[AccountState] = []
+    exclusion_reasons: list[RoutingExclusion] = []
+    recovery_times: list[float] = []
     all_states = list(states)
     usage_exhaustion_state_list = list(usage_exhaustion_states) if usage_exhaustion_states is not None else all_states
     bypass_account_ids = None if bypass_quota_exceeded_account_ids is None else set(bypass_quota_exceeded_account_ids)
@@ -570,10 +573,13 @@ def select_account(
             or (bypass_account_ids is not None and state.account_id in bypass_account_ids)
         )
         if state.status == AccountStatus.DEACTIVATED:
+            exclusion_reasons.append("deactivated")
             continue
         if state.status == AccountStatus.PAUSED:
+            exclusion_reasons.append("paused")
             continue
         if _known_expired_reauth(state, current):
+            exclusion_reasons.append("credentials")
             continue
         if state.status == AccountStatus.RATE_LIMITED:
             if state.reset_at and current >= state.reset_at:
@@ -582,6 +588,9 @@ def select_account(
                 state.error_count = 0
                 state.reset_at = None
             elif not bypass_standard_quota:
+                exclusion_reasons.append("rate_limit")
+                if state.reset_at:
+                    recovery_times.append(float(state.reset_at))
                 continue
         if state.status == AccountStatus.QUOTA_EXCEEDED:
             if state.reset_at and current >= state.reset_at:
@@ -590,16 +599,23 @@ def select_account(
                 state.secondary_used_percent = 0.0
                 state.reset_at = None
             elif not bypass_standard_quota:
+                exclusion_reasons.append("quota")
+                if state.reset_at:
+                    recovery_times.append(float(state.reset_at))
                 continue
         if state.cooldown_until and current >= state.cooldown_until:
             state.cooldown_until = None
             state.last_error_at = None
             state.error_count = 0
         if state.cooldown_until and current < state.cooldown_until:
+            exclusion_reasons.append("cooldown")
+            recovery_times.append(state.cooldown_until)
             continue
         if state.error_count >= ERROR_BACKOFF_THRESHOLD:
             backoff = min(300, 30 * (2 ** (state.error_count - ERROR_BACKOFF_THRESHOLD)))
             if state.last_error_at and current - state.last_error_at < backoff:
+                exclusion_reasons.append("error_backoff")
+                recovery_times.append(state.last_error_at + backoff)
                 in_error_backoff.append(state)
                 continue
             # Error backoff expired — reset error state so recovery is
@@ -656,6 +672,15 @@ def select_account(
                 )
                 if usage_exhaustion is not None:
                     return usage_exhaustion
+            # Keep authoritative usage-limit classification above. Mixed pools
+            # must not be mislabeled "All paused" merely because one is paused.
+            if len(set(exclusion_reasons)) > 1:
+                recovery = min(recovery_times) if recovery_times else None
+                return SelectionResult(
+                    None,
+                    explain_unavailable("No available accounts", exclusion_reasons, retry_at=recovery),
+                    resets_at=int(recovery) if recovery is not None else None,
+                )
             expired_reauth = [state for state in all_states if _known_expired_reauth(state, current)]
             deactivated = [s for s in all_states if s.status == AccountStatus.DEACTIVATED]
             paused = [s for s in all_states if s.status == AccountStatus.PAUSED]

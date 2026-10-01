@@ -9,6 +9,28 @@ import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/utils";
 
 describe("ConversationDetailsDialog", () => {
+  it("labels bounded analytics and shows measured speeds and cache coverage", async () => {
+    const details = createConversationDetails();
+    details.analytics.models = [{
+      model: details.modelStats[0].modelEffort.model,
+      reasoningEffort: details.modelStats[0].modelEffort.reasoningEffort,
+      requests: 4, errors: 1, cancelled: 2,
+      meanTtftMs: 1234, ttftSamples: 2, meanTps: 45.678, tpsSamples: 1,
+      cacheWriteTokens: 0, cacheWriteSamples: 2,
+    }];
+    server.use(http.get("/api/conversations/analytics", () => HttpResponse.json(details)));
+    renderWithProviders(<ConversationDetailsDialog open conversationId="analytics" onOpenChange={() => {}} />);
+    expect(await screen.findByText("1.23s")).toBeInTheDocument();
+    expect(screen.getByText("45.7 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getByTitle("Measured samples: 2 TTFT, 1 TPS")).toBeInTheDocument();
+    expect(screen.getByText("Cache writes: 0")).toHaveAttribute("title", "Measured cache-write requests: 2 / 4");
+    expect(screen.getByText(/Totals above are lifetime/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Hourly activity (latest 7 days)" })).toBeInTheDocument();
+    const unmeasuredRow = screen.getAllByRole("row")[2];
+    expect(within(unmeasuredRow).getByTitle("Measured samples: 0 TTFT, 0 TPS")).toHaveTextContent("—");
+  });
+
   it("keeps null and empty reasoning efforts as distinct rendered rows", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     server.use(
@@ -182,6 +204,8 @@ describe("ConversationDetailsDialog", () => {
       "Total input",
       "Total output",
       "Total cost",
+      "Errors / cancelled",
+      "Avg. TTFT / TPS",
     ]);
 
     const rows = screen.getAllByRole("row");

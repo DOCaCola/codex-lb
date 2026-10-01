@@ -159,3 +159,55 @@ class ConversationDetailsResponse(DashboardModel):
     total_elapsed_time: int
     dominant_useragent_group: str | None = None
     model_stats: list[ConversationModelStat] = Field(default_factory=list)
+    analytics: ConversationAnalytics
+
+
+class CacheWindow(DashboardModel):
+    requests: int
+    measured_requests: int
+    input_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cache_read_ratio: float | None
+
+
+class CacheActivity(DashboardModel):
+    source_id: str | None
+    model: str
+    current: CacheWindow
+    previous: CacheWindow
+    read_ratio_change: float | None
+
+
+class ClaudeCacheActivityResponse(DashboardModel):
+    generated_at: datetime
+    window_minutes: int = 60
+    groups: list[CacheActivity]
+
+
+class ConversationPerformance(DashboardModel):
+    model: str
+    reasoning_effort: str | None
+    requests: int
+    errors: int
+    cancelled: int
+    mean_ttft_ms: float | None
+    ttft_samples: int
+    mean_tps: float | None
+    tps_samples: int
+    cache_write_tokens: int
+    cache_write_samples: int
+
+
+class ConversationActivity(DashboardModel):
+    at: datetime
+    requests: int
+    errors: int
+    cancelled: int
+
+
+class ConversationAnalytics(DashboardModel):
+    start: datetime
+    end: datetime
+    models: list[ConversationPerformance]
+    activity: list[ConversationActivity]

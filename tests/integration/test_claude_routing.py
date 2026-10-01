@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import JsonValue
 
-from app.db.models import ClaudeAccount
+from app.db.models import ClaudeAccount, ClaudeCooldown
 from app.db.session import SessionLocal
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.client import ClaudeClient
@@ -115,6 +115,32 @@ async def test_bound_owner_not_replaced_when_paused(pool, async_client):
     with pytest.raises(ClaudePoolUnavailable) as error:
         await choose(owner_source_id=pool[0])
     assert error.value.code == "previous_response_owner_unavailable"
+
+
+async def test_native_messages_reports_actual_mixed_exclusions_without_identities(pool, async_client):
+    await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"isEnabled": False})
+    async with SessionLocal() as session:
+        session.add(
+            ClaudeCooldown(
+                source_id=pool[1],
+                model="*",
+                until=datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=2),
+            )
+        )
+        await session.commit()
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    )
+    assert response.status_code == 503, response.text
+    message = response.json()["error"]["message"]
+    assert "cooldown: 1, paused: 1" in message
+    assert "known recovery:" in message
+    assert all(source_id not in response.text for source_id in pool)
 
 
 async def test_routing_policy_does_not_override_owner_or_affinity(pool, async_client):
@@ -293,6 +319,40 @@ async def test_prepare_uses_provider_credentials_and_preserves_logical_history(p
         assert "access-secret" not in repr(prepared)
         assert "Caller instructions" not in repr(prepared)
     assert logical["model"] == MODEL
+
+
+async def test_prepare_native_billing_first_preserves_cache_layout(pool):
+    from app.modules.claude.dispatch import ClaudeDispatchPreparer
+    from app.modules.claude.repository import ClaudeRepository
+    from app.modules.claude.version import ClaudeVersionService
+
+    logical: dict[str, JsonValue] = {
+        "model": MODEL,
+        "max_tokens": 100,
+        "system": [
+            {"type": "text", "text": "x-anthropic-billing-header: cch=volatile; entrypoint=teammate"},
+            {"type": "text", "text": "Native prompt", "cache_control": {"type": "ephemeral"}},
+        ],
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    async with SessionLocal() as session:
+        version = (await ClaudeVersionService(session).snapshot()).version
+        prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
+            logical,
+            key(),
+            conversation_id="native-billing-first",
+            incoming_headers={
+                "user-agent": f"claude-cli/{version} (external, cli)",
+                "x-app": "cli",
+                "x-stainless-lang": "js",
+                "anthropic-beta": "oauth-2025-04-20",
+            },
+            endpoint="messages",
+            translated=False,
+        )
+        assert prepared.body["system"] == logical["system"]
+        assert prepared.body["messages"] == logical["messages"]
+        assert "mid-conversation-system" not in prepared.headers["anthropic-beta"]
     assert len(array(logical["messages"])) == 1
 
 

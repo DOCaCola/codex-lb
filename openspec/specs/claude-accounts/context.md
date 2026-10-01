@@ -66,6 +66,21 @@ affinity. Missing resource origins fail closed.
 
 ## Monitoring and UI
 
+### Billing-first native cache prefixes
+
+Native recognition also accepts a leading `x-anthropic-billing-header:` block
+under the existing qualifying Claude CLI software and OAuth headers. The marker
+alone does not authenticate a client or select a native profile. Recognized
+system blocks, cache markers and billing text remain in their original order;
+the gateway neither moves nor stabilizes volatile billing metadata.
+
+Agent LB commit `3eb7c18454a805a297ce22c92eeab73da225628f` (2026-09-25),
+inspected at `c7f83276e4c8af0d7735adb6524fc68d34a97732` on 2026-10-01,
+reports helper/teammate cache misses after prepending identity ahead of billing
+metadata. This is third-party before/after evidence, not independently verified
+live cache behavior. Native main/helper dispatch mocks verify layout preservation.
+Measured cache monitoring is documented in `../provider-observability/`.
+
 Accounts appear in shared dashboard cards/table, account selection, and Add account.
 Controls include pause/resume, refresh, reconnect, selected models, context/output
 caps and the global advertised-version pin. Privacy blur and read-only permissions

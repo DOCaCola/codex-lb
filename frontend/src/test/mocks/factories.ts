@@ -1474,6 +1474,7 @@ export function createConversationDetails(
 		accountCount: 2,
 		totalElapsedTime: 4200,
 		dominantUseragentGroup: "opencode",
+		analytics: { start: offsetIso(-100), end: offsetIso(0), models: [], activity: [] },
 		modelStats: [
 			createConversationModelStat(),
 			createConversationModelStat({

@@ -5457,13 +5457,16 @@ async def _source_responses_response(
     chat_include_usage: bool = False,
     require_complete_history: bool = False,
 ) -> Response:
+    from app.core.routing_diagnostics import RoutingExclusion, explain_unavailable
     from app.modules.openrouter.routing import cooldown_remaining, record_failure
 
     attempted: set[str] = set()
+    exclusions: list[RoutingExclusion] = []
     while True:
         attempted.add(source.id)
         remaining = await cooldown_remaining(source.id, payload.model) if source.kind == "openrouter" else 0
         if remaining:
+            exclusions.append("cooldown")
             error = ModelSourceForwardingError(
                 status_code=429,
                 payload=cast(
@@ -5501,6 +5504,12 @@ async def _source_responses_response(
                         headers=_source_error_response_headers(rate_limit_headers, exc),
                     )
                 await record_failure(source.id, payload.model, exc.upstream_status_code, exc.retry_after)
+                rejection_reasons: dict[int, RoutingExclusion] = {
+                    401: "authentication",
+                    402: "balance",
+                    429: "rate_limit",
+                }
+                exclusions.append(rejection_reasons[exc.upstream_status_code])
         try:
             selected = await select_responses_model_source(
                 payload.model,
@@ -5514,6 +5523,16 @@ async def _source_responses_response(
             # provider refusal. Preserve the original status and retry headers.
             selected = None
         if selected is None or selected[0].kind != "openrouter":
+            detail = error.payload.get("error")
+            message = detail.get("message") if isinstance(detail, dict) else None
+            if isinstance(detail, dict) and isinstance(message, str):
+                error.payload = {
+                    **error.payload,
+                    "error": {
+                        **detail,
+                        "message": explain_unavailable(message, exclusions),
+                    },
+                }
             return _logged_error_json_response(
                 request,
                 error.status_code,

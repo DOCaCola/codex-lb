@@ -40,9 +40,17 @@ def _system_blocks(value: JsonValue) -> list[JsonValue]:
 
 
 def has_native_identity(body: dict[str, JsonValue]) -> bool:
-    return any(
-        isinstance(block, dict) and block.get("text") == CLI_IDENTITY for block in _system_blocks(body.get("system"))
+    blocks = _system_blocks(body.get("system"))
+    # Claude Code's volatile billing marker must stay first: moving it into
+    # the ordinary cached prefix changes every subsequent cache key. Identity
+    # recognition still requires the software/OAuth signals in recognize_native.
+    billing_first = bool(
+        blocks
+        and isinstance(blocks[0], dict)
+        and isinstance(blocks[0].get("text"), str)
+        and blocks[0]["text"].startswith("x-anthropic-billing-header:")
     )
+    return billing_first or any(isinstance(block, dict) and block.get("text") == CLI_IDENTITY for block in blocks)
 
 
 def project_request(

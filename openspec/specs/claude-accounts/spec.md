@@ -130,6 +130,17 @@ Explicitly selected available models, or all discovered models with resolved cap
 - **THEN** its known exhaustion continues to block applicable models until reset or a newer observation
 - **AND** passing its reset changes the observation to unknown rather than fabricating zero usage
 
+### Requirement: Native billing-first layout preservation
+The gateway SHALL recognize a leading Claude Code billing system block as native
+payload identity only when the existing CLI software and OAuth header checks
+succeed. Recognized native requests MUST preserve system block order and cache
+breakpoints without synthesizing, relocating or stabilizing billing content.
+
+#### Scenario: Native billing-first helper
+- **WHEN** qualifying Claude CLI headers accompany a billing-first system array
+- **THEN** forwarding preserves the system array and cache breakpoints
+- **AND** a non-qualifying client does not gain native recognition from text alone
+
 ### Requirement: Native Messages fidelity
 Authenticated `/v1/messages` and `/v1/messages/count_tokens` SHALL preserve supported recognized native body fields, system block order, cache markers, tool identifiers, beta/version metadata, SSE pings, upstream error status and rate-limit information. Caller credentials and hop-by-hop headers MUST NOT reach upstream. Native recognition MUST NOT grant authentication or change global version state. Third-party Messages SHALL use the same explicit OAuth compatibility policy as translated Responses. Unsupported billing semantics MUST fail explicitly rather than silently change spending policy.
 

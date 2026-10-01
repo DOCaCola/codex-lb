@@ -11,7 +11,7 @@ from app.modules.claude.profile import (
     management_headers,
     recognize_native,
 )
-from app.modules.claude.request import project_request
+from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 from tests.claude_json_helpers import array, at
 
@@ -141,6 +141,26 @@ def test_legacy_placement_preserves_block_cache_and_signed_turn():
 def test_native_body_is_preserved():
     request = logical()
     assert project_request(request, profile(native=True), endpoint="messages").body == request
+
+
+@pytest.mark.parametrize("billing", ["cch=first; cc_prompt_id=main", "cch=changed; entrypoint=teammate"])
+def test_billing_first_native_cache_prefix_is_preserved(billing):
+    request = logical()
+    request["system"].insert(0, {"type": "text", "text": f"x-anthropic-billing-header: {billing}"})
+    headers = {
+        "user-agent": "claude-cli/2.1.290 (external, cli)",
+        "x-app": "cli",
+        "x-stainless-lang": "js",
+        "anthropic-beta": "oauth-2025-04-20",
+    }
+    native = recognize_native(headers, version="2.1.282", has_identity=has_native_identity(request))
+    assert native
+    projected = project_request(request, profile(native=native), endpoint="messages")
+    assert projected.body == request
+    assert projected.transformations == ()
+    assert not recognize_native({}, version="2.1.282", has_identity=has_native_identity(request))
+    request["system"].reverse()
+    assert not has_native_identity(request)
 
 
 def test_unknown_model_and_server_artifacts_reject_unsafe_relocation():

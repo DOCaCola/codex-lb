@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config.settings_cache import get_settings_cache
 from app.core.model_routing import reasoning_allowed
+from app.core.routing_diagnostics import RoutingExclusion, explain_unavailable
 from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourceModel
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.capabilities import reasoning_spec
@@ -179,30 +180,50 @@ async def select_account(
     ]
     eligible = [account for account, diagnostic in candidates if diagnostic.eligible]
     if not eligible:
+        reasons: list[RoutingExclusion] = [
+            diagnostic.reason for _, diagnostic in candidates if diagnostic.reason != "ready"
+        ]
+        reasons.extend("excluded" for account in accounts if account.source_id in excluded_source_ids)
         retry_at = min(
             (diagnostic.retry_at for _, diagnostic in candidates if diagnostic.retry_at is not None), default=None
         )
         if owner_source_id is not None:
             raise ClaudePoolUnavailable(
                 "previous_response_owner_unavailable",
-                "Claude continuation owner is unavailable; account-bound state cannot move to another account",
+                explain_unavailable(
+                    "Claude continuation owner is unavailable; account-bound state cannot move to another account",
+                    reasons,
+                    retry_at=retry_at.timestamp() if retry_at is not None else None,
+                ),
                 retry_at=retry_at,
             )
         if candidates and all(diagnostic.reason == "quota" for _, diagnostic in candidates):
             raise ClaudePoolUnavailable(
                 "claude_pool_rate_limited",
-                "All authorized Claude accounts for this model are rate limited",
+                explain_unavailable(
+                    "All authorized Claude accounts for this model are rate limited",
+                    reasons,
+                    retry_at=retry_at.timestamp() if retry_at is not None else None,
+                ),
                 status_code=429,
                 retry_at=retry_at,
             )
         if candidates and all(diagnostic.reason == "reasoning" for _, diagnostic in candidates):
             raise ClaudePoolUnavailable(
                 "reasoning_effort_not_allowed",
-                "No eligible Claude account permits the requested or default reasoning effort",
+                explain_unavailable(
+                    "No eligible Claude account permits the requested or default reasoning effort", reasons
+                ),
                 status_code=400,
             )
         raise ClaudePoolUnavailable(
-            "claude_pool_unavailable", "No authorized Claude account is available for this model", retry_at=retry_at
+            "claude_pool_unavailable",
+            explain_unavailable(
+                "No authorized Claude account is available for this model",
+                reasons,
+                retry_at=retry_at.timestamp() if retry_at is not None else None,
+            ),
+            retry_at=retry_at,
         )
     scope = api_key.id if api_key else "anonymous"
     if preferred_source_id is None:

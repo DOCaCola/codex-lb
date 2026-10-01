@@ -1025,7 +1025,7 @@ def test_select_account_reports_paused_and_deactivated_without_reauth_reason():
     result = select_account(states)
 
     assert result.account is None
-    assert result.error_message == "All accounts are paused or deactivated"
+    assert result.error_message == "No available accounts. Routing exclusions (deactivated: 1, paused: 1)."
 
 
 def test_select_account_round_robin_prefers_least_recently_selected():

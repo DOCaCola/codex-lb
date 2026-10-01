@@ -968,6 +968,10 @@ export const handlers = [
     );
   }),
 
+  http.get("/api/request-logs/claude-cache-activity", () =>
+    HttpResponse.json({ generatedAt: new Date().toISOString(), windowMinutes: 60, groups: [] }),
+  ),
+
   http.get("/api/request-logs/options", ({ request }) => {
     const url = new URL(request.url);
     const filtered = filterRequestLogs(url, {

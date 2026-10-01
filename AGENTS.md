@@ -11,6 +11,7 @@ and regression-evidence sources, not dependencies or authoritative specification
 | OpenCodex | https://github.com/lidge-jun/opencodex | Codex Responses adaptation, continuation/replay, OAuth refresh-outcome handling |
 | OmniRoute | https://github.com/diegosouzapw/OmniRoute | Explicit credential import, account management, provider compatibility reports |
 | CLIProxyAPI | https://github.com/router-for-me/CLIProxyAPI | Multi-account selection/affinity, Claude client-profile handling, protocol translation, refresh backoff |
+| Agent LB | https://github.com/aneym/agent-lb | Routing exclusion diagnostics, Claude cache-prefix observations, conversation analytics, account operations and credential-owner federation |
 
 - Prefer recent third-party live reproductions and before/after observations, then
   merged fixes with matching current source/tests, over unverified assumptions from

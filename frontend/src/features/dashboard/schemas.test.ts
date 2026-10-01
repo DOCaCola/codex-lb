@@ -1009,8 +1009,11 @@ describe("ConversationEntrySchema", () => {
 });
 
 describe("ConversationDetailsSchema", () => {
+  const analytics = { start: ISO, end: ISO, models: [], activity: [] };
+
   it("parses metadata and model/effort rows", () => {
     const parsed = ConversationDetailsSchema.parse({
+      analytics,
       conversationId: "conv_d",
       start: ISO,
       latest: ISO,
@@ -1042,6 +1045,7 @@ describe("ConversationDetailsSchema", () => {
 
   it("accepts nullable dominant user-agent and reasoning effort", () => {
     const parsed = ConversationDetailsSchema.parse({
+      analytics,
       conversationId: "conv_null",
       start: ISO,
       latest: ISO,
@@ -1068,6 +1072,7 @@ describe("ConversationDetailsSchema", () => {
 
   it("accepts null cached input totals from the detail endpoint", () => {
     const parsed = ConversationDetailsSchema.parse({
+      analytics,
       conversationId: "conv-null-cache",
       start: ISO,
       latest: ISO,
@@ -1093,6 +1098,7 @@ describe("ConversationDetailsSchema", () => {
 
   it("defaults modelStats to an empty array", () => {
     const parsed = ConversationDetailsSchema.parse({
+      analytics,
       conversationId: "conv_empty",
       start: ISO,
       latest: ISO,

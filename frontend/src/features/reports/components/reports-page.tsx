@@ -24,6 +24,7 @@ import type { ModelDistributionDonutProps } from "./model-distribution-donut";
 import type { UseragentDistributionDonutProps } from "./useragent-distribution-donut";
 import { DailyDetailTable } from "./daily-detail-table";
 import { ThreadIdentityCard } from "./thread-identity-card";
+import { ClaudeCacheActivity } from "./claude-cache-activity";
 import {
   daysAgoLocalISO,
   getBrowserReportsTimeZone,
@@ -255,6 +256,8 @@ export function ReportsPage({ initialFilters }: ReportsPageProps = {}) {
         onFiltersChange={handleFiltersChange}
         onVisibleChartIdsChange={setVisibleChartIds}
       />
+
+      <ClaudeCacheActivity accountLabels={Object.fromEntries(accountOptions.map((account) => [account.value, account.label]))} />
 
       {mainReportsError ? (
         <AlertMessage variant="error">

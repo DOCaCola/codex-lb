@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.modules.request_logs.mappers import (
     QUOTA_CODES,
@@ -16,9 +16,15 @@ from app.modules.request_logs.repository import (
     RequestLogsRepository,
 )
 from app.modules.request_logs.schemas import (
+    CacheActivity,
+    CacheWindow,
+    ClaudeCacheActivityResponse,
+    ConversationActivity,
+    ConversationAnalytics,
     ConversationEntry,
     ConversationModelEffort,
     ConversationModelStat,
+    ConversationPerformance,
     RequestCostCoverage,
     RequestLogConversation,
     RequestLogEntry,
@@ -81,11 +87,40 @@ class ConversationDetails:
     total_elapsed_time: int
     dominant_useragent_group: str | None
     model_stats: list[ConversationModelStat]
+    analytics: ConversationAnalytics
 
 
 class RequestLogsService:
     def __init__(self, repo: RequestLogsRepository) -> None:
         self._repo = repo
+
+    async def cache_activity(self, now: datetime) -> ClaudeCacheActivityResponse:
+        groups = []
+        for row in await self._repo.cache_activity(now):
+            current = CacheWindow(
+                **asdict(row.current),
+                cache_read_ratio=(
+                    row.current.cache_read_tokens / row.current.input_tokens if row.current.input_tokens else None
+                ),
+            )
+            previous = CacheWindow(
+                **asdict(row.previous),
+                cache_read_ratio=(
+                    row.previous.cache_read_tokens / row.previous.input_tokens if row.previous.input_tokens else None
+                ),
+            )
+            groups.append(
+                CacheActivity(
+                    source_id=row.source_id,
+                    model=row.model,
+                    current=current,
+                    previous=previous,
+                    read_ratio_change=current.cache_read_ratio - previous.cache_read_ratio
+                    if current.cache_read_ratio is not None and previous.cache_read_ratio is not None
+                    else None,
+                )
+            )
+        return ClaudeCacheActivityResponse(generated_at=now, groups=groups)
 
     async def list_recent(
         self,
@@ -349,6 +384,20 @@ def _to_conversation_details(result: ConversationDetailsResult) -> ConversationD
         account_count=result.account_count,
         total_elapsed_time=result.total_elapsed_ms,
         dominant_useragent_group=result.useragent_group,
+        analytics=ConversationAnalytics(
+            start=result.analytics.start,
+            end=result.analytics.end,
+            models=[ConversationPerformance(**asdict(row)) for row in result.analytics.models],
+            activity=[
+                ConversationActivity(
+                    at=datetime.fromtimestamp(row.bucket_epoch, UTC),
+                    requests=row.requests,
+                    errors=row.errors,
+                    cancelled=row.cancelled,
+                )
+                for row in result.analytics.activity
+            ],
+        ),
         model_stats=[
             ConversationModelStat(
                 model_effort=ConversationModelEffort(model=row.model, reasoning_effort=row.reasoning_effort),

@@ -688,6 +688,55 @@ test("dashboard conversations — narrow", async ({ page }) => {
   });
 });
 
+test("provider observability details and cache activity", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await interceptApi(page);
+  const details = createConversationDetails({ conversationId: "conv_abc", start: "2026-09-24T10:00:00Z", latest: "2026-10-01T10:00:00Z" });
+  await page.route("**/health/ready", (route) => fulfill(route, { status: "ok" }));
+  details.analytics = {
+    start: "2026-09-24T10:00:00.001Z", end: "2026-10-01T10:00:00.001Z",
+    activity: [
+      { at: "2026-09-30T10:00:00Z", requests: 12, errors: 1, cancelled: 2 },
+      { at: "2026-10-01T10:00:00Z", requests: 3, errors: 0, cancelled: 0 },
+    ],
+    models: details.modelStats.map((stat) => ({
+      model: stat.modelEffort.model, reasoningEffort: stat.modelEffort.reasoningEffort,
+      requests: 15, errors: 1, cancelled: 2, meanTtftMs: 1234,
+      ttftSamples: 11, meanTps: 45.6, tpsSamples: 8,
+      cacheWriteTokens: 2000, cacheWriteSamples: 12,
+    })),
+  };
+  await page.route("**/api/conversations/conv_abc", (route) => fulfill(route, details));
+  await page.route("**/api/request-logs/claude-cache-activity", (route) => fulfill(route, {
+    generatedAt: "2026-10-01T10:00:00Z", windowMinutes: 60,
+    groups: [{
+      sourceId: "claude-alpha", model: "anthropic/claude-opus-5-5", readRatioChange: -0.05,
+      current: { requests: 12, measuredRequests: 10, inputTokens: 100000, cacheReadTokens: 80000, cacheWriteTokens: 10000, cacheReadRatio: 0.8 },
+      previous: { requests: 8, measuredRequests: 8, inputTokens: 100000, cacheReadTokens: 85000, cacheWriteTokens: 5000, cacheReadRatio: 0.85 },
+    }],
+  }));
+  for (const theme of ["light", "dark"] as const) {
+    await applyTheme(page, theme);
+    await page.goto(`${BASE_URL}/dashboard?view=conversations`);
+    await page.getByRole("button", { name: /view details/i }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("45.6 tok/s").first()).toBeVisible();
+    await expect(dialog.locator(".recharts-surface")).toBeVisible();
+    await dialog.screenshot({ path: testInfo.outputPath(`conversation-analytics-${theme}.png`) });
+    await page.goto(`${BASE_URL}/reports`);
+    const cacheCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Claude cache activity (1h)", exact: true }) });
+    await expect(cacheCard.getByText("80.0%")).toBeVisible();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await cacheCard.screenshot({ path: testInfo.outputPath(`claude-cache-${theme}-${width}.png`) });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+  expect(errors).toEqual([]);
+});
+
 test("dashboard conversation details dialog", async ({ page }) => {
   await capture(page, {
     file: "dashboard-conversation-details.jpg",

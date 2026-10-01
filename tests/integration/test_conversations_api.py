@@ -655,6 +655,7 @@ async def test_conversation_details_exact_rows_elapsed_order_and_404(async_clien
         "totalElapsedTime",
         "dominantUseragentGroup",
         "modelStats",
+        "analytics",
     }
     assert body["conversationId"] == "Conv-A"
     assert body["accountCount"] == 2

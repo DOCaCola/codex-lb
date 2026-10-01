@@ -18,6 +18,7 @@ from app.modules.dashboard.timeframes import (
     resolve_request_log_timeframe,
 )
 from app.modules.request_logs.schemas import (
+    ClaudeCacheActivityResponse,
     ConversationDetailsResponse,
     ConversationsResponse,
     RequestLogApiKeyOption,
@@ -44,6 +45,17 @@ conversations_router = APIRouter(
 
 _MODEL_OPTION_DELIMITER = ":::"
 _CONVERSATION_MAX_LOOKBACK = timedelta(days=30)
+
+
+@router.get(
+    "/claude-cache-activity",
+    response_model=ClaudeCacheActivityResponse,
+    dependencies=[Depends(require_dashboard_permission(Permission.ACCOUNTS_READ))],
+)
+async def claude_cache_activity(
+    context: RequestLogsContext = Depends(get_request_logs_context),
+) -> ClaudeCacheActivityResponse:
+    return await context.service.cache_activity(utcnow())
 
 
 def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:
@@ -223,4 +235,5 @@ async def get_conversation_details(
         total_elapsed_time=details.total_elapsed_time,
         dominant_useragent_group=details.dominant_useragent_group,
         model_stats=details.model_stats,
+        analytics=details.analytics,
     )

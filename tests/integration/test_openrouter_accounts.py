@@ -506,6 +506,8 @@ async def test_reasoning_policy_prevents_ineligible_account_failover(async_clien
         assert result.status_code == 429, result.text
         assert result.headers["retry-after"] == "120"
         assert calls == ["limited"]
+        assert "Routing exclusions (rate_limit: 1)" in result.json()["error"]["message"]
+        assert source_id not in result.text
 
 
 async def test_read_only_account_mutations_denied(async_client, provider, monkeypatch):
