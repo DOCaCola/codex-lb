@@ -2113,7 +2113,7 @@ class AutomationsService:
             return
         try:
             await self._request_logs_repository.add_log(
-                request_operation=RequestOperation.RESPONSES,
+                request_operation=RequestOperation.COMPACTION,
                 account_id=account_id,
                 request_id=request_id,
                 model=model,

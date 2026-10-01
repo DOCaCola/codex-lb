@@ -61,14 +61,17 @@ def _payload() -> ResponsesRequest:
 
 
 @pytest.mark.parametrize("tamper", [None, "label", "signature", "invalid"])
-def test_forwarded_operation_is_bound_to_full_signature(tamper):
+@pytest.mark.parametrize(
+    "operation", [RequestOperation.IMAGE_EDIT, RequestOperation.COMPACTION, RequestOperation.CHECKPOINT_HANDOFF]
+)
+def test_forwarded_operation_is_bound_to_full_signature(tamper, operation):
     payload = _payload()
     context = HTTPBridgeForwardContext(
         origin_instance="origin",
         target_instance="owner",
         codex_session_affinity=True,
         downstream_turn_state=None,
-        request_operation=RequestOperation.IMAGE_EDIT,
+        request_operation=operation,
     )
     headers = build_owner_forward_headers(payload=payload, headers={}, context=context)
     if tamper == "label":
@@ -81,7 +84,7 @@ def test_forwarded_operation_is_bound_to_full_signature(tamper):
     if tamper is None:
         assert error is None
         assert forwarded is not None
-        assert forwarded.context.request_operation == RequestOperation.IMAGE_EDIT
+        assert forwarded.context.request_operation == operation
     else:
         assert forwarded is None
         assert error is not None

@@ -1,4 +1,5 @@
 {
+  "dashboard.requests.operations.checkpoint_handoff": "检查点交接",
   "modelSources.modelEditor.add": "添加模型",
   "modelSources.modelEditor.remove": "移除模型",
   "modelSources.modelEditor.select": "要编辑的模型",

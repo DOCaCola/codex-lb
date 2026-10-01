@@ -719,7 +719,15 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
             assert all(log.latency_first_token_ms is not None and log.latency_ms is not None for log in logs)
 
 
-@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/responses/compact",
+        "/backend-api/codex/responses/compact",
+        "/v1/responses",
+        "/backend-api/codex/responses",
+    ],
+)
 async def test_source_compaction_uses_selected_provider(async_client, provider, path):
     history = [
         {"role": "user", "content": "EARLIEST: original task"},
@@ -764,10 +772,23 @@ async def test_source_compaction_uses_selected_provider(async_client, provider, 
             assert source is not None
             source.base_url = url
             await session.commit()
-        result = await async_client.post(
-            path, json={"model": "openrouter/vendor/test", "instructions": "Summarize", "input": history}
-        )
+        request_body = {"model": "openrouter/vendor/test", "instructions": "Summarize", "input": history}
+        if not path.endswith("/compact"):
+            request_body["input"] = [*history, {"type": "compaction_trigger"}]
+            request_body["stream"] = False
+        result = await async_client.post(path, json=request_body)
         assert result.status_code == 200, result.text
-        body = result.json()
-        assert body["object"] == "response.compaction"
+        if path.endswith("/compact"):
+            body = result.json()
+        else:
+            events = [
+                json.loads(line[6:])
+                for line in result.text.splitlines()
+                if line.startswith("data: ") and line[6:] != "[DONE]"
+            ]
+            body = next(event["response"] for event in events if event["type"] == "response.completed")
+        assert body["object"] == ("response.compaction" if path.endswith("/compact") else "response")
         assert decode_codex_lb_compaction_summary(body["output"][0]["encrypted_content"]) == "Preserved summary"
+        async with SessionLocal() as session:
+            logs = list(await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id)))
+            assert len(logs) == 1 and logs[0].request_operation == "compaction"

@@ -51,8 +51,13 @@ workload kind would change warmup exclusions, count-token coverage and durable
 rollups, so `request_operation` is a separate nullable field. Existing rows remain
 unknown: a model name or HTTP transport cannot establish the original endpoint.
 
-The canonical method/path supplies classification without reading payloads or
-accepting client classification headers. Pure ASGI context lives through the
+The canonical method/path supplies initial classification without reading payloads
+or accepting client classification headers. Existing successful routing validation
+refines a Responses operation to Compaction for a terminal top-level
+`compaction_trigger`. There is no extra body parsing, prompt inference or payload
+logging for classification. Historical `compaction`/`context_compaction` items and
+embedded image/search tools remain ordinary Responses history or tools.
+Pure ASGI context lives through the
 stream. Persistence handoff, source dispatch and individual bridge turns snapshot
 the operation so detached writes and reused upstream workers keep their own
 ingress attribution. Cross-replica forwarding includes the operation in the
@@ -66,6 +71,20 @@ not a new log row. A Responses warmup displays `Responses · Warmup`. An image e
 implemented upstream with Responses still displays `Image edit`. These labels
 reuse the former Warmup line in the Model cell and do not add a table column.
 Request details expose operation separately from accounting workload.
+
+For example, terminal compaction arriving at `/backend-api/codex/responses`
+displays Compaction rather than Responses, even when a provider adapter removes
+the trigger and generates a summarization request. Native websocket turns snapshot
+their own validated result without changing the connection-wide operation; source
+websocket turns run through the HTTP pipeline in separate turn tasks. A following
+normal turn remains Responses. Internal compact calls and automation compact pings
+identify their actual operation, without changing their existing workload kind.
+
+Auxiliary native provider-switch generation displays Checkpoint handoff. Its
+operation is scoped alongside the auxiliary request ID and restored on success,
+error, timeout and cancellation, so a parent compaction or image operation keeps
+its own label. Authenticated owner forwarding binds the refined operation to the
+existing signature. No new log producer or historical correction is introduced.
 
 Upgrade adds nullable metadata with no historical backfill. There is no new
 polling or log producer, operation filter or aggregate dimension. Classification

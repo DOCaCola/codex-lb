@@ -14,6 +14,7 @@ import {
   parseDashboardView,
   parseOverviewTimeframe,
   RequestLogFilterOptionsSchema,
+  RequestLogSchema,
   RequestLogsResponseSchema,
   UsageWindowSchema,
 } from "@/features/dashboard/schemas";
@@ -171,6 +172,19 @@ describe("DashboardOverviewSchema", () => {
 });
 
 describe("RequestLogsResponseSchema", () => {
+  it("parses checkpoint handoffs without changing workload or inventing usage", () => {
+    const parsed = RequestLogSchema.parse({
+      requestedAt: ISO, accountId: null, requestId: "handoff-test", model: "",
+      requestOperation: "checkpoint_handoff", requestKind: "normal", status: "ok",
+      errorCode: null, errorMessage: null, tokens: null, cachedInputTokens: null,
+      reasoningEffort: null, costUsd: null, latencyMs: null,
+    });
+    expect(parsed.requestOperation).toBe("checkpoint_handoff");
+    expect(parsed.requestKind).toBe("normal");
+    expect(parsed.tokens).toBeNull();
+    expect(parsed.costUsd).toBeNull();
+  });
+
   it("requires total and hasMore metadata", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [],

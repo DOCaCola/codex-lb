@@ -470,6 +470,7 @@ async def test_automations_run_history_keeps_claimed_model_snapshot(async_client
         ]
         assert len(matching_logs) == 1
         assert matching_logs[0].model == "automation-reasoning-xhigh"
+        assert matching_logs[0].request_operation == "compaction"
         assert matching_logs[0].reasoning_effort == "xhigh"
 
 
@@ -538,6 +539,7 @@ async def test_automations_run_now_aliases_ultra_reasoning_to_max_on_wire(async_
         ]
         assert len(matching_logs) == 1
         assert matching_logs[0].model == "gpt-5.6-sol"
+        assert matching_logs[0].request_operation == "compaction"
         assert matching_logs[0].reasoning_effort == "max"
 
 

@@ -221,7 +221,7 @@ export const RequestLogSchema = z.object({
   archiveRequestId: z.string().nullable().optional(),
   requestKind: z.enum(["normal", "warmup", "limit_warmup", "prewarm", "compaction", "realtime_live", "count_tokens"]).optional().default("normal"),
   requestOperation: z.enum([
-    "unknown", "responses", "chat_completions", "messages", "count_tokens", "compaction",
+    "unknown", "responses", "chat_completions", "messages", "count_tokens", "compaction", "checkpoint_handoff",
     "image_generation", "image_edit", "transcription", "embeddings", "file_create", "file_finalize",
     "web_search", "goal_read", "goal_set", "goal_clear", "memory_summary", "analytics", "safety",
     "identity_keys", "realtime_call", "realtime_session",

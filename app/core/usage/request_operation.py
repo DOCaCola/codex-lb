@@ -11,6 +11,7 @@ class RequestOperation(StrEnum):
     MESSAGES = "messages"
     COUNT_TOKENS = "count_tokens"
     COMPACTION = "compaction"
+    CHECKPOINT_HANDOFF = "checkpoint_handoff"
     IMAGE_GENERATION = "image_generation"
     IMAGE_EDIT = "image_edit"
     TRANSCRIPTION = "transcription"
@@ -42,3 +43,10 @@ def set_request_operation(value: RequestOperation) -> Token[RequestOperation]:
 
 def reset_request_operation(token: Token[RequestOperation]) -> None:
     _OPERATION.reset(token)
+
+
+def refine_responses_operation(operation: RequestOperation, *, terminal_compaction: bool) -> RequestOperation:
+    """Refine an ingress label from an already validated routing decision."""
+    if operation == RequestOperation.RESPONSES and terminal_compaction:
+        return RequestOperation.COMPACTION
+    return operation

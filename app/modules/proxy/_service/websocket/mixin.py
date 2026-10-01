@@ -96,6 +96,7 @@ from app.core.resilience.network_recovery import (
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
+from app.core.usage.request_operation import refine_responses_operation
 from app.core.utils.request_id import get_request_id, reset_request_id, set_request_id
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
 from app.core.utils.sse import format_sse_event
@@ -3231,7 +3232,7 @@ class _WebSocketMixin:
             header_values=capability_header_values,
             client_metadata_values=_websocket_capability_metadata_values(payload),
         )
-        validate_top_level_compaction_trigger_input_shape(payload)
+        terminal_compaction = validate_top_level_compaction_trigger_input_shape(payload)
         replay_conversation_id = conversation_id or _owner_lookup_session_id_from_headers(
             headers, synthesized_turn_state=synthesized_turn_state
         )
@@ -3506,6 +3507,9 @@ class _WebSocketMixin:
         except ProxyResponseError:
             await proxy._release_websocket_reservation(reservation)
             raise
+        request_state.request_operation = refine_responses_operation(
+            request_state.request_operation, terminal_compaction=terminal_compaction
+        )
         request_state.useragent = useragent
         request_state.useragent_group = useragent_group
         request_state.conversation_id = conversation_id

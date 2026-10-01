@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
 from app.core.errors import openai_error
+from app.core.usage.request_operation import get_request_operation
 from app.db.models import Account, ApiKeyUsageReservation, RequestLog
 from app.db.session import get_background_session
 from app.modules.proxy import service as proxy_service
@@ -37,6 +38,7 @@ async def handoff_env(recovery_env, monkeypatch):
     outcome = {"status": "completed", "text": "Task handoff: preserve the original decision and critical evidence."}
 
     async def native_stream(payload, *args, **kwargs):
+        outcome.setdefault("operations", []).append(get_request_operation())
         generated.append((deepcopy(payload.model_dump(mode="json")), kwargs))
         try:
             if "started" in outcome:
@@ -116,6 +118,11 @@ async def test_http_handoff_only_on_switch_cached_and_metered(async_client, hand
         )
         assert len(log) == 1 and log[0].input_tokens == 101 and log[0].output_tokens == 20
         assert log[0].account_id is not None and log[0].model == "gpt-5.1"
+        assert log[0].request_operation == "checkpoint_handoff"
+        source_logs = (await session.execute(select(RequestLog).where(RequestLog.model == MODEL))).scalars().all()
+        assert len(source_logs) == 2
+        assert all(row.request_operation == "responses" for row in source_logs)
+    assert outcome["operations"] == ["checkpoint_handoff"]
     assert not list(directory.glob("*.replay"))
     raw = b"".join(p.read_bytes() for p in (directory / "origins").glob("*.replay"))
     assert b"Original decision" not in raw and b"PRIVATE" not in raw
@@ -316,6 +323,9 @@ async def test_source_compaction_handoff(async_client, handoff_env, path):
     assert response.json()["output"][0]["encrypted_content"].startswith("clb1:")
     assert len(generated) == len(finished) == 1
     assert outcome["text"] in json.dumps(captured[0][2]) and "Latest constraint" in json.dumps(captured[0][2])
+    async with get_background_session() as session:
+        rows = (await session.execute(select(RequestLog).order_by(RequestLog.id))).scalars().all()
+        assert [row.request_operation for row in rows] == ["compaction", "checkpoint_handoff", "compaction"]
 
 
 async def test_generic_source_handoff(async_client, handoff_env):

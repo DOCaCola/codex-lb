@@ -6,6 +6,7 @@
   "dashboard.requests.operations.messages": "Messages",
   "dashboard.requests.operations.count_tokens": "Token count",
   "dashboard.requests.operations.compaction": "Compaction",
+  "dashboard.requests.operations.checkpoint_handoff": "Checkpoint handoff",
   "dashboard.requests.operations.image_generation": "Image generation",
   "dashboard.requests.operations.image_edit": "Image edit",
   "dashboard.requests.operations.transcription": "Transcription",

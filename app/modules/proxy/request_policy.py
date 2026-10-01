@@ -858,11 +858,12 @@ def normalize_responses_request_payload(
     return responses
 
 
-def validate_top_level_compaction_trigger_input_shape(payload: Mapping[str, JsonValue]) -> None:
+def validate_top_level_compaction_trigger_input_shape(payload: Mapping[str, JsonValue]) -> bool:
+    """Validate raw trigger placement and return the terminal-compaction decision."""
     input_value = payload.get("input")
     if not is_json_list(input_value):
-        return
-    _validate_terminal_compaction_trigger_input_items(input_value)
+        return False
+    return _validate_terminal_compaction_trigger_input_items(input_value)
 
 
 def strip_terminal_compaction_trigger_input(

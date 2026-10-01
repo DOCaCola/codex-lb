@@ -1,4 +1,5 @@
 {
+  "dashboard.requests.operations.checkpoint_handoff": "체크포인트 인계",
   "modelSources.modelEditor.add": "모델 추가",
   "modelSources.modelEditor.remove": "모델 삭제",
   "modelSources.modelEditor.select": "편집할 모델",

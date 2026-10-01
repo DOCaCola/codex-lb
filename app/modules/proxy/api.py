@@ -186,7 +186,13 @@ from app.core.runtime_logging import log_error_response
 from app.core.socket_peer import raw_socket_peer_host
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
-from app.core.usage.request_operation import RequestOperation, get_request_operation, set_request_operation
+from app.core.usage.request_operation import (
+    RequestOperation,
+    get_request_operation,
+    refine_responses_operation,
+    reset_request_operation,
+    set_request_operation,
+)
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.core.utils.shared_future import (
@@ -1217,6 +1223,9 @@ async def responses(
             )
             is not None
         )
+        set_request_operation(
+            refine_responses_operation(get_request_operation(), terminal_compaction=terminal_compaction)
+        )
         source_route_excluded = responses_source_route_excluded(
             responses_payload,
             exclude_compaction=False,
@@ -1445,6 +1454,9 @@ async def v1_responses(
                 strip_trigger=False,
             )
             is not None
+        )
+        set_request_operation(
+            refine_responses_operation(get_request_operation(), terminal_compaction=terminal_compaction)
         )
         source_route_excluded = responses_source_route_excluded(
             responses_payload,
@@ -7655,6 +7667,7 @@ def _source_checkpoint_resolver(
             "compaction_handoff_native_request request_id=%s native_request_id=%s", get_request_id(), native_request_id
         )
         token = set_request_id(native_request_id)
+        operation_token = set_request_operation(RequestOperation.CHECKPOINT_HANDOFF)
         try:
             try:
                 result = await scheduler_for(native_context.service).wait_for(
@@ -7685,6 +7698,7 @@ def _source_checkpoint_resolver(
                 )
             return body
         finally:
+            reset_request_operation(operation_token)
             reset_request_id(token)
 
     return CheckpointHandoff(api_key, generate).resolve

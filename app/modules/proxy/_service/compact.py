@@ -41,6 +41,7 @@ from app.core.resilience.network_recovery import ProcessNetworkRecovery
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
+from app.core.usage.request_operation import RequestOperation
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.core.utils.retry import backoff_seconds
 from app.core.utils.shared_future import wait_on_shared_future
@@ -2172,6 +2173,7 @@ class _CompactMixin:
             usage = response.usage if response else None
             reasoning_effort = payload.reasoning.effort if payload.reasoning else None
             await proxy._write_request_log(
+                request_operation=RequestOperation.COMPACTION,
                 affinity_observation=affinity_observation,
                 account_id=account_id_value,
                 api_key=api_key,
