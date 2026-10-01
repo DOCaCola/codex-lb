@@ -13,6 +13,12 @@ afterEach(() => {
 });
 
 describe("AccountCard", () => {
+  it("separates optional account IDs with a middle dot", () => {
+    const { container } = render(<AccountCard account={createAccountSummary()} showAccountId />);
+    expect(container).toHaveTextContent("Plus · ID");
+    expect(container).not.toHaveTextContent("Plus | ID");
+  });
+
   it("renders both 5h and weekly quota bars for regular accounts", () => {
     const account = createAccountSummary();
     render(<AccountCard account={account} />);

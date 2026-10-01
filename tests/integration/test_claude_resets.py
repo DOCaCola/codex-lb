@@ -14,7 +14,7 @@ from app.modules.claude.observations import record_headers
 from app.modules.claude.reset_client import ClaimUnknown, ResetClient
 from app.modules.claude.reset_repository import ResetRepository
 from app.modules.claude.reset_schemas import ClaimAnswer, GrantStatus
-from app.modules.claude.schemas import AuthenticatedProfile, UsageSnapshot
+from app.modules.claude.schemas import AuthenticatedProfile, BootstrapResponse, UsageSnapshot
 from tests.integration.test_claude_accounts import import_body
 
 pytestmark = pytest.mark.integration
@@ -44,6 +44,15 @@ def grants():
 
 @pytest.fixture
 async def reset_account(async_client, monkeypatch):
+    monkeypatch.setattr(
+        ClaudeClient,
+        "bootstrap",
+        AsyncMock(
+            return_value=BootstrapResponse.model_validate(
+                {"oauth_account": {"account_uuid": "user", "organization_uuid": ORG}}
+            )
+        ),
+    )
     monkeypatch.setattr(
         ClaudeClient,
         "profile",

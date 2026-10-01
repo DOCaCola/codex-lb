@@ -28,6 +28,27 @@ class AuthenticatedProfile(BaseModel):
     organization: ProfileOrganization
 
 
+ClaudePlanType = Literal["free", "pro", "max", "max_5x", "max_20x", "team", "enterprise", "unknown"]
+
+
+class SubscriptionMetadata(BaseModel):
+    subscription_type: str | None = None
+    rate_limit_tier: str | None = None
+    source: Literal["credential_file", "bootstrap"]
+    observed_at: datetime
+
+
+class BootstrapAccount(BaseModel):
+    account_uuid: str = Field(min_length=1)
+    organization_uuid: str = Field(min_length=1)
+    organization_type: str | None = None
+    organization_rate_limit_tier: str | None = None
+
+
+class BootstrapResponse(BaseModel):
+    oauth_account: BootstrapAccount
+
+
 class Credentials(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
     access_token: SecretStr = Field(min_length=1)
@@ -49,6 +70,18 @@ class ImportedOAuth(BaseModel):
     refreshToken: SecretStr = Field(min_length=1)
     expiresAt: int = Field(strict=True, ge=1_000_000_000_000, le=9_999_999_999_999)
     scopes: list[str]
+    subscriptionType: str | None = None
+    rateLimitTier: str | None = None
+
+    def subscription_metadata(self) -> SubscriptionMetadata | None:
+        if self.subscriptionType is None and self.rateLimitTier is None:
+            return None
+        return SubscriptionMetadata(
+            subscription_type=self.subscriptionType,
+            rate_limit_tier=self.rateLimitTier,
+            source="credential_file",
+            observed_at=datetime.now(UTC),
+        )
 
     @field_validator("scopes")
     @classmethod
@@ -167,7 +200,7 @@ class HeaderQuotaObservation(BaseModel):
     observed_at: datetime
 
 
-MetadataEndpoint = Literal["catalog", "usage"]
+MetadataEndpoint = Literal["catalog", "usage", "subscription"]
 
 
 class MetadataRefreshState(BaseModel):
@@ -177,6 +210,9 @@ class MetadataRefreshState(BaseModel):
 
 
 class AccountState(BaseModel):
+    subscription: SubscriptionMetadata | None = None
+    subscription_updated_at: datetime | None = None
+    subscription_error: str | None = None
     all_models: bool = False
     reasoning_restrictions: ReasoningRestrictions = Field(default_factory=dict)
     metadata_refresh: dict[MetadataEndpoint, MetadataRefreshState] = Field(default_factory=dict)
@@ -237,6 +273,7 @@ class ClaudeUpdate(DashboardModel):
 
 
 class ClaudeAccountResponse(DashboardModel):
+    plan_type: ClaudePlanType
     routing_policy: AccountRoutingPolicy
     max_concurrency: int | None
     id: str

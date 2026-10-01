@@ -88,6 +88,7 @@ class WeeklyCreditApiKeyAttribution(DashboardModel):
     billable_tokens: int
     cached_tokens: int
     dominant_model: str
+    cost_coverage: RequestCostCoverage
 
 
 class WeeklyCreditPaceResponse(DashboardModel):

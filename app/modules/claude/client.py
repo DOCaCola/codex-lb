@@ -14,6 +14,7 @@ from app.modules.claude.profile import management_headers
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
     AuthenticatedProfile,
+    BootstrapResponse,
     CatalogModel,
     CatalogPage,
     Credentials,
@@ -139,3 +140,6 @@ class ClaudeClient:
 
     async def profile(self, token: str, version: str) -> AuthenticatedProfile:
         return await self._get("/api/oauth/profile", token, version, AuthenticatedProfile)
+
+    async def bootstrap(self, token: str, version: str) -> BootstrapResponse:
+        return await self._get("/api/claude_cli/bootstrap", token, version, BootstrapResponse)

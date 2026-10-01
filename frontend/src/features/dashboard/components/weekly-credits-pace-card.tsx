@@ -2,6 +2,7 @@ import { Gauge } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { WeeklyCreditPace, WeeklyCreditRunwayStatus } from "@/features/dashboard/utils";
+import { formatCoveredCost, formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
 import { formatCompactNumber, formatDateTimeInline, formatModelLabel } from "@/utils/formatters";
@@ -261,7 +262,7 @@ function RunwayWeeklyCreditsPaceCard({
       : null;
 
   return (
-    <section className="rounded-xl border bg-card p-5" aria-label={t("dashboard.weeklyPace.title")}>
+    <section className="@container/weekly-pace rounded-xl border bg-card p-5" aria-label={t("dashboard.weeklyPace.title")}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
         <span
@@ -365,29 +366,41 @@ function RunwayWeeklyCreditsPaceCard({
 
         {topApiKeys.length > 0 ? (
           <div data-testid="runway-attribution">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              {t("dashboard.weeklyPace.attributionTitle")}
-            </p>
+            <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-[11px] font-medium text-muted-foreground">
+              <p className="uppercase tracking-wider">{t("dashboard.weeklyPace.attributionTitle")}</p>
+              <p title={t("dashboard.weeklyPace.attributionCostDescription")}>
+                {t("dashboard.weeklyPace.attributionCost")}
+              </p>
+            </div>
             <ul className="mt-1.5 space-y-1">
               {topApiKeys.map((apiKey, index) => (
                 <li
                   // Prefer the stable wire id; older backends omit it, and key
                   // names are not unique, so name+index disambiguates then.
                   key={apiKey.apiKeyId ?? `${apiKey.name}-${index}`}
-                  // The fixed metric columns need ~324px on their own, so
-                  // below sm the key name wraps onto its own line instead of
-                  // forcing the card past narrow (<375px) viewports.
-                  className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1fr)_5.5rem_5rem_6.5rem]"
+                  // Respond to the card's width, not the viewport: the runway
+                  // occupies a narrow column even on a large dashboard.
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-muted-foreground @min-[20rem]/weekly-pace:grid @min-[20rem]/weekly-pace:grid-cols-[minmax(0,1fr)_auto_auto_auto]"
                 >
-                  <span className="w-full min-w-0 truncate sm:w-auto">{apiKey.name}</span>
-                  <span className="tabular-nums sm:text-right">
+                  <span className="w-full min-w-0 @min-[20rem]/weekly-pace:w-auto">
+                    <span className="block truncate">{apiKey.name}</span>
+                    <span className="block truncate text-[10px] text-foreground/70">
+                      {formatModelLabel(apiKey.dominantModel, null)}
+                    </span>
+                  </span>
+                  <span className="tabular-nums @min-[20rem]/weekly-pace:text-right">
                     {t("dashboard.weeklyPace.attributionRequests", { value: formatCompactNumber(apiKey.requests) })}
                   </span>
-                  <span className="tabular-nums sm:text-right">
+                  <span className="tabular-nums @min-[20rem]/weekly-pace:text-right">
                     {t("dashboard.weeklyPace.attributionTokens", { value: formatCompactNumber(apiKey.billableTokens) })}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-right text-foreground/70 sm:flex-none">
-                    {formatModelLabel(apiKey.dominantModel, null)}
+                  <span
+                    className="ml-auto max-w-full break-words text-right tabular-nums text-foreground/70"
+                    title={t("dashboard.weeklyPace.attributionCostTooltip", {
+                      cost: formatCoveredCost(apiKey.costCoverage.knownCostUsd, apiKey.costCoverage),
+                    })}
+                  >
+                    {formatCoveredCostShort(apiKey.costCoverage.knownCostUsd, apiKey.costCoverage)}
                   </span>
                 </li>
               ))}

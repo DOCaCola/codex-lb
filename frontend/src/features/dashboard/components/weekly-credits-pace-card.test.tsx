@@ -317,6 +317,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
               billableTokens: 9_800_000,
               cachedTokens: 4_000_000,
               dominantModel: "gpt-5.2-codex",
+              costCoverage: { knownCostUsd: 44_248.05, pricedRequests: 12_399, unpricedRequests: 1, unmeteredRequests: 0, coverageUnknown: false },
             },
             {
               apiKeyId: "key_batch_eval",
@@ -325,6 +326,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
               billableTokens: 14_200_000,
               cachedTokens: 0,
               dominantModel: "gpt-5.2",
+              costCoverage: { knownCostUsd: 0, pricedRequests: 800, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
             },
           ],
         }}
@@ -337,6 +339,12 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getByText("9.8M tok")).toBeInTheDocument();
     expect(screen.getByText("gpt-5.2-codex")).toBeInTheDocument();
     expect(screen.getByText("batch-eval")).toBeInTheDocument();
+    expect(screen.getByText("Est. API Cost")).toBeInTheDocument();
+    const cost = screen.getByText("$44,248.05");
+    expect(cost).toHaveAttribute("title", "Est. API Cost · last 2h: $44,248.05 known · incomplete (12399 priced, 1 unpriced)");
+    expect(cost.textContent).not.toContain("known");
+    expect(cost.textContent).not.toContain("≥");
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
   });
 
   it("hides the attribution list when no keys are reported", () => {
@@ -351,8 +359,10 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
         pace={{
           ...RUNWAY_PACE,
           topApiKeys: [
-            { name: "(unnamed)", requests: 500, billableTokens: 1_000_000, cachedTokens: 0, dominantModel: "gpt-5.2" },
-            { name: "(unnamed)", requests: 300, billableTokens: 2_000_000, cachedTokens: 0, dominantModel: "gpt-5.2-codex" },
+            { name: "(unnamed)", requests: 500, billableTokens: 1_000_000, cachedTokens: 0, dominantModel: "gpt-5.2",
+              costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 500, unmeteredRequests: 0, coverageUnknown: false } },
+            { name: "(unnamed)", requests: 300, billableTokens: 2_000_000, cachedTokens: 0, dominantModel: "gpt-5.2-codex",
+              costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 300, unmeteredRequests: 0, coverageUnknown: false } },
           ],
         }}
       />,
@@ -361,6 +371,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getAllByText("(unnamed)")).toHaveLength(2);
     expect(screen.getByText("500 req")).toBeInTheDocument();
     expect(screen.getByText("300 req")).toBeInTheDocument();
+    expect(screen.getAllByText("Unknown")).toHaveLength(2);
   });
 
   it("stretches the timeline horizon so reset events past 48h are not dropped", () => {

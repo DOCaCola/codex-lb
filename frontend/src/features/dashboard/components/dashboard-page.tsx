@@ -20,6 +20,7 @@ import { useAccountMutations } from "@/features/accounts/hooks/use-accounts";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
+import { useModels } from "@/features/api-keys/hooks/use-models";
 import { useClaudeAccounts } from "@/features/claude/use-claude";
 import { AccountList } from "@/features/dashboard/components/account-list";
 import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
@@ -105,6 +106,7 @@ export function DashboardPage() {
   // account actions `accounts:write`, the API-key filter `api_keys:read`.
   const canWriteAccounts = usePermission("accounts:write");
   const openRouterQuery = useOpenRouterAccounts();
+  const modelsQuery = useModels();
   const claudeQuery = useClaudeAccounts();
   const claudeAccounts = claudeQuery.data?.accounts ?? [];
   const openRouterAccounts = openRouterQuery.data?.accounts ?? [];
@@ -801,6 +803,7 @@ export function DashboardPage() {
                     <div className="transition-opacity duration-200">
                       <RecentRequestsTable
                         requests={view.requestLogs}
+                        models={modelsQuery.data}
                         accounts={overview?.accounts ?? []}
                         total={logPage.total}
                         visibleColumns={visibleColumns}

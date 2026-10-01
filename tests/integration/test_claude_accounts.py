@@ -51,12 +51,19 @@ async def test_all_mode_projects_only_valid_metadata_and_retains_selected_mode(a
 
 
 def install_profile_stub(monkeypatch):
-    from app.modules.claude.schemas import AuthenticatedProfile
+    from app.modules.claude.schemas import AuthenticatedProfile, BootstrapResponse
 
     async def profile(_self, token, _version):
         return AuthenticatedProfile.model_validate({"account": {"uuid": token}, "organization": {"uuid": "org-test"}})
 
     monkeypatch.setattr(ClaudeClient, "profile", profile)
+
+    async def bootstrap(_self, token, _version):
+        return BootstrapResponse.model_validate(
+            {"oauth_account": {"account_uuid": token, "organization_uuid": "org-test"}}
+        )
+
+    monkeypatch.setattr(ClaudeClient, "bootstrap", bootstrap)
 
 
 @pytest.fixture(autouse=True)

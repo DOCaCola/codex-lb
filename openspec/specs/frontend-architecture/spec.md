@@ -341,6 +341,40 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 - **WHEN** the overview response has arrived and the projections request is still in flight or failed
 - **THEN** the weekly runway card renders its full content from the overview payload with a stable layout footprint
 
+### Requirement: Weekly consumer estimated API costs
+
+Weekly pace top-consumer rows SHALL display compact USD estimated API costs for
+the same trailing two-hour window as their usage. Costs SHALL use recorded
+request costs across all models and existing coverage rules, never a quota-credit
+conversion. Unknown, free and incomplete costs SHALL remain distinct, with
+incomplete details in tooltips. Rankings, runway calculations and privacy rules
+SHALL remain unchanged.
+
+#### Scenario: Multiple models and partial coverage
+- **WHEN** a consumer has two priced requests costing $1 and $2 and one unpriced request within the attribution window
+- **THEN** its row displays $3.00 with incomplete coverage in the tooltip
+- **AND** request counts, tokens and dominant-model selection keep their existing semantics
+
+#### Scenario: Unknown versus free
+- **WHEN** one consumer has no known prices and another has explicitly free metered requests
+- **THEN** their rows display Unknown and $0.00 respectively
+
+#### Scenario: Responsive presentation
+- **WHEN** long consumer names, model names and cost totals are shown at desktop or narrow mobile widths
+- **THEN** cost remains readable without causing horizontal page overflow
+
+### Requirement: Concise dashboard account subtitles
+
+Dashboard account cards SHALL omit model-selection counts and All models labels
+from their subtitles. They SHALL retain known provider/plan identity and use the
+middle-dot separator between multiple fields, including optional account IDs.
+Shared card anatomy, privacy and account actions SHALL remain unchanged. Model
+selection controls elsewhere SHALL remain available.
+
+#### Scenario: Provider card subtitles
+- **WHEN** Codex Plus, paid OpenRouter and Claude Pro accounts are shown
+- **THEN** their subtitles read Plus, OpenRouter · Paid and Claude · Pro respectively, without selected-model counts
+
 ### Requirement: Account weekly trend planned line
 
 The account detail usage trend SHALL include an ideal weekly remaining line when weekly reset timing is available, so operators can compare actual weekly remaining credits against the linear schedule between weekly resets.
@@ -4269,3 +4303,31 @@ model-source models without assuming one global effort vocabulary.
   so the operator can save a valid initial configuration
 - **AND** the operator MUST still be able to replace that seed with arbitrary
   effort slugs before saving.
+
+### Requirement: Provider marks accompany account identities
+
+Dashboard account cards, lists and request-log account cells, and Accounts page lists and detail headings SHALL display a local text-free monochrome provider logo beside the account name. Marks SHALL use consistent sizing, remain visible in light/dark themes and not change privacy, accessible names, truncation or account actions. Unknown or unassigned providers SHALL NOT be mislabeled.
+
+#### Scenario: Mixed provider surfaces
+- **WHEN** Codex, Claude and OpenRouter accounts are displayed
+- **THEN** each name has its corresponding provider mark on all account identity surfaces
+- **AND** Codex accounts use the OpenAI mark, Claude accounts the Claude mark and OpenRouter accounts the OpenRouter mark
+- **AND** private text remains blurred without blurring the decorative mark
+
+#### Scenario: Log provenance determines the mark
+- **WHEN** an OpenRouter account serves a model made by another vendor
+- **THEN** the account cell shows the OpenRouter mark, not the model vendor's mark
+- **AND** generic OpenAI-compatible or unassigned rows do not claim a known provider
+
+### Requirement: Request log models use readable names
+
+Request-log model cells SHALL display catalog names when available and readable names for historical or uncatalogued model IDs. The exact technical model ID SHALL appear only in the native browser tooltip of the model label. Reasoning effort, service tier, operation labels, filtering and stored IDs SHALL remain unchanged.
+
+#### Scenario: Catalog name and exact ID
+- **WHEN** a request uses anthropic/claude-haiku-4-5-20251001 with high reasoning
+- **THEN** its visible model label is Claude Haiku 4.5 (high)
+- **AND** its native tooltip contains anthropic/claude-haiku-4-5-20251001
+
+#### Scenario: Catalog independent rendering
+- **WHEN** model catalog loading is incomplete or a historical model is absent
+- **THEN** request logs remain visible with readable labels and the exact technical IDs in tooltips

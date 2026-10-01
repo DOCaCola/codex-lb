@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import {
   AccountCardAction,
   AccountCardSurface,
@@ -28,7 +29,18 @@ import { claudeStatus } from "./display-values";
 export function ClaudeName({ account }: { account: ClaudeAccount }) {
   const blurred = usePrivacyStore((s) => s.blurred);
   return (
-    <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
+    <ProviderAccountName provider="claude">
+      <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
+    </ProviderAccountName>
+  );
+}
+
+export function ClaudePlan({ account }: { account: ClaudeAccount }) {
+  const { t } = useTranslation();
+  return (
+    <span title={account.state.subscription_error ? t("claude.subscription.retained") : undefined}>
+      {t(`claude.subscription.${account.planType}`)}
+    </span>
   );
 }
 
@@ -126,7 +138,7 @@ function Heading({ account }: { account: ClaudeAccount }) {
           <ClaudeName account={account} />
         </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          Claude |{" "}
+          Claude | <ClaudePlan account={account} /> |{" "}
           {account.state.all_models
             ? "All models"
             : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
@@ -168,14 +180,7 @@ export function ClaudeAccountCard({ account }: { account: ClaudeAccount }) {
     <AccountCardSurface
       data-testid="claude-account-card"
       title={<ClaudeName account={account} />}
-      subtitle={
-        <>
-          Claude |{" "}
-          {account.state.all_models
-            ? "All models"
-            : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
-        </>
-      }
+      subtitle={<>Claude · <ClaudePlan account={account} /></>}
       status={<StatusBadge status={normalizeStatus(claudeStatus(account))} />}
       actions={
         <AccountCardAction asChild>

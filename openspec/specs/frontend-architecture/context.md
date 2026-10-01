@@ -11,6 +11,65 @@ All card types receive the same flexible animation wrapper. At multi-column brea
 
 For example, a Codex alias with an email subtitle, a plain Codex identity and an OpenRouter balance card align at their body start and footer despite different content. Mobile Codex/Claude cards with two windows both keep two quota columns. Browser tests measure bounds and containment in light/dark themes at 1440, 768, 390 and 320 pixels.
 
+Dashboard card subtitles keep concise provider/plan identity: `Plus`,
+`OpenRouter · Paid`, and `Claude · Pro` when Claude subscription discovery
+provides a plan. Optional Codex account IDs also use `·`.
+Model counts and `All models` belong in account selection controls, not these
+overview cards. Account actions, privacy and the common card shell are unchanged.
+
+## Provider identity and readable request models
+
+Local text-free SVG marks live under `frontend/public/images/providers/` and
+identify the account provider rather than the model vendor. A shared 16-pixel
+decorative mark/name wrapper preserves existing privacy, truncation and actions;
+black marks invert in dark mode. An OpenRouter account serving GPT 6 Astra still
+shows the OpenRouter mark. Codex accounts use the OpenAI knot at the operator's
+request; application-level Codex branding is unchanged.
+
+Sources inspected 2026-10-01: the OpenAI knot from the inline SVG served by
+https://openai.com/ (including its JavaScript/cookie challenge page); the Claude
+sunburst from https://claude.com/; the OpenRouter glyph from
+https://openrouter.ai/brand/v2/openrouter-glyph-light.svg. Original glyph geometry
+is retained, wordmarks omitted and fills recolored black. The OpenRouter viewBox
+matches the trimmed glyph bounds used inline on its website. SVGs include no
+scripts, fonts or external resources; viewing the dashboard fetches only local
+assets. Marks identify providers, not endorsements.
+
+Request-log model cells use the existing cached catalog's names. Historical IDs
+not present in the catalog receive readable formatting without changing stored
+IDs, filters, detail or copy values. For example,
+`anthropic/claude-haiku-4-5-20251001` displays `Claude Haiku 4.5`, with the full ID
+in the native browser title. Catalog loading does not block request logs, and
+reasoning/service-tier suffixes and operation labels remain intact. Unknown
+account provenance receives no speculative provider logo.
+
+Browser regressions verify local asset safety, light/dark contrast, account
+cards/lists/logs/details and document containment at 320, 390 and 1440 pixels.
+No backend contract, configuration, migration or routing changes are required.
+
+## Weekly pace consumer costs
+
+The weekly runway's top consumers use a trailing two-hour attribution window,
+independent of the overview timeframe selector. Their estimated API costs use
+that exact request-log filter and sum recorded costs across every model, not a
+conversion of weekly quota credits. Shared request-level coverage rules exclude
+non-billable local refusals and token-count operations; attribution excludes
+warmup probes, deleted rows and requests outside the window.
+
+For example, two priced requests costing $1 and $2 plus an unpriced metered
+request display `$3.00`, with partial coverage explained in the tooltip. No
+known prices display `Unknown`; explicitly free metered requests display `$0.00`.
+The inline amounts deliberately omit coverage counts and lower-bound symbols.
+
+The existing grouped attribution query carries typed coverage alongside usage;
+there is no per-consumer fetch and consumer ranking remains unchanged. Candidate
+deduplication keeps the per-key total instead of summing it twice when a key
+ranks by both requests and tokens. The model label shares the consumer-name
+cell, and container queries wrap metrics in narrow cards, including desktop
+side columns. Browser regressions cover 320, 390 and 1440-pixel viewports.
+Backend and frontend must be updated together for the required coverage field;
+there is no database migration or new pricing setting.
+
 ## Progressive disclosure (nav + settings)
 
 ### Purpose

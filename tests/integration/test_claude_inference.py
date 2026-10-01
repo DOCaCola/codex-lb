@@ -737,6 +737,8 @@ async def test_native_count_tokens_forwards_json_and_headers_without_generation_
     assert response.headers["request-id"] == "native-count"
     assert captured[0][1]["json"]["system"] == "Count these original instructions"
     assert "x-stainless-timeout" not in captured[0][1]["headers"]
+    logs = (await async_client.get("/api/request-logs")).json()["requests"]
+    assert next(row for row in logs if row["model"] == MODEL)["planType"] == "unknown"
 
 
 async def test_native_wire_identity_and_features_survive_route(async_client, pool, monkeypatch):
@@ -1098,6 +1100,10 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
     from app.db.session import SessionLocal
     from app.modules.claude import transport
     from app.modules.claude.schemas import AccountState
+    from tests.integration.test_claude_request_plans import set_plan
+
+    await set_plan([pool[0]], "pro")
+    await set_plan([pool[1]], "max_20x")
 
     send_with_headers = transport._open_source_stream
 
@@ -1202,6 +1208,12 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
     assert len(closed) == 2
+
+    logs = (await async_client.get("/api/request-logs")).json()["requests"]
+    plans = dict(zip(pool, ("pro", "max_20x"), strict=True))
+    claude_logs = [row for row in logs if row["model"] == MODEL]
+    assert claude_logs
+    assert all(row["planType"] == plans[row["modelSourceId"]] for row in claude_logs)
 
     async with SessionLocal() as session:
         row = await session.get(ClaudeAccount, captured[-1][0])

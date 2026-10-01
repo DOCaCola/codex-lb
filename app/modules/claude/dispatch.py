@@ -23,8 +23,9 @@ from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.resources import ResourceScope, resolve_origins, resource_ids
 from app.modules.claude.routing import select_account
-from app.modules.claude.schemas import CLAUDE_BASE_URL
+from app.modules.claude.schemas import CLAUDE_BASE_URL, AccountState, ClaudePlanType
 from app.modules.claude.session import NativeSessionBinding, NativeSessionOwnership
+from app.modules.claude.subscription import subscription_plan
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 
@@ -42,6 +43,7 @@ class PreparedClaudeRequest:
     logical_body: dict[str, JsonValue] = field(repr=False)
     conversation_id: str
     credential_generation: int
+    plan_type: ClaudePlanType
     native_binding: NativeSessionBinding | None
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
     require_complete_history: bool = False
@@ -234,6 +236,7 @@ class ClaudeDispatchPreparer:
             logical_body=deepcopy(logical),
             conversation_id=conversation_id,
             credential_generation=snapshot.generation,
+            plan_type=subscription_plan(AccountState.model_validate_json(account.state_json).subscription),
             reasoning_effort=reasoning_effort,
             native_binding=NativeSessionBinding(
                 client_scope=api_key.id if api_key else "anonymous",

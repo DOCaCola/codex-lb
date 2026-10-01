@@ -154,10 +154,12 @@ async def test_dashboard_overview_combines_data(async_client, db_setup):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/api/dashboard/overview", "/api/dashboard/projections"])
 async def test_dashboard_overview_carries_weekly_runway_fields_and_attribution(
     async_client,
     db_setup,
     monkeypatch: pytest.MonkeyPatch,
+    endpoint,
 ):
     fixed_now = datetime(2026, 8, 17, 12, 0, 0)
     monkeypatch.setattr("app.modules.dashboard.service.utcnow", lambda: fixed_now)
@@ -196,11 +198,12 @@ async def test_dashboard_overview_carries_weekly_runway_fields_and_attribution(
                 output_tokens=25,
                 reasoning_tokens=10,
                 cached_input_tokens=20,
+                cost_usd=0.125,
             )
         )
         await session.commit()
 
-    response = await async_client.get("/api/dashboard/overview")
+    response = await async_client.get(endpoint)
 
     assert response.status_code == 200
     pace = response.json()["weeklyCreditPace"]
@@ -224,6 +227,13 @@ async def test_dashboard_overview_carries_weekly_runway_fields_and_attribution(
             "billableTokens": 125,
             "cachedTokens": 20,
             "dominantModel": "gpt-5.1",
+            "costCoverage": {
+                "knownCostUsd": 0.125,
+                "pricedRequests": 1,
+                "unpricedRequests": 0,
+                "unmeteredRequests": 0,
+                "coverageUnknown": False,
+            },
         }
     ]
     assert pace["scheduledUsedPercent"] == pytest.approx(97.619, abs=0.01)

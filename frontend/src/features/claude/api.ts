@@ -6,6 +6,7 @@ export const SelectionSchema = z.object({
 });
 export type ClaudeSelection = z.infer<typeof SelectionSchema>;
 export const ClaudeAccountSchema = z.object({
+  planType: z.enum(["free", "pro", "max", "max_5x", "max_20x", "team", "enterprise", "unknown"]),
   routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
   maxConcurrency: z.number().int().positive().nullable(),
   id: z.string(),
@@ -14,6 +15,14 @@ export const ClaudeAccountSchema = z.object({
   credentialStatus: z.string(),
   expiresAt: z.string(),
   state: z.object({
+    subscription: z.object({
+      subscription_type: z.string().nullable(),
+      rate_limit_tier: z.string().nullable(),
+      source: z.enum(["credential_file", "bootstrap"]),
+      observed_at: z.string(),
+    }).nullable(),
+    subscription_updated_at: z.string().nullable(),
+    subscription_error: z.string().nullable(),
     all_models: z.boolean(),
     reasoning_restrictions: z.record(z.string(), z.array(z.string()).min(1)),
     selections: z.array(SelectionSchema),

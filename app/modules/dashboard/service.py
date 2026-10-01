@@ -290,6 +290,7 @@ async def _attach_top_api_keys(
             billable_tokens=row.billable_tokens,
             cached_tokens=row.cached_tokens,
             dominant_model=row.dominant_model,
+            cost_coverage=cost_coverage_response(row.cost_coverage),
         )
         for row in rows
     ]

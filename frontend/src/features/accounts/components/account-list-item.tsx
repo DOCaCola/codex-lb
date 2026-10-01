@@ -1,4 +1,5 @@
 import { ShieldCheck } from "lucide-react";
+import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import { MiniQuotaRow } from "./quota-display";
 import { RoutingPolicyBadge } from "./routing-policy";
 import { useTranslation } from "react-i18next";
@@ -105,11 +106,13 @@ export function AccountListItem({
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
+            <ProviderAccountName provider="codex">
             {titleIsEmail && blurred ? (
               <span className="privacy-blur">{title}</span>
             ) : (
               title
             )}
+            </ProviderAccountName>
           </p>
           <p className="truncate text-xs text-muted-foreground" title={showAccountId ? t("accounts.detail.accountIdTitle", { accountId: account.accountId }) : undefined}>
             {emailSubtitle ? <><span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span> | {slotSubtitle}{idSuffix}</> : <>{slotSubtitle}{idSuffix}</>}

@@ -33,11 +33,13 @@ def test_retry_after(value, seconds):
 
 
 def test_cadence_and_force_never_override_cooldown_or_lease():
-    state = AccountState(usage_updated_at=NOW, catalog_updated_at=NOW)
+    state = AccountState(usage_updated_at=NOW, catalog_updated_at=NOW, subscription_updated_at=NOW)
     assert not refresh_due(state, "usage", NOW + timedelta(seconds=179), force=False)
     assert refresh_due(state, "usage", NOW + timedelta(seconds=180), force=False)
     assert not refresh_due(state, "catalog", NOW + timedelta(hours=5), force=False)
     assert refresh_due(state, "catalog", NOW + timedelta(hours=6), force=False)
+    assert not refresh_due(state, "subscription", NOW + timedelta(hours=5), force=False)
+    assert refresh_due(state, "subscription", NOW + timedelta(hours=6), force=False)
     assert refresh_due(state, "usage", NOW, force=True)
     for refresh in [
         MetadataRefreshState(retry_at=NOW + timedelta(seconds=90)),
@@ -54,6 +56,7 @@ def test_cadence_and_force_never_override_cooldown_or_lease():
         ("usage", "/api/oauth/usage"),
         ("catalog", "/v1/models"),
         ("profile", "/api/oauth/profile"),
+        ("bootstrap", "/api/claude_cli/bootstrap"),
     ],
 )
 async def test_metadata_http_error_preserves_status_deadline_not_body(monkeypatch, endpoint, path):

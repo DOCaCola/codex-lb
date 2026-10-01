@@ -46,6 +46,9 @@ import {
   type RequestLogColumnWidths,
 } from "@/features/dashboard/request-log-columns";
 import type { AccountSummary, RequestLog } from "@/features/dashboard/schemas";
+import type { ModelItem } from "@/features/api-keys/schemas";
+import { ProviderAccountName, type AccountProvider } from "@/components/brand/provider-account-name";
+import { modelDisplayName } from "@/utils/model-display";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
@@ -90,6 +93,10 @@ const PLAN_CLASS_MAP: Record<string, string> = {
   team: "bg-sky-500/15 text-sky-700 border-sky-500/20 hover:bg-sky-500/20 dark:text-sky-300",
   pro: "bg-violet-500/15 text-violet-700 border-violet-500/20 hover:bg-violet-500/20 dark:text-violet-300",
 };
+PLAN_CLASS_MAP.max = PLAN_CLASS_MAP.pro;
+PLAN_CLASS_MAP.max_5x = PLAN_CLASS_MAP.pro;
+PLAN_CLASS_MAP.max_20x = PLAN_CLASS_MAP.pro;
+PLAN_CLASS_MAP.enterprise = PLAN_CLASS_MAP.team;
 
 const REQUEST_KIND_LABELS: Record<string, string> = {
   normal: "Normal",
@@ -104,6 +111,7 @@ const REQUEST_KIND_LABELS: Record<string, string> = {
 export type RecentRequestsTableProps = {
   requests: RequestLog[];
   accounts: AccountSummary[];
+  models?: readonly Pick<ModelItem, "id" | "name">[];
   total: number;
   limit: number;
   offset: number;
@@ -290,6 +298,7 @@ function formatCompactElapsed(ms: number | null | undefined): string | null {
 }
 
 export function RecentRequestsTable({
+  models = [],
   requests,
   accounts,
   total,
@@ -305,6 +314,13 @@ export function RecentRequestsTable({
   onConversationClick,
 }: RecentRequestsTableProps) {
   const { t } = useTranslation();
+  const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.name])), [models]);
+  const requestPlanLabel = (request: RequestLog | null, missing: string): string => {
+    if (!request?.planType) return missing;
+    const plan = request.planType.trim().toLowerCase();
+    if (!plan) return missing;
+    return request.modelSourceKind === "claude" ? t(`claude.subscription.${plan}`) : formatSlug(plan);
+  };
   const [selectedRequest, setSelectedRequest] = useState<RequestLog | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const blurred = usePrivacyStore((s) => s.blurred);
@@ -360,6 +376,12 @@ export function RecentRequestsTable({
   const privateAccountLabel = (request: RequestLog) => request.modelSourceId
     ? !!request.modelSourceName
     : !!(request.accountId && emailLabelIds.has(request.accountId));
+  const requestAccountProvider = (request: RequestLog): AccountProvider | null => {
+    if (request.modelSourceKind === "openrouter" || request.modelSourceKind === "claude")
+      return request.modelSourceKind;
+    if (!request.modelSourceKind && !request.modelSourceId && request.accountId) return "codex";
+    return null;
+  };
 
   if (requests.length === 0) {
     const emptyFromExistingLogs = filtersApplied || total > 0;
@@ -415,7 +437,7 @@ export function RecentRequestsTable({
               const showRequestedTier =
                 !!request.requestedServiceTier && request.requestedServiceTier !== visibleServiceTier;
               const planType = request.planType?.trim().toLowerCase() || null;
-              const planLabel = planType ? formatSlug(planType) : "--";
+              const planLabel = requestPlanLabel(request, "--");
               const upstreamTransport = request.upstreamTransport;
               const generationSpeed = formatGenerationSpeed(request);
 
@@ -428,11 +450,13 @@ export function RecentRequestsTable({
                     </div>
                   </TableCell> : null}
                   {isColumnVisible("account") ? <TableCell className="truncate align-top text-sm">
+                    <ProviderAccountName provider={requestAccountProvider(request)}>
                     {isEmailLabel && blurred ? (
                       <span className="privacy-blur">{accountLabel}</span>
                     ) : (
                       accountLabel
                     )}
+                    </ProviderAccountName>
                   </TableCell> : null}
                   {isColumnVisible("plan") ? <TableCell className="align-top">
                     {planType ? (
@@ -451,8 +475,8 @@ export function RecentRequestsTable({
                   </TableCell> : null}
                   {isColumnVisible("model") ? <TableCell className="truncate align-top">
                     <div className="leading-tight">
-                      <span className="font-mono text-xs">
-                        {formatModelLabel(request.model, request.reasoningEffort, visibleServiceTier)}
+                      <span className="text-xs" title={request.model || undefined}>
+                        {formatModelLabel(modelDisplayName(request.model, modelNames.get(request.model)), request.reasoningEffort, visibleServiceTier)}
                       </span>
                       <div className="mt-1 truncate text-xs text-muted-foreground" title={requestTypeLabel(request, t)}>
                         {requestTypeLabel(request, t)}
@@ -604,7 +628,7 @@ export function RecentRequestsTable({
                 <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, selectedRequest.actualServiceTier ?? selectedRequest.serviceTier) : "—"} mono />
                 <RequestDetailField label={t("dashboard.requestDetails.requestKind")} value={selectedRequest ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ?? selectedRequest.requestKind) : "—"} />
                 <RequestDetailField label={t("dashboard.requestDetails.operation")} value={selectedRequest ? requestOperationLabel(selectedRequest, t) : "—"} />
-                <RequestDetailField label={t("dashboard.requests.columns.plan")} value={selectedRequest?.planType ? formatSlug(selectedRequest.planType) : "—"} />
+                <RequestDetailField label={t("dashboard.requests.columns.plan")} value={requestPlanLabel(selectedRequest, "—")} />
                 <RequestDetailField label={t("dashboard.requestDetails.elapsed")} value={formatElapsed(selectedRequest?.latencyMs ?? null)} />
                 <RequestDetailField label="TTFT" value={formatElapsed(selectedRequest?.latencyFirstTokenMs ?? null)} />
                 {selectedRequest?.modelSourceKind === "claude" ? (

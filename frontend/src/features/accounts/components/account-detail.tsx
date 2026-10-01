@@ -7,6 +7,7 @@ import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountActions } from "@/features/accounts/components/account-actions";
 import { CodexModelControls } from "./codex-model-controls";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
+import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
@@ -237,8 +238,10 @@ function AccountNameField({
       disabled={busy || readOnly}
       onSave={(value) => onSetAlias(accountId, value)}
     >
-      {labelIsEmail ? <span className={cn(blurred && "privacy-blur")}>{localLabel}</span> : localLabel}
-      {idSuffix}
+      <ProviderAccountName provider="codex">
+        {labelIsEmail ? <span className={cn(blurred && "privacy-blur")}>{localLabel}</span> : localLabel}
+        {idSuffix}
+      </ProviderAccountName>
     </AccountNameEditor>
   );
 }

@@ -18,6 +18,17 @@ vi.mock("@/features/accounts/components/provider-account-trends", () => ({
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 
 describe("Unified provider accounts", () => {
+  it.each([false, true])("omits model-selection details from dashboard subtitles (all models: %s)", (allModels) => {
+    const account = createOpenRouterAccount();
+    account.state.all_models = allModels;
+    account.state.selections = ["model-a", "model-b"].map((model) => ({
+      model, contextWindow: 256000, maxOutputTokens: null, displayName: null,
+    }));
+    render(<MemoryRouter><OpenRouterAccountCard account={account} /></MemoryRouter>);
+    expect(screen.getByTestId("openrouter-account-card")).toHaveTextContent("OpenRouter · Paid");
+    expect(screen.queryByText(/models selected|All models/)).not.toBeInTheDocument();
+  });
+
   it.each([
     [true, "Free"],
     [false, "Paid"],

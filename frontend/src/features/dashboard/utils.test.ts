@@ -766,6 +766,7 @@ describe("buildDashboardView", () => {
           billableTokens: 9_800_000,
           cachedTokens: 4_000_000,
           dominantModel: "gpt-5.2-codex",
+          costCoverage: { knownCostUsd: 12.5, pricedRequests: 12_400, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
       addProAccounts: 2,

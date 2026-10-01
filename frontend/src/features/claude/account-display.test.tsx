@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
@@ -21,6 +21,7 @@ import { ModelSelection } from "./model-selection";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 
 const account: ClaudeAccount = {
+  planType: "pro",
   maxConcurrency: null,
   routingPolicy: "normal",
   id: "claude-test",
@@ -29,6 +30,9 @@ const account: ClaudeAccount = {
   credentialStatus: "ready",
   expiresAt: "2026-09-25T20:00:00Z",
   state: {
+    subscription: null,
+    subscription_updated_at: null,
+    subscription_error: null,
     all_models: false,
     reasoning_restrictions: {},
     selections: [],
@@ -64,6 +68,58 @@ afterEach(() => {
   useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
 });
 describe("Claude shared account surfaces", () => {
+  it.each([
+    ["free", "Free"], ["pro", "Pro"], ["max", "Max"],
+    ["max_5x", "Max 5×"], ["max_20x", "Max 20×"],
+    ["team", "Team"], ["enterprise", "Enterprise"], ["unknown", "Unknown plan"],
+  ] as const)("shows %s in cards, account lists and dashboard plan cells", (planType, label) => {
+    const selected = { ...account, planType };
+    const view = render(<MemoryRouter><ClaudeAccountCard account={selected} /></MemoryRouter>);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+    view.rerender(<ClaudeListItem account={selected} selected onSelect={vi.fn()} />);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+    view.rerender(<MemoryRouter><DashboardList accounts={[]} claudeAccounts={[selected]} /></MemoryRouter>);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+  });
+
+  it("searches Claude accounts by the displayed subscription label", async () => {
+    render(<AccountList accounts={[]} claudeAccounts={[
+      { ...account, planType: "max_20x" },
+      { ...account, id: "other", name: "Other Claude", planType: "pro" },
+    ]} selectedAccountId={account.id} onSelect={vi.fn()} onOpenImport={vi.fn()} onOpenOauth={vi.fn()} />);
+    await userEvent.type(screen.getByPlaceholderText("Search accounts..."), "Max 20×");
+    expect(screen.getByText(account.name)).toBeVisible();
+    expect(screen.queryByText("Other Claude")).not.toBeInTheDocument();
+  });
+
+  it("sorts dashboard Claude rows by detected plan instead of provider name", () => {
+    render(<MemoryRouter><DashboardList accounts={[]} claudeAccounts={[
+      { ...account, id: "aaa", name: "A account", planType: "pro" },
+      { ...account, id: "zzz", name: "Z account", planType: "free" },
+    ]} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: /^Plan/ }));
+    let rows = screen.getAllByTestId("account-list-row");
+    expect(within(rows[0]).getByText("Free")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^Plan/ }));
+    rows = screen.getAllByTestId("account-list-row");
+    expect(within(rows[0]).getByText("Pro")).toBeVisible();
+  });
+
+  it("shows retained plan diagnostics in account details without offering a plan editor", () => {
+    const failed = { ...account, planType: "max_5x" as const,
+      state: { ...account.state, subscription_error: "Claude /api/claude_cli/bootstrap returned HTTP 429" },
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ClaudeAccountControls account={failed} readOnly onCreated={vi.fn()}>{({ detail }) => detail}</ClaudeAccountControls>
+    </QueryClientProvider>);
+    expect(screen.getByText("Max 5×")).toHaveAttribute("title", "Last known subscription; metadata refresh failed");
+    expect(screen.getByText("Max 5×").parentElement).toHaveTextContent("Claude | Max 5×");
+    expect(screen.queryByText(/Claude OAuth/)).not.toBeInTheDocument();
+    expect(screen.getByText(failed.state.subscription_error)).toHaveAttribute("role", "alert");
+    expect(screen.queryByRole("combobox", { name: /subscription|plan/i })).not.toBeInTheDocument();
+  });
+
   it("uses two card quota columns without changing the list and detail layout", () => {
     const view = render(<ClaudeQuota account={account} variant="card" />);
     expect(view.container.firstElementChild).toHaveClass("grid-cols-2");
@@ -76,7 +132,7 @@ describe("Claude shared account surfaces", () => {
     expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
   });
 
-  it("shows All models on both the card and account list", () => {
+  it("keeps model selection details out of dashboard card subtitles", () => {
     const automatic = {
       ...account,
       state: { ...account.state, all_models: true },
@@ -86,7 +142,8 @@ describe("Claude shared account surfaces", () => {
         <ClaudeAccountCard account={automatic} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/Claude.*All models/)).toBeVisible();
+    expect(screen.getByTestId("claude-account-card")).toHaveTextContent("Claude · Pro");
+    expect(screen.queryByText(/All models/)).not.toBeInTheDocument();
     view.rerender(
       <MemoryRouter>
         <ClaudeListItem account={automatic} selected onSelect={vi.fn()} />

@@ -123,7 +123,7 @@ export function AccountList({
             (statusFilter === "all" ||
               claudeStatus(account) === statusFilter) &&
             (!needle ||
-              `${account.name} ${account.id} claude anthropic`
+              `${account.name} ${account.id} claude anthropic ${account.planType.replaceAll("_", " ")} ${t(`claude.subscription.${account.planType}`)}`
                 .toLowerCase()
                 .includes(needle)),
         )
@@ -161,6 +161,7 @@ export function AccountList({
     search,
     statusFilter,
     activeSortMode,
+    t,
   ]);
   const totalCount =
     accounts.length + openRouterAccounts.length + claudeAccounts.length;

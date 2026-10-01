@@ -171,7 +171,7 @@ describe("AccountsPage", () => {
     render(<MemoryRouter><AccountsPage /></MemoryRouter>);
     for (const name of ["API keys", "Rename account", "Delete", "Refresh", "Models (0)"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: /All models/ })).toBeDisabled();
+    expect(screen.queryByRole("switch", { name: /All models/ })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeDisabled();
   });
 

@@ -16,6 +16,14 @@ Operational details: [implementation context](../openspec/specs/claude-accounts/
    be enabled until discovery or maintained metadata supplies both limits.
 5. Grant source-restricted client API keys access to the Claude account source.
 
+Subscription labels are detected automatically from imported metadata and
+authenticated bootstrap, then refreshed every six hours or with **Refresh**.
+Accounts show Free, Pro, Max (including 5×/20×), Team, Enterprise or Unknown plan.
+A failed lookup retains the last known label and shows a diagnostic; it does not
+pause inference. Labels are not quota capacities or billing guarantees. New
+request logs record the plan at dispatch, including errors and WebSockets; old
+rows without a recorded plan remain blank.
+
 Codex clients use `anthropic/<model-id>` over Responses HTTP or WebSocket. Native
 Messages clients can use the upstream model ID or its `anthropic/` prefix on
 `/v1/messages`; token counting is at `/v1/messages/count_tokens`. No LiteLLM hop

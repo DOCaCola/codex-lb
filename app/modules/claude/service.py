@@ -17,12 +17,13 @@ from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
-from app.modules.claude.identity import authenticated_identity
+from app.modules.claude.identity import authenticated_identity, profile_identity
 from app.modules.claude.metadata import (
     CLAIM_LEASE,
     FETCH_TIMEOUT_SECONDS,
     USAGE_INTERVAL,
     MetadataHTTPError,
+    metadata_updated_at,
     refresh_due,
 )
 from app.modules.claude.model_selection import effective_selections
@@ -32,6 +33,8 @@ from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
     CLAUDE_KIND,
     AccountState,
+    AuthenticatedProfile,
+    BootstrapResponse,
     CatalogModel,
     ClaudeAccountResponse,
     ClaudeImport,
@@ -43,8 +46,12 @@ from app.modules.claude.schemas import (
     OAuthComplete,
     OAuthStart,
     OAuthStarted,
+    ProfileAccount,
+    ProfileOrganization,
+    SubscriptionMetadata,
     UsageSnapshot,
 )
+from app.modules.claude.subscription import subscription_plan
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.service import ModelSourceNotFoundError
 
@@ -66,7 +73,8 @@ class ClaudeService:
         return [self._response(row) for row in await self.repository.list_accounts()]
 
     async def import_account(self, payload: ClaudeImport) -> ClaudeAccountResponse:
-        return await self._create(payload.name, payload.credentials.claudeAiOauth.credentials())
+        imported = payload.credentials.claudeAiOauth
+        return await self._create(payload.name, imported.credentials(), imported.subscription_metadata())
 
     async def start_oauth(self, payload: OAuthStart) -> OAuthStarted:
         target = await self._get(payload.source_id) if payload.source_id is not None else None
@@ -104,7 +112,9 @@ class ClaudeService:
             return await self._replace(flow.source_id, flow.generation, credentials)
         return await self._create(flow.name, credentials)
 
-    async def _create(self, name: str, credentials: Credentials) -> ClaudeAccountResponse:
+    async def _create(
+        self, name: str, credentials: Credentials, subscription: SubscriptionMetadata | None = None
+    ) -> ClaudeAccountResponse:
         if not name.strip():
             raise ClaudeError("Account name is required")
         identity = (
@@ -134,7 +144,7 @@ class ClaudeService:
             identity_fingerprint=identity,
             expires_at=credentials.expires_at.replace(tzinfo=None),
             credential_status="ready",
-            state_json=AccountState().model_dump_json(),
+            state_json=AccountState(subscription=subscription).model_dump_json(),
         )
         self.repository.session.add(row)
         try:
@@ -146,9 +156,16 @@ class ClaudeService:
 
     async def reconnect(self, source_id: str, payload: ClaudeReconnect) -> ClaudeAccountResponse:
         row = await self._get(source_id)
-        return await self._replace(source_id, row.generation, payload.credentials.claudeAiOauth.credentials())
+        imported = payload.credentials.claudeAiOauth
+        return await self._replace(source_id, row.generation, imported.credentials(), imported.subscription_metadata())
 
-    async def _replace(self, source_id: str, generation: int, credentials: Credentials) -> ClaudeAccountResponse:
+    async def _replace(
+        self,
+        source_id: str,
+        generation: int,
+        credentials: Credentials,
+        subscription: SubscriptionMetadata | None = None,
+    ) -> ClaudeAccountResponse:
         row = await self._get(source_id)
         if row.identity_fingerprint is None:
             raise ClaudeError(
@@ -181,6 +198,17 @@ class ClaudeService:
                 .returning(ClaudeAccount.source_id)
                 .execution_options(synchronize_session=False)
             )
+            if changed is not None:
+
+                def replace_subscription(state: AccountState) -> AccountState:
+                    if subscription is not None:
+                        state.subscription = subscription
+                    state.subscription_updated_at = None
+                    state.subscription_error = None
+                    state.metadata_refresh.pop("subscription", None)
+                    return state
+
+                await self.repository.mutate_state(source_id, generation + 1, replace_subscription)
             await self.repository.session.commit()
         except IntegrityError as exc:
             await self.repository.session.rollback()
@@ -232,6 +260,7 @@ class ClaudeService:
         row = await self._get(source_id)
         state = AccountState.model_validate_json(row.state_json)
         endpoints: list[MetadataEndpoint] = ["catalog", "usage"] if catalog else ["usage"]
+        endpoints.append("subscription")
         refresh_started_at = datetime.now(UTC)
         if not any(refresh_due(state, endpoint, refresh_started_at, force=force) for endpoint in endpoints):
             return self._response(row)
@@ -264,7 +293,7 @@ class ClaudeService:
         requested_at = datetime.now(UTC)
 
         def claim(state: AccountState) -> AccountState | None:
-            updated = state.catalog_updated_at if endpoint == "catalog" else state.usage_updated_at
+            updated = metadata_updated_at(state, endpoint)
             if updated is not None and updated >= refresh_started_at:
                 return None
             if not refresh_due(state, endpoint, requested_at, force=force):
@@ -280,16 +309,32 @@ class ClaudeService:
         await self.repository.session.commit()
         if claimed is None:
             return
-        result: list[CatalogModel] | UsageSnapshot | None = None
+        result: list[CatalogModel] | UsageSnapshot | SubscriptionMetadata | None = None
         error: str | None = None
         retry_at: datetime | None = None
         try:
             async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
-                result = (
-                    await self.client.catalog(token, version)
-                    if endpoint == "catalog"
-                    else await self.client.usage(token, version)
-                )
+                match endpoint:
+                    case "catalog":
+                        result = await self.client.catalog(token, version)
+                    case "usage":
+                        result = await self.client.usage(token, version)
+                    case "subscription":
+                        bootstrap: BootstrapResponse = await self.client.bootstrap(token, version)
+                        account = bootstrap.oauth_account
+                        profile = AuthenticatedProfile(
+                            account=ProfileAccount(uuid=account.account_uuid),
+                            organization=ProfileOrganization(uuid=account.organization_uuid),
+                        )
+                        row = await self._get(source_id)
+                        if row.identity_fingerprint != profile_identity(profile):
+                            raise ClaudeError("Claude bootstrap identity does not match the enrolled account")
+                        result = SubscriptionMetadata(
+                            subscription_type=account.organization_type,
+                            rate_limit_tier=account.organization_rate_limit_tier,
+                            source="bootstrap",
+                            observed_at=datetime.now(UTC),
+                        )
         except (ClaudeError, TimeoutError) as exc:
             error = str(exc) if isinstance(exc, ClaudeError) else f"Claude {endpoint} metadata timed out"
             retry_at = exc.retry_at if isinstance(exc, MetadataHTTPError) else datetime.now(UTC) + USAGE_INTERVAL
@@ -312,7 +357,7 @@ class ClaudeService:
                     assert isinstance(result, list)
                     state.catalog = result
                     state.catalog_updated_at = completed_at
-            else:
+            elif endpoint == "usage":
                 state.usage_check_started_at = requested_at
                 state.usage_error = error
                 if error is None:
@@ -320,6 +365,12 @@ class ClaudeService:
                     state.usage = result
                     state.usage_requested_at = requested_at
                     state.usage_updated_at = completed_at
+            else:
+                state.subscription_error = error
+                if error is None:
+                    assert isinstance(result, SubscriptionMetadata)
+                    state.subscription = result
+                    state.subscription_updated_at = completed_at
             return state
 
         merged = await self.repository.mutate_state(source_id, generation, finish)
@@ -327,7 +378,7 @@ class ClaudeService:
             if endpoint == "catalog":
                 row = await self._get(source_id)
                 await self.repository.sources.replace_models(row.source, project_models(merged), commit=False)
-            else:
+            elif endpoint == "usage":
                 effective = quota_status(merged, now=completed_at)
                 sample = UsageSnapshot.model_validate(
                     {
@@ -374,6 +425,7 @@ class ClaudeService:
         if row.refresh_intent and row.refresh_started_at and row.refresh_started_at < utcnow() - timedelta(minutes=1):
             status = "uncertain"
         return ClaudeAccountResponse(
+            plan_type=subscription_plan(state.subscription),
             routing_policy=AccountRoutingPolicy(row.routing_policy),
             max_concurrency=row.source.max_concurrency,
             id=row.source_id,

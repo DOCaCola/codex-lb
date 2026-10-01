@@ -30,7 +30,8 @@ import { cn } from "@/lib/utils";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
 import type { ClaudeAccount } from "@/features/claude/api";
-import { ClaudeName } from "@/features/claude/account-display";
+import { ClaudeName, ClaudePlan } from "@/features/claude/account-display";
+import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import { claudeStatus } from "@/features/claude/display-values";
 import { OpenRouterName, OpenRouterTier } from "@/features/openrouter/account-display";
 import {
@@ -500,7 +501,7 @@ export function AccountList({
           return entry.kind === "codex"
             ? formatSlug(entry.account.planType)
             : entry.kind === "claude"
-              ? "Claude"
+              ? t(`claude.subscription.${entry.account.planType}`)
               : "OpenRouter";
         return name(entry);
       };
@@ -509,7 +510,7 @@ export function AccountList({
         (sort.direction === "asc" ? 1 : -1)
       );
     });
-  }, [accounts, openRouterAccounts, claudeAccounts, sort]);
+  }, [accounts, openRouterAccounts, claudeAccounts, sort, t]);
 
   const handleSort = (key: AccountListSortKey) => {
     const nextSort: AccountListSort =
@@ -633,9 +634,11 @@ export function AccountList({
             >
               <div className="min-w-0">
                 <p className="truncate font-medium leading-tight">
+                  <ProviderAccountName provider="codex">
                   <span className={blurred ? "privacy-blur" : undefined}>
                     {title}
                   </span>
+                  </ProviderAccountName>
                 </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
                   {emailSubtitle ? (
@@ -792,11 +795,11 @@ function ClaudeRow({ account }: { account: ClaudeAccount }) {
           <ClaudeName account={account} />
         </p>
         <p className="text-xs text-muted-foreground">
-          {account.state.selections.length} models selected
+          {account.state.selections.length} {account.state.selections.length === 1 ? "model" : "models"} selected
         </p>
       </div>
       <StatusBadge status={normalizeStatus(claudeStatus(account))} />
-      <span className="text-xs text-muted-foreground">Claude</span>
+      <span className="text-xs text-muted-foreground"><ClaudePlan account={account} /></span>
       <QuotaCells quotas={account.quota.windows
         .filter((window) => window.name === "five_hour" || window.name === "seven_day")
         .map((window) => ({

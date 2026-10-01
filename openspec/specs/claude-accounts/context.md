@@ -678,3 +678,42 @@ not independent native OAuth qualification. Unlike blanket foreign-reasoning
 deletion in reference adapters, this policy preserves readable context.
 Endpoint mocks verify the transformation and refusal contracts, not live OAuth
 eligibility or full encrypted-state portability.
+
+## Automatic subscription labels (2026-10-01)
+
+Claude plan metadata is separate from encrypted rotating credentials and quota
+evidence. Credential imports preserve subscriptionType/rateLimitTier; authenticated
+bootstrap supplies organization_type/organization_rate_limit_tier. Known exact
+identifiers resolve to Free, Pro, Max, Max 5×, Max 20×, Team or Enterprise. A generic
+Max stays generic; absent or unfamiliar metadata is Unknown. Plan labels do not
+set capacities, model eligibility, pricing or included-usage guarantees.
+
+For example, an imported Pro account can become Max 20× when bootstrap reports
+default_claude_max_20x. The ordinary scheduler discovers existing accounts without
+reimport, checking successful subscription observations every six hours. Manual
+refresh can bypass that cadence, not failed-attempt cooldowns or active claims.
+The independent endpoint uses the existing 60-second timeout, 90-second lease,
+Retry-After handling and credential-generation fencing. Its account/organization
+fingerprint must match enrollment. Failures preserve the observation and show a
+safe diagnostic, without changing inference health or blocking the other metadata
+endpoints. Reconnect preserves last-known data unless an explicit import supplies
+new metadata, then schedules rediscovery. Token rotation does not discard it.
+
+Cards, lists and details reuse existing provider/account styling with localized
+plan labels. Prepared attempts snapshot the normalized plan after final account
+validation, before dispatch; SourceDispatch retains it for completion, errors,
+native token counting and downstream WebSockets. Retries snapshot their own
+selected accounts. A request prepared on Pro stays Pro even if metadata changes
+during inference. Historical rows without a snapshot are not relabeled from the
+current account. No migration, manual plan editor or inference-time bootstrap is
+needed.
+
+Reference source inspected 2026-10-01: OmniRoute
+`dbe703a0000b303cd7b1cf5879cb8740e5bfce71`, live bootstrap in
+open-sse/executors/claudeIdentity.ts, credential import and ProviderLimits/utils.tsx.
+Its live bootstrap reads oauth_account; a separate enrollment parser has a
+different shape, so alternate payload guesses are not adopted. Our implementation
+adds account/organization validation and durable polling using existing gateway
+machinery; no third-party source was copied. Mock protocol, race, persistence,
+request-log and browser tests verify local behavior, not live acceptance or Free
+account OAuth eligibility.

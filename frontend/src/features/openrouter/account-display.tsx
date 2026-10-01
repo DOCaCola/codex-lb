@@ -1,5 +1,6 @@
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
+import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import {
   AccountCardAction,
   AccountCardNotice,
@@ -25,7 +26,9 @@ import {
 export function OpenRouterName({ account }: { account: OpenRouterAccount }) {
   const blurred = usePrivacyStore((s) => s.blurred);
   return (
-    <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
+    <ProviderAccountName provider="openrouter">
+      <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
+    </ProviderAccountName>
   );
 }
 
@@ -240,10 +243,7 @@ export function OpenRouterAccountCard({
       title={<OpenRouterName account={account} />}
       subtitle={
         <>
-          OpenRouter · <OpenRouterTier account={account} /> ·{" "}
-          {account.state.all_models
-            ? "All models"
-            : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
+          OpenRouter · <OpenRouterTier account={account} />
         </>
       }
       status={<StatusBadge status={openRouterStatus(account)} />}

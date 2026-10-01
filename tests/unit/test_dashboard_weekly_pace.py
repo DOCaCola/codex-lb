@@ -343,6 +343,7 @@ async def test_weekly_pace_attribution_merges_rankings_and_dedupes_unnamed_key(d
                     output_tokens=5,
                     reasoning_tokens=2,
                     cached_input_tokens=3,
+                    cost_usd=0.25 if index < 3 else 2.0,
                 )
                 for index in range(4)
             ]
@@ -429,9 +430,129 @@ async def test_weekly_pace_attribution_merges_rankings_and_dedupes_unnamed_key(d
     assert alpha.billable_tokens == 60
     assert alpha.cached_tokens == 12
     assert alpha.dominant_model == "gpt-alpha"
+    assert alpha.cost_coverage.known_cost_usd == pytest.approx(2.75)
+    assert alpha.cost_coverage.priced_requests == 4
+    assert alpha.cost_coverage.complete
+    assert rows[1].cost_coverage.unpriced_requests == 3
+    assert rows[2].cost_coverage.unpriced_requests == 1
     assert any(row.billable_tokens == 1_500 for row in rows)
     request_logs_table = cast(Table, RequestLog.__table__)
     assert "idx_logs_dash_usage_covering" in {index.name for index in request_logs_table.indexes}
+
+
+@pytest.mark.asyncio
+async def test_weekly_attribution_costs_share_usage_window_and_coverage_rules(db_setup) -> None:
+    del db_setup
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                RequestLog(
+                    api_key_id="partial",
+                    request_id="priced-a",
+                    model="model-a",
+                    requested_at=NOW - timedelta(minutes=5),
+                    status="success",
+                    input_tokens=10,
+                    cost_usd=1,
+                ),
+                RequestLog(
+                    api_key_id="partial",
+                    request_id="priced-b",
+                    model="model-b",
+                    requested_at=NOW - timedelta(minutes=8),
+                    status="success",
+                    input_tokens=20,
+                    cost_usd=2,
+                ),
+                RequestLog(
+                    api_key_id="partial",
+                    request_id="unpriced",
+                    model="model-a",
+                    requested_at=NOW - timedelta(minutes=15),
+                    status="success",
+                    input_tokens=30,
+                ),
+                RequestLog(
+                    api_key_id="partial",
+                    request_id="unmetered",
+                    model="model-a",
+                    requested_at=NOW - timedelta(minutes=20),
+                    status="error",
+                    upstream_status_code=502,
+                ),
+                RequestLog(
+                    api_key_id="partial",
+                    request_id="local-refusal",
+                    model="model-a",
+                    requested_at=NOW - timedelta(minutes=25),
+                    status="error",
+                ),
+                RequestLog(
+                    api_key_id="partial",
+                    request_id="count",
+                    model="model-a",
+                    request_kind="count_tokens",
+                    requested_at=NOW - timedelta(minutes=30),
+                    status="success",
+                    input_tokens=50,
+                    cost_usd=99,
+                ),
+                RequestLog(
+                    api_key_id="free",
+                    request_id="free",
+                    model="free-model",
+                    requested_at=NOW - timedelta(minutes=5),
+                    status="success",
+                    input_tokens=10,
+                    cost_usd=0,
+                ),
+                RequestLog(
+                    api_key_id="legacy-claude",
+                    request_id="legacy-claude",
+                    model="anthropic/claude",
+                    requested_at=NOW - timedelta(minutes=5),
+                    status="success",
+                    input_tokens=10,
+                    model_source_kind="claude",
+                    cost_usd=0,
+                ),
+            ]
+        )
+        for request_id, overrides in [
+            ("old", {"requested_at": NOW - timedelta(hours=3)}),
+            ("future", {"requested_at": NOW + timedelta(minutes=1)}),
+            ("deleted", {"deleted_at": NOW}),
+            ("warmup", {"request_kind": "warmup"}),
+            ("limit-warmup", {"request_kind": "limit_warmup"}),
+        ]:
+            session.add(
+                RequestLog(
+                    api_key_id="partial",
+                    request_id=request_id,
+                    model="filtered",
+                    status="success",
+                    cost_usd=1000,
+                    input_tokens=1000,
+                    **{"requested_at": NOW - timedelta(minutes=5), **overrides},
+                )
+            )
+        await session.commit()
+        rows = await DashboardRepository(session).top_api_key_attribution_since(NOW - timedelta(hours=2), now=NOW)
+    by_key = {row.api_key_id: row for row in rows}
+    partial = by_key["partial"]
+    assert partial.requests == 6
+    assert partial.billable_tokens == 110
+    assert partial.dominant_model == "model-a"
+    assert partial.cost_coverage.known_cost_usd == 3
+    assert partial.cost_coverage.priced_requests == 2
+    assert partial.cost_coverage.unpriced_requests == 1
+    assert partial.cost_coverage.unmetered_requests == 1
+    assert not partial.cost_coverage.complete
+    assert by_key["free"].cost_coverage.known_cost_usd == 0
+    assert by_key["free"].cost_coverage.priced_requests == 1
+    assert by_key["free"].cost_coverage.complete
+    assert by_key["legacy-claude"].cost_coverage.priced_requests == 0
+    assert by_key["legacy-claude"].cost_coverage.unpriced_requests == 1
 
 
 def _assert_close(actual: object, expected: object, path: str = "") -> None:

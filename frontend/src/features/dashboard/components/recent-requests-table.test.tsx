@@ -123,6 +123,53 @@ function openRequestDetails() {
   return screen.getByRole("dialog");
 }
 
+describe("Provider identity and readable models", () => {
+  it("uses catalog display names with native exact-ID tooltips", () => {
+    const id = "openrouter/z-ai/glm-5.3-flash";
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} models={[{ id, name: "Z.ai: GLM 5.3 Flash" }]}
+      requests={[createRequestLogEntry({ model: id, reasoningEffort: "high", actualServiceTier: "priority" })]} />);
+    const label = screen.getByText("Z.ai: GLM 5.3 Flash (high, priority)");
+    expect(label).toHaveAttribute("title", id);
+    expect(label).not.toHaveClass("font-mono");
+    expect(screen.queryByText(id)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [null, null, "native", "codex"],
+    ["openrouter", "or-source", null, "openrouter"],
+    ["claude", "claude-source", null, "claude"],
+    ["openai_compatible", "custom-source", null, null],
+    [null, null, null, null],
+  ])("uses log provenance %s/%s rather than model vendor", (kind, sourceId, accountId, provider) => {
+    const { container } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
+      requests={[createRequestLogEntry({ model: "openai/gpt-6-astra", modelSourceKind: kind, modelSourceId: sourceId, accountId })]} />);
+    const mark = container.querySelector("tbody img");
+    if (provider) expect(mark).toHaveAttribute("data-provider", provider);
+    else expect(mark).toBeNull();
+  });
+});
+
+describe("Claude subscription snapshots", () => {
+  it.each([ ["max_20x", "Max 20×"], ["max_5x", "Max 5×"], ["unknown", "Unknown plan"] ])(
+    "shows %s consistently in request table and details", (planType, label) => {
+      render(<RecentRequestsTable accounts={[]} requests={[
+        createRequestLogEntry({ modelSourceKind: "claude", modelSourceName: "Claude account", planType }),
+      ]} {...PAGINATION_PROPS} />);
+      expect(screen.getByText(label)).toBeVisible();
+      expect(within(openRequestDetails()).getByText(label)).toBeVisible();
+    },
+  );
+
+  it("does not infer a plan for historical rows without a snapshot", () => {
+    render(<RecentRequestsTable accounts={[]} requests={[
+      createRequestLogEntry({ modelSourceKind: "claude", planType: null }),
+    ]} {...PAGINATION_PROPS} />);
+    expect(screen.queryByText("Unknown plan")).not.toBeInTheDocument();
+    const dialog = openRequestDetails();
+    expect(within(dialog).getByText("Plan").closest("div.space-y-1")).toHaveTextContent("—");
+  });
+});
+
 describe("OpenRouter gateway metrics", () => {
   it("uses total output and marks generation TPS estimated", () => {
     expect(formatGenerationSpeed({
@@ -235,7 +282,7 @@ describe("RecentRequestsTable", () => {
     expect(screen.getByRole("columnheader", { name: "Model" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "API Key" })).not.toBeInTheDocument();
     expect(screen.queryByText("Layout Key")).not.toBeInTheDocument();
-    expect(screen.getByText("gpt-5.1")).toBeInTheDocument();
+    expect(screen.getByText("GPT 5.1")).toBeInTheDocument();
   });
 
   it("resizes only the selected column by pointer and clamps it to bounds", () => {
@@ -406,7 +453,7 @@ describe("RecentRequestsTable", () => {
     expect(screen.getByText("Primary Account")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "Plus" })).toBeInTheDocument();
     expect(screen.getByText("Key Alpha")).toBeInTheDocument();
-    expect(screen.getByText("gpt-5.1 (high, default)")).toBeInTheDocument();
+    expect(screen.getByText("GPT 5.1 (high, default)")).toBeInTheDocument();
     expect(screen.getByText("Requested priority")).toBeInTheDocument();
     expect(screen.getByText("WS")).toBeInTheDocument();
     expect(screen.getByText("Up Auto")).toBeInTheDocument();
@@ -541,7 +588,7 @@ describe("RecentRequestsTable", () => {
       />,
     );
 
-    const row = screen.getByText("gpt-5.1").closest("tr");
+    const row = screen.getByText("GPT 5.1").closest("tr");
 
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByText("200ms")).toBeInTheDocument();
@@ -660,7 +707,7 @@ describe("RecentRequestsTable", () => {
       />,
     );
 
-    const row = screen.getByText("gpt-5.1").closest("tr");
+    const row = screen.getByText("GPT 5.1").closest("tr");
 
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByText("200ms")).toBeInTheDocument();
@@ -888,7 +935,7 @@ describe("RecentRequestsTable", () => {
        />,
     );
 
-    const row = screen.getByText("gpt-5.1").closest("tr");
+    const row = screen.getByText("GPT 5.1").closest("tr");
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getAllByText("--").length).toBeGreaterThan(0);
   });

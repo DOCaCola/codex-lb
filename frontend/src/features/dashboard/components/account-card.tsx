@@ -4,6 +4,7 @@ import {
   QuotaBar,
 } from "@/features/accounts/components/quota-display";
 import { useTranslation } from "react-i18next";
+import { ProviderAccountName } from "@/components/brand/provider-account-name";
 
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -102,7 +103,7 @@ export function AccountCard({
     account.displayName && account.displayName !== account.email
       ? account.email
       : null;
-  const idSuffix = showAccountId ? ` | ID ${compactId}` : "";
+  const idSuffix = showAccountId ? ` · ID ${compactId}` : "";
   const warmupStatus = account.limitWarmupEnabled
     ? t("accounts.listItem.warmupOn")
     : t("accounts.listItem.warmupOff");
@@ -201,7 +202,7 @@ export function AccountCard({
   return (
     <AccountCardSurface
       data-testid="codex-account-card"
-      title={blurred ? <span className="privacy-blur">{title}</span> : title}
+      title={<ProviderAccountName provider="codex">{blurred ? <span className="privacy-blur">{title}</span> : title}</ProviderAccountName>}
       subtitle={
         <>
           {planLabel}

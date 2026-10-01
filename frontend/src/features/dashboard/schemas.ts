@@ -128,6 +128,7 @@ const WeeklyCreditApiKeyAttributionSchema = z.object({
   billableTokens: z.number().int().nonnegative(),
   cachedTokens: z.number().int().nonnegative(),
   dominantModel: z.string(),
+  costCoverage: CostCoverageSchema,
 });
 
 const WeeklyCreditPaceStatusSchema = z.enum(["behind", "on_track", "ahead", "danger"]);

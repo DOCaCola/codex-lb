@@ -329,6 +329,7 @@ class SourceDispatch:
     admission_budget: ApiKeyRequestUsageBudget | None
     requested_service_tier: str | None
     requested_reasoning_effort: str | None = None
+    plan_type: str | None = None
     upstream_reasoning_effort: str | None = None
     upstream_thinking_mode: str | None = None
     upstream_thinking_budget_tokens: int | None = None
@@ -571,6 +572,7 @@ class SourceDispatch:
                     archive_request_id=proxy_request_id,
                     model_source_id=self.source.id,
                     model_source_kind=self.source.kind,
+                    plan_type=self.plan_type,
                     api_key_id=self.api_key.id if self.api_key is not None else None,
                     session_id=_owner_lookup_session_id_from_headers(headers),
                     model=self.model,

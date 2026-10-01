@@ -5873,6 +5873,7 @@ async def _dispatch_source_responses_attempt(
             admission_budget=admission_budget,
             requested_service_tier=payload.service_tier,
             requested_reasoning_effort=requested_effort,
+            plan_type=claude_attempt.prepared.plan_type if claude_attempt is not None else None,
             upstream_reasoning_effort=upstream_effort,
             upstream_thinking_mode=upstream_thinking_mode,
             upstream_thinking_budget_tokens=upstream_thinking_budget,

@@ -11,7 +11,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { ClaudeName, ClaudeQuota } from "./account-display";
+import { ClaudeName, ClaudePlan, ClaudeQuota } from "./account-display";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { useClaude } from "./use-claude";
 import type { ClaudeAccount, OAuthStarted } from "./api";
@@ -101,13 +101,13 @@ export function ClaudeAccountControls({
           <ClaudeName account={account} />
         </AccountNameEditor>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Claude OAuth |{" "}
+          Claude | <ClaudePlan account={account} /> |{" "}
           {account.state.all_models
             ? "All models"
             : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
         </p>
       </div>
-      {[error, account.state.catalog_error, account.state.usage_error]
+      {[error, account.state.catalog_error, account.state.usage_error, account.state.subscription_error]
         .filter(Boolean)
         .map((message, index) => (
           <p key={index} role="alert" className="text-sm text-destructive">

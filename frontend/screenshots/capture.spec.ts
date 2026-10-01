@@ -67,6 +67,7 @@ test("dashboard provider cards share sizing and anatomy", async ({
   ];
   openrouter[1].state.key_error = "Monitoring failed";
   const claude: ClaudeAccount = {
+    planType: "pro",
     id: "claude-two",
     name: "Claude quotas",
     isEnabled: true,
@@ -75,6 +76,7 @@ test("dashboard provider cards share sizing and anatomy", async ({
     credentialStatus: "ready",
     expiresAt: "2026-10-01T12:00:00Z",
     state: {
+      subscription: null, subscription_updated_at: null, subscription_error: null,
       all_models: true,
       reasoning_restrictions: {},
       selections: [],
@@ -303,10 +305,12 @@ test("Claude automatic models and shared account presentation", async ({ page },
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
   const account: ClaudeAccount = {
+    planType: "pro",
     id: "claude-preview", name: "Claude Research", isEnabled: true,
     maxConcurrency: null, routingPolicy: "burn_first", credentialStatus: "ready",
     expiresAt: "2026-10-01T12:00:00Z",
     state: {
+      subscription: null, subscription_updated_at: null, subscription_error: null,
       all_models: false,
       reasoning_restrictions: {},
       selections: [{ model: "claude-opus-5" }],
@@ -329,6 +333,15 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await page.route("**/api/claude-accounts**", (route) => {
     const p = new URL(route.request().url()).pathname;
     if (p === "/api/claude-accounts") return fulfill(route, { accounts: [account] });
+    if (p === "/api/claude-accounts/claude-preview/refresh" && route.request().method() === "POST") {
+      account.planType = "max_20x";
+      account.state.subscription = {
+        subscription_type: "claude_max", rate_limit_tier: "default_claude_max_20x",
+        source: "bootstrap", observed_at: "2026-10-01T12:00:00Z",
+      };
+      account.state.subscription_updated_at = "2026-10-01T12:00:00Z";
+      return fulfill(route, account);
+    }
     if (p.endsWith("/version")) return fulfill(route, {
       effectiveVersion: "2.1.283", discoveredVersion: "2.1.283", pinnedVersion: null,
       lastCheckedAt: null, lastChangedAt: null, error: null,
@@ -351,6 +364,11 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await applyTheme(page, "light");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`${BASE_URL}/accounts?selected=claude-preview`);
+  const detail = page.locator("section").filter({ has: page.getByRole("button", { name: "Rename account", exact: true }) });
+  await expect(detail.getByText("Pro", { exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(detail.getByText("Max 20×", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("account-list-scroll-region").getByText("Max 20×", { exact: true })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Routing policy" })).toBeVisible();
   await expect(page.getByRole("switch", { name: /All models/ })).toHaveCount(0);
   await expect(page.locator('[aria-label="Claude quota history"] .recharts-surface')).toBeVisible();
@@ -378,11 +396,13 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.goto(BASE_URL);
   await expect(page.getByTestId("claude-account-card")).toBeVisible();
+  await expect(page.getByTestId("claude-account-card")).toContainText("Claude · Max 20×");
   await page.getByTestId("claude-account-card").scrollIntoViewIfNeeded();
   await page.getByTestId("claude-account-card").screenshot({ path: testInfo.outputPath("claude-dashboard.png"), animations: "disabled" });
   await page.getByRole("radio", { name: /List/i }).click();
   const rows = page.getByTestId("dashboard-account-list");
   await expect(rows.getByText("Claude Research")).toBeVisible();
+  await expect(rows.getByText("Max 20×", { exact: true })).toBeVisible();
   await rows.screenshot({ path: testInfo.outputPath("claude-dashboard-list.png"), animations: "disabled" });
   expect(browserErrors).toEqual([]);
 });
@@ -996,8 +1016,9 @@ for (const width of [1440, 390]) {
     }));
     await page.route("**/api/claude-accounts", route => fulfill(route, { accounts: [{
       id: "claude-routing", name: "Claude research", isEnabled: true, credentialStatus: "ready",
+      planType: "pro",
       maxConcurrency: null, expiresAt: "2026-10-01T12:00:00Z",
-      state: { all_models: false, selections: [], catalog: [], catalog_updated_at: null, catalog_error: null, usage_updated_at: null, usage_error: null },
+      state: { subscription: null, subscription_updated_at: null, subscription_error: null, all_models: false, selections: [], catalog: [], catalog_updated_at: null, catalog_error: null, usage_updated_at: null, usage_error: null },
       quota: { observedAt: null, windows: [], models: [] },
     }] }));
     await page.goto(`${BASE_URL}/settings`);
@@ -1023,7 +1044,8 @@ for (const width of [1440, 390]) {
     await interceptApi(page);
     const account = {
       id: "src_claude_demo", name: "Research Claude", isEnabled: true, maxConcurrency: null, routingPolicy: "normal", credentialStatus: "ready", expiresAt: "2026-09-26T12:00:00Z",
-      state: { all_models: false, selections: [{ model: "claude-opus-5" }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
+      planType: "pro",
+      state: { subscription: null, subscription_updated_at: null, subscription_error: null, all_models: false, selections: [{ model: "claude-opus-5" }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
       quota: { observedAt: null, models: [], windows: [
         { name: "five_hour", utilization: 32, resetsAt: "2026-09-25T17:00:00Z", freshness: "fresh", exhausted: false },
         { name: "seven_day", utilization: null, resetsAt: null, freshness: "unknown", exhausted: false },

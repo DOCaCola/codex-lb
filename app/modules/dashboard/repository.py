@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy import case, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.usage.coverage import CostCoverage, coverage_from_values, request_cost_expressions
 from app.core.usage.types import BucketConversationAggregate, BucketModelAggregate, RequestActivityAggregate
 from app.db.models import (
     Account,
@@ -71,6 +72,7 @@ class ApiKeyAttributionRow:
     billable_tokens: int
     cached_tokens: int
     dominant_model: str
+    cost_coverage: CostCoverage
 
 
 class DashboardRepository:
@@ -196,6 +198,7 @@ class DashboardRepository:
                 func.count(RequestLog.id).label("requests"),
                 func.coalesce(func.sum(billable_tokens), 0).label("billable_tokens"),
                 func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_tokens"),
+                *request_cost_expressions(RequestLog),
             )
             .select_from(RequestLog)
             .outerjoin(ApiKey, ApiKey.id == RequestLog.api_key_id)
@@ -230,6 +233,10 @@ class DashboardRepository:
                 func.sum(ranked_models.c.requests).label("requests"),
                 func.sum(ranked_models.c.billable_tokens).label("billable_tokens"),
                 func.sum(ranked_models.c.cached_tokens).label("cached_tokens"),
+                func.sum(ranked_models.c.known_cost_usd).label("known_cost_usd"),
+                func.sum(ranked_models.c.priced_requests).label("priced_requests"),
+                func.sum(ranked_models.c.unpriced_requests).label("unpriced_requests"),
+                func.sum(ranked_models.c.unmetered_requests).label("unmetered_requests"),
                 func.max(
                     case(
                         (ranked_models.c.model_rank == 1, ranked_models.c.model),
@@ -272,6 +279,10 @@ class DashboardRepository:
                 func.max(candidates.c.billable_tokens).label("billable_tokens"),
                 func.max(candidates.c.cached_tokens).label("cached_tokens"),
                 func.max(candidates.c.dominant_model).label("dominant_model"),
+                func.max(candidates.c.known_cost_usd).label("known_cost_usd"),
+                func.max(candidates.c.priced_requests).label("priced_requests"),
+                func.max(candidates.c.unpriced_requests).label("unpriced_requests"),
+                func.max(candidates.c.unmetered_requests).label("unmetered_requests"),
             )
             .group_by(candidates.c.api_key_id)
             .order_by(
@@ -290,6 +301,9 @@ class DashboardRepository:
                 billable_tokens=int(row.billable_tokens),
                 cached_tokens=int(row.cached_tokens),
                 dominant_model=str(row.dominant_model),
+                cost_coverage=coverage_from_values(
+                    row.known_cost_usd, row.priced_requests, row.unpriced_requests, row.unmetered_requests
+                ),
             )
             for row in rows
         ]

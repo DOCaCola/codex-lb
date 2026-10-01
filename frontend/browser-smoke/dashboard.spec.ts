@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { AuthSessionSchema } from "../src/features/auth/schemas";
 import { DashboardProjectionsSchema } from "../src/features/dashboard/schemas";
 import { createOpenRouterAccount } from "../src/features/openrouter/test-fixtures";
+import { ClaudeAccountSchema } from "../src/features/claude/api";
 import {
   createAccountSummary,
   createDashboardAuthSession,
@@ -76,6 +77,153 @@ async function acceptTelemetryConsent(page: Page, consentDialog: Locator): Promi
   await expect(consentDialog).toBeHidden();
 }
 
+for (const width of [320, 390, 1440]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`provider branding and readable models ${theme} ${width}`, async ({ page }, testInfo) => {
+      await page.emulateMedia({ reducedMotion: "reduce", colorScheme: theme });
+      await page.addInitScript((value) => localStorage.setItem("codex-lb-theme", value), theme);
+      await page.setViewportSize({ width, height: 1000 });
+      const native = createAccountSummary({ accountId: "brand-native", displayName: "Codex account with a long operator alias" });
+      const openrouter = createOpenRouterAccount({ id: "brand-router", name: "OpenRouter account with a long operator alias" });
+      const claude = ClaudeAccountSchema.parse({
+        id: "brand-claude", name: "Claude account with a long operator alias",
+        planType: "pro", maxConcurrency: null, routingPolicy: "normal", isEnabled: true,
+        credentialStatus: "ready", expiresAt: "2027-01-01T00:00:00Z",
+        state: { all_models: true, reasoning_restrictions: {}, selections: [], catalog: [],
+          catalog_updated_at: null, catalog_error: null, usage_updated_at: null, usage_error: null,
+          subscription: null, subscription_updated_at: null, subscription_error: null },
+        quota: { observedAt: null, models: [], windows: [
+          { name: "five_hour", utilization: 20, resetsAt: "2026-10-02T00:00:00Z", freshness: "fresh", exhausted: false },
+          { name: "seven_day", utilization: 40, resetsAt: "2026-10-07T00:00:00Z", freshness: "fresh", exhausted: false },
+        ] },
+      });
+      await installMobileContainmentFixtures(page, [native]);
+      await page.route("**/api/claude-accounts", (route) => route.fulfill({ json: { accounts: [claude] } }));
+      await page.route("**/api/openrouter-accounts", (route) => route.fulfill({ json: { accounts: [openrouter] } }));
+      await page.route("**/api/models", (route) => route.fulfill({ json: { models: [
+        { id: "gpt-6-astra", name: "GPT 6 Astra" },
+        { id: "openrouter/z-ai/glm-5.3-flash", name: "Z.ai: GLM 5.3 Flash" },
+      ] } }));
+      await page.route(/\/api\/request-logs(?:\?|$)/, (route) => route.fulfill({ json: createRequestLogsResponse([
+        createRequestLogEntry({ requestId: "brand-native", accountId: native.accountId, model: "gpt-6-astra", modelSourceKind: null }),
+        createRequestLogEntry({ requestId: "brand-router", accountId: null, modelSourceId: openrouter.id, modelSourceKind: "openrouter", modelSourceName: openrouter.name, model: "openrouter/z-ai/glm-5.3-flash" }),
+        createRequestLogEntry({ requestId: "brand-claude", accountId: null, modelSourceId: claude.id, modelSourceKind: "claude", modelSourceName: claude.name, model: "anthropic/claude-haiku-4-5-20251001", reasoningEffort: "high" }),
+      ], 3, false) }));
+      await page.goto("/dashboard");
+      const cards = page.getByTestId("dashboard-account-cards");
+      for (const provider of ["codex", "claude", "openrouter"] as const) {
+        const assetPath = `/images/providers/${provider === "codex" ? "openai" : provider}.svg`;
+        const asset = await page.request.get(assetPath);
+        expect(asset.ok()).toBe(true);
+        const svg = await asset.text();
+        expect(svg).toContain("#000");
+        expect(svg).not.toMatch(/<(?:script|text|image|foreignObject|use|style)\b|onload|onclick|href=/);
+        const mark = cards.locator(`img[data-provider="${provider}"]`);
+        await expect(mark).toBeVisible();
+        await expect(mark).toHaveAttribute("src", assetPath);
+        await expect.poll(() => mark.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+        await expect(mark).toHaveCSS("width", "16px");
+        await expect(mark).toHaveCSS("filter", theme === "dark" ? "invert(1)" : "none");
+      }
+      const table = page.getByRole("table").first();
+      await expect(table.getByText("GPT 6 Astra", { exact: true })).toHaveAttribute("title", "gpt-6-astra");
+      await expect(table.getByText("Z.ai: GLM 5.3 Flash", { exact: true })).toHaveAttribute("title", "openrouter/z-ai/glm-5.3-flash");
+      await expect(table.getByText("Claude Haiku 4.5 (high)", { exact: true })).toHaveAttribute("title", "anthropic/claude-haiku-4-5-20251001");
+      await expect(table.locator("tbody img[data-provider]")).toHaveCount(3);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`provider-dashboard-${theme}-${width}.png`), fullPage: true });
+      await page.getByRole("radio", { name: "View accounts as list" }).click();
+      await expect(page.getByTestId("dashboard-account-list").locator("img[data-provider]")).toHaveCount(3);
+      for (const [provider, id, name] of [
+        ["codex", native.accountId, native.displayName],
+        ["claude", claude.id, claude.name],
+        ["openrouter", openrouter.id, openrouter.name],
+      ]) {
+        await page.goto(`/accounts?selected=${id}`);
+        const heading = page.getByRole("heading", { name, exact: true });
+        await expect(heading.locator(`img[data-provider="${provider}"]`)).toBeVisible();
+        await expect(page.locator(`button[aria-pressed] img[data-provider="${provider}"]`)).toHaveCount(1);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        await page.screenshot({ path: testInfo.outputPath(`provider-accounts-${provider}-${theme}-${width}.png`), fullPage: true });
+      }
+    });
+  }
+
+  test(`weekly consumer costs and concise account subtitles ${width}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height: 1000 });
+    const accounts = [createAccountSummary({ displayName: "Codex account" })];
+    await installMobileContainmentFixtures(page, accounts);
+    const pace = {
+      totalFullCredits: 1000, totalActualRemainingCredits: 600, totalExpectedRemainingCredits: 600,
+      actualUsedPercent: 40, scheduledUsedPercent: 40, deltaPercent: 0, scheduleGapCredits: 0,
+      overPlanCredits: 0, projectedShortfallCredits: 0, pauseForBreakEvenHours: null,
+      paceMultiplier: null, throttleToPercent: null, reduceByPercent: null,
+      proAccountEquivalentToCoverOverPlan: null, proAccountsToCoverOverPlan: null,
+      projectedDepletionHours: 60, projectedMinimumRemainingCredits: 0,
+      forecastBurnRateCreditsPerHour: 10, scheduledBurnRateCreditsPerHour: 10,
+      status: "on_track" as const, accountCount: 1, staleAccountCount: 0, inactiveAccountCount: 0,
+      confidence: "high" as const, runwayStatus: "safe" as const,
+      headroomPercent: 60, headroomCredits: 600, burnRateRecentCreditsPerHour: 10,
+      depletionEtaHours: 60, nextReliefInHours: 26, nextReliefCredits: 400, resetEvents: [],
+      topApiKeys: [
+        { apiKeyId: "paid", name: "Long consumer name for a production automation", requests: 12500,
+          billableTokens: 18000000, cachedTokens: 0, dominantModel: "anthropic/claude-opus-5-5",
+          costCoverage: { knownCostUsd: 44248.05, pricedRequests: 12499, unpricedRequests: 1,
+            unmeteredRequests: 0, coverageUnknown: false } },
+        { apiKeyId: "free", name: "Free consumer", requests: 25, billableTokens: 10000,
+          cachedTokens: 0, dominantModel: "openrouter/qwen/free",
+          costCoverage: { knownCostUsd: 0, pricedRequests: 25, unpricedRequests: 0,
+            unmeteredRequests: 0, coverageUnknown: false } },
+        { apiKeyId: "unknown", name: "Unknown consumer", requests: 10, billableTokens: 1000,
+          cachedTokens: 0, dominantModel: "unknown-model",
+          costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 10,
+            unmeteredRequests: 0, coverageUnknown: false } },
+      ],
+    };
+    await page.route(/\/api\/dashboard\/overview(?:\?|$)/, (route) =>
+      route.fulfill({ json: createDashboardOverview({ accounts, weeklyCreditPace: pace }) }));
+    await page.route(/\/api\/dashboard\/projections(?:\?|$)/, (route) =>
+      route.fulfill({ json: createDashboardProjections({ weeklyCreditPace: pace }) }));
+    await page.route("**/api/openrouter-accounts", (route) =>
+      route.fulfill({ json: { accounts: [createOpenRouterAccount()] } }));
+    await page.route("**/api/claude-accounts", (route) => route.fulfill({ json: { accounts: [{
+      planType: "pro", routingPolicy: "normal", maxConcurrency: null,
+      id: "claude-test", name: "Claude account", isEnabled: true, credentialStatus: "ready",
+      expiresAt: "2027-01-01T00:00:00Z",
+      state: { all_models: true, reasoning_restrictions: {}, selections: [], catalog: [], catalog_updated_at: null,
+        subscription: null, subscription_updated_at: null, subscription_error: null,
+        catalog_error: null, usage_updated_at: null, usage_error: null },
+      quota: { observedAt: null, models: [], windows: [] },
+    }] } }));
+    await page.goto("/dashboard");
+    const attribution = page.getByTestId("runway-attribution");
+    await expect(attribution.getByText("Top consumers · last 2h", { exact: true })).toBeVisible();
+    await expect(attribution.getByText("Est. API Cost", { exact: true })).toBeVisible();
+    await expect(attribution.getByText("$44,248.05", { exact: true })).toBeVisible();
+    await expect(attribution.getByText("$0.00", { exact: true })).toBeVisible();
+    await expect(attribution.getByText("Unknown", { exact: true })).toBeVisible();
+    await expect(attribution).not.toContainText("known · incomplete");
+    for (const row of await attribution.locator("li").all()) {
+      expect(await row.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return Array.from(el.children).every((child) => {
+          const bounds = child.getBoundingClientRect();
+          return bounds.left >= box.left - 1 && bounds.right <= box.right + 1;
+        });
+      })).toBe(true);
+    }
+    const cards = page.getByTestId("dashboard-account-cards");
+    await expect(cards.getByTestId("codex-account-card").getByText("Plus", { exact: true })).toBeVisible();
+    await expect(cards.getByTestId("openrouter-account-card")).toContainText("OpenRouter · Paid");
+    await expect(cards.getByTestId("claude-account-card")).toContainText("Claude · Pro");
+    await expect(cards).not.toContainText("models selected");
+    await expect(cards).not.toContainText("All models");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`weekly-consumer-costs-${width}.png`), fullPage: true });
+  });
+}
+
 for (const width of [390, 1440]) {
   test(`request operation labels reuse model-cell layout ${width}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -144,9 +292,11 @@ for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       await installMobileContainmentFixtures(page, []);
       const account = provider === "openrouter" ? createOpenRouterAccount({ id: "provider-test" }) : {
+        planType: "pro", maxConcurrency: null, routingPolicy: "normal",
         id: "provider-test", name: "Claude test", isEnabled: true, credentialStatus: "ready",
         expiresAt: "2027-01-01T00:00:00Z",
-        state: { selections: [], catalog: [], catalog_updated_at: null, catalog_error: null,
+        state: { subscription: null, subscription_updated_at: null, subscription_error: null,
+          all_models: false, reasoning_restrictions: {}, selections: [], catalog: [], catalog_updated_at: null, catalog_error: null,
           usage_updated_at: null, usage_error: null },
         quota: { observedAt: null, models: [], windows: [] },
       };
