@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config.settings_cache import get_settings_cache
+from app.core.errors import OpenAIErrorDetail
 from app.core.model_routing import reasoning_allowed
 from app.core.routing_diagnostics import RoutingExclusion, explain_unavailable
 from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourceModel
@@ -51,6 +52,14 @@ class ClaudePoolUnavailable(ClaudeError):
     def error_type(self) -> str:
         return "rate_limit_error" if self.status_code == 429 else super().error_type
 
+    @property
+    def error_detail(self) -> OpenAIErrorDetail:
+        detail = super().error_detail
+        if self.retry_at is not None:
+            detail["resets_at"] = self.retry_at.timestamp()
+            detail["resets_in_seconds"] = int(self.response_headers["Retry-After"])
+        return detail
+
 
 @dataclass(frozen=True)
 class Eligibility:
@@ -59,6 +68,7 @@ class Eligibility:
         "ready", "paused", "credentials", "refreshing", "refresh_backoff", "model", "reasoning", "quota", "cooldown"
     ]
     retry_at: datetime | None = None
+    quota_windows: tuple[str, ...] = ()
 
 
 def eligibility(
@@ -102,7 +112,8 @@ def eligibility(
     if any(item.window not in {"five_hour", "seven_day", "seven_day_overage_included"} for item in restrictions):
         return Eligibility(False, "cooldown", retry_at)
     if quota.blocked or restrictions:
-        return Eligibility(False, "quota", retry_at)
+        windows = tuple(sorted({*quota.blocking_windows, *(item.window for item in restrictions)}))
+        return Eligibility(False, "quota", retry_at, windows)
     # Expiry alone is not permanent ineligibility: dispatch owns the durable
     # refresh claim. It must never send the expired token itself.
     return Eligibility(True, "ready")
@@ -187,25 +198,29 @@ async def select_account(
         retry_at = min(
             (diagnostic.retry_at for _, diagnostic in candidates if diagnostic.retry_at is not None), default=None
         )
-        if owner_source_id is not None:
+        quota_only = bool(reasons) and all(reason == "quota" for reason in reasons)
+        if owner_source_id is not None or quota_only:
+            if owner_source_id is not None:
+                message = (
+                    "Claude continuation owner is quota-exhausted; account-bound state cannot move to another account"
+                    if quota_only
+                    else "Claude continuation owner is unavailable; account-bound state cannot move to another account"
+                )
+                code = "previous_response_owner_unavailable"
+            else:
+                message = "All authorized Claude accounts for this model are rate limited"
+                code = "claude_pool_rate_limited"
+            if quota_only:
+                windows = sorted({window for _, diagnostic in candidates for window in diagnostic.quota_windows})
+                message += ". Blocking quota windows: " + ", ".join(windows)
             raise ClaudePoolUnavailable(
-                "previous_response_owner_unavailable",
+                code,
                 explain_unavailable(
-                    "Claude continuation owner is unavailable; account-bound state cannot move to another account",
+                    message,
                     reasons,
                     retry_at=retry_at.timestamp() if retry_at is not None else None,
                 ),
-                retry_at=retry_at,
-            )
-        if candidates and all(diagnostic.reason == "quota" for _, diagnostic in candidates):
-            raise ClaudePoolUnavailable(
-                "claude_pool_rate_limited",
-                explain_unavailable(
-                    "All authorized Claude accounts for this model are rate limited",
-                    reasons,
-                    retry_at=retry_at.timestamp() if retry_at is not None else None,
-                ),
-                status_code=429,
+                status_code=429 if quota_only else 503,
                 retry_at=retry_at,
             )
         if candidates and all(diagnostic.reason == "reasoning" for _, diagnostic in candidates):

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import urlencode
 
 from app.core.crypto import TokenEncryptor
+from app.core.errors import OpenAIErrorDetail
 from app.modules.claude.schemas import Credentials
 
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -30,6 +31,10 @@ class ClaudeError(ValueError):
     @property
     def error_type(self) -> str:
         return "invalid_request_error" if self.status_code == 400 else "server_error"
+
+    @property
+    def error_detail(self) -> OpenAIErrorDetail:
+        return {"type": self.error_type, "code": self.code, "message": str(self)}
 
 
 @dataclass(frozen=True)

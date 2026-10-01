@@ -1873,14 +1873,13 @@ async def claude_messages(
             count_tokens=count_tokens,
         )
     except ClaudeError as exc:
+        detail = exc.error_detail
+        if detail["type"] == "server_error":
+            detail["type"] = "api_error"
         return JSONResponse(
             {
                 "type": "error",
-                "error": {
-                    "type": "api_error" if exc.error_type == "server_error" else exc.error_type,
-                    "code": exc.code,
-                    "message": str(exc),
-                },
+                "error": detail,
             },
             status_code=exc.status_code,
             headers=exc.response_headers,
@@ -5806,7 +5805,7 @@ async def _dispatch_source_responses_attempt(
         return _logged_error_json_response(
             request,
             exc.status_code,
-            openai_error(exc.code, str(exc), error_type=exc.error_type),
+            {"error": exc.error_detail},
             headers={**rate_limit_headers, **exc.response_headers},
         )
     claims = try_claim_source_admission(source)

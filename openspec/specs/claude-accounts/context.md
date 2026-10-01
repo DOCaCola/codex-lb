@@ -741,3 +741,31 @@ floor. CLIProxyAPI `fd48ea6840f5572deb53aeb5657740937ac9daaa`,
 `internal/runtime/executor/helps/claude_ttft_helpers.go`: signature output
 recognition. No third-party code is copied. Mock tests establish gateway metric
 behavior, not the reason a particular live upstream delivered in a burst.
+
+## Quota-blocked continuation owners (2026-10-01)
+
+A signed active tool turn or hosted resource can require its original Claude
+account even when another account is available. Exhausted quota is not a
+connectivity failure: pure quota exclusion returns 429 rate_limit_error while
+retaining previous_response_owner_unavailable and the account scope. Paused,
+unauthorized, refreshing and unknown-cooldown owners remain 503. These responses
+do not drop history, migrate signed state, spend reset grants or enable overage.
+
+For example, an owner with five_hour exhaustion until 13:19:59Z returns a message
+naming that observed window, resets_at (Unix seconds), resets_in_seconds and a
+positive ceil-rounded Retry-After. If weekly exhaustion lasts longer, that later
+barrier determines recovery. Unknown applicable deadlines omit timing rather
+than promising recovery at another account's reset. Responses WebSocket errors
+carry the same detail and a safe retry-after field in their headers object; the
+socket itself remains usable. A client may stop rather than wait automatically;
+neither retry timing nor 429 guarantees client-driven resumption.
+
+Source inspection on 2026-10-01: OpenCodex
+ef0297f86c4540c7d757c8595170d66f9c584aec uses AnthropicAccountCooldownError
+with 429 and bridges HTTP retry headers into WebSocket error frames. CLIProxyAPI
+fd48ea6840f5572deb53aeb5657740937ac9daaa returns model_cooldown 429 with
+reset_seconds/Retry-After. Agent LB
+c7f83276e4c8af0d7735adb6524fc68d34a97732 returns 429 with quota recovery
+metadata. These support error semantics, not cross-account signed-state
+portability. Route mocks verify no dispatch or history mutation; live client
+backoff behavior is not independently qualified by these tests.
