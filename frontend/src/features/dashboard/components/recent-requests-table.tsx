@@ -434,6 +434,10 @@ export function RecentRequestsTable({
               const errorPreview = request.errorMessage || request.errorCode || "-";
               const hasError = !!(request.errorCode || request.errorMessage);
               const visibleServiceTier = request.actualServiceTier ?? request.serviceTier;
+              const modelMetadata = [
+                request.reasoningEffort?.trim(),
+                visibleServiceTier?.trim() === "default" ? null : visibleServiceTier?.trim(),
+              ].filter(Boolean).join(" · ");
               const showRequestedTier =
                 !!request.requestedServiceTier && request.requestedServiceTier !== visibleServiceTier;
               const planType = request.planType?.trim().toLowerCase() || null;
@@ -476,7 +480,8 @@ export function RecentRequestsTable({
                   {isColumnVisible("model") ? <TableCell className="truncate align-top">
                     <div className="leading-tight">
                       <span className="text-xs" title={request.model || undefined}>
-                        {formatModelLabel(modelDisplayName(request.model, modelNames.get(request.model)), request.reasoningEffort, visibleServiceTier)}
+                        {modelDisplayName(request.model, modelNames.get(request.model))}
+                        {modelMetadata ? <> <span className="text-muted-foreground">{modelMetadata}</span></> : null}
                       </span>
                       <div className="mt-1 truncate text-xs text-muted-foreground" title={requestTypeLabel(request, t)}>
                         {requestTypeLabel(request, t)}

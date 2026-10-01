@@ -105,8 +105,8 @@ for (const width of [320, 390, 1440]) {
         { id: "openrouter/z-ai/glm-5.3-flash", name: "Z.ai: GLM 5.3 Flash" },
       ] } }));
       await page.route(/\/api\/request-logs(?:\?|$)/, (route) => route.fulfill({ json: createRequestLogsResponse([
-        createRequestLogEntry({ requestId: "brand-native", accountId: native.accountId, model: "gpt-6-astra", modelSourceKind: null }),
-        createRequestLogEntry({ requestId: "brand-router", accountId: null, modelSourceId: openrouter.id, modelSourceKind: "openrouter", modelSourceName: openrouter.name, model: "openrouter/z-ai/glm-5.3-flash" }),
+        createRequestLogEntry({ requestId: "brand-native", accountId: native.accountId, model: "gpt-6-astra", modelSourceKind: null, reasoningEffort: "medium", actualServiceTier: "default" }),
+        createRequestLogEntry({ requestId: "brand-router", accountId: null, modelSourceId: openrouter.id, modelSourceKind: "openrouter", modelSourceName: openrouter.name, model: "openrouter/z-ai/glm-5.3-flash", reasoningEffort: "high", actualServiceTier: "priority" }),
         createRequestLogEntry({ requestId: "brand-claude", accountId: null, modelSourceId: claude.id, modelSourceKind: "claude", modelSourceName: claude.name, model: "anthropic/claude-haiku-4-5-20251001", reasoningEffort: "high" }),
       ], 3, false) }));
       await page.goto("/dashboard");
@@ -126,9 +126,12 @@ for (const width of [320, 390, 1440]) {
         await expect(mark).toHaveCSS("filter", theme === "dark" ? "invert(1)" : "none");
       }
       const table = page.getByRole("table").first();
-      await expect(table.getByText("GPT 6 Astra", { exact: true })).toHaveAttribute("title", "gpt-6-astra");
-      await expect(table.getByText("Z.ai: GLM 5.3 Flash", { exact: true })).toHaveAttribute("title", "openrouter/z-ai/glm-5.3-flash");
-      await expect(table.getByText("Claude Haiku 4.5 (high)", { exact: true })).toHaveAttribute("title", "anthropic/claude-haiku-4-5-20251001");
+      const nativeLabel = table.getByTitle("gpt-6-astra", { exact: true });
+      await expect(nativeLabel).toHaveText("GPT 6 Astra medium");
+      await expect(nativeLabel.getByText("medium", { exact: true })).toHaveClass("text-muted-foreground");
+      await expect(nativeLabel.getByText("medium", { exact: true })).toHaveCSS("color", await table.getByText("Unknown", { exact: true }).first().evaluate((element) => getComputedStyle(element).color));
+      await expect(table.getByTitle("openrouter/z-ai/glm-5.3-flash", { exact: true })).toHaveText("Z.ai: GLM 5.3 Flash high · priority");
+      await expect(table.getByTitle("anthropic/claude-haiku-4-5-20251001", { exact: true })).toHaveText("Claude Haiku 4.5 high");
       await expect(table.locator("tbody img[data-provider]")).toHaveCount(3);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`provider-dashboard-${theme}-${width}.png`), fullPage: true });

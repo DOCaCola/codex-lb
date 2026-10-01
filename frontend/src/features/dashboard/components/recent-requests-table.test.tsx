@@ -128,10 +128,38 @@ describe("Provider identity and readable models", () => {
     const id = "openrouter/z-ai/glm-5.3-flash";
     render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} models={[{ id, name: "Z.ai: GLM 5.3 Flash" }]}
       requests={[createRequestLogEntry({ model: id, reasoningEffort: "high", actualServiceTier: "priority" })]} />);
-    const label = screen.getByText("Z.ai: GLM 5.3 Flash (high, priority)");
+    const label = screen.getByTitle(id);
+    expect(label).toHaveTextContent("Z.ai: GLM 5.3 Flash high · priority");
+    expect(screen.getByText("high · priority")).toHaveClass("text-muted-foreground");
     expect(label).toHaveAttribute("title", id);
     expect(label).not.toHaveClass("font-mono");
     expect(screen.queryByText(id)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["medium", "default", "medium"],
+    ["medium", "priority", "medium · priority"],
+    [null, "default", null],
+    [null, "priority", "priority"],
+    ["high", null, "high"],
+    [null, null, null],
+    ["", "flex", "flex"],
+  ])("renders effort %s and tier %s as muted metadata", (effort, tier, metadata) => {
+    const id = "gpt-6.1-sol";
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
+      models={[{ id, name: "GPT-6.1-Sol" }]}
+      requests={[createRequestLogEntry({ model: id, reasoningEffort: effort, actualServiceTier: tier })]} />);
+    const label = screen.getByTitle(id);
+    expect(label.textContent).toBe(`GPT-6.1-Sol${metadata ? ` ${metadata}` : ""}`);
+    expect(label.textContent).not.toMatch(/[()]/);
+    if (metadata) expect(within(label).getByText(metadata)).toHaveClass("text-muted-foreground");
+    else expect(label.querySelector(".text-muted-foreground")).toBeNull();
+  });
+
+  it("uses the recorded tier only when no actual tier is available", () => {
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
+      requests={[createRequestLogEntry({ model: "gpt-6.1-sol", reasoningEffort: "medium", serviceTier: "priority", actualServiceTier: null })]} />);
+    expect(screen.getByTitle("gpt-6.1-sol")).toHaveTextContent("GPT 6.1 Sol medium · priority");
   });
 
   it.each([
@@ -453,7 +481,10 @@ describe("RecentRequestsTable", () => {
     expect(screen.getByText("Primary Account")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "Plus" })).toBeInTheDocument();
     expect(screen.getByText("Key Alpha")).toBeInTheDocument();
-    expect(screen.getByText("GPT 5.1 (high, default)")).toBeInTheDocument();
+    const modelLabel = screen.getByTitle("gpt-5.1");
+    expect(modelLabel).toHaveTextContent("GPT 5.1 high");
+    expect(modelLabel.textContent).not.toContain("default");
+    expect(within(modelLabel).getByText("high")).toHaveClass("text-muted-foreground");
     expect(screen.getByText("Requested priority")).toBeInTheDocument();
     expect(screen.getByText("WS")).toBeInTheDocument();
     expect(screen.getByText("Up Auto")).toBeInTheDocument();

@@ -43,6 +43,14 @@ in the native browser title. Catalog loading does not block request logs, and
 reasoning/service-tier suffixes and operation labels remain intact. Unknown
 account provenance receives no speculative provider logo.
 
+Model-cell effort and non-default service-tier metadata use the established
+muted foreground inline, without parentheses. For example, a standard request
+shows `GPT-6.1-Sol medium`, with medium in grey; a priority request shows
+`GPT-6.1-Sol medium · priority`. The routine default tier is omitted from this
+primary label, while requested-versus-actual differences and raw detail metadata
+remain available. Catalog names stay authoritative; separate effort display
+labels are not provided by the catalog, so recorded effort identifiers are kept.
+
 Browser regressions verify local asset safety, light/dark contrast, account
 cards/lists/logs/details and document containment at 320, 390 and 1440 pixels.
 No backend contract, configuration, migration or routing changes are required.
