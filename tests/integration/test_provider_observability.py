@@ -120,7 +120,8 @@ async def test_conversation_analytics_measurement_scope_accounts_and_unknowns(as
     assert (claude["errors"], claude["cancelled"]) == (1, 1)
     assert (claude["ttftSamples"], claude["tpsSamples"]) == (1, 1)
     assert claude["meanTtftMs"] == 1000
-    assert claude["meanTps"] == 40
+    assert claude["meanTps"] == 50
+    assert models["gpt-test"]["meanTps"] == 40
     assert models["openrouter/test"]["meanTps"] == 50
     assert models["unknown"]["meanTtftMs"] is None
     assert models["unknown"]["meanTps"] is None
@@ -128,6 +129,44 @@ async def test_conversation_analytics_measurement_scope_accounts_and_unknowns(as
     assert sum(row["requests"] for row in analytics["activity"]) == 7
     assert sum(row["errors"] for row in analytics["activity"]) == 1
     assert sum(row["cancelled"] for row in analytics["activity"]) == 1
+
+
+@pytest.mark.parametrize("source_kind", ["claude", "openrouter"])
+async def test_conversation_gateway_tps_excludes_bursts_without_losing_other_observations(async_client, source_kind):
+    now = utcnow().replace(microsecond=0)
+    await seed(
+        log(
+            "burst",
+            now - timedelta(minutes=1),
+            model_source_kind=source_kind,
+            output_tokens=578,
+            reasoning_tokens=None,
+            latency_ms=6713,
+            latency_first_token_ms=6690,
+        ),
+        log(
+            "short",
+            now - timedelta(seconds=50),
+            model_source_kind=source_kind,
+            latency_ms=1999,
+            latency_first_token_ms=1000,
+        ),
+        log(
+            "boundary", now - timedelta(seconds=40), model_source_kind=source_kind, latency_ms=2000, reasoning_tokens=40
+        ),
+        log("failed", now - timedelta(seconds=30), model_source_kind=source_kind, status="error"),
+        log("cancelled", now - timedelta(seconds=20), model_source_kind=source_kind, status="cancelled"),
+        log("unknown-ttft", now - timedelta(seconds=10), model_source_kind=source_kind, latency_first_token_ms=None),
+        log("negative-ttft", now, model_source_kind=source_kind, latency_first_token_ms=-1),
+    )
+    response = await async_client.get("/api/conversations/observed-conversation")
+    assert response.status_code == 200, response.text
+    model = response.json()["analytics"]["models"][0]
+    assert model["requests"] == 7
+    assert model["ttftSamples"] == 3
+    assert model["tpsSamples"] == 1
+    assert model["meanTps"] == 100
+    assert model["cacheWriteSamples"] == 7
 
 
 async def test_empty_cache_activity_is_an_observation_not_health_failure(async_client):

@@ -717,3 +717,27 @@ adds account/organization validation and durable polling using existing gateway
 machinery; no third-party source was copied. Mock protocol, race, persistence,
 request-log and browser tests verify local behavior, not live acceptance or Free
 account OAuth eligibility.
+
+## Gateway throughput estimates
+
+Claude's reported output includes thinking, while a separate reasoning count may
+be unavailable. TPS therefore uses inclusive output rather than claiming a
+visible-text decode rate. The proxy can observe delivery, not upstream generation
+start. Nonempty redacted thinking and signatures prove opaque output arrived and
+anchor TTFT before protocol adaptation; they do not establish a token count.
+
+Successful turns need at least one second after first output to yield estimated
+TPS. For example, 578 tokens with 6713 ms total and 6690 ms TTFT has only 23 ms of
+observation: TPS is unavailable, not 25,130.4. The original timings, tokens and
+costs remain available. Reports and conversation analytics exclude the same
+sample. No timing clamp, full-duration substitution or historical rewrite is
+performed. Longer windows can still reflect buffering; the estimate marker and
+tooltips communicate this limit. Native OpenAI metric semantics are unchanged.
+
+Reference inspected October 1, 2026: OpenCodex
+`ef0297f86c4540c7d757c8595170d66f9c584aec`,
+`src/server/management/shared.ts`: estimated post-TTFT throughput with a one-second
+floor. CLIProxyAPI `fd48ea6840f5572deb53aeb5657740937ac9daaa`,
+`internal/runtime/executor/helps/claude_ttft_helpers.go`: signature output
+recognition. No third-party code is copied. Mock tests establish gateway metric
+behavior, not the reason a particular live upstream delivered in a burst.

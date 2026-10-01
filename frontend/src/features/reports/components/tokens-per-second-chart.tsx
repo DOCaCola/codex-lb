@@ -32,7 +32,7 @@ export function TokensPerSecondChart({ startDate, endDate, data }: TokensPerSeco
   }));
 
   return (
-    <ReportChartCard title={t("reports.charts.tokensPerSecond")} empty={data.length === 0}>
+    <ReportChartCard title={t("reports.charts.tokensPerSecond")} titleTooltip={t("common.metrics.gatewayTps")} empty={data.length === 0}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
             <defs>

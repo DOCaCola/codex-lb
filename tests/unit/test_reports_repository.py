@@ -22,21 +22,26 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_openrouter_tps_uses_total_output_and_excludes_unreliable_samples(async_session):
+@pytest.mark.parametrize("source_kind", ["openrouter", "claude"])
+async def test_gateway_tps_uses_total_output_and_excludes_unreliable_samples(async_session, source_kind):
     for index, (duration, status, first) in enumerate(
         [
             (2500, "success", 500),
             (550, "success", 500),
             (4500, "error", 500),
             (2500, "success", None),
+            (6713, "success", 6690),
+            (1499, "success", 500),
+            (2500, "cancelled", 500),
+            (2500, "success", -1),
         ]
     ):
         async_session.add(
             RequestLog(
-                request_id=f"or-speed-{index}",
+                request_id=f"{source_kind}-speed-{index}",
                 requested_at=datetime(2026, 6, 1, 9),
-                model="openrouter/test",
-                model_source_kind="openrouter",
+                model=f"{source_kind}/test",
+                model_source_kind=source_kind,
                 status=status,
                 output_tokens=100,
                 reasoning_tokens=40,
@@ -51,6 +56,28 @@ async def test_openrouter_tps_uses_total_output_and_excludes_unreliable_samples(
         timezone.utc,
     )
     assert rows[0].median_tps == 50
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_kind", ["openrouter", "claude"])
+@pytest.mark.parametrize("reasoning_tokens", [None, 40])
+async def test_gateway_tps_includes_one_second_boundary(async_session, source_kind, reasoning_tokens):
+    async_session.add(
+        RequestLog(
+            request_id="boundary",
+            requested_at=datetime(2026, 6, 1, 9),
+            model="test",
+            model_source_kind=source_kind,
+            status="success",
+            output_tokens=100,
+            reasoning_tokens=reasoning_tokens,
+            latency_ms=1500,
+            latency_first_token_ms=500,
+        )
+    )
+    await async_session.commit()
+    rows = await ReportsRepository(async_session).aggregate_daily_rows(date(2026, 6, 1), date(2026, 6, 1), timezone.utc)
+    assert rows[0].median_tps == 100
 
 
 class ReportAggregateFilters(TypedDict, total=False):

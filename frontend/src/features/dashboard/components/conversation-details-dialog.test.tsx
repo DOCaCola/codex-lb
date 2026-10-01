@@ -22,6 +22,7 @@ describe("ConversationDetailsDialog", () => {
     renderWithProviders(<ConversationDetailsDialog open conversationId="analytics" onOpenChange={() => {}} />);
     expect(await screen.findByText("1.23s")).toBeInTheDocument();
     expect(screen.getByText("45.7 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("45.7 tok/s")).toHaveAttribute("title", expect.stringContaining("Claude and OpenRouter TPS are gateway estimates"));
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
     expect(screen.getByTitle("Measured samples: 2 TTFT, 1 TPS")).toBeInTheDocument();
     expect(screen.getByText("Cache writes: 0")).toHaveAttribute("title", "Measured cache-write requests: 2 / 4");

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.usage.logs import CANCELLED_STATUS, NON_ERROR_STATUSES, SUCCESS_STATUS
+from app.core.usage.throughput import request_tps_expr
 from app.db.models import RequestLog
 from app.modules.accounts.usage_time_rollup import _requested_at_epoch_bucket_expr
 from app.modules.reports.filters import _normal_traffic_clause
@@ -144,27 +145,10 @@ async def read_conversation_analytics(
     ]
     success = and_(RequestLog.status == SUCCESS_STATUS, generation_clause())
     ttft = case((and_(success, RequestLog.latency_first_token_ms >= 0), RequestLog.latency_first_token_ms))
-    # Match the existing Reports TPS convention: OpenRouter's estimated output
-    # is already visible output; native/Claude output includes reasoning.
-    tokens = case(
-        (RequestLog.model_source_kind == "openrouter", RequestLog.output_tokens),
-        else_=RequestLog.output_tokens - func.coalesce(RequestLog.reasoning_tokens, 0),
-    )
-    elapsed = RequestLog.latency_ms - RequestLog.latency_first_token_ms
     tps = case(
         (
-            and_(
-                success,
-                tokens > 0,
-                RequestLog.latency_first_token_ms >= 0,
-                elapsed > 0,
-                or_(
-                    RequestLog.model_source_kind.is_(None),
-                    RequestLog.model_source_kind != "openrouter",
-                    elapsed >= 1000,
-                ),
-            ),
-            tokens * 1000.0 / func.nullif(elapsed, 0),
+            and_(success, RequestLog.latency_first_token_ms >= 0),
+            request_tps_expr(),
         )
     )
     errors = case((RequestLog.status.not_in(NON_ERROR_STATUSES), 1), else_=0)

@@ -6,16 +6,17 @@ import { EmptyState } from "@/components/empty-state";
 
 export type ReportChartCardProps = {
   title: string;
+  titleTooltip?: string;
   empty: boolean;
   children: ReactNode;
 };
 
-export function ReportChartCard({ title, empty, children }: ReportChartCardProps) {
+export function ReportChartCard({ title, titleTooltip, empty, children }: ReportChartCardProps) {
   const { t } = useTranslation();
 
   return (
     <div className="rounded-xl border bg-card p-5">
-      <div className="text-sm font-semibold text-foreground">{title}</div>
+      <div className="text-sm font-semibold text-foreground" title={titleTooltip}>{title}</div>
       {empty ? (
         <div className="mt-4">
           <EmptyState

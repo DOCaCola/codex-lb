@@ -1412,13 +1412,19 @@ def _claude_generated_content(event: Mapping[str, JsonValue]) -> bool:
         block = event.get("content_block")
         if not is_json_mapping(block):
             return False
+        if block.get("type") == "redacted_thinking":
+            return isinstance(block.get("data"), str) and bool(block["data"])
+        if block.get("type") == "thinking" and isinstance(block.get("signature"), str) and block["signature"]:
+            return True
         return any(isinstance(block.get(key), str) and bool(block[key]) for key in ("text", "thinking", "name"))
     if kind != "content_block_delta":
         return False
     delta = event.get("delta")
-    return is_json_mapping(delta) and any(
-        isinstance(delta.get(key), str) and bool(delta[key]) for key in ("text", "thinking", "partial_json")
-    )
+    if not is_json_mapping(delta):
+        return False
+    if delta.get("type") == "signature_delta":
+        return isinstance(delta.get("signature"), str) and bool(delta["signature"])
+    return any(isinstance(delta.get(key), str) and bool(delta[key]) for key in ("text", "thinking", "partial_json"))
 
 
 class SourceStreamUsageParser:

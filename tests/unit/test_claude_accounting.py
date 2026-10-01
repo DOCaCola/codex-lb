@@ -70,6 +70,50 @@ def test_claude_timing_ignores_metadata_and_empty_content():
     assert holder.timings.latency_ms == 4000
 
 
+@pytest.mark.parametrize(
+    "opaque_event",
+    [
+        {"type": "content_block_start", "content_block": {"type": "redacted_thinking", "data": "opaque"}},
+        {"type": "content_block_start", "content_block": {"type": "thinking", "thinking": "", "signature": "signed"}},
+        {"type": "content_block_delta", "delta": {"type": "signature_delta", "signature": "signed"}},
+    ],
+)
+def test_claude_timing_observes_opaque_output_without_inventing_usage(opaque_event):
+    clock = VirtualClock()
+    holder = SourceUsageHolder()
+    parser = SourceStreamUsageParser(holder, response_shape="claude", clock=clock)
+    clock.advance(1)
+    parser.feed(_frame(opaque_event))
+    clock.advance(2)
+    parser.feed(_frame({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "answer"}}))
+    clock.advance(1)
+    parser.feed(_frame({"type": "message_stop"}))
+    assert holder.timings.latency_first_token_ms == 1000
+    assert holder.timings.latency_ms == 4000
+    assert holder.usage is None
+
+
+@pytest.mark.parametrize(
+    "empty_event",
+    [
+        {"type": "content_block_start", "content_block": {"type": "redacted_thinking", "data": ""}},
+        {"type": "content_block_start", "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
+        {"type": "content_block_delta", "delta": {"type": "signature_delta", "signature": ""}},
+        {"type": "content_block_start", "content_block": {"type": "text", "text": "", "data": "metadata"}},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+    ],
+)
+def test_claude_timing_ignores_empty_opaque_and_terminal_events(empty_event):
+    clock = VirtualClock()
+    holder = SourceUsageHolder()
+    parser = SourceStreamUsageParser(holder, response_shape="claude", clock=clock)
+    clock.advance(1)
+    parser.feed(_frame(empty_event))
+    parser.feed(_frame({"type": "message_stop"}))
+    assert holder.timings.latency_first_token_ms is None
+    assert holder.timings.latency_ms == 1000
+
+
 def test_claude_price_counts_each_cache_category_once(monkeypatch):
     from app.core.usage import pricing_catalog
 

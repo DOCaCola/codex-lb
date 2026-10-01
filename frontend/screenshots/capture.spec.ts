@@ -25,6 +25,7 @@ import {
   createConversationEntry,
   createConversationsResponse,
   createModelSource,
+  createRequestLogEntry,
 } from "../src/test/mocks/factories";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,45 @@ const SCREENSHOT_PORT = process.env.SCREENSHOT_PORT ?? "4173";
 const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? `http://localhost:${SCREENSHOT_PORT}`;
 const THEME_KEY = "codex-lb-theme";
 const SETTLE_MS = 1500;
+
+for (const theme of ["light", "dark"] as const) {
+  test(`Claude gateway throughput — ${theme}`, async ({ page }, testInfo) => {
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await applyTheme(page, theme);
+    await interceptApi(page);
+    const requests = [
+      createRequestLogEntry({
+        requestId: "claude-burst", model: "anthropic/claude-opus-5-5", modelSourceKind: "claude",
+        outputTokensRaw: 578, reasoningTokens: null, latencyMs: 6713, latencyFirstTokenMs: 6690,
+      }),
+      createRequestLogEntry({
+        requestId: "claude-valid", model: "anthropic/claude-opus-5-5", modelSourceKind: "claude",
+        outputTokensRaw: 100, reasoningTokens: 40, latencyMs: 2500, latencyFirstTokenMs: 500,
+      }),
+      createRequestLogEntry({
+        requestId: "native-valid", model: "gpt-6-astra", modelSourceKind: null,
+        outputTokensRaw: 200, reasoningTokens: 40, latencyMs: 1000, latencyFirstTokenMs: 200,
+      }),
+    ];
+    await page.route("**/health/ready", route => fulfill(route, { status: "ok" }));
+    await page.route("**/api/request-logs?*", route => fulfill(route, createRequestLogsResponse(requests, 3, false)));
+    await page.goto(`${BASE_URL}/dashboard`);
+    const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: /^TPS/ }) });
+    const rows = table.locator("tbody tr");
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0).getByTitle(/Estimated output tokens/)).toHaveText("--");
+    await expect(rows.nth(1).getByTitle(/Estimated output tokens/)).toHaveText("≈50.0");
+    await expect(rows.nth(2).getByText("200.0", { exact: true })).toBeVisible();
+    await table.screenshot({ path: testInfo.outputPath(`claude-throughput-${theme}.png`), animations: "disabled" });
+    await rows.nth(0).getByRole("button", { name: "View Details", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTitle(/Estimated output tokens/)).toContainText("—");
+    await expect(dialog.getByText("25130.4", { exact: true })).toHaveCount(0);
+    await dialog.screenshot({ path: testInfo.outputPath(`claude-burst-detail-${theme}.png`), animations: "disabled" });
+    expect(errors).toEqual([]);
+  });
+}
 
 test("dashboard provider cards share sizing and anatomy", async ({
   page,

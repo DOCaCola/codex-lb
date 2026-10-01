@@ -1,5 +1,5 @@
 import { Inbox } from "lucide-react";
-import { formatGenerationSpeed } from "@/features/dashboard/generation-speed";
+import { formatGenerationSpeed, isGatewayMeasuredSpeed } from "@/features/dashboard/generation-speed";
 import { requestOperationLabel, requestTypeLabel } from "@/features/dashboard/request-operation";
 import {
   useMemo,
@@ -522,11 +522,11 @@ export function RecentRequestsTable({
                     </Badge>
                   </TableCell> : null}
                   {isColumnVisible("ttft") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums"
-                    title={request.modelSourceKind === "openrouter" ? t("dashboard.requests.gatewayTtft", "Gateway-observed time to first generated content, including reasoning or tool arguments.") : undefined}>
+                    title={isGatewayMeasuredSpeed(request) ? t("dashboard.requests.gatewayTtft", "Gateway-observed time to first generated content, including opaque thinking or tool arguments.") : undefined}>
                     {formatCompactElapsed(request.latencyFirstTokenMs) ?? "--"}
                   </TableCell> : null}
                   {isColumnVisible("tps") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums"
-                    title={request.modelSourceKind === "openrouter" ? t("dashboard.requests.gatewayTps", "Estimated output tokens/s, including reasoning, after first output. Unavailable for failed turns or generation windows under one second.") : undefined}>
+                    title={isGatewayMeasuredSpeed(request) ? t("dashboard.requests.gatewayTps", "Estimated output tokens/s, including reasoning, after first output. Unavailable for failed turns or generation windows under one second.") : undefined}>
                     {generationSpeed ?? "--"}
                   </TableCell> : null}
                   {isColumnVisible("tokens") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums">
@@ -658,7 +658,8 @@ export function RecentRequestsTable({
                   <RequestDetailField label={t("dashboard.requests.upstreamEffort", "Upstream effort")} value={selectedRequest.upstreamReasoningEffort} />
                 ) : null}
                 <RequestDetailField label={t("dashboard.requestDetails.queue")} value={formatElapsed(selectedRequest?.latencyQueueMs ?? null)} />
-                <RequestDetailField label="TPS" value={selectedRequest ? (formatGenerationSpeed(selectedRequest) ?? "—") : "—"} />
+                <RequestDetailField label="TPS" value={selectedRequest ? (formatGenerationSpeed(selectedRequest) ?? "—") : "—"}
+                  title={selectedRequest && isGatewayMeasuredSpeed(selectedRequest) ? t("dashboard.requests.gatewayTps", "Estimated output tokens/s, including reasoning, after first output. Unavailable for failed turns or generation windows under one second.") : undefined} />
                 {selectedRequest?.reasoningTokens != null ? (
                   <RequestDetailField
                     label={t("dashboard.requestDetails.reasoningTokensIncluded")}
@@ -832,6 +833,7 @@ type RequestDetailFieldProps = {
   copyValue?: string;
   copyLabel?: string;
   compactCopy?: boolean;
+  title?: string;
 };
 
 function RequestDetailField({
@@ -841,12 +843,13 @@ function RequestDetailField({
   copyValue,
   copyLabel,
   compactCopy = false,
+  title,
 }: RequestDetailFieldProps) {
   const { t } = useTranslation();
   const copyLabelText = copyLabel ?? t("components.copyButton.copy");
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" title={title}>
       <div className="flex items-center gap-2">
         <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">
           {label}

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, case, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.usage.throughput import request_tps_expr
 from app.db.models import Account, RequestLog
 from app.modules.reports.filters import (
     MISSING_USERAGENT_GROUP,
@@ -448,10 +449,7 @@ def _daily_speed_medians_stmt(
             *([RequestLog.api_key_id.in_(api_key_ids)] if api_key_ids else []),
         ),
     )
-    token_count = case(
-        (RequestLog.model_source_kind == "openrouter", RequestLog.output_tokens),
-        else_=RequestLog.output_tokens - func.coalesce(RequestLog.reasoning_tokens, 0),
-    )
+    tps = request_tps_expr()
     ttft_values_cte = (
         select(
             day_ranges_cte.c.report_date,
@@ -464,24 +462,10 @@ def _daily_speed_medians_stmt(
     tps_values_cte = (
         select(
             day_ranges_cte.c.report_date,
-            (token_count * 1000.0 / (RequestLog.latency_ms - RequestLog.latency_first_token_ms)).label("tps"),
+            tps.label("tps"),
         )
         .select_from(traffic_join)
-        .where(
-            token_count.is_not(None),
-            token_count > 0,
-            RequestLog.latency_ms.is_not(None),
-            RequestLog.latency_first_token_ms.is_not(None),
-            RequestLog.latency_ms > RequestLog.latency_first_token_ms,
-            or_(
-                RequestLog.model_source_kind.is_(None),
-                RequestLog.model_source_kind != "openrouter",
-                and_(
-                    RequestLog.status == "success",
-                    RequestLog.latency_ms - RequestLog.latency_first_token_ms >= 1000,
-                ),
-            ),
-        )
+        .where(tps.is_not(None))
         .cte("daily_tps_values")
     )
     queue_values_cte = (

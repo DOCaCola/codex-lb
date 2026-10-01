@@ -171,7 +171,7 @@ export function ConversationDetailsDialog({
                           <TableCell className="font-mono text-xs tabular-nums">{performance ? `${performance.errors} / ${performance.cancelled}` : "—"}</TableCell>
                           <TableCell className="font-mono text-xs tabular-nums" title={t("dashboard.conversations.analytics.samples", { ttft: performance?.ttftSamples ?? 0, tps: performance?.tpsSamples ?? 0 })}>
                             <div>{performance?.meanTtftMs == null ? "—" : `${(performance.meanTtftMs / 1000).toFixed(2)}s`}</div>
-                            <div>{performance?.meanTps == null ? "—" : `${performance.meanTps.toFixed(1)} tok/s`}</div>
+                            <div title={t("common.metrics.gatewayTps")}>{performance?.meanTps == null ? "—" : `${performance.meanTps.toFixed(1)} tok/s`}</div>
                           </TableCell>
                         </TableRow>
                       ); })}

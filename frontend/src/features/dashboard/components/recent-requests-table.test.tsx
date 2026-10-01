@@ -198,24 +198,61 @@ describe("Claude subscription snapshots", () => {
   });
 });
 
-describe("OpenRouter gateway metrics", () => {
-  it("uses total output and marks generation TPS estimated", () => {
+describe.each(["openrouter", "claude"] as const)("%s gateway metrics", (sourceKind) => {
+  it.each([null, 40])("uses total output and marks generation TPS estimated with reasoning %s", (reasoningTokens) => {
     expect(formatGenerationSpeed({
-      ...LAYOUT_REQUEST, modelSourceKind: "openrouter",
-      latencyMs: 2500, latencyFirstTokenMs: 500, outputTokensRaw: 100, reasoningTokens: 40,
+      ...LAYOUT_REQUEST, modelSourceKind: sourceKind,
+      latencyMs: 2500, latencyFirstTokenMs: 500, outputTokensRaw: 100, reasoningTokens,
     })).toBe("≈50.0");
+  });
+
+  it("includes a one-second window", () => {
+    expect(formatGenerationSpeed({
+      ...LAYOUT_REQUEST, modelSourceKind: sourceKind,
+      latencyMs: 1500, latencyFirstTokenMs: 500, outputTokensRaw: 100,
+    })).toBe("≈100.0");
   });
 
   it.each([
     { latencyMs: 1000, latencyFirstTokenMs: 500 },
+    { latencyMs: 1499, latencyFirstTokenMs: 500 },
+    { latencyMs: 6713, latencyFirstTokenMs: 6690, outputTokensRaw: 578 },
     { latencyFirstTokenMs: null },
+    { latencyFirstTokenMs: -1 },
     { outputTokensRaw: null },
+    { outputTokensRaw: 0 },
     { status: "error" },
+    { status: "cancelled" },
   ])("omits unmeasurable/unsuccessful TPS: %j", (override) => {
     expect(formatGenerationSpeed({
-      ...LAYOUT_REQUEST, modelSourceKind: "openrouter",
+      ...LAYOUT_REQUEST, modelSourceKind: sourceKind,
       latencyMs: 2500, latencyFirstTokenMs: 500, ...override,
     })).toBeNull();
+  });
+
+  it("shows the same estimated rate and explanation in the row and details", () => {
+    render(<RecentRequestsTable accounts={[]} requests={[{
+      ...LAYOUT_REQUEST, modelSourceKind: sourceKind,
+      latencyMs: 2500, latencyFirstTokenMs: 500, outputTokensRaw: 100,
+    }]} {...PAGINATION_PROPS} />);
+    const rate = screen.getByText("≈50.0");
+    expect(rate).toHaveAttribute("title", expect.stringContaining("generation windows under one second"));
+    const dialog = openRequestDetails();
+    expect(within(dialog).getByText("≈50.0").closest("div.space-y-1"))
+      .toHaveAttribute("title", expect.stringContaining("including reasoning"));
+  });
+
+  it("keeps burst timing and tokens visible without the inflated rate", () => {
+    render(<RecentRequestsTable accounts={[]} requests={[{
+      ...LAYOUT_REQUEST, modelSourceKind: sourceKind,
+      latencyMs: 6713, latencyFirstTokenMs: 6690, outputTokensRaw: 578,
+    }]} {...PAGINATION_PROPS} />);
+    expect(screen.queryByText(/25130/)).not.toBeInTheDocument();
+    const dialog = openRequestDetails();
+    expect(within(dialog).getByText("TPS").closest("div.space-y-1"))
+      .toHaveTextContent("—");
+    expect(within(dialog).getByText("TTFT").closest("div.space-y-1"))
+      .not.toHaveTextContent("—");
   });
 
   it("labels compatible upstream transport HTTP", () => {
@@ -235,6 +272,8 @@ describe("Claude accounting presentation", () => {
       ...LAYOUT_REQUEST,
       model: "anthropic/claude-haiku-4-5-20251001",
       modelSourceKind: "claude",
+      latencyMs: 3000,
+      latencyFirstTokenMs: 1000,
       inputTokens: 1000,
       outputTokens: 100,
       tokens: 1100,

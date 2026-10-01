@@ -182,6 +182,75 @@ async def test_responses_route_reaches_claude_with_owned_cleanup(async_client, p
 
 
 @pytest.mark.parametrize("surface", ["responses", "messages", "chat"])
+@pytest.mark.parametrize(
+    "opaque_block",
+    [
+        {"type": "redacted_thinking", "data": "opaque"},
+        {"type": "thinking", "thinking": "", "signature": "signed"},
+    ],
+)
+async def test_claude_public_routes_observe_opaque_output_before_adaptation(
+    async_client, pool, monkeypatch, surface, opaque_block
+):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+    from app.modules.claude import transport
+    from tests.simulation.virtual_time import VirtualClock
+
+    clock = VirtualClock()
+    install_upstream(monkeypatch, content=[opaque_block, {"type": "text", "text": "answer"}])
+    original_open = transport.open_responses
+    original_events = transport._iter_sse_events
+
+    async def open_with_clock(*args, **kwargs):
+        return await original_open(*args, **{**kwargs, "clock": clock})
+
+    async def timed_events(*args, **kwargs):
+        async for frame in original_events(*args, **kwargs):
+            event = json.loads(next(line[6:] for line in frame.splitlines() if line.startswith("data: ")))
+            if event["type"] == "content_block_start":
+                clock.advance((1 if event["index"] == 0 else 3) - clock.monotonic())
+            elif event["type"] == "message_stop":
+                clock.advance(4 - clock.monotonic())
+            yield frame
+
+    monkeypatch.setattr(transport, "open_responses", open_with_clock)
+    monkeypatch.setattr(transport, "_iter_sse_events", timed_events)
+    if surface == "messages":
+        response = await async_client.post(
+            "/v1/messages",
+            headers=native_headers(),
+            json={
+                "model": "claude-opus-5",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 100,
+                "stream": True,
+            },
+        )
+        assert opaque_block["type"] in response.text
+    elif surface == "chat":
+        response = await async_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": MODEL,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+            },
+        )
+    else:
+        response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hi", "stream": True})
+    assert response.status_code == 200, response.text
+    assert "answer" in response.text
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
+        assert (row.latency_first_token_ms, row.latency_ms) == (1000, 4000)
+        assert row.output_tokens == 7
+        assert row.reasoning_tokens is None
+
+
+@pytest.mark.parametrize("surface", ["responses", "messages", "chat"])
 async def test_claude_public_routes_preserve_cache_write_and_semantic_timing(async_client, pool, monkeypatch, surface):
     from sqlalchemy import select
 
