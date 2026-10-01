@@ -115,7 +115,7 @@ async def test_sol_to_opus_http_preserves_readable_history_and_retained_state(
     assert next_retained.expand([])[: len(original["input"])] == original["input"]
 
 
-@pytest.mark.parametrize("case", ["active", "tampered", "fork"])
+@pytest.mark.parametrize("case", ["active", "tampered", "foreign_client"])
 async def test_nonportable_and_unauthenticated_history_fails_before_account_selection(
     async_client, opus_pool, monkeypatch, case
 ):
@@ -128,13 +128,13 @@ async def test_nonportable_and_unauthenticated_history_fails_before_account_sele
     code = "nonportable_provider_history"
     if case == "active":
         request = payload(completed=False)
-    elif case in {"tampered", "fork"}:
+    elif case in {"tampered", "foreign_client"}:
         code = "invalid_provider_history"
         request["input"][1]["encrypted_content"] = (
             "claude-v1.invalid"
             if case == "tampered"
             else ClaudeOpaqueState(TokenEncryptor()).encode(
-                OpaqueScope(opus_pool, MODEL, "anonymous", "parent-conversation"),
+                OpaqueScope(opus_pool, MODEL, "another-key"),
                 {"type": "thinking", "thinking": "", "signature": "parent-signed"},
             )
         )
@@ -146,6 +146,27 @@ async def test_nonportable_and_unauthenticated_history_fails_before_account_sele
     assert error["message"] != "Invalid request payload"
     assert not captured
     selection.assert_not_awaited()
+
+
+@pytest.mark.parametrize("active", [False, True])
+async def test_forked_conversation_replays_parent_signed_state(async_client, opus_pool, monkeypatch, active):
+    from app.modules.claude import inference
+
+    captured, _ = install_upstream(monkeypatch)
+    selection = AsyncMock(wraps=inference.select_account)
+    monkeypatch.setattr(inference, "select_account", selection)
+    signed: dict[str, JsonValue] = {"type": "thinking", "thinking": "", "signature": "parent-signed"}
+    token = ClaudeOpaqueState(TokenEncryptor()).encode(OpaqueScope(opus_pool, MODEL, "anonymous"), signed)
+    request = payload(completed=not active)
+    request["input"][1] = {"type": "reasoning", "summary": [], "encrypted_content": token}
+    response = await async_client.post(
+        "/backend-api/codex/responses", headers={**HEADERS, "session_id": "child-conversation"}, json=request
+    )
+    assert response.status_code == 200, response.text
+    blocks = [block for message in captured[0][2]["messages"] for block in message["content"]]
+    assert signed in blocks
+    ownership = selection.await_args.kwargs
+    assert ownership["owner_source_id" if active else "preferred_source_id"] == opus_pool
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
@@ -176,9 +197,7 @@ async def test_plaintext_compaction_preserves_all_reasoning(async_client, opus_p
 async def test_opus_sol_opus_preserves_original_empty_display_signed_blocks(async_client, opus_pool, monkeypatch):
     captured, _ = install_upstream(monkeypatch)
     signed: dict[str, JsonValue] = {"type": "thinking", "thinking": "", "signature": "original-signed-state"}
-    token = ClaudeOpaqueState(TokenEncryptor()).encode(
-        OpaqueScope(opus_pool, MODEL, "anonymous", HEADERS["session_id"]), signed
-    )
+    token = ClaudeOpaqueState(TokenEncryptor()).encode(OpaqueScope(opus_pool, MODEL, "anonymous"), signed)
     request = payload()
     request["input"].insert(0, {"type": "reasoning", "summary": [], "encrypted_content": token})
     response = await async_client.post("/backend-api/codex/responses", headers=HEADERS, json=request)

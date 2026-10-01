@@ -24,7 +24,7 @@ HEADERS = {"user-agent": "codex_cli_rs/0.157.0", "session_id": CONVERSATION}
 
 def owned_history(source):
     token = ClaudeOpaqueState(TokenEncryptor()).encode(
-        OpaqueScope(source, MODEL, "anonymous", CONVERSATION),
+        OpaqueScope(source, MODEL, "anonymous"),
         {"type": "thinking", "thinking": "private reasoning", "signature": "private signature"},
     )
     return [
@@ -137,7 +137,7 @@ async def test_websocket_owned_quota_carries_retry_details(async_client, pool, m
 @pytest.mark.parametrize("path", ["/v1/messages", "/v1/messages/count_tokens"])
 async def test_native_resource_owner_quota_is_429(async_client, pool, monkeypatch, path):
     captured, _ = install_upstream(monkeypatch)
-    resource_scope = ResourceScope("anonymous", "native-thread", MODEL)
+    resource_scope = ResourceScope("anonymous", MODEL)
     await record_origins(resource_scope, pool[0], {"content": blocks()})
     deadline = datetime.now(UTC) + timedelta(minutes=5)
     await exhaust(pool[0], deadline)

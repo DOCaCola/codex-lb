@@ -27,7 +27,7 @@ HEADERS = {"session_id": "native-provider-history"}
 def history(kind="thinking", *, client_scope="anonymous"):
     opaque = ClaudeOpaqueState(TokenEncryptor())
     token = opaque.encode(
-        OpaqueScope("claude-source", "anthropic/claude-opus-5-5", client_scope, HEADERS["session_id"]),
+        OpaqueScope("claude-source", "anthropic/claude-opus-5-5", client_scope),
         {"type": kind, "thinking": "Preserved Opus context", "signature": "signed"},
     )
     return [
@@ -170,7 +170,7 @@ def test_public_keyed_websocket_native_switch_preserves_or_rejects_history(app_i
     async def make_history(key):
         async with SessionLocal() as session:
             api_key = await ApiKeysService(ApiKeysRepository(session)).validate_key(key)
-        return history(
+        return api_key.id, history(
             "thinking" if kind == "wrong_client" else kind,
             client_scope="another-key" if kind == "wrong_client" else api_key.id,
         )
@@ -179,14 +179,14 @@ def test_public_keyed_websocket_native_switch_preserves_or_rejects_history(app_i
     with TestClient(app_instance, client=("127.0.0.1", 50000)) as client:
         key = client.portal.call(seed_account)
         assert client.put("http://localhost/api/settings", json={"apiKeyAuthEnabled": True}).status_code == 200
-        original = client.portal.call(make_history, key)
+        api_key_id, original = client.portal.call(make_history, key)
         with client.websocket_connect(
             "ws://localhost/backend-api/codex/responses",
             headers={**HEADERS, "authorization": f"Bearer {key}"},
         ) as websocket:
             websocket.send_json({"type": "response.create", "model": "gpt-6.1-sol", "input": original})
             event = websocket.receive_json()
-            assert auth_scopes[-1]["conversation_id"] == HEADERS["session_id"], auth_scopes
+            assert auth_scopes[-1] == {"client_scope": api_key_id}, auth_scopes
             if kind == "thinking":
                 assert event["type"] == "response.created", event
                 assert websocket.receive_json()["type"] == "response.completed"

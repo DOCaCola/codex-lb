@@ -37,7 +37,7 @@ class NativeSessionBinding:
 
     @property
     def resource_scope(self) -> ResourceScope:
-        return ResourceScope(self.client_scope, self.conversation_id, self.model)
+        return ResourceScope(self.client_scope, self.model)
 
     async def commit(self, source_id: str) -> None:
         """Persist affinity only after admission, without overwriting a concurrent binding."""

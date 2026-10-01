@@ -349,7 +349,7 @@ class _StreamingRetryMixin:
         required_account_id: str | None = None,
     ) -> AsyncIterator[str]:
         proxy = cast(_StreamingServiceProtocol, self)
-        payload = project_native_history(payload, headers, api_key)
+        payload = project_native_history(payload, api_key)
         scheduler = scheduler_for(proxy)
         clock = clock_for(proxy)
         useragent, useragent_group, conversation_id = _request_log_client_fields(headers)

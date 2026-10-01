@@ -992,7 +992,7 @@ class _HTTPBridgeStreamingMixin:
         capacity_startup_wait_event: asyncio.Event | None = None,
         capacity_startup_ready_event: asyncio.Event | None = None,
     ) -> AsyncIterator[str]:
-        payload = project_native_history(payload, headers, api_key)
+        payload = project_native_history(payload, api_key)
         dashboard_settings = await _service_get_settings_cache().get()
         runtime_config = _http_bridge_runtime_config(dashboard_settings, _service_get_settings())
         if http_bridge_active is False:

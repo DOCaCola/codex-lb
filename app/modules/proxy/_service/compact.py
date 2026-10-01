@@ -833,7 +833,7 @@ class _CompactMixin:
 
         proxy._raise_for_unsupported_input_image_references(payload)
         try:
-            payload = project_native_history(payload, headers, api_key)
+            payload = project_native_history(payload, api_key)
             rewritten_file_account_id = await proxy._resolve_forwarded_file_account_for_responses(
                 payload,
                 headers,

@@ -355,7 +355,7 @@ async def plan_chat_replay(
                 token = item.get("encrypted_content")
                 if not isinstance(token, str):
                     continue
-                envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=scope.conversation_id)
+                envelope = opaque.authenticate(token, client_scope=client_scope)
                 if envelope.block.get("type") == "web_search":
                     raise ClientPayloadError(
                         "Claude search state cannot be reconstructed from Chat history", param="messages"

@@ -182,13 +182,13 @@ def test_genuine_empty_display_signed_blocks_remain_verbatim(kind):
     token = opaque.encode(scope(), block)
     payload = history(token=token, summary=None, content=None, completed=False)
     assert project_foreign_replay(payload) is payload
-    replay = authenticate_replay(payload, opaque, model=scope().model, client_scope="key-a", conversation_id="thread-a")
+    replay = authenticate_replay(payload, opaque, model=scope().model, client_scope="key-a")
     assert replay.blocks[0].envelope.block == block
     assert replay.owner_source_id == "source-a"
 
 
-@pytest.mark.parametrize("scope_field", ["client_scope", "conversation_id", "tampering"])
-def test_projection_never_bypasses_authentication_including_forked_scope(scope_field):
+@pytest.mark.parametrize("scope_field", ["client_scope", "tampering"])
+def test_projection_never_bypasses_authentication(scope_field):
     opaque = codec()
     token = opaque.encode(scope(), {"type": "thinking", "thinking": "", "signature": "signed"})
     payload = history(token=token if scope_field != "tampering" else "claude-v1.invalid")
@@ -199,7 +199,6 @@ def test_projection_never_bypasses_authentication_including_forked_scope(scope_f
             opaque,
             model=scope().model,
             client_scope="child-key" if scope_field == "client_scope" else "key-a",
-            conversation_id="child-thread" if scope_field == "conversation_id" else "thread-a",
         )
     assert error.value.code == "invalid_provider_history"
     assert error.value.param == "input[1]"
@@ -213,17 +212,13 @@ def test_opus_sol_opus_mixed_history_keeps_original_signed_state(readable):
     payload = history() if readable else history(summary=None, content=None)
     payload["input"].insert(0, {"type": "reasoning", "encrypted_content": token})
     projected = project_foreign_replay(payload)
-    replay = authenticate_replay(
-        projected, opaque, model=scope().model, client_scope="key-a", conversation_id="thread-a"
-    )
+    replay = authenticate_replay(projected, opaque, model=scope().model, client_scope="key-a")
     projected = replay.project(projected, source_id="source-a", model=scope().model)
     body = project_responses(
         projected,
         max_output_tokens=64000,
         reasoning=None,
-        restore_reasoning=lambda value: (
-            opaque.decode(value, model=scope().model, client_scope="key-a", conversation_id="thread-a").block
-        ),
+        restore_reasoning=lambda value: opaque.decode(value, model=scope().model, client_scope="key-a").block,
     ).body
     assert at(body["messages"], 0, "content") == [signed]
     assert ("Sol context" in str(body)) is readable
@@ -237,6 +232,6 @@ def test_empty_projection_preserves_later_authentication_error_index(token):
     projected = project_foreign_replay(payload)
     assert at(projected["input"], 1) == {"type": "reasoning", "summary": []}
     with pytest.raises(ClientPayloadError) as error:
-        authenticate_replay(projected, codec(), model=scope().model, client_scope="key-a", conversation_id="thread-a")
+        authenticate_replay(projected, codec(), model=scope().model, client_scope="key-a")
     assert error.value.code == "invalid_provider_history"
     assert error.value.param == "input[5]"

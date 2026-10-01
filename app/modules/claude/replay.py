@@ -138,7 +138,6 @@ def project_native_replay(
     opaque: ClaudeOpaqueState,
     *,
     client_scope: str,
-    conversation_id: str,
 ) -> list[NativeJsonValue]:
     """Extract portable thinking, never relabel opaque Claude state as OpenAI."""
     projected: list[NativeJsonValue] = []
@@ -150,7 +149,7 @@ def project_native_replay(
             continue
         param = f"input[{index}]"
         try:
-            envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
+            envelope = opaque.authenticate(token, client_scope=client_scope)
         except ClientPayloadError as exc:
             raise ClientPayloadError(str(exc), param=param, code="invalid_provider_history") from exc
         kind = envelope.block["type"]
@@ -241,7 +240,6 @@ def authenticate_replay(
     *,
     model: str,
     client_scope: str,
-    conversation_id: str,
     require_complete_history: bool = False,
 ) -> ClaudeReplay:
     items = payload.get("input")
@@ -258,7 +256,7 @@ def authenticate_replay(
         if not isinstance(token, str):
             continue
         try:
-            envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
+            envelope = opaque.authenticate(token, client_scope=client_scope)
         except ClientPayloadError as exc:
             raise ClientPayloadError(str(exc), param=f"input[{index}]", code="invalid_provider_history") from exc
         strict = envelope.block.get("type") == "web_search" or index >= active_start

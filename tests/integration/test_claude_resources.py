@@ -47,7 +47,7 @@ async def test_native_resource_survives_affinity_expiry_and_rebind(async_client,
         async for frame in original_frames(body):
             for identifier in ("srv1", "srv2"):
                 if identifier in frame:
-                    scope = ResourceScope("anonymous", "native-thread", MODEL)
+                    scope = ResourceScope("anonymous", MODEL)
                     async with SessionLocal() as session:
                         assert await resolve_origins(session, scope.keys(frozenset({identifier}))) in pool
             yield frame
@@ -89,6 +89,22 @@ async def test_native_resource_survives_affinity_expiry_and_rebind(async_client,
     assert closed == [origin]
 
 
+async def test_forked_native_session_replays_resource_on_its_origin(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch, content=blocks())
+    first = await async_client.post("/v1/messages", headers=native_headers(), json=payload())
+    assert "srv1" in first.text
+    origin = captured[0][0]
+    replay, _ = install_upstream(monkeypatch)
+    history = [{"role": "assistant", "content": blocks()}, {"role": "user", "content": "continue"}]
+    response = await async_client.post(
+        "/v1/messages",
+        headers={**native_headers(), "x-claude-code-session-id": "native-fork"},
+        json=payload(history),
+    )
+    assert response.status_code == 200, response.text
+    assert replay[-1][0] == origin
+
+
 async def test_unknown_history_not_blessed_by_affinity(async_client, pool, monkeypatch):
     captured, _ = install_upstream(monkeypatch)
     await async_client.post("/v1/messages", headers=native_headers(), json=payload())
@@ -121,7 +137,7 @@ async def test_commit_failure_never_exposes_resource_or_retries(async_client, po
 
 
 async def test_scope_expiry_conflict_touch_and_deletion(pool):
-    scope = ResourceScope("key", "thread", MODEL)
+    scope = ResourceScope("key", MODEL)
     value = {"content": blocks()}
     keys = scope.keys(resource_ids(value))
     await record_origins(scope, pool[0], value)
@@ -131,9 +147,8 @@ async def test_scope_expiry_conflict_touch_and_deletion(pool):
     async with SessionLocal() as session:
         assert await resolve_origins(session, keys) == pool[0]
         for alternate in (
-            ResourceScope("other", "thread", MODEL),
-            ResourceScope("key", "other", MODEL),
-            ResourceScope("key", "thread", "anthropic/claude-sonnet-5"),
+            ResourceScope("other", MODEL),
+            ResourceScope("key", "anthropic/claude-sonnet-5"),
         ):
             with pytest.raises(ClaudeError, match="unknown or expired"):
                 await resolve_origins(session, alternate.keys(resource_ids(value)))
@@ -151,7 +166,7 @@ async def test_scope_expiry_conflict_touch_and_deletion(pool):
 
 
 async def test_expired_origin_cannot_be_revived_by_replay(pool):
-    scope = ResourceScope("key", "thread", MODEL)
+    scope = ResourceScope("key", MODEL)
     await record_origins(scope, pool[0], {"content": blocks()})
     keys = scope.keys(frozenset({"srv1"}))
     async with SessionLocal() as session:
@@ -165,7 +180,7 @@ async def test_expired_origin_cannot_be_revived_by_replay(pool):
 
 
 async def test_concurrent_registration_never_overwrites_origin(pool):
-    scope = ResourceScope("key", "thread", MODEL)
+    scope = ResourceScope("key", MODEL)
     value = {"content": blocks()}
     outcomes = await asyncio.gather(
         record_origins(scope, pool[0], value), record_origins(scope, pool[1], value), return_exceptions=True

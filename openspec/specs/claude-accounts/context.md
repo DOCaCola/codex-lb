@@ -48,7 +48,7 @@ separate 40/30 details, and each category is priced once.
 
 Portable text, images and function/free-form custom tool histories are projected.
 Tool namespaces use deterministic reversible names. Signed thinking stays in
-encrypted account/model/client/conversation-bound envelopes, never fabricated
+encrypted account/model/client-bound envelopes, never fabricated
 reasoning summaries. JSON-schema output and model-specific adaptive or budget reasoning use explicit model
 policies; unknown model minors do not inherit capabilities optimistically. Grammar
 constrained tool decoding, files, built-in server tools other than web search, verbosity,
@@ -139,7 +139,7 @@ and forced hosted-search choices fail explicitly before dispatch.
 Search lifecycle and URL citations are projected into Responses. Exact upstream
 server call/result blocks travel in authenticated `reasoning.encrypted_content`
 alongside the public `web_search_call`; clients must retain both. The carrier
-uses the existing account/model/client/conversation binding and durable replay
+uses the existing account/model/client binding and durable replay
 store. Missing or altered state, incompatible scope and unavailable owners fail
 explicitly; no encrypted result is fabricated from citations. Search errors or
 unfinished server calls cannot be reported as successful completion.
@@ -335,7 +335,7 @@ treat429 as terminal. Header delivery alone does not guarantee automatic resume.
 
 ### Native resource provenance
 
-Native server-tool identifiers are scoped by client/conversation/model and
+Native server-tool identifiers are scoped by client/model and
 stored as hashes with source and timestamps. The one-hour affinity record is
 only a cache preference. Thirty-day sliding provenance is an operator-facing
 retention policy, not a guarantee of upstream resource validity. Cleanup deletes
@@ -596,7 +596,7 @@ tool-continuation mocks exercise this behavior; live acceptance is unverified.
 The native Codex boundary cannot resolve Claude's `resp_msg_…` reasoning IDs or
 decode our authenticated `claude-v1.` envelopes. Renaming an ID would conceal
 only the first incompatibility. Native dispatch now authenticates the envelope
-against the same client/conversation scope used by source retention and extracts
+against the same client scope used by source retention and extracts
 readable thinking into `summary_text`. It removes the Claude envelope and its
 foreign item identity from the outbound projection, never from retained history.
 Existing summaries and additional plaintext reasoning survive; ordinary messages
@@ -664,7 +664,7 @@ compaction still leaves the original history unchanged. OpenCodex `ef0297f`,
 Sub2API `d6adebd`, CLIProxyAPI `fd48ea6` and OmniRoute `dbe703a0` (inspected
 2026-10-01) all drop foreign opaque reasoning; none refuses compaction for it.
 Genuine Claude envelopes, including empty-display signed thinking,
-retain client/conversation authentication and account/model ownership. Invalid
+retain client authentication and account/model ownership. Invalid
 authentication returns `invalid_provider_history` rather than a generic payload
 error. Conversion logs contain only conversion and opaque-omission counts.
 
@@ -864,3 +864,15 @@ off switch, so they are not changed.
 Not live-qualified: Anthropic acceptance of converted thinking text after a real
 model or account switch, Fable 5.1 prefix binding over projected history, and the
 disabled-thinking continuation on a production Haiku/Sonnet 4.5 account.
+
+### Client-scoped history authentication
+
+Conversation IDs come from caller headers (`thread-id`, Claude Code session), so
+under one API key they identify routing and retention context, not a principal.
+Envelopes and native resource origins therefore authenticate against client scope;
+model and account ownership come from the encrypted envelope or recorded origin.
+Example: a Codex fork of an Opus thread replays its parent's signed thinking under
+the child `thread-id`; completed thinking prefers its original account and active
+reasoning or search still requires it. Fork metadata (`forked_from_thread_id`,
+`parent_session_id`) is never an authorization input; the latter remains an
+affinity hint only. Older envelopes still carry an ignored conversation field.

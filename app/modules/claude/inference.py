@@ -111,7 +111,6 @@ async def prepare_responses(
                 opaque,
                 model=model,
                 client_scope=client_scope,
-                conversation_id=conversation_id,
                 require_complete_history=require_complete_history,
             )
         else:
@@ -120,7 +119,6 @@ async def prepare_responses(
                 opaque,
                 model=model,
                 client_scope=client_scope,
-                conversation_id=conversation_id,
                 require_complete_history=require_complete_history,
             )
             account = await select_account(
@@ -144,9 +142,7 @@ async def prepare_responses(
             projected,
             max_output_tokens=selected.max_output_tokens,
             reasoning=catalog_reasoning(AccountState.model_validate_json(account.state_json), model),
-            restore_reasoning=lambda token: (
-                opaque.decode(token, model=model, client_scope=client_scope, conversation_id=conversation_id).block
-            ),
+            restore_reasoning=lambda token: opaque.decode(token, model=model, client_scope=client_scope).block,
         )
         prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
             projection.body,
@@ -168,7 +164,7 @@ async def prepare_responses(
     return ClaudeAttempt(
         prepared,
         ResponsesProjection(
-            OpaqueScope(prepared.source.id, model, client_scope, conversation_id),
+            OpaqueScope(prepared.source.id, model, client_scope),
             projection.tools,
             opaque,
             search_enabled=projection.search_enabled,

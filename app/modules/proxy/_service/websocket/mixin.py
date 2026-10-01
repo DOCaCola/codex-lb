@@ -3338,12 +3338,7 @@ class _WebSocketMixin:
                 responses_payload.model, refreshed_api_key, raw_model=raw_source_model
             )
         ):
-            responses_payload = project_native_history(
-                responses_payload,
-                headers,
-                refreshed_api_key,
-                conversation_id=replay_conversation_id or "source-responses",
-            )
+            responses_payload = project_native_history(responses_payload, refreshed_api_key)
         normalized_payload = responses_payload.to_payload()
         stripped_client_metadata = strip_capability_metadata(normalized_payload.get("client_metadata"))
         if stripped_client_metadata is not normalized_payload.get("client_metadata"):

@@ -177,7 +177,7 @@ def test_unsupported_semantics_are_not_silently_dropped(payload):
 
 
 def scope():
-    return OpaqueScope("source-a", "anthropic/claude-opus-5", "key-a", "thread-a")
+    return OpaqueScope("source-a", "anthropic/claude-opus-5", "key-a")
 
 
 def codec():
@@ -199,9 +199,7 @@ def test_assistant_tail_preserves_history_and_appends_wire_only_continuation(sig
         payload,
         max_output_tokens=8192,
         restore_reasoning=lambda token: (
-            opaque.decode(
-                token, model=scope().model, client_scope=scope().client_scope, conversation_id=scope().conversation_id
-            ).block
+            opaque.decode(token, model=scope().model, client_scope=scope().client_scope).block
         ),
     )
     assert projected.body["messages"] == [
@@ -341,9 +339,7 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
         request(tools=payload["tools"], input=history),
         max_output_tokens=8192,
         restore_reasoning=lambda token: (
-            opaque.decode(
-                token, model=scope().model, client_scope=scope().client_scope, conversation_id=scope().conversation_id
-            ).block
+            opaque.decode(token, model=scope().model, client_scope=scope().client_scope).block
         ),
     )
     assert at(replay.body, "messages", 1, "content") == [
@@ -354,16 +350,13 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
     assert at(replay.body, "messages", 2, "content", 0, "tool_use_id") == "call1"
 
 
-@pytest.mark.parametrize(
-    "field,value", [("model", "anthropic/claude-sonnet-5"), ("client_scope", "key-b"), ("conversation_id", "thread-b")]
-)
+@pytest.mark.parametrize("field,value", [("model", "anthropic/claude-sonnet-5"), ("client_scope", "key-b")])
 def test_opaque_state_cannot_cross_scope(field, value):
     opaque = codec()
     token = opaque.encode(scope(), {"type": "redacted_thinking", "data": "opaque"})
     args = {
         "model": scope().model,
         "client_scope": scope().client_scope,
-        "conversation_id": scope().conversation_id,
         field: value,
     }
     with pytest.raises(ClientPayloadError):

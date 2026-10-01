@@ -18,7 +18,6 @@ class SignedBlock(BaseModel):
     source_id: str
     model: str
     client_scope: str
-    conversation_id: str
     block: dict[str, JsonValue]
 
 
@@ -27,7 +26,6 @@ class OpaqueScope:
     source_id: str
     model: str
     client_scope: str
-    conversation_id: str
 
 
 class ClaudeOpaqueState:
@@ -41,26 +39,25 @@ class ClaudeOpaqueState:
             source_id=scope.source_id,
             model=scope.model,
             client_scope=scope.client_scope,
-            conversation_id=scope.conversation_id,
             block=block,
         )
         return PREFIX + self.encryptor.encrypt(envelope.model_dump_json()).decode("ascii")
 
-    def decode(self, token: str, *, model: str, client_scope: str, conversation_id: str) -> SignedBlock:
-        envelope = self.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
+    def decode(self, token: str, *, model: str, client_scope: str) -> SignedBlock:
+        envelope = self.authenticate(token, client_scope=client_scope)
         if envelope.model != model:
-            raise ClientPayloadError("Claude reasoning state belongs to another model or conversation", param="input")
+            raise ClientPayloadError("Claude reasoning state belongs to another model", param="input")
         return envelope
 
-    def authenticate(self, token: str, *, client_scope: str, conversation_id: str) -> SignedBlock:
+    def authenticate(self, token: str, *, client_scope: str) -> SignedBlock:
         if not token.startswith(PREFIX):
             raise ClientPayloadError("Reasoning belongs to another provider; resend portable context", param="input")
         try:
             envelope = SignedBlock.model_validate_json(self.encryptor.decrypt(token[len(PREFIX) :].encode("ascii")))
         except (InvalidToken, ValidationError, ValueError, UnicodeError) as exc:
             raise ClientPayloadError("Invalid Claude reasoning state", param="input") from exc
-        if (envelope.client_scope, envelope.conversation_id) != (client_scope, conversation_id):
-            raise ClientPayloadError("Claude reasoning state belongs to another client or conversation", param="input")
+        if envelope.client_scope != client_scope:
+            raise ClientPayloadError("Claude reasoning state belongs to another client", param="input")
         if envelope.block.get("type") not in ("thinking", "redacted_thinking", "web_search"):
             raise ClientPayloadError("Invalid Claude reasoning block", param="input")
         return envelope

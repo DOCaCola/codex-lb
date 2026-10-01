@@ -118,7 +118,6 @@ def test_search_lifecycle_citations_and_authenticated_replay():
                 token,
                 model=scope().model,
                 client_scope=scope().client_scope,
-                conversation_id=scope().conversation_id,
             ).block
         ),
     )
@@ -172,7 +171,7 @@ def test_stream_search_json_and_citation_deltas():
     assert "upstream-owned-opaque-data" not in json.dumps(events)
 
 
-@pytest.mark.parametrize("changed", ["model", "client_scope", "conversation_id", "token"])
+@pytest.mark.parametrize("changed", ["model", "client_scope", "token"])
 def test_search_state_rejects_changed_scope_or_tampering(changed):
     opaque = codec()
     response = ResponsesProjection(scope(), {}, opaque, search_enabled=True).complete(
@@ -183,7 +182,6 @@ def test_search_state_rejects_changed_scope_or_tampering(changed):
     arguments = {
         "model": scope().model,
         "client_scope": scope().client_scope,
-        "conversation_id": scope().conversation_id,
     }
     if changed == "token":
         token = token[:30] + ("A" if token[30] != "A" else "B") + token[31:]

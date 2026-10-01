@@ -25,7 +25,6 @@ def read(payload, opaque, *, require_complete_history=False, **overrides):
         opaque,
         model=overrides.get("model", scope().model),
         client_scope=overrides.get("client_scope", "key-a"),
-        conversation_id=overrides.get("conversation_id", "thread-a"),
         require_complete_history=require_complete_history,
     )
 
@@ -73,17 +72,16 @@ def test_tool_output_does_not_complete_thinking():
     assert read(payload, opaque).owner_source_id == "source-a"
 
 
-@pytest.mark.parametrize("field,value", [("client_scope", "other"), ("conversation_id", "other")])
-def test_authentication_precedes_omission(field, value):
+def test_authentication_precedes_omission():
     opaque = codec()
     with pytest.raises(ClientPayloadError):
-        read(history(opaque), opaque, **{field: value})
+        read(history(opaque), opaque, client_scope="other")
 
 
 def test_mixed_completed_owners_are_not_conflicting():
     opaque = codec()
     payload = history(opaque)
-    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a", "thread-a"), {"type": "thinking"})
+    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a"), {"type": "thinking"})
     payload["input"].insert(1, {"type": "reasoning", "encrypted_content": other})
     replay = read(payload, opaque)
     assert replay.owner_source_id is None
@@ -102,7 +100,7 @@ def test_tampered_completed_state_is_not_discarded():
 def test_conflicting_active_owners_fail():
     opaque = codec()
     payload = history(opaque, completed=False)
-    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a", "thread-a"), {"type": "thinking"})
+    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a"), {"type": "thinking"})
     payload["input"].append({"type": "reasoning", "encrypted_content": other})
     with pytest.raises(ClientPayloadError):
         read(payload, opaque)
@@ -139,9 +137,7 @@ def test_compaction_omits_unreadable_completed_state(block):
 def test_compaction_reads_conflicting_completed_owners():
     opaque = codec()
     payload = history(opaque)
-    other = opaque.encode(
-        OpaqueScope("source-b", scope().model, "key-a", "thread-a"), {"type": "thinking", "thinking": "second"}
-    )
+    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a"), {"type": "thinking", "thinking": "second"})
     payload["input"].insert(1, {"type": "reasoning", "encrypted_content": other})
     payload = compact(payload)
     replay = read(payload, opaque, require_complete_history=True)

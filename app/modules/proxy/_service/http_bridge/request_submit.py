@@ -706,7 +706,7 @@ class _HTTPBridgeRequestSubmitMixin:
     ) -> tuple[_WebSocketRequestState, str]:
         # One dump feeds client-metadata derivation, the frame and the usage
         # budget; ``to_payload`` is deterministic so sharing it is exact.
-        payload = project_native_history(payload, headers, api_key)
+        payload = project_native_history(payload, api_key)
         base_payload = payload.to_payload()
         request_state, text_data = self._prepare_response_bridge_request_state(
             payload,

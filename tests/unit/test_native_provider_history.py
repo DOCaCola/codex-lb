@@ -30,7 +30,6 @@ def convert(items, opaque, **overrides):
         items,
         opaque,
         client_scope=overrides.get("client_scope", scope().client_scope),
-        conversation_id=overrides.get("conversation_id", scope().conversation_id),
     )
 
 
@@ -56,13 +55,12 @@ def test_empty_summary_envelope_is_recovered_without_mutating_tools_or_history()
     ensure_native_provider_history({"input": projected})
 
 
-@pytest.mark.parametrize("field", ["client_scope", "conversation_id"])
-def test_cross_scope_projection_fails_without_mutation(field):
+def test_cross_client_projection_fails_without_mutation():
     opaque = codec()
     items = [reasoning(opaque)]
     original = deepcopy(items)
     with pytest.raises(ClientPayloadError) as raised:
-        convert(items, opaque, **{field: "another"})
+        convert(items, opaque, client_scope="another")
     assert raised.value.code == "invalid_provider_history"
     assert raised.value.param == "input[0]"
     assert items == original

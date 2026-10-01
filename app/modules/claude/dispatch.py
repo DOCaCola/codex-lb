@@ -107,9 +107,7 @@ class ClaudeDispatchPreparer:
             resource_keys = (
                 ()
                 if translated
-                else ResourceScope(api_key.id if api_key else "anonymous", conversation_id, model).keys(
-                    resource_ids(logical)
-                )
+                else ResourceScope(api_key.id if api_key else "anonymous", model).keys(resource_ids(logical))
             )
             requires_owner = bool(resource_keys)
             retained_owner = await native_ownership.owner()

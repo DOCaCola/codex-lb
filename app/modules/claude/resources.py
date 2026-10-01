@@ -63,14 +63,11 @@ def resource_ids(value: JsonValue) -> frozenset[str]:
 @dataclass(frozen=True)
 class ResourceScope:
     client_scope: str
-    conversation_id: str
     model: str
 
     def keys(self, identifiers: frozenset[str]) -> tuple[str, ...]:
         return tuple(
-            hashlib.sha256(
-                json.dumps([self.client_scope, self.conversation_id, self.model, "server_tool", identifier]).encode()
-            ).hexdigest()
+            hashlib.sha256(json.dumps([self.client_scope, self.model, "server_tool", identifier]).encode()).hexdigest()
             for identifier in sorted(identifiers)
         )
 
