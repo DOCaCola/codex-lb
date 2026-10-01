@@ -25,6 +25,7 @@ from app.core.openai.model_registry import get_model_registry
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_route
+from app.core.usage.request_operation import RequestOperation
 from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountStatus, DashboardSettings
 from app.db.session import get_background_session
@@ -2112,6 +2113,7 @@ class AutomationsService:
             return
         try:
             await self._request_logs_repository.add_log(
+                request_operation=RequestOperation.RESPONSES,
                 account_id=account_id,
                 request_id=request_id,
                 model=model,

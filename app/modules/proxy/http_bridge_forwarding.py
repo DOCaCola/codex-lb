@@ -18,6 +18,7 @@ from app.core.crypto import get_or_create_key
 from app.core.errors import OpenAIErrorEnvelope, openai_error, response_failed_event
 from app.core.openai.requests import ResponsesRequest, extract_input_file_ids
 from app.core.types import JsonObject
+from app.core.usage.request_operation import RequestOperation
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event
@@ -61,6 +62,7 @@ HTTP_BRIDGE_ORIGINAL_UNANCHORED_HEADER = "x-codex-bridge-original-unanchored"
 HTTP_BRIDGE_SIGNATURE_VERSION_HEADER = "x-codex-bridge-signature-version"
 HTTP_BRIDGE_CLIENT_IP_HEADER = "x-codex-bridge-client-ip"
 HTTP_BRIDGE_CLIENT_IP_SIGNATURE_HEADER = "x-codex-bridge-client-ip-signature"
+HTTP_BRIDGE_REQUEST_OPERATION_HEADER = "x-codex-bridge-request-operation"
 HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 # Additive tamper-proofing header (#1203): a second signature bound to the
 # exact forwarding body (``model_dump_for_forwarding``) that is posted, so an
@@ -96,6 +98,7 @@ class HTTPBridgeForwardContext:
     original_affinity_key: str | None = None
     file_owner_account_id: str | None = None
     client_ip: str | None = None
+    request_operation: RequestOperation | None = None
     reservation: ApiKeyUsageReservationData | None = None
     signature_version: str | None = None
 
@@ -329,6 +332,8 @@ def build_owner_forward_headers(
     forwarded[HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER] = context.origin_instance
     forwarded[HTTP_BRIDGE_TARGET_INSTANCE_HEADER] = context.target_instance
     forwarded[HTTP_BRIDGE_CODEX_AFFINITY_HEADER] = "1" if context.codex_session_affinity else "0"
+    if context.request_operation is not None:
+        forwarded[HTTP_BRIDGE_REQUEST_OPERATION_HEADER] = context.request_operation.value
     signature_version = _HTTP_BRIDGE_SIGNATURE_VERSION_V2 if context.original_request_unanchored else None
     if signature_version is not None:
         forwarded[HTTP_BRIDGE_SIGNATURE_VERSION_HEADER] = signature_version
@@ -405,6 +410,11 @@ def parse_forwarded_request(
             ),
         )
     client_ip = _optional_header(headers.get(HTTP_BRIDGE_CLIENT_IP_HEADER))
+    raw_operation = _optional_header(headers.get(HTTP_BRIDGE_REQUEST_OPERATION_HEADER))
+    try:
+        request_operation = RequestOperation(raw_operation) if raw_operation is not None else None
+    except ValueError:
+        return None, _invalid_bridge_forward_signature_error()
     signature_version = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_VERSION_HEADER))
     original_unanchored_value = _optional_header(headers.get(HTTP_BRIDGE_ORIGINAL_UNANCHORED_HEADER))
     if signature_version == _HTTP_BRIDGE_SIGNATURE_VERSION_V2:
@@ -425,6 +435,7 @@ def parse_forwarded_request(
         original_affinity_key=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KEY_HEADER)),
         file_owner_account_id=_optional_header(headers.get(HTTP_BRIDGE_FILE_OWNER_HEADER)),
         client_ip=client_ip,
+        request_operation=request_operation,
         reservation=_reservation_from_headers(headers),
         signature_version=signature_version,
     )
@@ -449,11 +460,15 @@ def parse_forwarded_request(
     )
     if tools_bound_valid:
         return HTTPBridgeForwardedRequest(context=context), None
-    if context.file_owner_account_id is not None or extract_input_file_ids(payload.input):
+    if (
+        context.request_operation is not None
+        or context.file_owner_account_id is not None
+        or extract_input_file_ids(payload.input)
+    ):
         # The rolling-upgrade primary signature does not bind the additive
         # file-owner proof. Never allow a stripped/forged proof to downgrade to
-        # it, and never allow payloads with file references to fall back after a
-        # stripped proof made the owner value look absent.
+        # it (nor an unauthenticated operation label). File references cannot
+        # fall back after a stripped proof made the owner value look absent.
         return None, _invalid_bridge_forward_signature_error()
     # ROLLOUT SHIM (#1203, remove with HTTP_BRIDGE_SIGNATURE_V2_HEADER
     # follow-up): fall back to the primary signature (#1169's versioned /
@@ -691,6 +706,7 @@ def _structured_bridge_signing_payload(
             ),
             "signature_version": signature_version,
             "target_instance": context.target_instance,
+            **({"request_operation": context.request_operation.value} if context.request_operation is not None else {}),
         },
         ensure_ascii=True,
         sort_keys=True,

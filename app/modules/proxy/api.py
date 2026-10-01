@@ -186,6 +186,7 @@ from app.core.runtime_logging import log_error_response
 from app.core.socket_peer import raw_socket_peer_host
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
+from app.core.usage.request_operation import RequestOperation, get_request_operation, set_request_operation
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.core.utils.shared_future import (
@@ -1568,6 +1569,9 @@ async def internal_bridge_responses(
     api_key, auth_error = await _validate_internal_bridge_api_key(request)
     if auth_error is not None:
         return auth_error
+    # Only authenticated, signature-verified internal metadata can replace the
+    # ingress operation. The outer ASGI context owns reset after streaming ends.
+    set_request_operation(forwarded_request_context.context.request_operation or RequestOperation.UNKNOWN)
     capability_transport_denial = await _required_capability_http_transport_denial(request, api_key, payload=payload)
     if capability_transport_denial is not None:
         return capability_transport_denial
@@ -9738,6 +9742,7 @@ async def _log_source_chat_completion(
         async with get_background_session() as session:
             await RequestLogsRepository(session).add_log(
                 account_id=None,
+                request_operation=get_request_operation(),
                 model_source_id=source.id,
                 preserve_unknown_cost=True,
                 model_source_kind=source.kind,

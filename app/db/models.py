@@ -541,6 +541,7 @@ class RequestLog(Base):
         nullable=False,
     )
     connection_request_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    request_operation: Mapped[str | None] = mapped_column(String, nullable=True)
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     model: Mapped[str] = mapped_column(String, nullable=False)

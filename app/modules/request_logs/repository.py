@@ -22,6 +22,7 @@ from app.core.usage.logs import (
     RequestLogLike,
     calculated_cost_from_log,
 )
+from app.core.usage.request_operation import RequestOperation
 from app.core.usage.types import (
     BucketConversationAggregate,
     BucketModelAggregate,
@@ -1085,6 +1086,7 @@ class RequestLogsRepository:
         bridge_stage: str | None = None,
         request_kind: str = RequestKind.NORMAL.value,
         connection_request_kind: str | None = None,
+        request_operation: RequestOperation | None = None,
         upstream_proxy_route_mode: str | None = None,
         upstream_proxy_pool_id: str | None = None,
         upstream_proxy_endpoint_id: str | None = None,
@@ -1128,6 +1130,7 @@ class RequestLogsRepository:
                 upstream_transport=upstream_transport,
                 request_kind=request_kind,
                 connection_request_kind=connection_request_kind,
+                request_operation=request_operation,
                 useragent=resolved_useragent,
                 useragent_group=resolved_useragent_group,
                 conversation_id=resolved_conversation_id,

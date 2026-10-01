@@ -10,6 +10,7 @@ from app.core.usage.logs import (
     output_tokens_from_log,
     total_tokens_from_log,
 )
+from app.core.usage.request_operation import RequestOperation
 from app.db.models import RequestLog
 from app.modules.request_logs.schemas import RequestLogCostBreakdown, RequestLogEntry
 
@@ -57,6 +58,7 @@ def to_request_log_entry(
         archive_request_id=log.archive_request_id if include_sensitive_metadata else None,
         request_kind=log.request_kind,
         connection_request_kind=log.connection_request_kind,
+        request_operation=RequestOperation(log.request_operation) if log.request_operation is not None else None,
         model=log.model,
         source=log.source,
         model_source_id=log.model_source_id,

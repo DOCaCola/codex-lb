@@ -48764,19 +48764,22 @@ def test_prepare_http_bridge_request_persists_conversation_id_with_useragent_on_
 
 @pytest.mark.asyncio
 async def test_http_bridge_finalization_persists_request_state_conversation_id(monkeypatch):
+    from app.core.usage.request_operation import RequestOperation, reset_request_operation, set_request_operation
+
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     account = _make_account("acc_bridge_conversation_finalize")
     payload = ResponsesRequest.model_validate({"model": "gpt-5.1", "instructions": "hello", "input": []})
-    request_state, _text_data = service._prepare_http_bridge_request(
-        payload,
-        {
-            "User-Agent": "opencode/1.15.13",
-            "x-session-affinity": "conv-bridge-finalize",
-        },
-        api_key=None,
-        api_key_reservation=None,
-    )
+    token = set_request_operation(RequestOperation.IMAGE_EDIT)
+    try:
+        request_state, _text_data = service._prepare_http_bridge_request(
+            payload,
+            {"User-Agent": "opencode/1.15.13", "x-session-affinity": "conv-bridge-finalize"},
+            api_key=None,
+            api_key_reservation=None,
+        )
+    finally:
+        reset_request_operation(token)
     monkeypatch.setattr(service, "_settle_stream_api_key_usage", AsyncMock())
     monkeypatch.setattr(service._load_balancer, "record_success", AsyncMock())
 
@@ -48795,6 +48798,7 @@ async def test_http_bridge_finalization_persists_request_state_conversation_id(m
     assert request_state.conversation_id == "conv-bridge-finalize"
     assert await service.drain_persistence_tasks(timeout_seconds=1)
     assert request_logs.calls[0]["conversation_id"] == "conv-bridge-finalize"
+    assert request_logs.calls[0]["request_operation"] == RequestOperation.IMAGE_EDIT
 
 
 def test_prepare_http_bridge_request_kind_uses_headers_over_payload_metadata():

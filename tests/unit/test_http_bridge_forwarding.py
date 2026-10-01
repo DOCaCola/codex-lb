@@ -13,6 +13,7 @@ from aiohttp.client_reqrep import ConnectionKey
 from app.core.clients.proxy import ProxyResponseError
 from app.core.config.settings import get_settings
 from app.core.openai.requests import ResponsesRequest
+from app.core.usage.request_operation import RequestOperation
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy.http_bridge_forwarding import (
     HTTP_BRIDGE_AFFINITY_KEY_HEADER,
@@ -25,6 +26,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     HTTP_BRIDGE_LOCAL_PRE_DISPATCH_REFUSAL_HEADER,
     HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER,
     HTTP_BRIDGE_ORIGINAL_UNANCHORED_HEADER,
+    HTTP_BRIDGE_REQUEST_OPERATION_HEADER,
     HTTP_BRIDGE_RESERVATION_ID_HEADER,
     HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER,
     HTTP_BRIDGE_RESERVATION_MODEL_HEADER,
@@ -56,6 +58,33 @@ def _temp_bridge_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterato
 
 def _payload() -> ResponsesRequest:
     return ResponsesRequest.model_validate({"model": "gpt-5.4", "instructions": "hi", "input": "hi"})
+
+
+@pytest.mark.parametrize("tamper", [None, "label", "signature", "invalid"])
+def test_forwarded_operation_is_bound_to_full_signature(tamper):
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="origin",
+        target_instance="owner",
+        codex_session_affinity=True,
+        downstream_turn_state=None,
+        request_operation=RequestOperation.IMAGE_EDIT,
+    )
+    headers = build_owner_forward_headers(payload=payload, headers={}, context=context)
+    if tamper == "label":
+        headers[HTTP_BRIDGE_REQUEST_OPERATION_HEADER] = "web_search"
+    elif tamper == "signature":
+        headers.pop(HTTP_BRIDGE_SIGNATURE_V2_HEADER)
+    elif tamper == "invalid":
+        headers[HTTP_BRIDGE_REQUEST_OPERATION_HEADER] = "invented"
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="owner")
+    if tamper is None:
+        assert error is None
+        assert forwarded is not None
+        assert forwarded.context.request_operation == RequestOperation.IMAGE_EDIT
+    else:
+        assert forwarded is None
+        assert error is not None
 
 
 def _payload_with_file() -> ResponsesRequest:

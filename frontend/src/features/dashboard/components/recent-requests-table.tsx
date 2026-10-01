@@ -1,5 +1,6 @@
 import { Inbox } from "lucide-react";
 import { formatGenerationSpeed } from "@/features/dashboard/generation-speed";
+import { requestOperationLabel, requestTypeLabel } from "@/features/dashboard/request-operation";
 import {
   useMemo,
   useRef,
@@ -93,6 +94,10 @@ const REQUEST_KIND_LABELS: Record<string, string> = {
   normal: "Normal",
   warmup: "Warmup",
   limit_warmup: "Warmup",
+  prewarm: "Prewarm",
+  compaction: "Compaction",
+  count_tokens: "Token count",
+  realtime_live: "Realtime session",
 };
 
 export type RecentRequestsTableProps = {
@@ -447,11 +452,9 @@ export function RecentRequestsTable({
                       <span className="font-mono text-xs">
                         {formatModelLabel(request.model, request.reasoningEffort, visibleServiceTier)}
                       </span>
-                      {request.requestKind === "warmup" || request.requestKind === "limit_warmup" ? (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {REQUEST_KIND_LABELS.warmup}
-                        </div>
-                      ) : null}
+                      <div className="mt-1 truncate text-xs text-muted-foreground" title={requestTypeLabel(request, t)}>
+                        {requestTypeLabel(request, t)}
+                      </div>
                       {showRequestedTier ? (
                         <div className="text-[11px] text-muted-foreground">
                           {t("dashboard.requests.requestedTier", { tier: request.requestedServiceTier })}
@@ -598,6 +601,7 @@ export function RecentRequestsTable({
                 <RequestDetailField label={t("dashboard.requests.columns.status")} value={selectedRequest ? t(`dashboard.requestStatus.${selectedRequest.status}`, { defaultValue: REQUEST_STATUS_LABELS[selectedRequest.status] ?? selectedRequest.status }) : "—"} />
                 <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, selectedRequest.actualServiceTier ?? selectedRequest.serviceTier) : "—"} mono />
                 <RequestDetailField label={t("dashboard.requestDetails.requestKind")} value={selectedRequest ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ?? selectedRequest.requestKind) : "—"} />
+                <RequestDetailField label={t("dashboard.requestDetails.operation")} value={selectedRequest ? requestOperationLabel(selectedRequest, t) : "—"} />
                 <RequestDetailField label={t("dashboard.requests.columns.plan")} value={selectedRequest?.planType ? formatSlug(selectedRequest.planType) : "—"} />
                 <RequestDetailField label={t("dashboard.requestDetails.elapsed")} value={formatElapsed(selectedRequest?.latencyMs ?? null)} />
                 <RequestDetailField label="TTFT" value={formatElapsed(selectedRequest?.latencyFirstTokenMs ?? null)} />

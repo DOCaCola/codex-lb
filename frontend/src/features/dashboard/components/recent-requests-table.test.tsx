@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { usePrivacyStore } from "@/hooks/use-privacy";
-import { ADMIN_PERMISSIONS, OPERATOR_PERMISSIONS } from "@/test/mocks/factories";
+import { ADMIN_PERMISSIONS, OPERATOR_PERMISSIONS, createRequestLogEntry } from "@/test/mocks/factories";
 import { RecentRequestsTable } from "@/features/dashboard/components/recent-requests-table";
 import { formatGenerationSpeed } from "@/features/dashboard/generation-speed";
 import {
@@ -15,6 +15,21 @@ import {
 import type { RequestLog } from "@/features/dashboard/schemas";
 
 const ISO = "2026-01-01T12:00:00+00:00";
+
+it("shows operation and workload in the existing model-cell label area", () => {
+  render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
+    createRequestLogEntry({ requestId: "search", model: "", requestOperation: "web_search", tokens: null, costUsd: null }),
+    createRequestLogEntry({ requestId: "warm", requestOperation: "responses", requestKind: "warmup" }),
+    createRequestLogEntry({ requestId: "count", requestOperation: "count_tokens", requestKind: "count_tokens" }),
+  ]} />);
+  expect(screen.getByText("Web search")).toBeInTheDocument();
+  expect(screen.getByText("Responses · Warmup")).toBeInTheDocument();
+  expect(screen.getByText("Token count")).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Type" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("columnheader")).toHaveLength(ALL_REQUEST_LOG_COLUMNS.length);
+  const cell = screen.getByText("Web search").closest("td");
+  expect(cell).toHaveTextContent("--");
+});
 const NULL_FAILURE_METADATA = {
   failurePhase: null,
   failureDetail: null,
@@ -824,7 +839,7 @@ describe("RecentRequestsTable", () => {
       />,
     );
 
-    expect(screen.getByText("Warmup")).toBeInTheDocument();
+    expect(screen.getByText("Unknown · Warmup")).toBeInTheDocument();
     expect(screen.queryByText("Normal")).not.toBeInTheDocument();
   });
 

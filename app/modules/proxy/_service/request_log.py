@@ -8,6 +8,7 @@ import anyio
 
 from app.core.clock import clock_for, scheduler_for
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, proxy_phase_latency_seconds
+from app.core.usage.request_operation import RequestOperation, get_request_operation
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._load_balancer.throughput_cohort import record_tps_sample
 from app.modules.proxy._load_balancer.ttft_cohort import record_ttft_sample
@@ -191,6 +192,7 @@ class _RequestLogMixin:
         bridge_stage: str | None = None,
         request_kind: str = "normal",
         connection_request_kind: str | None = None,
+        request_operation: RequestOperation | None = None,
         upstream_proxy_route_mode: str | None = None,
         upstream_proxy_pool_id: str | None = None,
         upstream_proxy_endpoint_id: str | None = None,
@@ -259,6 +261,7 @@ class _RequestLogMixin:
                 bridge_stage=bridge_stage,
                 request_kind=request_kind,
                 connection_request_kind=connection_request_kind,
+                request_operation=request_operation if request_operation is not None else get_request_operation(),
                 upstream_proxy_route_mode=upstream_proxy_route_mode,
                 upstream_proxy_pool_id=upstream_proxy_pool_id,
                 upstream_proxy_endpoint_id=upstream_proxy_endpoint_id,
@@ -469,6 +472,7 @@ class _RequestLogMixin:
         bridge_stage: str | None = None,
         request_kind: str = "normal",
         connection_request_kind: str | None = None,
+        request_operation: RequestOperation | None = None,
         upstream_proxy_route_mode: str | None = None,
         upstream_proxy_pool_id: str | None = None,
         upstream_proxy_endpoint_id: str | None = None,
@@ -504,6 +508,7 @@ class _RequestLogMixin:
                     actual_service_tier=actual_service_tier,
                     request_kind=request_kind,
                     connection_request_kind=connection_request_kind,
+                    request_operation=request_operation,
                     latency_ms=latency_ms,
                     latency_first_token_ms=latency_first_token_ms,
                     latency_queue_ms=latency_queue_ms,

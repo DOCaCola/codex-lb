@@ -114,6 +114,61 @@ async def test_write_request_log_spawns_scheduler_owned_persistence_task() -> No
 
 
 @pytest.mark.asyncio
+async def test_log_handoff_retains_operation_after_ingress_context_ends():
+    from app.core.usage.request_operation import RequestOperation, reset_request_operation, set_request_operation
+
+    scheduler = _RecordingVirtualScheduler(VirtualClock())
+    request_logs = _RequestLogsRepo()
+    service = _service(scheduler, request_logs)
+    token = set_request_operation(RequestOperation.WEB_SEARCH)
+    try:
+        await _write_log(service, "search")
+    finally:
+        reset_request_operation(token)
+    await scheduler.drain()
+    assert request_logs.rows[0]["request_operation"] == RequestOperation.WEB_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_reused_worker_logs_each_turn_operation_not_its_original_context():
+    from app.core.usage.request_operation import RequestOperation, reset_request_operation, set_request_operation
+    from app.modules.proxy._service.support import _WebSocketRequestState
+
+    scheduler = _RecordingVirtualScheduler(VirtualClock())
+    request_logs = _RequestLogsRepo()
+    service = _service(scheduler, request_logs)
+    states = []
+    for operation in (RequestOperation.IMAGE_EDIT, RequestOperation.CHAT_COMPLETIONS):
+        token = set_request_operation(operation)
+        try:
+            states.append(
+                _WebSocketRequestState(
+                    request_id=operation.value,
+                    model="test-model",
+                    service_tier=None,
+                    reasoning_effort=None,
+                    api_key_reservation=None,
+                    started_at=0,
+                )
+            )
+        finally:
+            reset_request_operation(token)
+    token = set_request_operation(RequestOperation.RESPONSES)
+    try:
+        for state in states:
+            await service._write_websocket_connect_failure(
+                account_id=None, api_key=None, request_state=state, error_code="upstream_error", error_message="test"
+            )
+    finally:
+        reset_request_operation(token)
+    await scheduler.drain()
+    assert [row["request_operation"] for row in request_logs.rows] == [
+        RequestOperation.IMAGE_EDIT,
+        RequestOperation.CHAT_COMPLETIONS,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rewrite_request_log_model_retries_on_virtual_time() -> None:
     scheduler = _RecordingVirtualScheduler(VirtualClock())
     request_logs = _RequestLogsRepo(rowcounts=[0, 0, 1])

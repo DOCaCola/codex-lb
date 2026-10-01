@@ -77,6 +77,35 @@ async function acceptTelemetryConsent(page: Page, consentDialog: Locator): Promi
 }
 
 for (const width of [390, 1440]) {
+  test(`request operation labels reuse model-cell layout ${width}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height: 1000 });
+    await installMobileContainmentFixtures(page);
+    await page.route(/\/api\/request-logs(?:\?|$)/, async (route) => {
+      const requests = [
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "search", model: "", requestOperation: "web_search", tokens: null, costUsd: null }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "warm", requestOperation: "responses", requestKind: "warmup" }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "image", model: "gpt-image-2", requestOperation: "image_edit" }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "count", requestOperation: "count_tokens", requestKind: "count_tokens" }),
+        createRequestLogEntry({ accountId: "acc_primary", requestId: "legacy", requestOperation: null }),
+      ];
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(createRequestLogsResponse(requests, 5, false)) });
+    });
+    await page.goto("/dashboard");
+    const table = page.getByRole("table").first();
+    await expect(table.getByText("Web search", { exact: true })).toBeVisible();
+    await expect(table.getByText("Responses · Warmup", { exact: true })).toBeVisible();
+    await expect(table.getByText("Image edit", { exact: true })).toBeVisible();
+    await expect(table.getByText("Token count", { exact: true })).toBeVisible();
+    await expect(table.getByText("Unknown", { exact: true })).toBeVisible();
+    await expect(table.getByRole("columnheader")).toHaveCount(12);
+    await expect(table.getByRole("columnheader", { name: "Type" })).toHaveCount(0);
+    await table.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`operation-labels-${width}.png`), fullPage: true });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    expect(overflow).toBe(false);
+  });
+
   test(`Luna Reserve reuses Spark quota bars ${width}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width, height: 1000 });

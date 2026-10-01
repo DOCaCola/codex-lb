@@ -20,6 +20,7 @@ from app.core.plan_types import account_plan_matches_allowed, normalize_account_
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.usage.pricing import get_pricing_for_model
+from app.core.usage.request_operation import RequestOperation
 from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, DashboardSettings, UsageHistory
 from app.modules.accounts.auth_manager import AuthManager
@@ -138,6 +139,7 @@ class LimitWarmupRequestLogRepository(Protocol):
         upstream_error_code: str | None = None,
         bridge_stage: str | None = None,
         request_kind: str = "normal",
+        request_operation: RequestOperation | None = None,
         upstream_proxy_route_mode: str | None = None,
         upstream_proxy_pool_id: str | None = None,
         upstream_proxy_endpoint_id: str | None = None,
@@ -665,6 +667,7 @@ class LimitWarmupService:
             else None
         )
         await self._request_logs_repo.add_log(
+            request_operation=RequestOperation.RESPONSES,
             account_id=account.id,
             request_id=result.request_id,
             model=model,

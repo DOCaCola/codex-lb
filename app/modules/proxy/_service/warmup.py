@@ -27,6 +27,7 @@ from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.upstream_proxy import UpstreamProxyRouteError
+from app.core.usage.request_operation import RequestOperation
 from app.db.models import Account, AccountStatus
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.support import _call_with_supported_optional_kwargs, _request_log_client_fields
@@ -461,6 +462,7 @@ class _WarmupMixin:
                     reasoning_tokens=reasoning_tokens,
                     transport=_REQUEST_TRANSPORT_HTTP,
                     request_kind="warmup",
+                    request_operation=RequestOperation.COMPACTION,
                     upstream_proxy_route_mode=upstream_proxy_route_mode,
                     upstream_proxy_pool_id=upstream_proxy_pool_id,
                     upstream_proxy_endpoint_id=upstream_proxy_endpoint_id,

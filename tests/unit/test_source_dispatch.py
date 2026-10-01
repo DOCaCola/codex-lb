@@ -225,6 +225,19 @@ async def _frames(*frames: bytes) -> AsyncIterator[bytes]:
         yield frame
 
 
+@pytest.mark.asyncio
+async def test_source_dispatch_snapshots_operation_before_settlement_context_changes(recorder):
+    from app.core.usage.request_operation import RequestOperation, reset_request_operation, set_request_operation
+
+    token = set_request_operation(RequestOperation.MESSAGES)
+    try:
+        owner = _owner(recorder)
+    finally:
+        reset_request_operation(token)
+    await owner.finish(status="success", usage=SourceUsage(input_tokens=10, output_tokens=5))
+    assert recorder.rows[0]["request_operation"] == RequestOperation.MESSAGES
+
+
 def _attach_stream(owner: SourceDispatch, *, holder: SourceUsageHolder | None = None) -> _FakeStream:
     stream = _FakeStream(usage_holder=holder or SourceUsageHolder(), body=_frames())
     owner.stream = cast(Any, stream)

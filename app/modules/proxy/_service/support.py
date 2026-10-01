@@ -32,6 +32,7 @@ from app.core.resilience.network_recovery import PROCESS_NETWORK_UNAVAILABLE_COD
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
+from app.core.usage.request_operation import RequestOperation, get_request_operation
 from app.core.utils.locks import fast_lock
 from app.core.utils.sse import sse_event_type_from_block
 from app.db.models import Account, StickySessionKind
@@ -1004,6 +1005,7 @@ class _WebSocketRequestState:
     reasoning_effort: str | None
     api_key_reservation: ApiKeyUsageReservationData | None
     started_at: float
+    request_operation: RequestOperation = field(default_factory=get_request_operation)
     pre_normalization_reasoning_effort: str | None = None
     responses_lite_model: str | None = None
     latency_first_token_ms: int | None = None

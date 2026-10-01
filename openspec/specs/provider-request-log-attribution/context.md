@@ -42,3 +42,32 @@ defines this basis instead of claiming a complete invoice breakdown. For example
 $30 and $10 produce 75% and 25% bars even if some requests have no known price.
 Unknown requests receive no invented cost. Other coverage-sensitive report
 comparisons, detailed report coverage and underlying aggregate fields are unchanged.
+
+## Request operation attribution
+
+Operation metadata describes the ingress API, independently of the model,
+downstream/upstream transports and accounting workload (`request_kind`). Reusing
+workload kind would change warmup exclusions, count-token coverage and durable
+rollups, so `request_operation` is a separate nullable field. Existing rows remain
+unknown: a model name or HTTP transport cannot establish the original endpoint.
+
+The canonical method/path supplies classification without reading payloads or
+accepting client classification headers. Pure ASGI context lives through the
+stream. Persistence handoff, source dispatch and individual bridge turns snapshot
+the operation so detached writes and reused upstream workers keep their own
+ingress attribution. Cross-replica forwarding includes the operation in the
+authenticated structured signature; an operation-bearing forward cannot use the
+legacy signature-only acceptance path. Labels contain no call IDs or payloads,
+and existing native realtime metadata redaction remains unchanged.
+
+For example, a standalone alpha/search request with no model displays `--` with
+`Web search` beneath it; an embedded search tool remains a `Responses` request,
+not a new log row. A Responses warmup displays `Responses · Warmup`. An image edit
+implemented upstream with Responses still displays `Image edit`. These labels
+reuse the former Warmup line in the Model cell and do not add a table column.
+Request details expose operation separately from accounting workload.
+
+Upgrade adds nullable metadata with no historical backfill. There is no new
+polling or log producer, operation filter or aggregate dimension. Classification
+does not change routing, account attribution, settlement, usage, pricing or
+privacy rules. Missing model/token/cost values stay missing.

@@ -159,6 +159,7 @@ async def test_images_roundtrip_accounting_and_discovery(async_client, image_pro
         async with SessionLocal() as session:
             logs = list(await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id)))
             assert len(logs) == 1
+            assert logs[0].request_operation == ("image_generation" if operation == "generations" else "image_edit")
             assert logs[0].cost_usd == pytest.approx(0.012)
             assert logs[0].input_tokens == 10
 

@@ -18,6 +18,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import ResponsesRequest
 from app.core.resilience.toggles import bind_resilience_toggles
+from app.core.usage.request_operation import RequestOperation
 from app.core.utils.shared_future import _await_cleanup_deferring_cancellation
 from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountStatus, DashboardSettings, QuotaPlannerDecision
@@ -287,6 +288,7 @@ class QuotaWarmupService:
                 if settlement_cancellation is not None:
                     raise settlement_cancellation
             await self._request_logs.add_log(
+                request_operation=RequestOperation.RESPONSES,
                 account_id=account_id,
                 api_key_id=api_key_id,
                 request_id=request_id,
@@ -343,6 +345,7 @@ class QuotaWarmupService:
                     cached_input_tokens=0,
                 )
             await self._request_logs.add_log(
+                request_operation=RequestOperation.RESPONSES,
                 account_id=account_id,
                 api_key_id=api_key_id,
                 request_id=request_id,

@@ -42,6 +42,7 @@ from app.core.metrics.prometheus import (
 from app.core.openai.requests import (
     ResponsesRequest,
 )
+from app.core.usage.request_operation import get_request_operation
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.api_keys.service import (
@@ -433,6 +434,7 @@ class _HTTPBridgeOwnerForwardingMixin:
             original_affinity_key=owner_forward.key.affinity_key,
             file_owner_account_id=file_owner_account_id,
             client_ip=client_ip,
+            request_operation=get_request_operation(),
         )
         forward_headers = _headers_with_authorization(headers, proxy_api_authorization)
         clock = clock_for(self)

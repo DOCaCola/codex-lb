@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
+from app.core.usage.request_operation import RequestOperation
 from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 
 
@@ -29,6 +30,7 @@ class RequestLogEntry(DashboardModel):
     archive_request_id: str | None = None
     request_kind: str = "normal"
     connection_request_kind: str | None = None
+    request_operation: RequestOperation | None = None
     model: str
     source: str | None = None
     model_source_id: str | None = None

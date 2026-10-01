@@ -9,6 +9,7 @@ import pytest
 
 from app.core.clients.proxy import UpstreamProxyRouteTrace
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute, UpstreamProxyRouteError
+from app.core.usage.request_operation import RequestOperation
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, DashboardSettings, UsageHistory
 from app.modules.limit_warmup import service as limit_warmup_service
@@ -218,6 +219,7 @@ class FakeRequestLogsRepo:
         upstream_error_code: str | None = None,
         bridge_stage: str | None = None,
         request_kind: str = "normal",
+        request_operation: RequestOperation | None = None,
         upstream_proxy_route_mode: str | None = None,
         upstream_proxy_pool_id: str | None = None,
         upstream_proxy_endpoint_id: str | None = None,
@@ -258,6 +260,7 @@ class FakeRequestLogsRepo:
                 "upstream_error_code": upstream_error_code,
                 "bridge_stage": bridge_stage,
                 "request_kind": request_kind,
+                "request_operation": request_operation,
                 "upstream_proxy_route_mode": upstream_proxy_route_mode,
                 "upstream_proxy_pool_id": upstream_proxy_pool_id,
                 "upstream_proxy_endpoint_id": upstream_proxy_endpoint_id,
@@ -319,6 +322,7 @@ async def test_fake_request_logs_repo_accepts_request_log_metadata_fields() -> N
             "upstream_error_code": None,
             "bridge_stage": None,
             "request_kind": "normal",
+            "request_operation": None,
             "upstream_proxy_route_mode": None,
             "upstream_proxy_pool_id": None,
             "upstream_proxy_endpoint_id": None,
@@ -669,6 +673,7 @@ async def test_reset_confirmed_candidate_sends_one_warmup() -> None:
     assert repo.rows[0].status == "succeeded"
     assert logs.logs[0]["source"] == "limit_warmup"
     assert logs.logs[0]["request_kind"] == "warmup"
+    assert logs.logs[0]["request_operation"] == RequestOperation.RESPONSES
 
 
 @pytest.mark.asyncio

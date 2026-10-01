@@ -6774,6 +6774,7 @@ class _WebSocketMixin:
             try:
                 await proxy._write_request_log(
                     affinity_observation=request_state.affinity_observation,
+                    request_operation=request_state.request_operation,
                     account_id=account_id_value,
                     api_key=api_key,
                     request_id=request_log_response_id,
@@ -6962,6 +6963,7 @@ class _WebSocketMixin:
             return
         await proxy._write_request_log(
             affinity_observation=request_state.affinity_observation,
+            request_operation=request_state.request_operation,
             account_id=account_id,
             api_key=api_key,
             request_id=request_state.request_log_id or request_state.request_id,
@@ -7337,6 +7339,7 @@ class _WebSocketMixin:
             try:
                 await proxy._write_request_log(
                     affinity_observation=request_state.affinity_observation,
+                    request_operation=request_state.request_operation,
                     account_id=account_id_value,
                     # HTTP-bridge callers fan a shared session failure out to
                     # requests from multiple API keys, so they pass api_key=None;

@@ -63,6 +63,7 @@ from app.core.middleware import (
 from app.core.middleware.dashboard_gzip import add_dashboard_gzip_middleware
 from app.core.middleware.dashboard_overrides import DashboardOverridesMiddleware
 from app.core.middleware.inflight import InFlightMiddleware
+from app.core.middleware.request_operation import RequestOperationMiddleware
 from app.core.openai.model_refresh_scheduler import build_model_refresh_scheduler
 from app.core.resilience.backpressure import BackpressureMiddleware
 from app.core.resilience.bulkhead import BulkheadMiddleware, get_bulkhead
@@ -1013,6 +1014,7 @@ def create_app() -> FastAPI:
     # settings overrides (C2-1 timeouts) for the request/socket once the
     # admission middlewares below have let it through.
     app.add_middleware(cast(Any, DashboardOverridesMiddleware))
+    app.add_middleware(cast(Any, RequestOperationMiddleware))
     app.add_middleware(cast(Any, InFlightMiddleware))
     add_dashboard_gzip_middleware(app)
     add_dashboard_auth_proxy_middleware(app)

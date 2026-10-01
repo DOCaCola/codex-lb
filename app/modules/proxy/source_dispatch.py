@@ -66,6 +66,7 @@ from app.core.metrics.prometheus import (
 from app.core.openai.parsing import classify_event_type
 from app.core.request_locality import resolve_request_client_host
 from app.core.types import JsonValue
+from app.core.usage.request_operation import RequestOperation, get_request_operation
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.shared_future import (
     _await_cleanup_deferring_cancellation,
@@ -332,6 +333,7 @@ class SourceDispatch:
     upstream_thinking_mode: str | None = None
     upstream_thinking_budget_tokens: int | None = None
     count_tokens: bool = False
+    request_operation: RequestOperation = field(default_factory=get_request_operation)
     cleanup_scheduler: CleanupScheduler | None = None
     scheduler: Scheduler = REAL_SCHEDULER
     clock: Clock = REAL_CLOCK
@@ -573,6 +575,7 @@ class SourceDispatch:
                     session_id=_owner_lookup_session_id_from_headers(headers),
                     model=self.model,
                     request_kind="count_tokens" if self.count_tokens else "normal",
+                    request_operation=self.request_operation,
                     input_tokens=usage.input_tokens if usage is not None else None,
                     output_tokens=usage.output_tokens if usage is not None else None,
                     cached_input_tokens=usage.cached_input_tokens if usage is not None else None,

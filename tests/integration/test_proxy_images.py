@@ -1096,6 +1096,15 @@ async def test_images_edits_basic_round_trip(async_client, monkeypatch):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["data"] == [{"b64_json": "EDITED_B64", "revised_prompt": "edited"}]
+    from app.db.models import RequestLog
+    from app.dependencies import get_proxy_service_for_app
+    from app.main import app
+
+    assert await get_proxy_service_for_app(app).drain_persistence_tasks(timeout_seconds=5)
+    async with SessionLocal() as session:
+        rows = list(await session.scalars(select(RequestLog)))
+        assert rows
+        assert all(row.request_operation == "image_edit" for row in rows)
 
     # Verify the upstream payload contained the image as an input_image data
     # URL alongside the prompt text.
