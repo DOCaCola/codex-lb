@@ -255,11 +255,20 @@ Translated Claude Responses SHALL accept nameless web_search declarations and ma
 - **THEN** preparation fails explicitly without dispatch
 
 ### Requirement: Translated cache boundaries
-Translated Responses SHALL produce deterministic ephemeral cache boundaries for stable instruction/tool prefixes and recent user history, within Anthropic's four-breakpoint limit. Proxy-generated boundaries SHALL use the default 5m tier. Native caller markers and signed server content MUST remain unchanged. Projection MUST NOT mutate retained logical history.
+Translated Responses SHALL produce deterministic ephemeral cache boundaries for stable instruction/tool prefixes and recent user history, within Anthropic's four-breakpoint limit. Proxy-generated boundaries SHALL use the 1-hour tier (`ttl: "1h"`) that Claude Code sends, and translated requests SHALL negotiate `extended-cache-ttl-2025-04-11`. All proxy-generated boundaries share that tier, so no longer TTL follows a shorter one. Native caller markers, native betas and signed server content MUST remain unchanged. Projection MUST NOT mutate retained logical history.
 
 #### Scenario: Subsequent translated turn
 - **WHEN** a translated conversation adds another user turn
 - **THEN** stable prefix and recent user-turn cache boundaries are present without changing prior text or signed blocks
+
+#### Scenario: Translated boundaries survive agent pauses
+- **WHEN** a translated request is prepared
+- **THEN** every proxy-generated boundary is `{"type":"ephemeral","ttl":"1h"}`
+- **AND** the request's `anthropic-beta` includes `extended-cache-ttl-2025-04-11`
+
+#### Scenario: Native markers are not upgraded
+- **WHEN** a native Claude Code request carries its own cache markers
+- **THEN** those markers and the caller's TTLs are forwarded unchanged
 
 ### Requirement: Translated completed reasoning recovery
 The gateway SHALL authenticate historical Claude state against the client scope before routing. Conversation identity SHALL govern session identity, routing affinity and retained continuation but MUST NOT authorize history, so a forked or other conversation of the same client SHALL replay authenticated state under the same model and account ownership rules. Completed thinking SHALL provide only a preferred eligible account. When the selected account or model differs, the gateway SHALL omit incompatible completed thinking from outbound projection while preserving visible text and paired tools and leaving retained history unchanged; compaction SHALL instead project completed thinking as readable historical assistant text and omit only redacted thinking. It SHALL record conversion and omission counts without content or credentials. Active reasoning and server search SHALL remain account/model-bound. A subsequent explicit user message or canonical external task input, not a paired tool output, SHALL mark earlier thinking completed; compaction SHALL determine this on the client-supplied history excluding its summarization instruction. Invalid authentication or conflicting strict owners MUST fail before dispatch.

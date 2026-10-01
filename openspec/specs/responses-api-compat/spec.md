@@ -3402,11 +3402,9 @@ requests MUST NOT wait on an orphaned creation future that can never complete.
 
 ### Requirement: Codex compaction triggers are bridged into compact output
 
-When `POST /backend-api/codex/responses` receives a request whose top-level `input` array contains exactly one `{"type":"compaction_trigger"}` item as its final element, the proxy SHALL remove that trigger before calling upstream compaction handling and SHALL emit a raw SSE stream that contains exactly one compaction output item. The internal compact request built for that flow MUST contain exactly one terminal `compaction_trigger` item on the compact wire, and the proxy MUST reject duplicate or non-terminal top-level `compaction_trigger` placement locally with HTTP 400 `invalid_request_error` before any upstream compact handling.
+When `POST /backend-api/codex/responses` receives a request whose top-level `input` array contains exactly one `{"type":"compaction_trigger"}` item as its final element and the request is served by a subscription account, the proxy SHALL dispatch it as an ordinary Responses turn through the same HTTP bridge or HTTP streaming path as any other turn. The forwarded body MUST retain the client's tool declarations, `tool_choice`, `parallel_tool_calls`, text options and complete input, with the single terminal trigger unchanged. The proxy MUST NOT rebuild the turn as a compact request, trim its input to the compact wire budget or elide images. The upstream SSE lifecycle, including its compaction output item, SHALL be relayed to the client as for any turn, and the turn SHALL establish the same session/turn-state ownership as any bridged turn. A successful turn whose output ends with exactly one native compaction item SHALL record native checkpoint provenance for that conversation exactly as a websocket compaction turn does. The proxy MUST reject duplicate or non-terminal top-level `compaction_trigger` placement locally with HTTP 400 `invalid_request_error` before any upstream work.
 
-The stream MUST emit `response.created`, `response.output_item.added`, `response.output_item.done`, and `response.completed` in that order with monotonically increasing sequence numbers. The added event MUST expose the selected compaction item as in progress. The done event and terminal completed response MUST carry the same terminal `compaction` item. When the selected encrypted upstream compaction item carries a valid `cmp_` ID or status, the synthetic stream MUST preserve those values with its `encrypted_content`; it MUST NOT generate or rewrite a replacement item ID. A malformed, empty, or non-`cmp_` ID MUST be omitted while the opaque encrypted content remains unchanged.
-
-Codex compact flows SHALL send the upstream compact request to `POST /backend-api/codex/responses` with `stream=true` and `store=false`, accept the upstream SSE response, and reconstruct one normalized compact response item from the terminal response lifecycle; they MUST NOT require the legacy `/backend-api/codex/responses/compact` upstream route to be available.
+Explicit compact requests (`POST /backend-api/codex/responses/compact`) SHALL send the upstream compact request to `POST /backend-api/codex/responses` with `stream=true`, `store=false` and exactly one terminal `compaction_trigger`, accept the upstream SSE response, and reconstruct one normalized compact response item from the terminal response lifecycle; they MUST NOT require the legacy `/backend-api/codex/responses/compact` upstream route to be available.
 
 For Codex-affinity standalone compact requests, `POST /backend-api/codex/responses/compact` SHALL remain available as a compatibility endpoint with its subscription-backed compact routing contract, and SHALL normalize an upstream remote-compaction-v2 response that includes historical message output plus a compaction summary into the single compact output item required by Codex clients. A valid upstream `cmp_` compaction item `id` and any non-empty `status` MUST be preserved in that normalized output item. An empty, non-string, or non-`cmp_` ID MUST be omitted rather than rewritten; encrypted content MUST remain unchanged.
 
@@ -3414,26 +3412,27 @@ OpenAI-style `/v1/responses/compact` is otherwise unchanged by this requirement;
 
 #### Scenario: terminal trigger emits a complete compact lifecycle
 
-- **WHEN** a `POST /backend-api/codex/responses` request ends with exactly one top-level `compaction_trigger`
-- **THEN** the proxy strips the trigger and invokes compact handling
-- **AND** it emits created, added, done, and completed events in that order
-- **AND** their sequence numbers increase monotonically from zero
-- **AND** the done event and completed response contain the same single terminal compaction item
+- **WHEN** a subscription-served `POST /backend-api/codex/responses` request ends with exactly one top-level `compaction_trigger`
+- **THEN** the turn is forwarded as an ordinary turn and the upstream request carries the client's tools and `parallel_tool_calls`
+- **AND** the proxy does not call compact handling
+- **AND** the client receives the upstream SSE lifecycle, including its compaction output item, as relayed for any turn
 
 #### Scenario: terminal trigger becomes one compact-wire trigger
 
-- **WHEN** a `POST /backend-api/codex/responses` request ends with exactly one
-  top-level `compaction_trigger`
-- **THEN** the proxy strips that trigger before compact-input preparation
-- **AND** the internal compact request contains exactly one terminal
-  `compaction_trigger` item on its `input` array
+- **WHEN** a subscription-served `POST /backend-api/codex/responses` request ends with exactly one top-level `compaction_trigger`
+- **THEN** the upstream request carries the complete client input, including inline images, untrimmed
+- **AND** it contains exactly one terminal `compaction_trigger` item, unchanged
 
 #### Scenario: encrypted compaction item identity survives trigger streaming
 
-- **WHEN** compaction handling for a terminal trigger returns encrypted content with a non-empty upstream `cmp_*` ID and terminal status
-- **THEN** the added event exposes that ID with in-progress status
-- **AND** the done event and completed response preserve the exact upstream ID, terminal status, and encrypted content
+- **WHEN** the upstream turn streams an encrypted compaction item with an upstream ID and status
+- **THEN** the relayed item keeps that ID, status and encrypted content unchanged
 - **AND** the proxy does not synthesize a replacement item ID
+
+#### Scenario: forwarded compaction turn records checkpoint provenance
+
+- **WHEN** a forwarded terminal-trigger turn completes with exactly one native compaction item as its final output
+- **THEN** the proxy records native checkpoint provenance for that conversation and serving account
 
 #### Scenario: malformed trigger placement is rejected
 
@@ -3441,12 +3440,11 @@ OpenAI-style `/v1/responses/compact` is otherwise unchanged by this requirement;
   `POST /backend-api/codex/responses/compact` request contains duplicate or
   non-terminal top-level `compaction_trigger` items
 - **THEN** the proxy returns HTTP 400 with `invalid_request_error`
-- **AND** it does not attempt upstream compact handling
+- **AND** it does not attempt upstream work
 
 #### Scenario: Codex compact transport uses the Responses stream
 
-- **WHEN** a valid terminal compaction trigger is submitted through a Codex
-  compact flow
+- **WHEN** a client calls `POST /backend-api/codex/responses/compact`
 - **THEN** the proxy sends the compact request to
   `POST /backend-api/codex/responses` with `stream=true` and `store=false`
 - **AND** it accepts the upstream SSE response and reconstructs one normalized
@@ -4306,8 +4304,9 @@ call/output pair.
 
 #### Scenario: Terminal compaction trigger validates before admission
 
-- **WHEN** a streaming Responses request ends with `compaction_trigger` and its derived compact input cannot fit
-- **THEN** the service returns the same invalid-client-payload response before admission, reservation, account selection, or upstream compact work
+- **WHEN** a streaming Responses request ends with `compaction_trigger` on a subscription-served HTTP turn
+- **THEN** compact trimming and the compact wire budget do not apply, because the turn is forwarded unchanged
+- **AND** malformed trigger placement is still rejected before admission, reservation, account selection, or upstream work
 
 #### Scenario: Enforced non-Lite model rejects Lite input
 
@@ -4322,7 +4321,6 @@ call/output pair.
 #### Scenario: Distinct code-mode calls remain distinct
 
 - **WHEN** request history has different call IDs with identical code-mode source text and matching outputs
-- **THEN** every call and matching output remains in the forwarded history
 
 ### Requirement: Reasoning summaries omit blank HTML comment placeholders
 
