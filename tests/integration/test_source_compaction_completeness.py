@@ -277,25 +277,29 @@ async def test_compact_failure_does_not_replace_original_history(async_client, p
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
-@pytest.mark.parametrize("state", ["available", "paused", "model_switch", "signature_rejected", "search"])
-async def test_compaction_keeps_signed_history_owned_or_returns_error(async_client, pool, monkeypatch, path, state):
+@pytest.mark.parametrize(
+    "state", ["available", "paused", "model_switch", "signature_rejected", "search", "search_paused"]
+)
+async def test_compaction_preserves_signed_history_on_any_route(async_client, pool, monkeypatch, path, state):
     from app.db.models import ModelSource
     from app.db.session import SessionLocal
     from tests.unit.test_claude_search import search_content
 
     signed = {"type": "thinking", "thinking": "IMPORTANT SIGNED HISTORY", "signature": "original-signature"}
+    readable = {"type": "text", "text": "IMPORTANT SIGNED HISTORY"}
+    search = state.startswith("search")
     captured, _ = install_upstream(
         monkeypatch,
-        content=search_content() if state == "search" else [signed, {"type": "text", "text": "answer"}],
+        content=search_content() if search else [signed, {"type": "text", "text": "answer"}],
     )
     headers = {"session_id": "signed-complete-compact"}
     first_body = {"model": MODEL, "input": "Original context"}
-    if state == "search":
+    if search:
         first_body["tools"] = [{"type": "web_search"}]
     first = await async_client.post("/v1/responses", headers=headers, json=first_body)
     assert first.status_code == 200, first.text
     owner = captured[0][0]
-    if state == "paused":
+    if state.endswith("paused"):
         async with SessionLocal() as session:
             source = await session.get(ModelSource, owner)
             assert source is not None
@@ -312,21 +316,51 @@ async def test_compaction_keeps_signed_history_owned_or_returns_error(async_clie
             "previous_response_id": first.json()["id"],
         },
     )
-    if state in {"paused", "model_switch"}:
-        assert response.status_code == (503 if state == "paused" else 400), response.text
+    if state == "search_paused":
+        assert response.status_code == 503, response.text
         assert not later
         assert "output" not in response.json()
+        return
+    assert response.status_code == 200, response.text
+    assert len(later) == (2 if state == "signature_rejected" else 1)
+    # A model switch has no replayable signature, so routing may pick any account.
+    expected = {"paused": set(pool) - {owner}, "model_switch": set(pool)}.get(state, {owner})
+    assert len({request[0] for request in later}) == 1
+    assert {request[0] for request in later} <= expected
+    sent = [[block for message in request[2]["messages"] for block in message["content"]] for request in later]
+    if search:
+        assert any(block.get("type") == "web_search_tool_result" for block in sent[0])
+    elif state == "available":
+        assert signed in sent[0]
     else:
-        assert len(later) == 1
-        assert later[0][0] == owner
-        blocks = [block for message in later[0][2]["messages"] for block in message["content"]]
-        if state == "search":
-            assert any(block.get("type") == "web_search_tool_result" for block in blocks)
-        else:
-            assert signed in blocks
-        assert response.status_code == (400 if state == "signature_rejected" else 200), response.text
+        # Another route, or a rejected signature: the summarizer reads the thinking.
+        assert readable in sent[-1]
+        assert signed not in sent[-1]
         if state == "signature_rejected":
-            assert "output" not in response.json()
+            assert signed in sent[0]
+    assert "CONTEXT CHECKPOINT COMPACTION" in json.dumps(sent[-1])
+
+
+@pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
+async def test_websocket_compaction_trigger_reads_signed_history_after_model_switch(
+    async_client, pool, monkeypatch, path
+):
+    signed = {"type": "thinking", "thinking": "IMPORTANT SIGNED HISTORY", "signature": "original-signature"}
+    captured, _ = install_upstream(monkeypatch, content=[signed, {"type": "text", "text": "answer"}])
+    async with websocket_session(async_client, path, "signed-switch-ws") as turn:
+        first = await turn({"input": "Original context"})
+        compact = await turn(
+            {
+                "model": "anthropic/claude-sonnet-5",
+                "previous_response_id": first["id"],
+                "input": [{"type": "compaction_trigger"}],
+            }
+        )
+    assert [item["type"] for item in compact["output"]] == ["compaction"]
+    assert len(captured) == 2
+    blocks = [block for message in captured[1][2]["messages"] for block in message["content"]]
+    assert {"type": "text", "text": "IMPORTANT SIGNED HISTORY"} in blocks
+    assert signed not in blocks
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])

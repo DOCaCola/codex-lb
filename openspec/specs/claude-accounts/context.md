@@ -816,3 +816,51 @@ prefill in its Responses translator; `6f25b9a1` introduced its Opus 5/Sonnet 4.6
 rule on August 29. We adopt the history-preserving behavior, not deletion. No
 third-party code is copied. Public route/socket mocks verify projection and
 recovery, not live upstream OAuth acceptance or the unknown tool's actual origin.
+
+## Portable signed history and unsigned tool turns (2026-10-01)
+
+Compaction previously treated every signed Claude block as a hard account/model
+owner and skipped signature recovery. Compacting after a Claude model switch
+(Sonnet 5 to Opus 5.5), with the original account paused, or after a historical
+signature rejection therefore failed, while a normal turn on the same history
+succeeded by omitting that thinking. Omission was rejected for compaction because
+it loses content the summary should cover; the only alternative considered was
+refusal.
+
+Completed thinking now only prefers its account. Normal turns keep omission:
+Anthropic allows omitting prior-turn thinking outside the active tool turn and
+filters it per model anyway (Haiku keeps only the last turn). Compaction reads
+instead: completed thinking that cannot keep its signature on the selected route
+becomes readable assistant text, and redacted thinking is omitted. Compaction's
+one-shot signature recovery converts the same way. This is Sub2API's
+`FilterThinkingBlocksForRetry` strategy ("preserve content as text", `d6adebd`),
+applied deterministically. Converting rather than replaying signatures on another
+account also avoids depending on OmniRoute's observation (`dbe703a0`) that
+signatures survive an OAuth account switch, since Sonnet 5.5 blocks are
+documented as account-bound. The active turn is decided by the same
+client-history boundary as foreign reasoning, so the summarizer instruction never
+makes completed thinking active. Active signed state and search stay hard owners.
+For example, Opus 5 thinking "use the cached index" followed by `/compact` on
+Sonnet 5 sends that sentence as an assistant text block.
+
+Manual budget thinking (Haiku 4.5, Sonnet 4.5) requires the final assistant turn
+of a thinking-enabled request to begin with a thinking block; adaptive mode drops
+that requirement, and one turn runs in a single thinking mode (Anthropic thinking
+guide, read 2026-10-01). Claude Code #14264 shows the resulting 400, "Expected
+`thinking` or `redacted_thinking`, but found `tool_use`". Sol tool loops with
+plaintext reasoning, adaptive Claude turns that skipped thinking, or an effort
+change mid-loop reach that state. When the first assistant message after the last
+user message without a tool result lacks leading signed thinking, the budget
+request sends `thinking: {"type":"disabled"}`, the value Claude Code sends and the
+documented thinking-off setting for both models (OpenCodex `ef0297f` live table:
+Haiku 4.5 accepts it). A user message that directly follows a tool output is
+merged into the tool-result message on the wire and still belongs to the open
+turn. Sub2API removes top-level thinking reactively after such 400s; the structure
+is known before dispatch, so no rejected request is spent. CLIProxyAPI `fd48ea6`
+disables thinking only for forced tool choice, and OpenCodex replays only genuine
+signatures without covering this case. Adaptive Opus 5.5 and Fable reject every
+off switch, so they are not changed.
+
+Not live-qualified: Anthropic acceptance of converted thinking text after a real
+model or account switch, Fable 5.1 prefix binding over projected history, and the
+disabled-thinking continuation on a production Haiku/Sonnet 4.5 account.

@@ -23,6 +23,22 @@ from app.modules.claude.tool_schema import ToolArguments, adapt_tool_schema
 logger = logging.getLogger(__name__)
 
 
+def _unsigned_open_turn(messages: list[JsonValue]) -> bool:
+    """Whether the open tool-use turn lacks the leading thinking manual mode requires."""
+    turn = cast(list[dict[str, list[dict[str, JsonValue]]]], messages)
+    start = next(
+        (
+            index + 1
+            for index in range(len(turn) - 1, -1, -1)
+            if turn[index]["role"] == "user"
+            and not any(block.get("type") == "tool_result" for block in turn[index]["content"])
+        ),
+        0,
+    )
+    first = next((message for message in turn[start:] if message["role"] == "assistant"), None)
+    return first is not None and first["content"][0].get("type") not in ("thinking", "redacted_thinking")
+
+
 def _tool_output_error(
     reason: str, *, index: int, kind: str, item: dict[str, JsonValue], pending_count: int
 ) -> ClientPayloadError:
@@ -385,6 +401,7 @@ def project_responses(
         selected["disable_parallel_tool_use"] = True
     requested_reasoning = payload.get("reasoning")
     policy = model_policy(str(payload.get("model", "")))
+    thinking = False
     if isinstance(requested_reasoning, dict) and requested_reasoning.get("effort") not in (None, "none"):
         requested_effort = requested_reasoning.get("effort")
         if not isinstance(requested_effort, str) or requested_effort not in EFFORT_LEVELS:
@@ -406,8 +423,20 @@ def project_responses(
             budget = {"low": 4096, "medium": 8192, "high": 16384, "max": 32000}[effort]
             if budget < 1024 or budget >= limit:
                 raise invalid("Claude thinking budget must be below max_output_tokens", "max_output_tokens")
-            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
-        if choice == "required" or isinstance(choice, dict):
+            if _unsigned_open_turn(messages):
+                # Manual thinking requires the open turn to begin with signed
+                # thinking, and one turn runs in one thinking mode. A tool loop
+                # produced without it continues with thinking off; the next
+                # user turn re-enables it.
+                body["thinking"] = {"type": "disabled"}
+                logger.info(
+                    "claude_thinking_projection request_id=%s reason=unsigned_open_turn mode=disabled",
+                    get_request_id(),
+                )
+            else:
+                body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        thinking = body["thinking"] != {"type": "disabled"}
+        if thinking and (choice == "required" or isinstance(choice, dict)):
             raise invalid("Claude thinking cannot be combined with a forced tool choice", "tool_choice")
     text = payload.get("text")
     if isinstance(text, dict):
@@ -428,7 +457,7 @@ def project_responses(
     for field in ("temperature", "top_p"):
         # An explicit null means "unset"; forwarding it would send ``null`` upstream.
         if payload.get(field) is not None:
-            if "thinking" in body and (field == "top_p" or payload[field] != 1):
+            if thinking and (field == "top_p" or payload[field] != 1):
                 raise invalid(f"Claude thinking cannot be combined with {field}", field)
             body[field] = payload[field]
     return MessagesProjection(

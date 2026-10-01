@@ -98,6 +98,70 @@ def test_budget_thinking_is_bounded_by_caller_output_limit(model):
         )
 
 
+HAIKU = "anthropic/claude-haiku-4-5-20251001"
+SIGNED = {"type": "thinking", "thinking": "plan", "signature": "sig"}
+
+
+def tool_loop(*, signed=False, commentary=False, ending="tool"):
+    items = [{"role": "user", "content": "inspect"}]
+    if signed:
+        items.append({"type": "reasoning", "encrypted_content": "signed"})
+    if commentary:
+        items.append({"role": "assistant", "content": "Looking"})
+    items += [
+        {"type": "function_call", "name": "read", "call_id": "call", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call", "output": "ok"},
+    ]
+    if ending in ("answer", "assistant"):
+        items.append({"role": "assistant", "content": "Done"})
+    if ending in ("answer", "merged_user"):
+        items.append({"role": "user", "content": "next"})
+    return {
+        "model": HAIKU,
+        "input": items,
+        "tools": [{"type": "function", "name": "read", "parameters": {"type": "object"}}],
+        "reasoning": {"effort": "medium"},
+    }
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [{}, {"commentary": True}, {"ending": "merged_user"}],
+    ids=["tool_output", "commentary", "user_text_joins_tool_result_message"],
+)
+def test_budget_thinking_is_disabled_for_unsigned_open_tool_turn(caplog, loop):
+    payload = tool_loop(**loop)
+    payload["temperature"] = 0.2
+    with caplog.at_level("INFO"):
+        result = project(payload, max_output_tokens=64000)
+    assert result.body["thinking"] == {"type": "disabled"}
+    assert result.body["temperature"] == 0.2
+    assert "reason=unsigned_open_turn" in caplog.text
+    with pytest.raises(ClientPayloadError, match="Unsupported Claude reasoning effort"):
+        project({**payload, "reasoning": {"effort": "extreme"}}, max_output_tokens=64000)
+    with pytest.raises(ClientPayloadError, match="below max_output_tokens"):
+        project({**payload, "max_output_tokens": 8192}, max_output_tokens=64000)
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        {"signed": True},
+        {"ending": "answer"},
+        {"ending": "assistant"},
+    ],
+    ids=["signed_turn", "new_user_turn", "continuation_turn"],
+)
+def test_budget_thinking_stays_enabled_outside_unsigned_open_turns(loop):
+    result = project(tool_loop(**loop), max_output_tokens=64000, restore_reasoning=lambda token: dict(SIGNED))
+    assert result.body["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+
+
+def test_adaptive_thinking_is_unchanged_for_unsigned_open_tool_turn():
+    result = project({**tool_loop(), "model": "anthropic/claude-opus-5"}, max_output_tokens=64000)
+    assert result.body["thinking"] == {"type": "adaptive"}
+
+
 @pytest.mark.parametrize(
     "payload",
     [

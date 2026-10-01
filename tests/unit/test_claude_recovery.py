@@ -6,6 +6,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.recovery import historical_recovery
 from app.modules.claude.wire_identity import native_conversation_id
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
+from tests.claude_json_helpers import array, at
 
 pytestmark = pytest.mark.unit
 
@@ -34,10 +35,27 @@ def history():
 def test_recovery_preserves_visible_history_and_original():
     body = history()
     original = deepcopy(body)
-    recovered = historical_recovery(body, failure())
+    recovered = historical_recovery(body, failure(), readable_history=False)
     assert body == original
     assert recovered["messages"][1]["content"] == [{"type": "text", "text": "answer"}]
     assert recovered["thinking"] == body["thinking"]
+
+
+def test_summarization_recovery_reads_historical_thinking():
+    body = history()
+    body["messages"][1]["content"].insert(1, {"type": "redacted_thinking", "data": "opaque"})
+    original = deepcopy(body)
+    recovered = historical_recovery(body, failure(), readable_history=True)
+    assert body == original
+    assert recovered is not None
+    assert at(recovered, "messages", 1, "content") == [
+        {"type": "text", "text": "old"},
+        {"type": "text", "text": "answer"},
+    ]
+    body["messages"][1]["content"] = [{"type": "thinking", "thinking": "only", "signature": "opaque"}]
+    recovered = historical_recovery(body, failure(), readable_history=True)
+    assert recovered is not None
+    assert at(recovered, "messages", 1, "content") == [{"type": "text", "text": "only"}]
 
 
 @pytest.mark.parametrize(
@@ -50,7 +68,7 @@ def test_recovery_preserves_visible_history_and_original():
     ],
 )
 def test_unrelated_errors_do_not_recover(status, message):
-    assert historical_recovery(history(), failure(status, message)) is None
+    assert historical_recovery(history(), failure(status, message), readable_history=False) is None
 
 
 def test_protects_complete_active_tool_chain():
@@ -68,17 +86,21 @@ def test_protects_complete_active_tool_chain():
                 {"role": "user", "content": [{"type": "tool_result", "tool_use_id": str(i), "content": "ok"}]},
             ]
         )
-    recovered = historical_recovery(body, failure())
-    assert recovered["messages"][3:] == body["messages"][3:]
+    for readable in (False, True):
+        recovered = historical_recovery(body, failure(), readable_history=readable)
+        assert recovered is not None
+        assert array(recovered["messages"])[3:] == body["messages"][3:]
 
 
 def test_empty_message_and_server_state_refuse_recovery():
     body = history()
     body["messages"][1]["content"].pop()
-    assert historical_recovery(body, failure()) is None
+    assert historical_recovery(body, failure(), readable_history=False) is None
+    body["messages"][1]["content"] = [{"type": "redacted_thinking", "data": "opaque"}]
+    assert historical_recovery(body, failure(), readable_history=True) is None
     body = history()
     body["messages"][1]["content"].append({"type": "server_tool_use", "id": "search"})
-    assert historical_recovery(body, failure()) is None
+    assert historical_recovery(body, failure(), readable_history=True) is None
 
 
 def test_explicit_identity_and_conflict():

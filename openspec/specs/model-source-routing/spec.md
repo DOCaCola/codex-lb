@@ -170,9 +170,15 @@ successful compaction checkpoint or replacement of retained original history.
 Native OpenAI compact wire behavior SHALL remain unchanged.
 Source model request overrides MUST NOT replace compaction history/instructions,
 enable tools or automatic truncation, or attach persisted continuation handles.
-Claude compaction MUST authenticate and preserve signed history on its original
-account/model or fail explicitly; it MUST NOT omit completed signed blocks on
-route changes or use historical signature recovery that removes them.
+Claude compaction MUST authenticate signed history and SHALL prefer its original
+account and model, replaying signed blocks verbatim there. Completed signed
+thinking that cannot keep its signature on the selected account or model, or
+whose historical signature the upstream rejects, SHALL reach the summarizer as
+readable historical assistant text in original order without fabricated
+signatures; completed redacted thinking, which has no readable content, SHALL
+produce no wire block. Signed state in the active turn of the client-supplied
+history and hosted search state MUST remain bound to their original account and
+model or fail explicitly.
 
 #### Scenario: Unresolved compact continuation
 - **WHEN** source compaction includes a previous-response handle whose history cannot be resolved
@@ -194,9 +200,13 @@ route changes or use historical signature recovery that removes them.
 - **WHEN** native OpenAI compact serialization is used
 - **THEN** its existing normalization and wire-budget behavior remain active
 
+#### Scenario: Signed Claude history on another route
+- **WHEN** compaction runs on another account or model than completed signed thinking, its owner is unavailable, completed owners differ or the upstream rejects a historical signature
+- **THEN** the summarizer receives that thinking as readable assistant text with all other history unchanged, without signatures from another route
+
 #### Scenario: Signed Claude history cannot be preserved
-- **WHEN** compaction cannot preserve signed history because its owner/model is unavailable, conflicting owners are present or its signature is rejected
-- **THEN** it returns an error without dropping the signed blocks or dispatching a shortened-history retry
+- **WHEN** compaction contains active-turn signed state or hosted search state whose owner or model is unavailable or conflicting
+- **THEN** it returns an error without dispatching or dropping that state
 
 #### Scenario: Conflicting model overrides
 - **WHEN** source request overrides replace input or enable tools, persisted continuation or automatic truncation

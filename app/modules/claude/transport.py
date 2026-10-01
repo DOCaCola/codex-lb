@@ -69,11 +69,9 @@ async def open_responses(
     try:
         return await _open_responses(prepared, projection, scheduler=scheduler, clock=clock)
     except ModelSourceForwardingError as exc:
-        if prepared.require_complete_history:
-            # Signature recovery removes historical thinking. That is not a
-            # valid retry for a complete-history compaction request.
-            raise
-        recovered = historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
+        recovered = historical_recovery(
+            cast(dict[str, JsonValue], prepared.body), exc, readable_history=prepared.require_complete_history
+        )
         if recovered is None or prepared.budget.remaining == 0:
             raise
     logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
@@ -272,7 +270,11 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
     try:
         return await _forward_native(prepared, count_tokens=count_tokens)
     except ModelSourceForwardingError as exc:
-        recovered = None if count_tokens else historical_recovery(cast(dict[str, JsonValue], prepared.body), exc)
+        recovered = (
+            None
+            if count_tokens
+            else historical_recovery(cast(dict[str, JsonValue], prepared.body), exc, readable_history=False)
+        )
         if recovered is None or prepared.budget.remaining == 0:
             raise
     logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)

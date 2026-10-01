@@ -58,14 +58,21 @@ known resource on its authorized original account.
 ### Requirement: Bounded historical signature recovery
 Messages forwarding SHALL retry at most once on an upstream HTTP 400 explicitly
 rejecting a thinking-block signature, before output delivery. Recovery SHALL
-remove only completed historical thinking, preserve active ordinary and server
-tool cycles, and leave all visible content and tool pairs unchanged. If removal
-would leave an empty message or no safe change exists, it SHALL return the error.
-Generic errors, 429s and latest-assistant-modification errors MUST NOT trigger it.
+change only completed historical thinking, preserve active ordinary and server
+tool cycles, and leave all visible content and tool pairs unchanged. Normal
+translated and native requests SHALL remove that thinking. Compaction SHALL
+convert historical thinking to readable text and remove redacted thinking. If
+the change would leave an empty message or no safe change exists, it SHALL
+return the error. Generic errors, 429s and latest-assistant-modification errors
+MUST NOT trigger it.
 
 #### Scenario: Historical rejection
 - **WHEN** an upstream rejects an eligible historical thinking signature
 - **THEN** one same-target recovery attempt is allowed, without changing accounts
+
+#### Scenario: Compaction rejection
+- **WHEN** an upstream rejects a historical thinking signature in a compaction request
+- **THEN** the single recovery attempt carries that thinking as text so the summary keeps its readable content
 
 ### Requirement: Scoped parent affinity
 Native sessions SHALL use explicit session headers or structured session metadata,
@@ -255,7 +262,7 @@ Translated Responses SHALL produce deterministic ephemeral cache boundaries for 
 - **THEN** stable prefix and recent user-turn cache boundaries are present without changing prior text or signed blocks
 
 ### Requirement: Translated completed reasoning recovery
-The gateway SHALL authenticate historical Claude state against client and conversation before routing. Completed thinking SHALL provide only a preferred eligible account. When the selected account or model differs, the gateway SHALL omit incompatible completed thinking from outbound projection while preserving visible text and paired tools and leaving retained history unchanged. It SHALL record an omission count without content or credentials. Active reasoning and server search SHALL remain account/model-bound. A subsequent explicit user message or canonical external task input, not a paired tool output, SHALL mark earlier thinking completed. Invalid authentication or conflicting strict owners MUST fail before dispatch.
+The gateway SHALL authenticate historical Claude state against client and conversation before routing. Completed thinking SHALL provide only a preferred eligible account. When the selected account or model differs, the gateway SHALL omit incompatible completed thinking from outbound projection while preserving visible text and paired tools and leaving retained history unchanged; compaction SHALL instead project completed thinking as readable historical assistant text and omit only redacted thinking. It SHALL record conversion and omission counts without content or credentials. Active reasoning and server search SHALL remain account/model-bound. A subsequent explicit user message or canonical external task input, not a paired tool output, SHALL mark earlier thinking completed; compaction SHALL determine this on the client-supplied history excluding its summarization instruction. Invalid authentication or conflicting strict owners MUST fail before dispatch.
 
 #### Scenario: Historical account unavailable
 - **WHEN** only completed thinking belongs to an unavailable account
@@ -264,6 +271,10 @@ The gateway SHALL authenticate historical Claude state against client and conver
 #### Scenario: Model switch
 - **WHEN** completed thinking belongs to another model
 - **THEN** the requested model receives portable visible history without that thinking
+
+#### Scenario: Compaction on another route
+- **WHEN** compaction selects another account or model than completed thinking
+- **THEN** the summarizer receives that thinking as readable assistant text in its original position, without a signature
 
 #### Scenario: Active tool cycle
 - **WHEN** incompatible reasoning belongs to the active tool turn
@@ -567,6 +578,25 @@ Known budget-thinking models SHALL advertise reasoning separately from adaptive-
 #### Scenario: Haiku reasoning cap
 - **WHEN** Haiku 4.5 receives high reasoning with an explicit output cap below the mapped budget
 - **THEN** the request fails before dispatch rather than enlarging the cap
+
+### Requirement: Budget thinking in an unsigned open tool turn
+Translated Messages requests for budget-thinking models SHALL send `thinking: {"type":"disabled"}` when the first assistant message of the open turn, which follows the last user message without a tool result, does not begin with thinking or redacted thinking. Requested effort SHALL still be validated. The decision SHALL log a content-free diagnostic. Adaptive-thinking models, user-started turns and signed open turns SHALL keep the requested thinking configuration. Native Messages MUST remain caller-owned.
+
+#### Scenario: Foreign tool loop on Haiku
+- **WHEN** Haiku 4.5 with reasoning continues tool calls whose assistant turn has no signed Claude thinking
+- **THEN** that request disables thinking instead of sending a budget the upstream rejects
+
+#### Scenario: Signed tool loop
+- **WHEN** the open turn's first assistant message begins with genuine signed thinking
+- **THEN** the budget thinking configuration is sent unchanged
+
+#### Scenario: New user turn
+- **WHEN** the request ends with a user message without tool results, including a wire-only continuation
+- **THEN** budget thinking is enabled as requested
+
+#### Scenario: Adaptive model
+- **WHEN** an adaptive-thinking model continues an unsigned tool loop
+- **THEN** the adaptive configuration is sent unchanged
 
 ### Requirement: Faithful translated Claude tool schemas
 Translated function tools SHALL expose an object input_schema without root oneOf, anyOf or allOf. Ordinary object schemas and nested composition SHALL retain their constraints. Root compositions SHALL use a reversible upstream-only arguments object envelope rather than lossy property merging. Local JSON-pointer references SHALL remain bound to the original schema after relocation. Schemas requiring relocation with unsupported reference scopes, malformed structure or exhausted adaptation budgets SHALL fail before dispatch with the caller-visible tool identity and tools parameter path, without omitting tools or replacing their schema with an unconstrained object.

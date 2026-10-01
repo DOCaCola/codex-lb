@@ -642,6 +642,52 @@ async def test_haiku_budget_reasoning_roundtrips_and_logs_upstream_mode(async_cl
     assert len(captured) == 1
 
 
+async def test_haiku_continues_unsigned_tool_turn_with_thinking_disabled(async_client, pool, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+    from app.modules.claude.client import ClaudeClient
+    from app.modules.claude.schemas import CatalogModel
+
+    model = "claude-haiku-4-5-20251001"
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[CatalogModel(id=model, display_name="Haiku")]))
+    assert (await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")).status_code == 200
+    selected = await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"selections": [{"model": model}]})
+    assert selected.status_code == 200
+    captured, _ = install_upstream(monkeypatch)
+    # A Sol tool loop (plaintext reasoning only) continued on Haiku.
+    loop = [
+        {"role": "user", "content": "inspect the file"},
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Read it first"}]},
+        {"type": "function_call", "name": "read", "call_id": "call_sol", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_sol", "output": "contents"},
+    ]
+    body = {
+        "model": f"anthropic/{model}",
+        "stream": False,
+        "reasoning": {"effort": "medium"},
+        "max_output_tokens": 10000,
+        "tools": [{"type": "function", "name": "read", "parameters": {"type": "object"}}],
+    }
+    response = await async_client.post("/v1/responses", json={**body, "input": loop})
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["thinking"] == {"type": "disabled"}
+    assert "interleaved-thinking-2025-05-14" not in captured[0][3].get("anthropic-beta", "")
+    next_turn = [*loop, {"role": "assistant", "content": "Done"}, {"role": "user", "content": "now summarize"}]
+    response = await async_client.post("/v1/responses", json={**body, "input": next_turn})
+    assert response.status_code == 200, response.text
+    assert captured[1][2]["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+    async with SessionLocal() as session:
+        rows = (await session.scalars(select(RequestLog).order_by(RequestLog.id))).all()
+        assert [(row.reasoning_effort, row.upstream_thinking_mode) for row in rows] == [
+            ("medium", "disabled"),
+            ("medium", "enabled"),
+        ]
+
+
 @pytest.mark.parametrize("sampling", [{"temperature": 0.2}, {"top_p": 0.9}])
 async def test_claude_responses_rejects_thinking_sampling_conflicts(async_client, pool, monkeypatch, sampling):
     captured, _ = install_upstream(monkeypatch)

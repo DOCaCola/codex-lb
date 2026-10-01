@@ -128,12 +128,16 @@ anchor available. For example, a 150k-token-equivalent tool transcript on a
 really exceeds Opus capacity is rejected instead of falsely reporting successful
 compaction after discarding items. Existing native compact behavior is unchanged.
 
-Claude signed blocks are authenticated and treated as hard account/model owners
-for compaction, including completed thinking. Mixed signed owners, model changes,
-unavailable owners and invalid signatures fail explicitly rather than invoking
-ordinary conversation recovery that omits thinking. Pending tool calls also fail
-unless their real outputs are supplied; no tool output or signature is invented.
-Native Messages and ordinary Responses recovery retain their existing policy.
+Claude signed blocks are authenticated before routing. Completed thinking prefers
+its original account and model, where it is replayed verbatim. On another route,
+or after the upstream rejects a historical signature, the summarizer receives
+completed thinking as readable assistant text; redacted thinking has no readable
+content and is omitted. Active-turn signed state and hosted search remain hard
+account/model owners and fail explicitly when unavailable. Pending tool calls also
+fail unless their real outputs are supplied; no tool output or signature is
+invented. Native Messages and ordinary Responses recovery retain their existing
+omission policy. See `../claude-accounts/context.md` (portable signed history,
+2026-10-01) for why the earlier hard-owner rule was replaced.
 
 OpenCodex at 5ab6d52b2a4da722d398e4ab50a6c621ac3ce087 informs the history-first
 approach. Its merged #6175 older-image omission is heuristic; this source path

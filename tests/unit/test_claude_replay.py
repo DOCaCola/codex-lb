@@ -5,6 +5,7 @@ import pytest
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.claude.opaque import OpaqueScope
 from app.modules.claude.replay import authenticate_replay
+from app.modules.model_sources.compaction import source_compaction_instruction
 from tests.unit.test_claude_protocol import TASK_INPUT, codec, scope
 
 pytestmark = pytest.mark.unit
@@ -27,6 +28,13 @@ def read(payload, opaque, *, require_complete_history=False, **overrides):
         conversation_id=overrides.get("conversation_id", "thread-a"),
         require_complete_history=require_complete_history,
     )
+
+
+def compact(payload):
+    return {**payload, "input": [*payload["input"], source_compaction_instruction()]}
+
+
+READABLE = {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "private"}]}
 
 
 @pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
@@ -100,26 +108,62 @@ def test_conflicting_active_owners_fail():
         read(payload, opaque)
 
 
-@pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
-def test_compaction_preserves_completed_signed_history_or_fails(kind):
+@pytest.mark.parametrize("completed", [True, False], ids=["new_user_turn", "closed_assistant_turn"])
+def test_compaction_prefers_signed_owner_and_reads_thinking_elsewhere(caplog, completed):
     opaque = codec()
-    payload = history(opaque, kind=kind)
+    payload = compact(history(opaque, completed=completed))
+    original = deepcopy(payload)
     replay = read(payload, opaque, require_complete_history=True)
-    assert replay.owner_source_id == "source-a"
+    assert replay.owner_source_id is None
+    assert replay.preferred_source_id == "source-a"
     assert replay.project(payload, source_id="source-a", model=scope().model) == payload
-    with pytest.raises(ClientPayloadError):
-        replay.project(payload, source_id="source-b", model=scope().model)
-    with pytest.raises(ClientPayloadError, match="compaction requires its original model"):
-        read(payload, opaque, model="other", require_complete_history=True)
+    with caplog.at_level("INFO"):
+        moved = replay.project(payload, source_id="source-b", model=scope().model)
+    assert moved["input"] == [READABLE, *payload["input"][1:]]
+    assert "converted=1 omitted=0" in caplog.text
+    assert "private" not in caplog.text
+    switched = read(payload, opaque, model="other", require_complete_history=True)
+    assert switched.project(payload, source_id="source-a", model="other")["input"] == moved["input"]
+    assert payload == original
 
 
-def test_compaction_does_not_discard_conflicting_completed_signed_owners():
+@pytest.mark.parametrize("block", [{"type": "redacted_thinking", "data": "x"}, {"type": "thinking", "thinking": ""}])
+def test_compaction_omits_unreadable_completed_state(block):
+    opaque = codec()
+    payload = compact(history(opaque))
+    payload["input"][0]["encrypted_content"] = opaque.encode(scope(), block)
+    replay = read(payload, opaque, model="other", require_complete_history=True)
+    assert replay.project(payload, source_id="source-a", model="other")["input"] == payload["input"][1:]
+
+
+def test_compaction_reads_conflicting_completed_owners():
     opaque = codec()
     payload = history(opaque)
-    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a", "thread-a"), {"type": "thinking"})
+    other = opaque.encode(
+        OpaqueScope("source-b", scope().model, "key-a", "thread-a"), {"type": "thinking", "thinking": "second"}
+    )
     payload["input"].insert(1, {"type": "reasoning", "encrypted_content": other})
-    with pytest.raises(ClientPayloadError, match="conflicting signed history owners"):
-        read(payload, opaque, require_complete_history=True)
+    payload = compact(payload)
+    replay = read(payload, opaque, require_complete_history=True)
+    assert replay.owner_source_id is None
+    projected = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    assert projected[:2] == [READABLE, payload["input"][1]]
+
+
+@pytest.mark.parametrize("kind", ["thinking", "web_search"])
+def test_compaction_keeps_active_and_search_state_strict(kind):
+    opaque = codec()
+    payload = history(opaque, kind=kind, completed=kind == "web_search")
+    if kind == "thinking":
+        payload["input"][1] = {"type": "function_call", "name": "read", "call_id": "call", "arguments": "{}"}
+        payload["input"].append({"type": "function_call_output", "call_id": "call", "output": "ok"})
+    payload = compact(payload)
+    replay = read(payload, opaque, require_complete_history=True)
+    assert replay.owner_source_id == "source-a"
+    with pytest.raises(ClientPayloadError, match="original account/model"):
+        replay.project(payload, source_id="source-b", model=scope().model)
+    with pytest.raises(ClientPayloadError, match="original model"):
+        read(payload, opaque, model="other", require_complete_history=True)
 
 
 @pytest.mark.parametrize("pairing", [{}, {"call_id": None}, {"call_id": ""}, {"call_id": " \t"}])

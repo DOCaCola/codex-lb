@@ -11,7 +11,10 @@ from app.modules.model_sources.forwarding import ModelSourceForwardingError
 _SIGNATURE_ERROR = re.compile(r"invalid\s+[`'\" ]*signature[`'\" ]*\s+in\s+[`'\" ]*thinking[`'\" ]*\s+block", re.I)
 
 
-def historical_recovery(body: dict[str, JsonValue], error: ModelSourceForwardingError) -> dict[str, JsonValue] | None:
+def historical_recovery(
+    body: dict[str, JsonValue], error: ModelSourceForwardingError, *, readable_history: bool
+) -> dict[str, JsonValue] | None:
+    """Retry without historical signatures; summarization keeps thinking as text."""
     detail = error.payload.get("error")
     message = detail.get("message") if isinstance(detail, dict) else None
     if error.status_code != 400 or not isinstance(message, str) or not _SIGNATURE_ERROR.search(message):
@@ -64,12 +67,17 @@ def historical_recovery(body: dict[str, JsonValue], error: ModelSourceForwarding
         if item.get("role") != "assistant" or not isinstance(content, list) or index in protected:
             output.append(item)
             continue
-        kept = [
-            block
-            for block in content
-            if not (isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"})
-        ]
-        if len(kept) != len(content):
+        kept: list[JsonValue] = []
+        for block in content:
+            kind = block.get("type") if isinstance(block, dict) else None
+            if kind not in {"thinking", "redacted_thinking"}:
+                kept.append(block)
+                continue
+            assert isinstance(block, dict)
+            text = block.get("thinking")
+            if readable_history and kind == "thinking" and isinstance(text, str) and text:
+                kept.append({"type": "text", "text": text})
+        if kept != content:
             if not kept:
                 return None
             changed = True

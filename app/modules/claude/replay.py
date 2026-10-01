@@ -196,9 +196,11 @@ class ClaudeReplay:
     blocks: tuple[ReplayBlock, ...]
     owner_source_id: str | None
     preferred_source_id: str | None
+    # Summarization reads completed thinking that cannot keep its signature.
+    readable_history: bool
 
     def project(self, payload: dict[str, JsonValue], *, source_id: str, model: str) -> dict[str, JsonValue]:
-        omitted: set[int] = set()
+        replaced: dict[int, JsonValue | None] = {}
         for block in self.blocks:
             envelope = block.envelope
             if (envelope.source_id, envelope.model) == (source_id, model):
@@ -207,13 +209,30 @@ class ClaudeReplay:
                 raise ClientPayloadError(
                     "Active Claude reasoning or search requires its original account/model", param="input"
                 )
-            omitted.add(block.index)
-        if not omitted:
+            text = envelope.block.get("thinking") if envelope.block["type"] == "thinking" else None
+            assert text is None or isinstance(text, str)
+            replaced[block.index] = (
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+                if self.readable_history and text
+                else None
+            )
+        if not replaced:
             return payload
         items = payload["input"]
         assert isinstance(items, list)
-        logger.info("claude_reasoning_projection reason=route_changed omitted=%d", len(omitted))
-        return {**payload, "input": [item for index, item in enumerate(items) if index not in omitted]}
+        converted = sum(item is not None for item in replaced.values())
+        logger.info(
+            "claude_reasoning_projection reason=route_changed converted=%d omitted=%d",
+            converted,
+            len(replaced) - converted,
+        )
+        projected: list[JsonValue] = []
+        for index, item in enumerate(items):
+            if index not in replaced:
+                projected.append(item)
+            elif (text_item := replaced[index]) is not None:
+                projected.append(text_item)
+        return {**payload, "input": projected}
 
 
 def authenticate_replay(
@@ -227,8 +246,8 @@ def authenticate_replay(
 ) -> ClaudeReplay:
     items = payload.get("input")
     if not isinstance(items, list):
-        return ClaudeReplay((), None, None)
-    last_user = _last_user_index(items)
+        return ClaudeReplay((), None, None, require_complete_history)
+    active_start = _active_turn_start(items, compaction=require_complete_history)
     blocks: list[ReplayBlock] = []
     owner: str | None = None
     preferred: str | None = None
@@ -242,26 +261,14 @@ def authenticate_replay(
             envelope = opaque.authenticate(token, client_scope=client_scope, conversation_id=conversation_id)
         except ClientPayloadError as exc:
             raise ClientPayloadError(str(exc), param=f"input[{index}]", code="invalid_provider_history") from exc
-        # Summarization must not silently discard even completed signed history
-        # when the preferred account/model is unavailable.
-        strict = require_complete_history or envelope.block.get("type") == "web_search" or index >= last_user
+        strict = envelope.block.get("type") == "web_search" or index >= active_start
         if strict:
             if envelope.model != model:
-                raise ClientPayloadError(
-                    "Claude compaction requires its original model for signed history"
-                    if require_complete_history
-                    else "Active Claude reasoning or search requires its original model",
-                    param="input",
-                )
+                raise ClientPayloadError("Active Claude reasoning or search requires its original model", param="input")
             if owner is not None and owner != envelope.source_id:
-                raise ClientPayloadError(
-                    "Claude compaction contains conflicting signed history owners"
-                    if require_complete_history
-                    else "Active Claude history contains conflicting account owners",
-                    param="input",
-                )
+                raise ClientPayloadError("Active Claude history contains conflicting account owners", param="input")
             owner = envelope.source_id
         elif envelope.model == model:
             preferred = envelope.source_id
         blocks.append(ReplayBlock(index, envelope, strict))
-    return ClaudeReplay(tuple(blocks), owner, preferred)
+    return ClaudeReplay(tuple(blocks), owner, preferred, require_complete_history)
