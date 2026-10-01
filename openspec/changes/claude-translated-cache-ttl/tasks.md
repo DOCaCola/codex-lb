@@ -1,0 +1,4 @@
+- [x] 1. Stamp gateway-owned translated breakpoints with `ttl: "1h"`.
+- [x] 2. Send `extended-cache-ttl-2025-04-11` on translated requests only.
+- [x] 3. Update unit and integration expectations; keep native passthrough unchanged.
+- [x] 4. Lint, types, affected tests; validate OpenSpec.

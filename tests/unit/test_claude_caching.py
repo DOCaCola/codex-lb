@@ -28,6 +28,10 @@ def test_translated_cache_markers_do_not_touch_signed_server_blocks():
     signed = deepcopy(body["messages"][1])
     cache_translated(body)
     assert json.dumps(body).count('"cache_control"') == 3
+    # Claude Code's own TTL: tool and review pauses outlast a 5-minute entry.
+    assert [
+        block["cache_control"] for block in (body["system"][-1], *(m["content"][-1] for m in body["messages"][::2]))
+    ] == [{"type": "ephemeral", "ttl": "1h"}] * 3
     assert body["messages"][1] == signed
     once = deepcopy(body)
     cache_translated(body)

@@ -33,7 +33,7 @@ def assert_seed(body, *, last=False, seed=SEED):
         assert blocks[0] == {
             "type": "text",
             "text": seed["output"],
-            **({"cache_control": {"type": "ephemeral"}} if last else {}),
+            **({"cache_control": {"type": "ephemeral", "ttl": "1h"}} if last else {}),
         }
         assert all(block["type"] != "tool_result" for block in blocks)
         return
@@ -41,7 +41,7 @@ def assert_seed(body, *, last=False, seed=SEED):
     assert blocks[1] == {
         "type": "text",
         "text": SEED["output"],
-        **({"cache_control": {"type": "ephemeral"}} if last else {}),
+        **({"cache_control": {"type": "ephemeral", "ttl": "1h"}} if last else {}),
     }
     assert all(block["type"] != "tool_result" for block in blocks)
 
@@ -66,7 +66,7 @@ async def test_http_delegation_seed_is_context(async_client, pool, monkeypatch, 
     assert captured[0][2]["messages"][0]["content"][-1] == {
         "type": "text",
         "text": "Continue",
-        "cache_control": {"type": "ephemeral"},
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
     }
 
 
@@ -127,7 +127,7 @@ async def test_http_standalone_image_and_text_are_preserved(async_client, pool, 
         {
             "type": "image",
             "source": {"type": "base64", "media_type": "image/png", "data": data},
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
         },
     ]
 
@@ -169,7 +169,7 @@ async def test_http_external_task_preserves_text_images_in_established_history(
     assert messages[-1]["content"] == [
         {"type": "text", "text": "Before image"},
         {"type": "image", "source": {"type": "url", "url": "https://example.com/task.png"}},
-        {"type": "text", "text": "After image", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "After image", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
     ]
     store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
     retained = await store.load(ReplayScope(None, "established-task"), response_id)
@@ -235,7 +235,7 @@ async def test_http_continuation_restores_real_tool_pair_after_seed(async_client
             "type": "tool_result",
             "tool_use_id": "active-call",
             "content": [{"type": "text", "text": RESULT["output"]}],
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
         }
     ]
 
@@ -322,7 +322,7 @@ async def test_websocket_standalone_context_and_strict_pairing(
             assert_seed(captured[0][2], last=True, seed=seed)
             assert_seed(captured[1][2], last=True, seed=seed)
             assert captured[1][2]["messages"][-1]["content"] == [
-                {"type": "text", "text": TASK["output"], "cache_control": {"type": "ephemeral"}}
+                {"type": "text", "text": TASK["output"], "cache_control": {"type": "ephemeral", "ttl": "1h"}}
             ]
     finally:
         await incoming.put({"type": "websocket.disconnect", "code": 1000})

@@ -144,10 +144,13 @@ store. Missing or altered state, incompatible scope and unavailable owners fail
 explicitly; no encrypted result is fabricated from citations. Search errors or
 unfinished server calls cannot be reported as successful completion.
 
-Translated requests stamp default five-minute ephemeral cache boundaries on the
-last system block (or last tool if there is no system block), plus the last two
-cacheable user-turn tails. Native cache markers and signed server blocks remain
-untouched. These are eligibility hints, not a guarantee of cache hits.
+Translated requests stamp one-hour ephemeral cache boundaries (with beta
+`extended-cache-ttl-2025-04-11`, as Claude Code sends) on the last system block
+(or last tool if there is no system block), plus the last two cacheable
+user-turn tails. Agent turns often pause past five minutes for tool work, so
+the default tier rewrote the prefix after most such pauses (41/42 turns after
+5–60 minute gaps, 2026-10-01). Native cache markers and signed server blocks
+remain untouched. These are eligibility hints, not a guarantee of cache hits.
 
 Synthesized metadata carries a stable local source/client device hash and the
 same scoped session UUID as the header. `account_uuid` is empty: the stored

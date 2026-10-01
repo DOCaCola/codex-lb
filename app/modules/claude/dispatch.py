@@ -14,7 +14,7 @@ from app.core.crypto import TokenEncryptor
 from app.db.models import ModelSource
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.auth import ClaudeAuth
-from app.modules.claude.caching import cache_translated
+from app.modules.claude.caching import EXTENDED_CACHE_TTL_BETA, cache_translated
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.failover import SendBudget
@@ -191,6 +191,8 @@ class ClaudeDispatchPreparer:
         # Validate caller beta metadata before a potentially rotating grant is
         # touched; the actual token is inserted only after refresh succeeds.
         feature_betas = list(projected.feature_betas)
+        if translated:
+            feature_betas.append(EXTENDED_CACHE_TTL_BETA)
         if not native:
             thinking = projected.body.get("thinking")
             if isinstance(thinking, dict) and thinking.get("type") in {"enabled", "adaptive"}:

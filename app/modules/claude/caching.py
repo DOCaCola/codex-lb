@@ -1,6 +1,15 @@
-"""Cache policy for gateway-owned Responses projections, never native requests."""
+"""Cache policy for gateway-owned Responses projections, never native requests.
+
+Breakpoints use the 1-hour TTL Claude Code itself sends: agent turns routinely
+pause longer than 5 minutes for tool work and review, and a 5-minute entry then
+rewrites the whole prefix. Every breakpoint here is gateway-owned and shares one
+TTL, so the API's rule that a longer TTL never follows a shorter one holds.
+"""
 
 from pydantic import JsonValue
+
+EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
+_BREAKPOINT: dict[str, JsonValue] = {"type": "ephemeral", "ttl": "1h"}
 
 
 def cache_translated(body: dict[str, JsonValue]) -> None:
@@ -25,4 +34,4 @@ def cache_translated(body: dict[str, JsonValue]) -> None:
                     users.append(block)
         targets.extend(users[-2:])
     for block in targets:
-        block["cache_control"] = {"type": "ephemeral"}
+        block["cache_control"] = dict(_BREAKPOINT)

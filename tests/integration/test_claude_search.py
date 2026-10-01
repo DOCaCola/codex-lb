@@ -28,7 +28,8 @@ async def test_cached_search_allows_normal_route(async_client, pool, monkeypatch
     identity = json.loads(captured[0][2]["metadata"]["user_id"])
     assert identity["session_id"] == captured[0][3]["x-claude-code-session-id"]
     assert identity["account_uuid"] == ""
-    assert captured[0][2]["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert captured[0][2]["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert "extended-cache-ttl-2025-04-11" in captured[0][3]["anthropic-beta"].split(",")
 
 
 @pytest.mark.parametrize("stream", [False, True])

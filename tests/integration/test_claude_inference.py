@@ -204,7 +204,7 @@ async def test_assistant_tail_continuation_is_only_applied_to_translated_routes(
         assert len(messages) == 3
         assert messages[2] == {
             "role": "user",
-            "content": [{"type": "text", "text": "(continue)", "cache_control": {"type": "ephemeral"}}],
+            "content": [{"type": "text", "text": "(continue)", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
         }
     assert len(closed) == 1
 
@@ -370,7 +370,7 @@ async def test_websocket_projection_failure_then_assistant_tail_recovery_on_same
         messages = recovered[0][2]["messages"]
         assert messages[1]["content"] == [{"type": "text", "text": "Progress"}]
         assert messages[2]["content"] == [
-            {"type": "text", "text": "(continue)", "cache_control": {"type": "ephemeral"}}
+            {"type": "text", "text": "(continue)", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
         ]
     finally:
         await incoming.put({"type": "websocket.disconnect", "code": 1000})
