@@ -292,6 +292,27 @@ def test_bad_stream_never_emits_argument_or_done(raw):
     assert not adapter.stopped
 
 
+def test_wrapped_stream_without_arguments_fails_envelope_validation():
+    projected = project(request(tools=declaration()), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    adapter.consume({"type": "message_start", "message": {"id": "empty"}})
+    adapter.consume(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "name": next(iter(projected.tools)), "id": "call", "input": {}},
+        }
+    )
+    assert (
+        adapter.consume(
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": ""}}
+        )
+        == []
+    )
+    with pytest.raises(ClaudeError, match="invalid arguments envelope"):
+        adapter.consume({"type": "content_block_stop", "index": 0})
+
+
 def test_complete_message_unwraps_tool_input():
     projected = project(request(tools=declaration()), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())

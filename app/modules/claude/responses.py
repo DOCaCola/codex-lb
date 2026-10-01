@@ -322,6 +322,9 @@ class ResponsesProjection:
                 piece = delta.get("partial_json")
                 if not isinstance(piece, str):
                     raise ClaudeError("Invalid Claude tool JSON delta")
+                if not piece:
+                    # Claude streams argument-less calls as one empty fragment; the block keeps its start input.
+                    return []
                 identity = self.tools.get(str(block.get("name")))
                 wrapped = identity is not None and identity.arguments is not None
                 if wrapped:

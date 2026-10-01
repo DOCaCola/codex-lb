@@ -433,6 +433,46 @@ def test_streamed_translated_call_declares_plaintext_on_every_item():
     assert all(isinstance(item, dict) and item["encrypted_function_args"] == [] for item in items)
 
 
+def _stream_tool_call(tools, *fragments):
+    projected = project(request(tools=tools), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    block = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools)), "input": {}}
+    events = adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    events += adapter.consume({"type": "content_block_start", "index": 0, "content_block": block})
+    for fragment in fragments:
+        events += adapter.consume(
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": fragment}}
+        )
+    events += adapter.consume({"type": "content_block_stop", "index": 0})
+    events += adapter.consume({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}})
+    events += adapter.consume({"type": "message_stop"})
+    return events
+
+
+NO_ARGUMENT_TOOL = [{"type": "function", "name": "list_agents", "parameters": {"type": "object", "properties": {}}}]
+
+
+def test_streamed_function_call_without_arguments_keeps_start_input():
+    events = _stream_tool_call(NO_ARGUMENT_TOOL, "")
+    assert not [event for event in events if event["type"] == "response.function_call_arguments.delta"]
+    done = next(event for event in events if event["type"] == "response.function_call_arguments.done")
+    item = at(events[-1], "response", "output", 0)
+    assert done["arguments"] == at(item, "arguments") == "{}"
+    assert (at(item, "type"), at(item, "name"), at(item, "status")) == ("function_call", "list_agents", "completed")
+
+
+def test_streamed_custom_call_without_input_keeps_start_input():
+    events = _stream_tool_call([{"type": "custom", "name": "exec", "description": "Run input"}], "")
+    item = at(events[-1], "response", "output", 0)
+    assert (at(item, "type"), at(item, "input")) == ("custom_tool_call", "")
+
+
+@pytest.mark.parametrize("fragments", [("{",), ('{"a":', ""), (" ",)])
+def test_streamed_malformed_tool_json_fails(fragments):
+    with pytest.raises(ClaudeError, match="invalid tool JSON"):
+        _stream_tool_call(NO_ARGUMENT_TOOL, *fragments)
+
+
 @pytest.mark.parametrize(
     "stop,status",
     [("end_turn", "completed"), ("tool_use", "completed"), ("max_tokens", "incomplete"), ("pause_turn", "incomplete")],
