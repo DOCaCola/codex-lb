@@ -5338,7 +5338,7 @@ async def _source_synthetic_compaction_response(
     context: ProxyContext | None = None,
 ) -> Response:
     try:
-        compact_payload = build_terminal_compact_request(payload, include_tool_declarations=True)
+        compact_payload = build_terminal_compact_request(payload)
         if compact_payload is None:
             raise RuntimeError("source compaction requires a terminal compaction trigger")
     except ClientPayloadError as exc:
@@ -7238,16 +7238,6 @@ async def _stream_responses(
         )
     apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
     validate_model_access(api_key, payload.model)
-    compact_payload: ResponsesCompactRequest | None = None
-    if codex_session_affinity:
-        try:
-            compact_payload = build_terminal_compact_request(payload, include_tool_declarations=False)
-            if compact_payload is not None:
-                # Validate the native compact wire budget only on native dispatch.
-                compact_payload.to_payload()
-        except ClientPayloadError as exc:
-            error = openai_client_payload_error(exc)
-            return _logged_error_json_response(request, 400, error)
     admission_denial = await _opportunistic_admission_denial(request, context, api_key, model=payload.model)
     if admission_denial is not None:
         return admission_denial
@@ -7304,101 +7294,6 @@ async def _stream_responses(
         if downstream_turn_state is not None
         else {}
     )
-    if compact_payload is not None:
-        responses_cleanup_ready_token = _bind_propagated_responses_service_cleanup_ready(
-            responses_service_cleanup_ready_event
-        )
-        try:
-            try:
-                compact_result = await context.service.compact_responses(
-                    compact_payload,
-                    effective_headers,
-                    codex_session_affinity=codex_session_affinity,
-                    openai_cache_affinity=openai_cache_affinity,
-                    api_key=api_key,
-                    api_key_reservation=reservation,
-                    client_ip=client_ip,
-                    forwarded_request=forwarded_request,
-                    forwarded_file_owner_account_id=forwarded_file_owner_account_id,
-                )
-            except NotImplementedError:
-                error = OpenAIErrorEnvelopeModel(
-                    error=OpenAIError(
-                        message="responses/compact is not implemented",
-                        type="server_error",
-                        code="not_implemented",
-                    )
-                )
-                return _logged_error_json_response(
-                    request,
-                    501,
-                    error.model_dump(mode="json", exclude_none=True),
-                    headers=rate_limit_headers,
-                )
-            except ProxyResponseError as exc:
-                if forwarded_request and responses_service_cleanup_ready_event.is_set():
-                    # Fallback settlement already transferred cleanup. A 502
-                    # would look like a definitive rejection and let origin
-                    # replay a compact that already ran.
-                    envelope = _parse_error_envelope(exc.payload)
-                    error = envelope.error
-                    stream = _synthetic_compaction_failure_stream(
-                        response_id=get_request_id() or "unknown",
-                        error_code=(error.code if error is not None and error.code else "upstream_error"),
-                        error_message=(
-                            error.message
-                            if error is not None and error.message
-                            else "Compact request failed after settlement"
-                        ),
-                    )
-                    return StreamingResponse(
-                        stream,
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache, no-transform",
-                            "X-Accel-Buffering": "no",
-                            **turn_state_headers,
-                            **rate_limit_headers,
-                        },
-                    )
-                return _stream_startup_error_response(
-                    request,
-                    exc,
-                    headers=rate_limit_headers,
-                )
-            compact_item = _compact_response_output_item(compact_result)
-            if compact_item is None:
-                if forwarded_request and responses_service_cleanup_ready_event.is_set():
-                    stream = _synthetic_compaction_failure_stream(response_id=_compact_response_id(compact_result))
-                else:
-                    error = openai_error(
-                        "upstream_error",
-                        "Compact response did not include a compaction output item",
-                        error_type="server_error",
-                    )
-                    return _logged_error_json_response(request, 502, error, headers=rate_limit_headers)
-            else:
-                stream = _synthetic_compaction_response_stream(
-                    compact_item,
-                    response_id=_compact_response_id(compact_result),
-                    usage=compact_result.usage,
-                )
-            return StreamingResponse(
-                stream,
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache, no-transform",
-                    "X-Accel-Buffering": "no",
-                    **turn_state_headers,
-                    **rate_limit_headers,
-                },
-            )
-        finally:
-            _reset_propagated_responses_service_cleanup_ready(responses_cleanup_ready_token)
-            if _responses_origin_may_release_reservation(
-                service_cleanup_ready_event=responses_service_cleanup_ready_event
-            ):
-                await reservation_cleanup.release(action="terminal compaction response")
     turn_scheduler = scheduler_for(context.service)
     turn_clock = clock_for(context.service)
     capacity_wait_event = asyncio.Event()
@@ -8137,15 +8032,6 @@ def _json_mapping_from_model_or_mapping(value: object) -> Mapping[str, JsonValue
     return None
 
 
-def _compact_response_id(payload: CompactResponsePayload) -> str:
-    if payload.id:
-        return payload.id
-    request_id = get_request_id()
-    if request_id:
-        return f"resp_{request_id}"
-    return f"resp_{uuid4().hex}"
-
-
 async def _synthetic_compaction_response_stream(
     compact_item: Mapping[str, JsonValue],
     *,
@@ -8200,22 +8086,6 @@ async def _synthetic_compaction_response_stream(
             "sequence_number": 3,
             "response": completed_response,
         }
-    )
-    yield "data: [DONE]\n\n"
-
-
-async def _synthetic_compaction_failure_stream(
-    *,
-    response_id: str,
-    error_code: str = "upstream_error",
-    error_message: str = "Compact response did not include a compaction output item",
-) -> AsyncIterator[str]:
-    yield format_sse_event(
-        response_failed_event(
-            error_code,
-            error_message,
-            response_id=response_id,
-        )
     )
     yield "data: [DONE]\n\n"
 

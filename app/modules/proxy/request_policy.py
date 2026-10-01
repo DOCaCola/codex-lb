@@ -877,15 +877,21 @@ def strip_terminal_compaction_trigger_input(
     return _strip_terminal_compaction_trigger_input_items(input_value, strip_trigger=strip_trigger)
 
 
-def build_terminal_compact_request(
-    payload: ResponsesRequest, *, include_tool_declarations: bool
-) -> ResponsesCompactRequest | None:
+def build_terminal_compact_request(payload: ResponsesRequest) -> ResponsesCompactRequest | None:
     compact_input = strip_terminal_compaction_trigger_input(payload)
     if compact_input is None:
         return None
-    fields = {"model", "instructions", "reasoning", "store", "service_tier", "prompt_cache_key"}
-    if include_tool_declarations:
-        fields |= {"tools", "tool_choice", "parallel_tool_calls"}
+    fields = {
+        "model",
+        "instructions",
+        "reasoning",
+        "store",
+        "service_tier",
+        "prompt_cache_key",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+    }
     compact_payload_data = payload.model_dump(
         mode="json",
         include=fields,

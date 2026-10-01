@@ -1,0 +1,4 @@
+- [x] 1. Remove the native HTTP trigger→compact branch; keep source compaction and explicit compact endpoints.
+- [x] 2. Record checkpoint provenance on HTTP bridge and direct streaming compaction turns.
+- [x] 3. Replace compact-branch regressions with forwarded-turn regressions (tools, full input, one trigger, relayed item, provenance).
+- [x] 4. Lint, types, affected tests; validate OpenSpec.

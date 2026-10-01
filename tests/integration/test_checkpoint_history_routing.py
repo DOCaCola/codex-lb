@@ -75,6 +75,26 @@ async def recovery_env(async_client, opus_pool, monkeypatch, tmp_path):
 
     monkeypatch.setattr(proxy_service, "core_compact_responses", native_compact)
 
+    async def native_stream(payload, *args, **kwargs):
+        # A native HTTP trigger turn streams the checkpoint as an output item;
+        # its terminal event may carry an empty output.
+        request = payload.to_payload()
+        calls.append(deepcopy(request))
+        await seed_existing_snapshot(request)
+        response = {"id": "resp_compact", "object": "response", "model": request["model"]}
+        usage = {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20}
+        for event in (
+            {"type": "response.created", "response": {**response, "status": "in_progress"}},
+            {"type": "response.output_item.done", "output_index": 0, "item": checkpoint()},
+            {
+                "type": "response.completed",
+                "response": {**response, "status": "completed", "output": [], "usage": usage},
+            },
+        ):
+            yield "data: " + json.dumps(event) + "\n\n"
+
+    monkeypatch.setattr(proxy_service, "core_stream_responses", native_stream)
+
     class NativeCompactSocket(SyntheticUpstream):
         async def send_text(self, text):
             request = json.loads(text)
@@ -178,6 +198,11 @@ async def test_native_compact_then_http_source_recovery_and_continuation(async_c
     assert compact.status_code == 200, compact.text
     assert "PRIVATE_NATIVE_CHECKPOINT" in compact.text
     assert calls[0]["input"][: len(original)] == original
+    if trigger:
+        # The forwarded turn reaches upstream intact and its streamed
+        # checkpoint establishes provenance for the next turn's routing.
+        assert calls[0]["input"][-1] == {"type": "compaction_trigger"}
+        assert list((directory / "origins").glob("*.replay"))
     assert list(directory.glob("*.replay"))
     switched = await async_client.post(
         path,

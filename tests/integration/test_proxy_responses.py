@@ -710,11 +710,32 @@ async def test_proxy_responses_repeated_401_after_refresh_fails_over(async_clien
     assert captured_account_ids[1] != invalidated_account_id
 
 
+def _native_compaction_stream_lines(response_id: str) -> list[str]:
+    item = {"id": "cmp_forwarded", "type": "compaction", "encrypted_content": "ENCRYPTED_NATIVE_CHECKPOINT"}
+    return [
+        "data: "
+        + json.dumps({"type": "response.created", "response": {"id": response_id, "status": "in_progress"}})
+        + "\n\n",
+        "data: " + json.dumps({"type": "response.output_item.done", "output_index": 0, "item": item}) + "\n\n",
+        "data: "
+        + json.dumps(
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "output": [],
+                    "usage": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15},
+                },
+            }
+        )
+        + "\n\n",
+    ]
+
+
 @pytest.mark.asyncio
-async def test_proxy_responses_compaction_trigger_elides_required_tool_image_and_streams_item(
-    async_client,
-    monkeypatch,
-):
+async def test_proxy_responses_compaction_trigger_is_forwarded_as_ordinary_turn(async_client, monkeypatch):
     email = "compact-trigger@example.com"
     raw_account_id = "acc_compact_trigger"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -722,20 +743,15 @@ async def test_proxy_responses_compaction_trigger_elides_required_tool_image_and
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    other_email = "compact-trigger-other@example.com"
-    other_raw_account_id = "acc_compact_trigger_other"
-    other_auth_json = _make_auth_json(other_raw_account_id, other_email)
+    other_auth_json = _make_auth_json("acc_compact_trigger_other", "compact-trigger-other@example.com")
     other_files = {"auth_json": ("auth.json", json.dumps(other_auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=other_files)
     assert response.status_code == 200
 
     async with SessionLocal() as session:
-        accounts = {
-            account.chatgpt_account_id: account
-            for account in (await session.execute(select(Account))).scalars().all()
-            if account.chatgpt_account_id in {raw_account_id, other_raw_account_id}
-        }
-        owner_account = accounts[raw_account_id]
+        owner_account = (
+            await session.execute(select(Account).where(Account.chatgpt_account_id == raw_account_id))
+        ).scalar_one()
         session.add(
             RequestLog(
                 account_id=owner_account.id,
@@ -748,67 +764,44 @@ async def test_proxy_responses_compaction_trigger_elides_required_tool_image_and
         )
         await session.commit()
 
-    seen_payload: dict[str, object] = {}
-    selection_preferred_ids: list[str | None] = []
+    seen: list[tuple[dict[str, object], str]] = []
 
-    async def fake_select_account(self, deadline: float, **kwargs):
-        del self, deadline
-        preferred_account_id = cast(str | None, kwargs.get("preferred_account_id"))
-        selection_preferred_ids.append(preferred_account_id)
-        assert preferred_account_id == owner_account.id
-        return proxy_module.AccountSelection(account=owner_account, error_message=None, error_code=None)
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del headers, access_token, base_url, raise_for_status, kwargs
+        seen.append((payload.to_payload(), account_id))
+        for line in _native_compaction_stream_lines("resp_compact_forwarded"):
+            yield line
 
-    async def fake_compact(payload, headers, access_token, account_id, **kwargs):
-        del headers, access_token, kwargs
-        wire_payload = payload.to_payload()
-        seen_payload["payload"] = wire_payload
-        seen_payload["input"] = wire_payload["input"]
-        seen_payload["model"] = payload.model
-        seen_payload["previous_response_id"] = getattr(payload, "previous_response_id", None)
-        seen_payload["conversation"] = getattr(payload, "conversation", None)
-        seen_payload["account_id"] = account_id
-        return CompactResponsePayload.model_validate(
-            {
-                "object": "response.compaction",
-                "compaction_summary": {
-                    "id": "cmp_trigger_summary",
-                    "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
-                    "summary_text": "condensed thread state",
-                },
-                "usage": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15},
-            }
-        )
+    async def unexpected_compact(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("a native trigger turn must not be rewritten into a compact request")
 
-    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget_compatible", fake_select_account)
-    monkeypatch.setattr(proxy_module, "core_compact_responses", fake_compact)
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    monkeypatch.setattr(proxy_module, "core_compact_responses", unexpected_compact)
 
+    tools = [{"type": "function", "name": "shell", "parameters": {"type": "object", "properties": {}}}]
+    request_input = [
+        {"role": "user", "content": "hello"},
+        {"type": "custom_tool_call", "name": "view_image", "call_id": "call_route_image", "input": "{}"},
+        {
+            "type": "custom_tool_call_output",
+            "call_id": "call_route_image",
+            "output": [
+                {"type": "input_text", "text": "Image Size: 1512x982."},
+                {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 500_000},
+            ],
+        },
+        {"type": "compaction_trigger"},
+    ]
     payload = {
         "model": "gpt-5.1",
         "instructions": "compact this turn",
-        "input": [
-            {"role": "user", "content": "hello"},
-            {
-                "type": "custom_tool_call",
-                "name": "view_image",
-                "call_id": "call_route_image",
-                "input": "{}",
-            },
-            {
-                "type": "custom_tool_call_output",
-                "call_id": "call_route_image",
-                "output": [
-                    {"type": "input_text", "text": "Image Size: 1512x982."},
-                    {
-                        "type": "input_image",
-                        "image_url": "data:image/png;base64," + "A" * 500_000,
-                    },
-                ],
-            },
-            {"type": "compaction_trigger"},
-        ],
+        "input": request_input,
+        "tools": tools,
+        "tool_choice": "auto",
+        "parallel_tool_calls": True,
         "previous_response_id": "resp_compact_anchor",
-        "promptCacheKey": "compact-cache-affinity",
-        "include": [],
+        "prompt_cache_key": "compact-cache-affinity",
         "stream": True,
     }
     async with async_client.stream(
@@ -820,164 +813,61 @@ async def test_proxy_responses_compaction_trigger_elides_required_tool_image_and
         assert resp.status_code == 200
         lines = [line async for line in resp.aiter_lines() if line]
 
+    assert len(seen) == 1
+    upstream_payload, upstream_account_id = seen[0]
+    assert upstream_account_id == raw_account_id
+    assert upstream_payload["tools"] == tools
+    assert upstream_payload["tool_choice"] == "auto"
+    assert upstream_payload["parallel_tool_calls"] is True
+    assert upstream_payload["previous_response_id"] == "resp_compact_anchor"
+    upstream_input = cast(list[Mapping[str, object]], upstream_payload["input"])
+    assert "data:image/png;base64," + "A" * 500_000 in json.dumps(upstream_input)
+    assert upstream_input[-1] == {"type": "compaction_trigger"}
+    assert sum(1 for item in upstream_input if item.get("type") == "compaction_trigger") == 1
+
     events = list(_iter_sse_events(lines))
     assert [event["type"] for event in events] == [
         "response.created",
-        "response.output_item.added",
         "response.output_item.done",
         "response.completed",
     ]
-    assert [event["sequence_number"] for event in events] == [0, 1, 2, 3]
-    assert selection_preferred_ids == [owner_account.id]
-    assert seen_payload["model"] == "gpt-5.1"
-    compact_input = cast(list[Mapping[str, object]], seen_payload["input"])
-    assert compact_input[0] == {"role": "user", "content": "hello"}
-    assert compact_input[1]["call_id"] == "call_route_image"
-    assert compact_input[2]["call_id"] == "call_route_image"
-    compact_input_json = json.dumps(compact_input)
-    assert "Image Size: 1512x982." in compact_input_json
-    assert "Omitted inline image bytes that were already observed before compaction" in compact_input_json
-    assert "data:image/png;base64" not in compact_input_json
-    assert compact_input[-1] == {"type": "compaction_trigger"}
-    assert sum(1 for item in compact_input if item.get("type") == "compaction_trigger") == 1
-    assert seen_payload["previous_response_id"] == "resp_compact_anchor"
-    assert seen_payload["account_id"] == raw_account_id
-    compact_payload = cast(Mapping[str, object], seen_payload["payload"])
-    assert compact_payload["prompt_cache_key"] == "compact-cache-affinity"
-    assert "include" not in compact_payload
-    assert "stream" not in compact_payload
-    assert events[1]["item"] == {
-        "id": "cmp_trigger_summary",
-        "type": "compaction",
-        "status": "in_progress",
-        "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
-    }
-    terminal_item = {
-        "id": "cmp_trigger_summary",
-        "type": "compaction",
-        "status": "completed",
-        "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
-    }
-    assert events[2]["item"] == terminal_item
-    assert events[3]["response"]["output"] == [terminal_item]
-    assert events[3]["response"]["usage"] == {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15}
-    assert lines[-1] == "data: [DONE]"
+    assert [event["item"]["id"] for event in events if "item" in event] == ["cmp_forwarded"]
 
 
 @pytest.mark.asyncio
 async def test_proxy_responses_compaction_trigger_preserves_conversation(async_client, monkeypatch):
-    email = "compact-trigger-conversation@example.com"
     raw_account_id = "acc_compact_trigger_conversation"
-    auth_json = _make_auth_json(raw_account_id, email)
+    auth_json = _make_auth_json(raw_account_id, "compact-trigger-conversation@example.com")
     files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    async with SessionLocal() as session:
-        owner_account = (
-            await session.execute(select(Account).where(Account.chatgpt_account_id == raw_account_id))
-        ).scalar_one()
+    seen_payloads: list[dict[str, object]] = []
 
-    seen_payload: dict[str, object] = {}
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del headers, access_token, account_id, base_url, raise_for_status, kwargs
+        seen_payloads.append(payload.to_payload())
+        for line in _native_compaction_stream_lines("resp_compact_conversation"):
+            yield line
 
-    async def fake_select_account(self, deadline: float, **kwargs):
-        del self, deadline, kwargs
-        return proxy_module.AccountSelection(account=owner_account, error_message=None, error_code=None)
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
-    async def fake_compact(payload, headers, access_token, account_id, **kwargs):
-        del headers, access_token, kwargs
-        seen_payload["payload"] = payload.model_dump(mode="json", exclude_none=True)
-        seen_payload["conversation"] = getattr(payload, "conversation", None)
-        seen_payload["account_id"] = account_id
-        return CompactResponsePayload.model_validate(
-            {
-                "object": "response.compaction",
-                "compaction_summary": {
-                    "encrypted_content": "ENCRYPTED_CONTEXT_COMPACTION_SUMMARY",
-                    "summary_text": "condensed thread state",
-                },
-            }
-        )
-
-    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget_compatible", fake_select_account)
-    monkeypatch.setattr(proxy_module, "core_compact_responses", fake_compact)
-
-    payload = {
-        "model": "gpt-5.1",
-        "input": [
-            {"role": "user", "content": "hello"},
-            {"type": "compaction_trigger"},
-        ],
-        "conversation": "conv_compact_anchor",
-        "include": [],
-        "stream": True,
-    }
     async with async_client.stream(
         "POST",
         "/backend-api/codex/responses",
-        json=payload,
+        json={
+            "model": "gpt-5.1",
+            "input": [{"role": "user", "content": "hello"}, {"type": "compaction_trigger"}],
+            "conversation": "conv_compact_anchor",
+            "stream": True,
+        },
         headers={"session_id": "sid_compact_trigger_conversation"},
     ) as resp:
         assert resp.status_code == 200
         lines = [line async for line in resp.aiter_lines() if line]
 
-    events = list(_iter_sse_events(lines))
-    assert [event["type"] for event in events] == [
-        "response.created",
-        "response.output_item.added",
-        "response.output_item.done",
-        "response.completed",
-    ]
-    assert [event["sequence_number"] for event in events] == [0, 1, 2, 3]
-    assert seen_payload["conversation"] == "conv_compact_anchor"
-    assert seen_payload["account_id"] == raw_account_id
-    compact_payload = cast(Mapping[str, object], seen_payload["payload"])
-    assert compact_payload["conversation"] == "conv_compact_anchor"
-    assert "include" not in compact_payload
-    assert "stream" not in compact_payload
-
-
-@pytest.mark.asyncio
-async def test_proxy_responses_compaction_trigger_rejects_untrimmable_input_before_admission(
-    async_client,
-    monkeypatch,
-):
-    async def unexpected_admission(*args, **kwargs):
-        del args, kwargs
-        pytest.fail("admission should not run for an untrimmable compaction trigger")
-
-    async def unexpected_limits(*args, **kwargs):
-        del args, kwargs
-        pytest.fail("limit reservation should not run for an untrimmable compaction trigger")
-
-    async def unexpected_compact(*args, **kwargs):
-        del args, kwargs
-        pytest.fail("compact should not run for an untrimmable compaction trigger")
-
-    monkeypatch.setattr(proxy_api_module, "_opportunistic_admission_denial", unexpected_admission)
-    monkeypatch.setattr(proxy_api_module, "_enforce_request_limits", unexpected_limits)
-    monkeypatch.setattr(proxy_module.ProxyService, "compact_responses", unexpected_compact)
-
-    response = await async_client.post(
-        "/backend-api/codex/responses",
-        json={
-            "model": "gpt-5.1",
-            "instructions": "compact this turn",
-            "input": [
-                {"role": "user", "content": "initial instructions"},
-                {"role": "assistant", "content": "middle context " + "y" * 500_000},
-                {"role": "user", "content": "latest request " + "x" * 500_000},
-                {"type": "compaction_trigger"},
-            ],
-            "stream": True,
-        },
-    )
-
-    assert response.status_code == 400
-    error = response.json()["error"]
-    assert error["type"] == "invalid_request_error"
-    assert error["code"] == "responses_compact_input_too_large"
-    assert error["param"] == "input"
+    assert [payload["conversation"] for payload in seen_payloads] == ["conv_compact_anchor"]
+    assert [event["type"] for event in _iter_sse_events(lines)][-1] == "response.completed"
 
 
 @pytest.mark.asyncio

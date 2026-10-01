@@ -470,18 +470,6 @@ def test_compact_response_output_item_drops_invalid_id_prefix() -> None:
     }
 
 
-def test_compact_response_id_generates_unique_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(proxy_api_module, "get_request_id", lambda: None)
-    payload = CompactResponsePayload.model_validate({"object": "response.compaction"})
-
-    first = proxy_api_module._compact_response_id(payload)
-    second = proxy_api_module._compact_response_id(payload)
-
-    assert first.startswith("resp_")
-    assert second.startswith("resp_")
-    assert first != second
-
-
 @pytest.mark.asyncio
 async def test_synthetic_compaction_stream_preserves_mapping_usage() -> None:
     blocks = [

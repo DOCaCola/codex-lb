@@ -216,6 +216,7 @@ from app.modules.proxy._service.warmup import (
 from app.modules.proxy.affinity import (
     _extract_model_class,
 )
+from app.modules.proxy.checkpoint_history import is_checkpoint_item
 from app.modules.proxy.continuity import is_http_bridge_account_neutral_replay
 from app.modules.proxy.helpers import (
     _normalize_error_code,
@@ -2743,6 +2744,17 @@ class _HTTPBridgeUpstreamEventsMixin:
                     event_type=event_type,
                     payload=payload,
                 )
+                # Native compaction items arrive in ``output_item.done`` while
+                # ``response.completed`` may carry an empty output; terminal
+                # settlement records checkpoint provenance from this collector.
+                if event_type in {"response.created", "response.failed", "response.incomplete", "error"}:
+                    matched_request_state.http_replay_output.clear()
+                elif (
+                    event_type == "response.output_item.done"
+                    and payload is not None
+                    and is_checkpoint_item(payload.get("item"))
+                ):
+                    matched_request_state.http_replay_output.retain(payload)
                 completed_tool_call = _response_output_item_done_tool_call(payload)
                 if completed_tool_call is not None:
                     completed_call_id, completed_call_type = completed_tool_call

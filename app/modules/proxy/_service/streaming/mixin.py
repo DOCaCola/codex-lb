@@ -397,6 +397,7 @@ from app.modules.proxy.affinity import (
     _sticky_key_from_session_header,  # noqa: F401
 )
 from app.modules.proxy.affinity_observation import AffinityObservation
+from app.modules.proxy.checkpoint_history import checkpoint_scope, is_checkpoint_item, retain_completed_checkpoint
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
@@ -413,6 +414,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
 from app.modules.proxy.load_balancer import AccountConcurrencyCaps, AccountLease
+from app.modules.proxy.replay_output import ReplayOutputCollector
 from app.modules.proxy.tool_call_dedupe import mark_duplicate_tool_call_downstream_event
 from app.modules.proxy.tool_call_dedupe import (
     response_id_from_payload as tool_call_response_id_from_payload,
@@ -506,6 +508,8 @@ class _StreamingMixin(_StreamingRetryMixin):
         actual_service_tier: str | None = None
         reasoning_effort = payload.reasoning.effort if payload.reasoning else None
         session_id = _owner_lookup_session_id_from_headers(headers)
+        checkpoint_replay_scope = checkpoint_scope(headers, api_key)
+        checkpoint_output = ReplayOutputCollector()
         # Keep selection/failover waits out of latency and TTFT, record them as
         # queue time, then re-anchor after this attempt's admission wait.
         attempt_started_at = start = clock.monotonic()
@@ -942,6 +946,22 @@ class _StreamingMixin(_StreamingRetryMixin):
                     continue
                 if event_payload is not None and not preserve_raw_sse_line:
                     line = format_sse_event(event_payload)
+                if checkpoint_replay_scope is not None and event_payload is not None:
+                    # Record provenance before the terminal event reaches the
+                    # client, so its next turn can route the checkpoint home.
+                    if event_type == "response.output_item.done" and is_checkpoint_item(event_payload.get("item")):
+                        checkpoint_output.retain(event_payload)
+                    elif event_type == "response.completed" and status == "success":
+                        completed_response = event_payload.get("response")
+                        if isinstance(completed_response, dict):
+                            output = checkpoint_output.finish(completed_response.get("output"))
+                            if output is not None and any(is_checkpoint_item(item) for item in output):
+                                await retain_completed_checkpoint(
+                                    model,
+                                    {**completed_response, "output": output},
+                                    checkpoint_replay_scope,
+                                    account_id_value,
+                                )
                 settlement.downstream_visible = True
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     settlement.downstream_text_visible = True

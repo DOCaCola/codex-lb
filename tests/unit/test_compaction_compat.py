@@ -189,7 +189,7 @@ def test_cache_preserving_source_compaction_keeps_conversation_tool_declarations
     assert SOURCE_COMPACTION_TOOL_REMINDER in str(wire["input"][-1])
 
 
-def test_terminal_compaction_carries_tool_declarations_only_when_requested() -> None:
+def test_terminal_compaction_carries_tool_declarations() -> None:
     from app.modules.proxy.request_policy import build_terminal_compact_request
 
     payload = ResponsesRequest.model_validate(
@@ -203,13 +203,11 @@ def test_terminal_compaction_carries_tool_declarations_only_when_requested() -> 
         }
     )
 
-    source = build_terminal_compact_request(payload, include_tool_declarations=True)
-    native = build_terminal_compact_request(payload, include_tool_declarations=False)
+    source = build_terminal_compact_request(payload)
 
-    assert source is not None and native is not None
+    assert source is not None
     assert source.model_dump(mode="json")["tools"] == [{"type": "function", "name": "do_work"}]
     assert source.model_dump(mode="json")["parallel_tool_calls"] is True
-    assert not {"tools", "tool_choice", "parallel_tool_calls"} & native.model_dump(mode="json").keys()
 
 
 @pytest.mark.parametrize(

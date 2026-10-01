@@ -338,8 +338,18 @@ async def retain_streamed_checkpoint(
     account_id: str,
 ) -> None:
     # The caller owns validated response.create JSON and has completed settlement.
-    # Successful native completion establishes provenance even for native deltas.
-    # No readable input or provider ciphertext is retained.
     request = json.loads(request_text)
+    await retain_completed_checkpoint(request["model"], response, scope, account_id)
+
+
+async def retain_completed_checkpoint(
+    model: str,
+    response: dict[str, JsonValue],
+    scope: ReplayScope,
+    account_id: str,
+) -> None:
+    # Successful native completion establishes provenance even for native deltas;
+    # ``response`` carries the output reconstructed from ``output_item.done``.
+    # No readable input or provider ciphertext is retained.
     result = CompactResponsePayload.model_validate({**response, "object": "response.compaction"})
-    await retain_checkpoint_provenance(request["model"], result, scope, account_id)
+    await retain_checkpoint_provenance(model, result, scope, account_id)
