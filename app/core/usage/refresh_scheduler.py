@@ -14,6 +14,7 @@ from app.core.plan_types import normalize_account_plan_type
 from app.core.resilience.toggles import resolve_resilience_toggles
 from app.core.scheduling.leader_election_handle import get_leader_election as _get_leader_election
 from app.core.usage import capacity_for_plan, default_window_minutes
+from app.core.usage.quota import account_credit_policy
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, UsageHistory
@@ -26,7 +27,7 @@ from app.modules.limit_warmup.service import (
     StreamingLimitWarmupSender,
     usage_reset_confirmed,
 )
-from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.account_cache import get_account_selection_cache, record_account_quota_status
 from app.modules.proxy.load_balancer import background_recovery_state_from_account, effective_routing_tunables
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.request_logs.repository import RequestLogsRepository
@@ -436,6 +437,7 @@ async def reconcile_recoverable_account_statuses(
             and blocked_at == account.blocked_at
         ):
             continue
+        status_changed = status != account.status
         updated = await accounts_repo.update_status_if_current(
             account.id,
             status,
@@ -453,6 +455,8 @@ async def reconcile_recoverable_account_statuses(
         account.deactivation_reason = deactivation_reason
         account.reset_at = reset_at
         account.blocked_at = blocked_at
+        if status_changed:
+            record_account_quota_status(account.id, account_credit_policy(account.credit_policy), status)
         recovered += 1
     return recovered
 

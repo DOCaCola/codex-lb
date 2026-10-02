@@ -16,7 +16,7 @@ from app.core.errors import openai_error
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 from app.core.types import JsonValue
 from app.core.utils.time import naive_utc_to_epoch, utcnow
-from app.db.models import Account, AccountStatus, AutomationJob, AutomationRun, DashboardSettings
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, AutomationJob, AutomationRun, DashboardSettings
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.automations.repository import AutomationsRepository
@@ -26,6 +26,7 @@ from app.modules.automations.service import (
     _scheduled_cycle_key,
     _scheduled_slot_key,
 )
+from app.modules.proxy.account_cache import is_account_routing_unavailable, mark_account_routing_unavailable
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
 
@@ -1991,6 +1992,28 @@ async def test_automations_due_run_freezes_all_accounts_snapshot_for_cycle(db_se
         assert len(runs) == 2
         assert {run.account_id for run in runs} == {accounts[0].id, accounts[1].id}
         assert {run.cycle_expected_accounts for run in runs} == {2}
+
+
+@pytest.mark.asyncio
+async def test_automations_reset_reactivation_makes_credit_policy_never_account_routable(db_setup):
+    del db_setup
+    account = (await _create_accounts("auto-never-spend-reset"))[0]
+    now = utcnow().replace(second=0, microsecond=0)
+    elapsed_reset_at = naive_utc_to_epoch(now - timedelta(minutes=1))
+
+    async with SessionLocal() as session:
+        accounts_repository = AccountsRepository(session)
+        assert await accounts_repository.update_credit_policy(account.id, AccountCreditPolicy.NEVER)
+        await accounts_repository.update_status(account.id, AccountStatus.RATE_LIMITED, reset_at=elapsed_reset_at)
+        mark_account_routing_unavailable(account.id)
+        blocked = await accounts_repository.get_by_id(account.id)
+        assert blocked is not None
+        service = AutomationsService(AutomationsRepository(session), accounts_repository)
+
+        await service._reactivate_accounts_if_reset_elapsed([blocked], now_utc=now)
+
+    assert blocked.status == AccountStatus.ACTIVE
+    assert not is_account_routing_unavailable(account.id)
 
 
 @pytest.mark.asyncio

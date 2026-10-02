@@ -11,7 +11,8 @@ import pytest
 
 from app.core.resilience.toggles import resolve_resilience_toggles
 from app.core.usage import refresh_scheduler as refresh_scheduler_module
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, UsageHistory
+from app.modules.proxy.account_cache import is_account_routing_unavailable, mark_account_routing_unavailable
 from app.modules.proxy.load_balancer import effective_routing_tunables
 
 pytestmark = pytest.mark.unit
@@ -27,6 +28,7 @@ def _make_account(
     reset_at: int | None = None,
     blocked_at: int | None = None,
     deactivation_reason: str | None = None,
+    credit_policy: AccountCreditPolicy = AccountCreditPolicy.SPEND,
 ) -> Account:
     return Account(
         id=account_id,
@@ -41,6 +43,7 @@ def _make_account(
         reset_at=reset_at,
         blocked_at=blocked_at,
         deactivation_reason=deactivation_reason,
+        credit_policy=credit_policy.value,
     )
 
 
@@ -414,6 +417,59 @@ async def test_reconcile_recovers_free_after_confirmed_monthly_reset_before_lega
 
     assert recovered == 1
     assert (account.status, account.reset_at, account.blocked_at) == (AccountStatus.ACTIVE, None, None)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_recovery_makes_credit_policy_never_account_routable_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A never-spend account is blocked through routing availability, which also
+    # retires its live upstream websockets. A background recovery must lift that
+    # block, or every turn keeps retiring the socket that holds its previous response.
+    now = 1_700_000_000.0
+    blocked_at = int(now - 3600)
+    legacy_reset_at = int(now + 7 * 24 * 3600)
+    next_monthly_reset = int(now - 60 + 30 * 24 * 3600)
+    monkeypatch.setattr("time.time", lambda: now)
+    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
+    monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
+
+    account = _make_account(
+        "acc_never_spend_reset",
+        status=AccountStatus.RATE_LIMITED,
+        plan_type="free",
+        reset_at=legacy_reset_at,
+        blocked_at=blocked_at,
+        credit_policy=AccountCreditPolicy.NEVER,
+    )
+    mark_account_routing_unavailable(account.id)
+    before = _make_usage(
+        account.id,
+        window="monthly",
+        used_percent=100.0,
+        reset_at=legacy_reset_at,
+        recorded_at=_epoch_to_naive_utc(now - 120),
+        window_minutes=43200,
+    )
+    after = _make_usage(
+        account.id,
+        window="monthly",
+        used_percent=0.0,
+        reset_at=next_monthly_reset,
+        recorded_at=_epoch_to_naive_utc(now - 60),
+        window_minutes=43200,
+    )
+
+    recovered = await refresh_scheduler_module.reconcile_recoverable_account_statuses(
+        accounts_repo=StubAccountsRepository([account]),
+        usage_repo=StubUsageRepository(monthly={account.id: after}),
+        accounts=[account],
+        reset_evidence={account.id: _reset_evidence(before, after)},
+    )
+
+    assert recovered == 1
+    assert account.status == AccountStatus.ACTIVE
+    assert not is_account_routing_unavailable(account.id)
 
 
 @pytest.mark.asyncio

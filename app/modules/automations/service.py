@@ -25,6 +25,7 @@ from app.core.openai.model_registry import get_model_registry
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_route
+from app.core.usage.quota import account_credit_policy
 from app.core.usage.request_operation import RequestOperation
 from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountStatus, DashboardSettings
@@ -39,7 +40,11 @@ from app.modules.automations.repository import (
     effective_compact_request_budget_seconds,
     run_stale_started_before,
 )
-from app.modules.proxy.account_cache import get_account_selection_cache, mark_account_routing_unavailable
+from app.modules.proxy.account_cache import (
+    get_account_selection_cache,
+    mark_account_routing_unavailable,
+    record_account_quota_status,
+)
 from app.modules.proxy.helpers import _header_account_id
 from app.modules.proxy.request_policy import resolve_wire_reasoning_effort
 from app.modules.request_logs.repository import RequestLogsRepository
@@ -2026,6 +2031,9 @@ class AutomationsService:
                 account.deactivation_reason = None
                 account.reset_at = None
                 account.blocked_at = None
+                record_account_quota_status(
+                    account.id, account_credit_policy(account.credit_policy), AccountStatus.ACTIVE
+                )
 
     @staticmethod
     def _to_run_data(
