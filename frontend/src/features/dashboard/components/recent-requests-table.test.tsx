@@ -154,39 +154,49 @@ describe("Provider identity and readable models", () => {
   it("uses catalog display names with native exact-ID tooltips", () => {
     const id = "openrouter/z-ai/glm-5.3-flash";
     render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} models={[{ id, name: "Z.ai: GLM 5.3 Flash" }]}
-      requests={[createRequestLogEntry({ model: id, reasoningEffort: "high", actualServiceTier: "priority" })]} />);
+      requests={[createRequestLogEntry({ model: id, reasoningEffort: "high", serviceTier: "priority" })]} />);
     const label = screen.getByTitle(id);
-    expect(label).toHaveTextContent("Z.ai: GLM 5.3 Flash high · priority");
-    expect(screen.getByText("high · priority")).toHaveClass("text-muted-foreground");
+    expect(label.textContent).toBe("Z.ai: GLM 5.3 Flash high ");
+    expect(within(label).getByText("high")).toHaveClass("text-muted-foreground");
+    expect(within(label).getByRole("img", { name: "Fast" })).toHaveClass("text-muted-foreground");
     expect(label).toHaveAttribute("title", id);
     expect(label).not.toHaveClass("font-mono");
     expect(screen.queryByText(id)).not.toBeInTheDocument();
   });
 
   it.each([
-    ["medium", "default", "medium"],
-    ["medium", "priority", "medium · priority"],
-    [null, "default", null],
-    [null, "priority", "priority"],
-    ["high", null, "high"],
-    [null, null, null],
-    ["", "flex", "flex"],
-  ])("renders effort %s and tier %s as muted metadata", (effort, tier, metadata) => {
+    ["medium", "default", "medium", null],
+    ["medium", "priority", "medium", "Fast"],
+    [null, "auto", null, null],
+    [null, "ultrafast", null, "Ultrafast"],
+    ["high", null, "high", null],
+    [null, null, null, null],
+    ["", "flex", "Flex", null],
+  ])("renders effort %s and billable tier %s as muted metadata", (effort, tier, text, mark) => {
     const id = "gpt-6.1-sol";
     render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
       models={[{ id, name: "GPT-6.1-Sol" }]}
-      requests={[createRequestLogEntry({ model: id, reasoningEffort: effort, actualServiceTier: tier })]} />);
+      requests={[createRequestLogEntry({ model: id, reasoningEffort: effort, serviceTier: tier })]} />);
     const label = screen.getByTitle(id);
-    expect(label.textContent).toBe(`GPT-6.1-Sol${metadata ? ` ${metadata}` : ""}`);
+    expect(label.textContent).toBe(`GPT-6.1-Sol${text ? ` ${text}` : ""}${mark ? " " : ""}`);
     expect(label.textContent).not.toMatch(/[()]/);
-    if (metadata) expect(within(label).getByText(metadata)).toHaveClass("text-muted-foreground");
-    else expect(label.querySelector(".text-muted-foreground")).toBeNull();
+    if (text) expect(within(label).getByText(text)).toHaveClass("text-muted-foreground");
+    if (mark) expect(within(label).getByRole("img", { name: mark })).toHaveClass("text-muted-foreground");
+    else expect(within(label).queryByRole("img")).toBeNull();
+    if (!text && !mark) expect(label.querySelector(".text-muted-foreground")).toBeNull();
   });
 
-  it("uses the recorded tier only when no actual tier is available", () => {
+  it("shows the billable tier rather than an unproven upstream echo", () => {
     render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
-      requests={[createRequestLogEntry({ model: "gpt-6.1-sol", reasoningEffort: "medium", serviceTier: "priority", actualServiceTier: null })]} />);
-    expect(screen.getByTitle("gpt-6.1-sol")).toHaveTextContent("GPT 6.1 Sol medium · priority");
+      requests={[createRequestLogEntry({ model: "gpt-6.1-sol", reasoningEffort: "medium", serviceTier: "priority", requestedServiceTier: "priority", actualServiceTier: "default" })]} />);
+    expect(within(screen.getByTitle("gpt-6.1-sol")).getByRole("img", { name: "Fast" })).toBeInTheDocument();
+    expect(screen.queryByText(/requested/)).not.toBeInTheDocument();
+  });
+
+  it("notes a request billed below its requested tier", () => {
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
+      requests={[createRequestLogEntry({ model: "gpt-6.1-sol", serviceTier: "flex", requestedServiceTier: "priority", actualServiceTier: "flex" })]} />);
+    expect(screen.getByText("Fast requested · billed Flex")).toHaveClass("text-muted-foreground");
   });
 
   it.each([
@@ -551,7 +561,7 @@ describe("RecentRequestsTable", () => {
     expect(modelLabel).toHaveTextContent("GPT 5.1 high");
     expect(modelLabel.textContent).not.toContain("default");
     expect(within(modelLabel).getByText("high")).toHaveClass("text-muted-foreground");
-    expect(screen.getByText("Requested priority")).toBeInTheDocument();
+    expect(screen.getByText("Fast requested · billed Default")).toBeInTheDocument();
     expect(screen.getByText("WS")).toBeInTheDocument();
     expect(screen.getByText("Up Auto")).toBeInTheDocument();
     expect(screen.getByText("Rate limit")).toBeInTheDocument();

@@ -48,6 +48,7 @@ from app.core.openai.parsing import (
 from app.core.types import JsonValue
 from app.core.usage.live_hub import publish_live_usage
 from app.core.usage.live_snapshots import EVENT_MARKER, parse_rate_limit_event_text
+from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.request_id import reset_request_id, set_request_id
 from app.core.utils.shared_future import wait_on_shared_future
 from app.core.utils.sse import format_sse_event, format_sse_event_from_text, parse_sse_data_json_text
@@ -2738,7 +2739,9 @@ class _HTTPBridgeUpstreamEventsMixin:
                 actual_service_tier = _service_tier_from_event_payload(payload)
                 if actual_service_tier is not None:
                     matched_request_state.actual_service_tier = actual_service_tier
-                    matched_request_state.service_tier = actual_service_tier
+                    matched_request_state.service_tier = billable_service_tier(
+                        matched_request_state.requested_service_tier, actual_service_tier
+                    )
                 _record_http_bridge_tool_call_lifecycle(
                     matched_request_state,
                     event_type=event_type,

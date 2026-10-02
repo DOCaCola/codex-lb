@@ -20,7 +20,7 @@ from app.db.session import SessionLocal
 from app.modules.accounts.usage_rollup import run_fold_pass
 from app.modules.accounts.usage_time_rollup import run_hourly_fold_pass
 from app.modules.reports.rollup import run_report_fold_pass
-from app.modules.request_logs.cost_backfill import backfill_missing_costs
+from app.modules.request_logs.cost_backfill import backfill_missing_costs, repair_echoed_service_tiers
 from tests.integration.test_account_usage_rollup import _make_account
 
 pytestmark = pytest.mark.integration
@@ -191,3 +191,100 @@ async def test_watermark_equality_is_lifetime_inclusive_and_hourly_exclusive(db_
         boundary = await session.scalar(select(RequestLog).where(RequestLog.request_id == "boundary"))
         assert boundary is not None
         assert boundary.cost_usd == calculated_cost_from_log(boundary)
+
+
+async def test_echoed_tier_repair_rebills_requested_tier_across_folded_history(db_setup):
+    async with SessionLocal() as session:
+        session.add(_make_account("a", "a@example.com"))
+        session.add(ApiKey(id="k", name="test", key_hash="hash", key_prefix="key"))
+        await session.flush()
+        variants = [
+            {"actual_service_tier": "default", "service_tier": "default"},
+            {"actual_service_tier": "auto", "service_tier": "auto"},
+            {"actual_service_tier": "default", "service_tier": "default", "request_kind": "warmup"},
+            {"actual_service_tier": "flex", "service_tier": "flex"},
+            {"actual_service_tier": "default", "service_tier": "default", "model_source_kind": "openai_compatible"},
+            {"actual_service_tier": "default", "service_tier": "default", "requested_at": NOW},
+        ]
+        for i, variant in enumerate(variants):
+            values: dict[str, object] = dict(
+                account_id="a",
+                api_key_id="k",
+                request_id=f"t{i}",
+                requested_at=BASE,
+                model="gpt-6-astra",
+                input_tokens=1000,
+                output_tokens=100,
+                cached_input_tokens=500,
+                status="success",
+                request_kind="normal",
+                requested_service_tier="priority",
+            )
+            values.update(variant)
+            session.add(RequestLog(**values))
+        await session.commit()
+    async with SessionLocal() as session:
+        await backfill_missing_costs(session)
+    await fold()
+
+    async def totals(session):
+        return {
+            table: (
+                await session.scalar(select(func.sum(table.request_count))),
+                await session.scalar(select(func.sum(table.priced_requests))),
+            )
+            for table in [
+                AccountUsageRollup,
+                ApiKeyUsageRollup,
+                RequestUsageHourlyRollup,
+                RequestDemandQuarterRollup,
+                RequestReportHourlyRollup,
+            ]
+        }
+
+    async with SessionLocal() as session:
+        before = await totals(session)
+        old_costs = dict((await session.execute(select(RequestLog.request_id, RequestLog.cost_usd))).all())
+        batch = await repair_echoed_service_tiers(session, limit=2)
+        assert (batch.scanned, batch.updated) == (2, 2)
+        batch = await repair_echoed_service_tiers(session, after_id=batch.last_id, limit=2)
+        assert batch.scanned == 2
+        assert (await repair_echoed_service_tiers(session, after_id=batch.last_id)).scanned == 0
+        assert (await repair_echoed_service_tiers(session)).scanned == 0
+
+    async with SessionLocal() as session:
+        logs = {log.request_id: log for log in (await session.scalars(select(RequestLog))).all()}
+        for request_id in ("t0", "t1", "t2", "t5"):
+            log = logs[request_id]
+            assert log.service_tier == "priority"
+            assert log.cost_usd == calculated_cost_from_log(log)
+            assert log.cost_usd > old_costs[request_id]
+        assert logs["t3"].service_tier == "flex"
+        assert logs["t4"].service_tier == "default"
+        for request_id in ("t3", "t4"):
+            assert logs[request_id].cost_usd == old_costs[request_id]
+
+        folded = [log for log in logs.values() if log.requested_at < NOW]
+        normal = [log for log in folded if log.request_kind != "warmup"]
+
+        def cost(rows):
+            return sum(log.cost_usd or 0 for log in rows)
+
+        assert await session.scalar(select(AccountUsageRollup.total_cost_usd)) == pytest.approx(cost(normal))
+        assert await session.scalar(select(ApiKeyUsageRollup.total_cost_usd)) == pytest.approx(cost(normal))
+        assert await session.scalar(select(func.sum(RequestReportHourlyRollup.cost_usd))) == pytest.approx(cost(normal))
+        for table in [RequestUsageHourlyRollup, RequestDemandQuarterRollup]:
+            assert await session.scalar(select(func.sum(table.cost_usd))) == pytest.approx(cost(folded))
+        tiers = dict(
+            (
+                await session.execute(
+                    select(
+                        RequestUsageHourlyRollup.service_tier, func.sum(RequestUsageHourlyRollup.request_count)
+                    ).group_by(RequestUsageHourlyRollup.service_tier)
+                )
+            ).all()
+        )
+        assert tiers == {"priority": 3, "flex": 1, "default": 1}
+        for table in [RequestUsageHourlyRollup, RequestDemandQuarterRollup]:
+            assert await session.scalar(select(func.count()).where(table.request_count == 0)) == 0
+        assert await totals(session) == before

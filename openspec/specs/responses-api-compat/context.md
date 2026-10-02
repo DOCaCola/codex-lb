@@ -69,15 +69,22 @@ therefore records three separate values in request logs:
   normalization.
 - `actualServiceTier`: what upstream reported in the completed response, when
   upstream included it.
-- `serviceTier`: the effective billable tier. This uses `actualServiceTier`
-  when present and falls back to `requestedServiceTier` only when upstream omits
-  the actual tier.
+- `serviceTier`: the effective billable tier. The reported tier may only lower
+  it, to a known cheaper tier; a missing, unknown or more expensive report
+  leaves the requested tier billable.
 
-If a request is sent with `service_tier: "fast"` or `service_tier: "priority"`
-and the completed row shows `requestedServiceTier: "priority"` but
-`actualServiceTier: "default"`, codex-lb forwarded the priority request and
-upstream chose the default tier. That can happen even when websocket transport
-is active.
+The Codex backend echoes `default` (and on some websocket and prewarm turns
+`auto`) as `response.service_tier` on turns it serves on the requested Fast
+tier, so these echoes never prove a downgrade: a row with
+`requestedServiceTier: "priority"` and `actualServiceTier: "default"` stays
+billed as `priority`. Production latency confirms it: such turns run at Fast
+speed, not standard speed. sub2api and opencodex apply the same rule. A
+cheaper non-echo report such as `flex` is billed as reported.
+
+The dashboard request log shows a billed Fast or Ultrafast tier as a grey icon
+next to the reasoning effort, and notes the requested tier only when the billed
+tier is cheaper. Rows stored before this rule are re-billed once by the
+leader's metadata scheduler, with exact deltas mirrored into folded aggregates.
 
 For OpenCode or Codex-compatible clients, enable Fast Mode by sending a
 Responses request with:

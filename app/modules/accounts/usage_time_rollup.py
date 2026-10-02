@@ -56,7 +56,7 @@ skip route (and needs no conversation-satellite bound at all: neither
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import astuple, dataclass, replace
 from datetime import datetime, timedelta
 
@@ -531,6 +531,12 @@ def _requested_at_epoch_bucket_expr(session: AsyncSession, bucket_seconds: int) 
 
 
 def _hourly_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]):
+    return insert(RequestUsageHourlyRollup).from_select(
+        list(_HOURLY_KEY_COLUMNS + _HOURLY_MEASURE_COLUMNS), _hourly_fold_select(session, window)
+    )
+
+
+def _hourly_fold_select(session: AsyncSession, window: tuple[ColumnElement, ...]):
     bucket = _requested_at_epoch_bucket_expr(session, HOURLY_BUCKET_SECONDS).label("bucket_epoch")
     account_id = _dimension_expr(RequestLog.account_id).label("account_id")
     api_key_id = _dimension_expr(RequestLog.api_key_id).label("api_key_id")
@@ -551,7 +557,7 @@ def _hourly_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
         else_=greatest(0, least(RequestLog.cached_input_tokens, RequestLog.input_tokens)),
     )
     cost, priced, unpriced, unmetered = request_cost_expressions(RequestLog)
-    stmt = (
+    return (
         select(
             bucket,
             account_id,
@@ -581,7 +587,6 @@ def _hourly_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
         .where(*window)
         .group_by(bucket, account_id, api_key_id, RequestLog.model, service_tier, RequestLog.request_kind, is_deleted)
     )
-    return insert(RequestUsageHourlyRollup).from_select(list(_HOURLY_KEY_COLUMNS + _HOURLY_MEASURE_COLUMNS), stmt)
 
 
 def _error_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]):
@@ -605,6 +610,12 @@ def _error_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...])
 
 
 def _demand_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]):
+    return insert(RequestDemandQuarterRollup).from_select(
+        list(_QUARTER_KEY_COLUMNS + _QUARTER_MEASURE_COLUMNS), _demand_fold_select(session, window)
+    )
+
+
+def _demand_fold_select(session: AsyncSession, window: tuple[ColumnElement, ...]):
     # Full legacy demand grain (slot, account, api_key, model,
     # reasoning_effort, kind, status): the planner's `_bin_demand_units`
     # takes max(token, cost, request units) PER BIN before summing, so
@@ -617,7 +628,7 @@ def _demand_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
     is_deleted = RequestLog.deleted_at.is_not(None).label("is_deleted")
     output_or_reasoning = func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)
     cost, priced, unpriced, unmetered = request_cost_expressions(RequestLog)
-    stmt = (
+    return (
         select(
             slot,
             account_id,
@@ -649,7 +660,6 @@ def _demand_fold_insert(session: AsyncSession, window: tuple[ColumnElement, ...]
             is_deleted,
         )
     )
-    return insert(RequestDemandQuarterRollup).from_select(list(_QUARTER_KEY_COLUMNS + _QUARTER_MEASURE_COLUMNS), stmt)
 
 
 # Shared fold filter of the conversation satellite: exactly the row set every
@@ -1078,3 +1088,48 @@ async def merge_time_rollups_into(session: AsyncSession, canonical_account_id: s
     await rekey_report_accounts(session, duplicate_ids, canonical_account_id)
     canonical_dimension = to_dimension(canonical_account_id)
     await _rekey_account_rows(session, duplicate_ids, lambda row: replace(row, account_id=canonical_dimension))
+
+
+async def mirror_request_log_repricing_into_time_rollups(
+    session: AsyncSession, log_ids: Sequence[int], reprice: Callable[[], Awaitable[None]]
+) -> None:
+    """Mirror an in-place repricing (billable ``service_tier`` and/or
+    ``cost_usd``) of folded raw rows into the hourly and demand rollups.
+
+    The rows' fold contribution is captured with the fold pass's own select
+    before and after ``reprice`` mutates them; the buckets receive exactly
+    the difference, so pruned neighbours sharing a bucket stay intact and a
+    tier change moves the rows between hourly ``service_tier`` buckets.
+    Buckets the move empties are removed, as the fold never writes empty
+    buckets.
+    ``log_ids`` MUST lie below the hourly watermark, under the fold-state
+    lock the caller holds.
+    """
+    window = (RequestLog.id.in_(log_ids),)
+    hourly_before = [HourlyUsageRollupRow(*row) for row in await session.execute(_hourly_fold_select(session, window))]
+    demand_before = [
+        QuarterDemandRollupRow(*row) for row in await session.execute(_demand_fold_select(session, window))
+    ]
+    await reprice()
+    await session.flush()
+    hourly_after = [HourlyUsageRollupRow(*row) for row in await session.execute(_hourly_fold_select(session, window))]
+    demand_after = [QuarterDemandRollupRow(*row) for row in await session.execute(_demand_fold_select(session, window))]
+    repo = RequestUsageTimeRollupRepository(session)
+    await repo.add_hourly([_negated(row, _HOURLY_MEASURE_COLUMNS) for row in hourly_before] + hourly_after)
+    await repo.add_demand([_negated(row, _QUARTER_MEASURE_COLUMNS) for row in demand_before] + demand_after)
+    await session.execute(
+        delete(RequestUsageHourlyRollup).where(
+            RequestUsageHourlyRollup.request_count == 0,
+            RequestUsageHourlyRollup.bucket_epoch.in_({row.bucket_epoch for row in hourly_before}),
+        )
+    )
+    await session.execute(
+        delete(RequestDemandQuarterRollup).where(
+            RequestDemandQuarterRollup.request_count == 0,
+            RequestDemandQuarterRollup.slot_epoch.in_({row.slot_epoch for row in demand_before}),
+        )
+    )
+
+
+def _negated(row, measure_columns: tuple[str, ...]):
+    return replace(row, **{column: -getattr(row, column) for column in measure_columns})

@@ -2717,7 +2717,17 @@ async def test_api_key_reasoning_allowlist_rejects_chat_completions_before_upstr
 
 
 @pytest.mark.asyncio
-async def test_stream_usage_logs_actual_service_tier(async_client, monkeypatch):
+@pytest.mark.parametrize(
+    ("echoed_tier", "billed_tier", "expected_cost"),
+    [
+        ("default", "priority", 35_000_000),
+        ("auto", "priority", 35_000_000),
+        ("flex", "flex", 13_750_000),
+    ],
+)
+async def test_stream_usage_bills_only_proven_service_tier_downgrades(
+    async_client, monkeypatch, echoed_tier, billed_tier, expected_cost
+):
     enable = await async_client.put(
         "/api/settings",
         json={
@@ -2751,7 +2761,7 @@ async def test_stream_usage_logs_actual_service_tier(async_client, monkeypatch):
             "response": {
                 "id": "resp_stream_actual_tier",
                 "status": "completed",
-                "service_tier": "default",
+                "service_tier": echoed_tier,
                 "usage": {
                     "input_tokens": 1_000_000,
                     "output_tokens": 1_000_000,
@@ -2782,19 +2792,19 @@ async def test_stream_usage_logs_actual_service_tier(async_client, monkeypatch):
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 27_500_000
+        assert limits[0].current_value == expected_cost
 
         result = await session.execute(select(RequestLog).order_by(RequestLog.requested_at.desc()))
         latest_log = result.scalars().first()
         assert latest_log is not None
         assert latest_log.api_key_id == key_id
         assert latest_log.requested_service_tier == "priority"
-        assert latest_log.actual_service_tier == "default"
-        assert latest_log.service_tier == "default"
+        assert latest_log.actual_service_tier == echoed_tier
+        assert latest_log.service_tier == billed_tier
 
 
 @pytest.mark.asyncio
-async def test_stream_usage_logs_actual_service_tier_when_response_created_echoes_default(async_client, monkeypatch):
+async def test_stream_usage_bills_requested_tier_when_response_created_echoes_default(async_client, monkeypatch):
     enable = await async_client.put(
         "/api/settings",
         json={
@@ -2867,7 +2877,7 @@ async def test_stream_usage_logs_actual_service_tier_when_response_created_echoe
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 27_500_000
+        assert limits[0].current_value == 35_000_000
 
         result = await session.execute(select(RequestLog).order_by(RequestLog.requested_at.desc()))
         latest_log = result.scalars().first()
@@ -2875,7 +2885,7 @@ async def test_stream_usage_logs_actual_service_tier_when_response_created_echoe
         assert latest_log.api_key_id == key_id
         assert latest_log.requested_service_tier == "priority"
         assert latest_log.actual_service_tier == "default"
-        assert latest_log.service_tier == "default"
+        assert latest_log.service_tier == "priority"
 
 
 @pytest.mark.asyncio
@@ -3267,10 +3277,16 @@ async def test_compact_cost_limit_uses_canonical_request_service_tier_when_respo
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["/backend-api/codex/responses/compact", "/v1/responses/compact"])
-async def test_compact_cost_limit_prefers_response_service_tier_over_request(
+@pytest.mark.parametrize(
+    ("response_service_tier", "expected_cost"),
+    [("default", 35_000_000), ("flex", 13_750_000)],
+)
+async def test_compact_cost_limit_bills_only_proven_response_tier_downgrades(
     async_client,
     monkeypatch,
     endpoint,
+    response_service_tier,
+    expected_cost,
 ):
     enable = await async_client.put(
         "/api/settings",
@@ -3305,7 +3321,7 @@ async def test_compact_cost_limit_prefers_response_service_tier_over_request(
                 "id": "resp_compact_response_tier",
                 "model": "gpt-5.4",
                 "status": "completed",
-                "service_tier": "default",
+                "service_tier": response_service_tier,
                 "usage": {
                     "input_tokens": 1_000_000,
                     "output_tokens": 1_000_000,
@@ -3333,7 +3349,7 @@ async def test_compact_cost_limit_prefers_response_service_tier_over_request(
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 27_500_000
+        assert limits[0].current_value == expected_cost
 
 
 @pytest.mark.asyncio

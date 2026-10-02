@@ -14,6 +14,7 @@ from app.core.clock import clock_for, scheduler_for
 from app.core.errors import openai_error
 from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
 from app.core.openai.models import CompactResponsePayload
+from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.request_id import get_request_id
 from app.core.utils.shared_future import wait_on_shared_future
 from app.db.models import Account
@@ -408,14 +409,7 @@ class _ApiKeyUsageMixin:
         output_tokens = usage.output_tokens if usage else None
         cached_input_tokens = usage.input_tokens_details.cached_tokens if usage and usage.input_tokens_details else 0
         model_name = api_key_reservation.model or (getattr(response, "model", None) or "")
-        response_service_tier = _service_tier_from_response(response)
-        service_tier = (
-            response_service_tier
-            if isinstance(response_service_tier, str)
-            else request_service_tier
-            if isinstance(request_service_tier, str)
-            else None
-        )
+        service_tier = billable_service_tier(request_service_tier, _service_tier_from_response(response))
 
         proxy = cast(_ApiKeyUsageServiceProtocol, self)
         reservation_released = False

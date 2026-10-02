@@ -1,0 +1,5 @@
+- [x] 1. Add the billable tier resolver and use it at every persistence and API-key settlement site (HTTP stream, HTTP bridge, websocket, compact).
+- [x] 2. Report the billable tier in the telemetry service-tier mix.
+- [x] 3. Add the history repair with exact lifetime, report, hourly and demand rollup mirroring, and run it from the metadata scheduler before the missing-cost backfill.
+- [x] 4. Show the billable Fast/Ultrafast tier as a grey icon in the request log, label `priority` as Fast, and show a downgrade note only for cheaper billed tiers.
+- [x] 5. Update backend and frontend tests; sync specs and context.

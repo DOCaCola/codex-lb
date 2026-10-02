@@ -42,6 +42,7 @@ from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
 from app.core.usage.request_operation import RequestOperation
+from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.core.utils.retry import backoff_seconds
 from app.core.utils.shared_future import wait_on_shared_future
@@ -408,13 +409,6 @@ def _service_tier_from_response(response: CompactResponsePayload | None) -> str 
     return cast(Callable[[CompactResponsePayload | None], str | None], _service_global("_service_tier_from_response"))(
         response
     )
-
-
-def _effective_service_tier(requested_service_tier: str | None, actual_service_tier: str | None) -> str | None:
-    return cast(
-        Callable[[str | None, str | None], str | None],
-        _service_global("_effective_service_tier"),
-    )(requested_service_tier, actual_service_tier)
 
 
 def _compact_same_contract_retry_budget() -> int:
@@ -2193,7 +2187,7 @@ class _CompactMixin:
                 ),
                 reasoning_effort=reasoning_effort,
                 transport=_REQUEST_TRANSPORT_HTTP,
-                service_tier=_effective_service_tier(request_service_tier, actual_service_tier),
+                service_tier=billable_service_tier(request_service_tier, actual_service_tier),
                 requested_service_tier=request_service_tier,
                 actual_service_tier=actual_service_tier,
                 failure_phase=failure_metadata.failure_phase,

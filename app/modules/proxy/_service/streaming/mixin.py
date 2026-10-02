@@ -44,6 +44,7 @@ from app.core.errors import synthetic_stream_failure_event as response_failed_ev
 from app.core.openai.parsing import _LIFECYCLE_EVENT_TYPES, classify_event_type, parse_sse_event_payload
 from app.core.openai.requests import ResponsesRequest
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
+from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.core.utils.time import utcnow as utcnow
@@ -655,7 +656,7 @@ class _StreamingMixin(_StreamingRetryMixin):
             event_service_tier = _facade()._service_tier_from_event_payload(first_payload)
             if event_service_tier is not None:
                 actual_service_tier = event_service_tier
-                service_tier = event_service_tier
+                service_tier = billable_service_tier(requested_service_tier, event_service_tier)
             if event and event.response and event.response.id:
                 response_id = event.response.id
                 settlement.response_id = response_id
@@ -812,7 +813,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 event_service_tier = _facade()._service_tier_from_event_payload(event_payload)
                 if event_service_tier is not None:
                     actual_service_tier = event_service_tier
-                    service_tier = event_service_tier
+                    service_tier = billable_service_tier(requested_service_tier, event_service_tier)
                 line, event_payload, event, event_type = _rewrite_tool_call_line(line, event_payload, event=event)
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     saw_text_delta = True

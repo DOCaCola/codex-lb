@@ -2584,14 +2584,6 @@ def _service_tier_from_event_payload(payload: dict[str, JsonValue] | None) -> st
     return _normalize_service_tier_value(response.get("service_tier"))
 
 
-def _effective_service_tier(requested_service_tier: str | None, actual_service_tier: str | None) -> str | None:
-    if isinstance(actual_service_tier, str):
-        return actual_service_tier
-    if isinstance(requested_service_tier, str):
-        return requested_service_tier
-    return None
-
-
 def _normalize_service_tier_value(value: JsonValue) -> str | None:
     if not isinstance(value, str):
         return None

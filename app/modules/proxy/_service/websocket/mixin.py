@@ -97,6 +97,7 @@ from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.usage.request_operation import refine_responses_operation
+from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.request_id import get_request_id, reset_request_id, set_request_id
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
 from app.core.utils.sse import format_sse_event
@@ -5711,7 +5712,9 @@ class _WebSocketMixin:
                 actual_service_tier = _facade()._service_tier_from_event_payload(payload)
                 if actual_service_tier is not None:
                     request_state.actual_service_tier = actual_service_tier
-                    request_state.service_tier = actual_service_tier
+                    request_state.service_tier = billable_service_tier(
+                        request_state.requested_service_tier, actual_service_tier
+                    )
                 completed_tool_call = _facade()._response_output_item_done_tool_call(payload)
                 if completed_tool_call is not None:
                     completed_call_id, completed_call_type = completed_tool_call
@@ -6670,7 +6673,7 @@ class _WebSocketMixin:
         actual_service_tier = _facade()._service_tier_from_event_payload(payload)
         if actual_service_tier is not None:
             request_state.actual_service_tier = actual_service_tier
-            response_service_tier = actual_service_tier
+            response_service_tier = billable_service_tier(request_state.requested_service_tier, actual_service_tier)
 
         settlement = _StreamSettlement(
             status=status,

@@ -3,7 +3,9 @@
 ## Purpose
 
 Define API key lifecycle, enforcement, accounting, and dashboard management contracts for downstream clients.
+
 ## Requirements
+
 ### Requirement: API Key creation
 
 The system SHALL allow the admin to create API keys via `POST /api/api-keys` with a `name` (required), `allowedModels` (optional list), `weeklyTokenLimit` (optional integer), `expiresAt` (optional ISO 8601 datetime), `assignedAccountIds` (optional list), and `usageSections` (optional comma-separated string, defaults to `"upstream_limits,account_pool_usage"`). The system MUST generate a key in the format `sk-clb-{48 hex chars}`, store only the `sha256` hash in the database, and return the plain key exactly once in the creation response. The system MUST accept timezone-aware ISO 8601 datetimes for `expiresAt`, normalize them to UTC naive for persistence, and return the expiration as UTC in API responses.
@@ -743,13 +745,19 @@ Validation failures MUST use the existing OpenAI error envelope used by `/v1/*` 
 - **THEN** the system still authenticates that key and returns the self-usage payload
 
 ### Requirement: API key cost accounting uses the billable service tier
-API key cost accounting MUST continue to use the effective billable `service_tier` chosen for the request log and MUST NOT derive pricing from the operator-requested tier when the upstream reports a different actual tier.
+API key cost accounting MUST use the settled billable `service_tier` recorded for the request log. An upstream-reported actual tier MUST affect pricing only when it is a proven cheaper tier; a `default` or `auto` echo on a higher requested tier MUST NOT lower the rate.
 
 #### Scenario: Requested and actual tiers differ
 - **WHEN** a priced request is sent with `requested_service_tier: "priority"`
 - **AND** the upstream reports `actual_service_tier: "default"`
-- **THEN** the persisted billable `service_tier` is `default`
-- **AND** API key cost accounting uses the `default` tier rate for that request
+- **THEN** the persisted billable `service_tier` is `priority`
+- **AND** API key cost accounting uses the `priority` tier rate for that request
+
+#### Scenario: Upstream reports a cheaper non-echo tier
+- **WHEN** a priced request is sent with `requested_service_tier: "priority"`
+- **AND** the upstream reports `actual_service_tier: "flex"`
+- **THEN** the persisted billable `service_tier` is `flex`
+- **AND** API key cost accounting uses the `flex` tier rate for that request
 
 ### Requirement: API keys can enforce a service tier
 

@@ -342,11 +342,11 @@ class TelemetrySnapshotBuilder:
         return TransportMixSnapshot(ws=_ratio(websocket, total), http_bridge=_ratio(total - websocket, total))
 
     async def _service_tier_mix(self, conditions: list[Predicate], total: int) -> ServiceTierMixSnapshot:
-        # "fast" is normalized to "priority" at write time
-        # (_normalize_service_tier_value), so the persisted vocabulary here is
-        # default/flex/priority; lumping priority into default would hide fast
-        # mode traffic from the mix.
-        tier = func.coalesce(RequestLog.actual_service_tier, RequestLog.service_tier, "default")
+        # The billable tier is the settled one: the raw response echo reports
+        # ``default`` for Fast turns on the Codex backend. "fast" is
+        # normalized to "priority" at write time, so the persisted vocabulary
+        # is default/flex/priority.
+        tier = func.coalesce(RequestLog.service_tier, "default")
         flex = await self._count_where(conditions, tier == "flex")
         priority = await self._count_where(conditions, tier == "priority")
         return ServiceTierMixSnapshot(

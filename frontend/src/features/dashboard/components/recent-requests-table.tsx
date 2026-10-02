@@ -48,7 +48,9 @@ import {
 import type { AccountSummary, RequestLog } from "@/features/dashboard/schemas";
 import type { ModelItem } from "@/features/api-keys/schemas";
 import { ProviderAccountName, type AccountProvider } from "@/components/brand/provider-account-name";
+import { ServiceTierMark } from "@/components/brand/service-tier-mark";
 import { modelDisplayName } from "@/utils/model-display";
+import { isServiceTierDowngrade, serviceTierLabel, visibleServiceTier } from "@/utils/service-tiers";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
@@ -433,13 +435,9 @@ export function RecentRequestsTable({
               const isEmailLabel = privateAccountLabel(request);
               const errorPreview = request.errorMessage || request.errorCode || "-";
               const hasError = !!(request.errorCode || request.errorMessage);
-              const visibleServiceTier = request.actualServiceTier ?? request.serviceTier;
-              const modelMetadata = [
-                request.reasoningEffort?.trim(),
-                visibleServiceTier?.trim() === "default" ? null : visibleServiceTier?.trim(),
-              ].filter(Boolean).join(" · ");
-              const showRequestedTier =
-                !!request.requestedServiceTier && request.requestedServiceTier !== visibleServiceTier;
+              const reasoningEffort = request.reasoningEffort?.trim();
+              const billedTier = visibleServiceTier(request.serviceTier);
+              const tierDowngraded = isServiceTierDowngrade(request.requestedServiceTier, request.serviceTier);
               const planType = request.planType?.trim().toLowerCase() || null;
               const planLabel = requestPlanLabel(request, "--");
               const upstreamTransport = request.upstreamTransport;
@@ -482,16 +480,20 @@ export function RecentRequestsTable({
                     <div className="leading-tight">
                       <span className="text-xs" title={request.model || undefined}>
                         {modelDisplayName(request.model, modelNames.get(request.model))}
-                        {modelMetadata ? <> <span className="text-muted-foreground">{modelMetadata}</span></> : null}
+                        {reasoningEffort ? <> <span className="text-muted-foreground">{reasoningEffort}</span></> : null}
+                        {billedTier ? <> <ServiceTierMark tier={billedTier} label={serviceTierLabel(billedTier, t)} /></> : null}
                       </span>
                       {typeLabel ? (
                         <div className="mt-1 truncate text-xs text-muted-foreground" title={typeLabel}>
                           {typeLabel}
                         </div>
                       ) : null}
-                      {showRequestedTier ? (
+                      {tierDowngraded ? (
                         <div className="text-[11px] text-muted-foreground">
-                          {t("dashboard.requests.requestedTier", { tier: request.requestedServiceTier })}
+                          {t("dashboard.requests.tierDowngraded", {
+                            requested: serviceTierLabel(request.requestedServiceTier, t),
+                            billed: serviceTierLabel(request.serviceTier, t),
+                          })}
                         </div>
                       ) : null}
                     </div>
@@ -633,7 +635,7 @@ export function RecentRequestsTable({
                   <RequestDetailField label={t("dashboard.requests.columns.account")} value={requestAccountLabel(selectedRequest)} />
                 </div> : null}
                 <RequestDetailField label={t("dashboard.requests.columns.status")} value={selectedRequest ? t(`dashboard.requestStatus.${selectedRequest.status}`, { defaultValue: REQUEST_STATUS_LABELS[selectedRequest.status] ?? selectedRequest.status }) : "—"} />
-                <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, selectedRequest.actualServiceTier ?? selectedRequest.serviceTier) : "—"} mono />
+                <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, serviceTierLabel(visibleServiceTier(selectedRequest.serviceTier), t)) : "—"} mono />
                 <RequestDetailField label={t("dashboard.requestDetails.requestKind")} value={selectedRequest ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ?? selectedRequest.requestKind) : "—"} />
                 <RequestDetailField label={t("dashboard.requestDetails.operation")} value={selectedRequest ? requestOperationLabel(selectedRequest, t) : "—"} />
                 <RequestDetailField label={t("dashboard.requests.columns.plan")} value={requestPlanLabel(selectedRequest, "—")} />
