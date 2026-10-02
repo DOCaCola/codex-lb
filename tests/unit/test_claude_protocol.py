@@ -169,11 +169,84 @@ def test_adaptive_thinking_is_unchanged_for_unsigned_open_tool_turn():
         {"service_tier": "priority"},
         {"truncation": "auto"},
         {"tools": [{"type": "custom", "name": "grammar", "format": {"type": "grammar", "definition": "x"}}]},
+        {
+            "tools": [
+                {
+                    "type": "custom",
+                    "name": "grammar",
+                    "format": {"type": "grammar", "syntax": "ebnf", "definition": "x"},
+                }
+            ]
+        },
+        {"tools": [{"type": "custom", "name": "grammar", "format": {"type": "grammar", "syntax": "lark"}}]},
+        {"tools": [{"type": "custom", "name": "grammar", "format": {"type": "json"}}]},
     ],
 )
 def test_unsupported_semantics_are_not_silently_dropped(payload):
     with pytest.raises(ClientPayloadError):
         project(request(**payload), max_output_tokens=8192)
+
+
+APPLY_PATCH_GRAMMAR = 'start: begin_patch hunk+ end_patch\nbegin_patch: "*** Begin Patch" LF\n'
+
+
+def apply_patch_tool():
+    return {
+        "type": "custom",
+        "name": "apply_patch",
+        "description": "Edit files.",
+        "format": {"type": "grammar", "syntax": "lark", "definition": APPLY_PATCH_GRAMMAR},
+    }
+
+
+def test_grammar_custom_tool_documents_its_grammar_on_the_raw_input():
+    projected = project(request(tools=[apply_patch_tool()]), max_output_tokens=8192)
+    [declaration] = array(projected.body["tools"])
+    assert at(declaration, "description") == "Edit files."
+    schema = at(declaration, "input_schema")
+    assert at(schema, "required") == ["input"]
+    assert at(schema, "additionalProperties") is False
+    description = at(schema, "properties", "input", "description")
+    assert isinstance(description, str)
+    assert description.endswith(f"It must match this lark grammar:\n{APPLY_PATCH_GRAMMAR}")
+    [identity] = projected.tools.values()
+    assert (identity.name, identity.namespace, identity.custom) == ("apply_patch", None, True)
+
+
+def test_text_custom_tool_input_carries_no_grammar():
+    projected = project(
+        request(tools=[{"type": "custom", "name": "exec", "format": {"type": "text"}}]), max_output_tokens=8192
+    )
+    [declaration] = array(projected.body["tools"])
+    assert at(declaration, "input_schema", "properties", "input", "description") == (
+        "Raw text passed verbatim to the tool."
+    )
+
+
+def test_apply_patch_call_roundtrips_as_custom_tool_call():
+    patch = "*** Begin Patch\n*** Add File: a.txt\n+a\n*** End Patch\n"
+    payload = request(tools=[apply_patch_tool()])
+    projected = project(payload, max_output_tokens=8192)
+    wire = next(iter(projected.tools))
+    response = ResponsesProjection(scope(), projected.tools, codec()).complete(
+        {
+            "id": "msg1",
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "tool_use", "id": "call1", "name": wire, "input": {"input": patch}}],
+        }
+    )
+    call = at(response, "output", -1)
+    assert isinstance(call, dict)
+    assert (call["type"], call["name"], call["input"]) == ("custom_tool_call", "apply_patch", patch)
+    history = [
+        {"role": "user", "content": "Hello"},
+        *array(response["output"]),
+        {"type": "custom_tool_call_output", "call_id": "call1", "output": "Success. Updated a.txt"},
+    ]
+    replay = project(request(tools=payload["tools"], input=history), max_output_tokens=8192)
+    assert at(replay.body, "messages", 1, "content", 0, "input") == {"input": patch}
+    assert at(replay.body, "messages", 2, "content", 0, "tool_use_id") == "call1"
 
 
 def scope():

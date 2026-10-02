@@ -48,6 +48,9 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         context_window = default_client_context_window(context_window)
         raw["auto_compact_token_limit"] = context_window * 9 // 10
         raw["effective_context_window_percent"] = 95
+        # The Claude adapter projects Codex's grammar-format apply_patch tool,
+        # and Codex registers that tool only for catalogs advertising it.
+        raw["apply_patch_tool_type"] = "freeform"
     raw.setdefault("visibility", "list")
     raw.setdefault("shell_type", "shell_command")
     raw.setdefault("max_context_window", context_window)

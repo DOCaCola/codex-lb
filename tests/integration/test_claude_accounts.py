@@ -197,6 +197,7 @@ async def test_automatic_catalog_limits_and_rejected_override_api(async_client, 
     assert model["max_output_tokens"] == 128000
     assert model["auto_compact_token_limit"] == 244800
     assert model["effective_context_window_percent"] == 95
+    assert model["apply_patch_tool_type"] == "freeform"
     generic = (await async_client.get("/v1/models")).json()["data"]
     generic_model = next(item for item in generic if item["id"] == "anthropic/claude-opus-5")
     assert generic_model["context_length"] == generic_model["metadata"]["input_context_window"] == 272000

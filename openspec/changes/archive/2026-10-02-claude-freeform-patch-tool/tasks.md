@@ -1,0 +1,4 @@
+- [x] 1. Project lark/regex grammar custom tools to a raw-text Claude input documenting the grammar; reject malformed grammars and unknown formats explicitly.
+- [x] 2. Advertise `apply_patch_tool_type: "freeform"` for Claude catalog models only.
+- [x] 3. Cover projection, apply_patch call round trip, catalog advertisement and the Codex models endpoint with tests.
+- [x] 4. Verify Codex registers and executes `apply_patch` against a Claude model end to end.

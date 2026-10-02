@@ -50,9 +50,11 @@ Portable text, images and function/free-form custom tool histories are projected
 Tool namespaces use deterministic reversible names. Signed thinking stays in
 encrypted account/model/client-bound envelopes, never fabricated
 reasoning summaries. JSON-schema output and model-specific adaptive or budget reasoning use explicit model
-policies; unknown model minors do not inherit capabilities optimistically. Grammar
-constrained tool decoding, files, built-in server tools other than web search, verbosity,
-automatic truncation and paid service tiers have explicit unsupported errors.
+policies; unknown model minors do not inherit capabilities optimistically. Grammar-format
+custom tools (Codex's freeform apply_patch) become one raw-text input documenting the
+grammar, because Anthropic cannot constrain decoding; Codex parses the input and returns
+violations to the model as tool errors. Files, built-in server tools other than web
+search, verbosity, automatic truncation and paid service tiers have explicit unsupported errors.
 Native Messages may carry native extensions without pretending they are Responses
 features. Switching models with signed state requires portable context.
 

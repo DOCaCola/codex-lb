@@ -64,6 +64,39 @@ def invalid(message: str, param: str = "input") -> ClientPayloadError:
     return ClientPayloadError(message, param=param, code="unsupported_parameter")
 
 
+_GRAMMAR_SYNTAXES = frozenset({"lark", "regex"})
+
+
+def _custom_tool_input_schema(tool: dict[str, JsonValue], *, param: str) -> dict[str, JsonValue]:
+    """Claude schema for a Responses custom tool's single raw-text input.
+
+    Claude cannot constrain decoding to a grammar, so a grammar format becomes
+    the input's documented contract. The client still owns validation: Codex
+    parses every freeform input (apply_patch included) and returns a
+    non-conforming one to the model as a tool error.
+    """
+    custom_format = tool.get("format")
+    description = "Raw text passed verbatim to the tool."
+    if custom_format is not None:
+        if not isinstance(custom_format, dict):
+            raise invalid("Invalid custom tool format", f"{param}.format")
+        kind = custom_format.get("type")
+        if kind == "grammar":
+            syntax = custom_format.get("syntax")
+            definition = custom_format.get("definition")
+            if syntax not in _GRAMMAR_SYNTAXES or not isinstance(definition, str) or not definition:
+                raise invalid("Custom tool grammar requires a lark or regex definition", f"{param}.format")
+            description += f" It must match this {syntax} grammar:\n{definition}"
+        elif kind != "text":
+            raise invalid(f"Unsupported custom tool format: {kind}", f"{param}.format")
+    return {
+        "type": "object",
+        "properties": {"input": {"type": "string", "description": description}},
+        "required": ["input"],
+        "additionalProperties": False,
+    }
+
+
 @dataclass(frozen=True)
 class ToolIdentity:
     name: str
@@ -172,25 +205,11 @@ def project_responses(
             return
         if kind not in ("function", "custom"):
             raise invalid(f"Unsupported Claude tool type: {kind}", "tools")
-        custom_format = tool.get("format")
-        if (
-            kind == "custom"
-            and custom_format is not None
-            and (not isinstance(custom_format, dict) or custom_format.get("type") != "text")
-        ):
-            raise invalid("Claude custom tools support text input, not grammar-constrained decoding", "tools")
         identity = ToolIdentity(name, namespace, kind == "custom")
         if identity.wire_name in tools:
             raise invalid("Duplicate tool identity", "tools")
         schema: JsonValue = (
-            tool.get("parameters")
-            if kind == "function"
-            else {
-                "type": "object",
-                "properties": {"input": {"type": "string"}},
-                "required": ["input"],
-                "additionalProperties": False,
-            }
+            tool.get("parameters") if kind == "function" else _custom_tool_input_schema(tool, param=param)
         )
         if not isinstance(schema, dict):
             raise invalid(f"Tool '{name}' requires a JSON object schema", f"{param}.parameters")
