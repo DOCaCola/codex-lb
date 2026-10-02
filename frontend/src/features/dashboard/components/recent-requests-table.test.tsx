@@ -19,6 +19,21 @@ import type { RequestLog } from "@/features/dashboard/schemas";
 
 const ISO = "2026-01-01T12:00:00+00:00";
 
+it("highlights only rows that just arrived", () => {
+  const old = createRequestLogEntry({ requestId: "old", model: "model-old" });
+  const { rerender } = render(
+    <RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[old]} />,
+  );
+  expect(screen.getByTitle("model-old").closest("tr")).not.toHaveClass("request-log-row-arrived");
+
+  rerender(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[
+    createRequestLogEntry({ requestId: "new", model: "model-new" }),
+    old,
+  ]} />);
+  expect(screen.getByTitle("model-new").closest("tr")).toHaveClass("request-log-row-arrived");
+  expect(screen.getByTitle("model-old").closest("tr")).not.toHaveClass("request-log-row-arrived");
+});
+
 it("shows operation and workload in the existing model-cell label area", () => {
   render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
     createRequestLogEntry({ requestId: "search", model: "", requestOperation: "web_search", tokens: null, costUsd: null }),

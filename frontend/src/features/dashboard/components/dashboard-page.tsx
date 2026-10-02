@@ -279,6 +279,9 @@ export function DashboardPage() {
 
   const overview = dashboardQuery.data;
   const logPage = logsQuery.data;
+  // Arrivals are tracked on the first page of settled (non-placeholder) data.
+  const liveRequestContext =
+    !logsQuery.isPlaceholderData && filters.offset === 0 ? JSON.stringify(filters) : null;
 
   const view = useMemo(() => {
     void resolvedLanguage;
@@ -813,6 +816,7 @@ export function DashboardPage() {
                         offset={filters.offset}
                         hasMore={logPage.hasMore}
                         filtersApplied={emptyStateFiltersApplied}
+                        liveContextKey={liveRequestContext}
                         onLimitChange={(limit) =>
                           updateFilters({ limit, offset: 0 })
                         }

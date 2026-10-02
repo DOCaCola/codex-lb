@@ -189,6 +189,20 @@
   animation: fade-in-up 0.35s ease-out both;
 }
 
+/* Request-log rows that just arrived through a live refresh */
+@keyframes request-log-row-arrived {
+  0%, 20% {
+    background-color: color-mix(in oklab, var(--primary) 24%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.request-log-row-arrived {
+  animation: request-log-row-arrived 5s ease-in-out;
+}
+
 .animate-delay-75 { animation-delay: 75ms; }
 .animate-delay-150 { animation-delay: 150ms; }
 .animate-delay-225 { animation-delay: 225ms; }

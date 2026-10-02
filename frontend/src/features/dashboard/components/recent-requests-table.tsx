@@ -1,6 +1,7 @@
 import { Inbox } from "lucide-react";
 import { formatGenerationSpeed, isGatewayMeasuredSpeed } from "@/features/dashboard/generation-speed";
 import { requestOperationLabel, requestTypeLabel } from "@/features/dashboard/request-operation";
+import { useFreshRequestIds } from "@/features/dashboard/hooks/use-fresh-request-ids";
 import {
   useMemo,
   useRef,
@@ -119,6 +120,11 @@ export type RecentRequestsTableProps = {
   offset: number;
   hasMore: boolean;
   filtersApplied?: boolean;
+  /**
+   * Query context of `requests`. Rows that arrive through a refresh of the same
+   * context fade in a highlight; null or omitted disables highlighting.
+   */
+  liveContextKey?: string | null;
   visibleColumns?: readonly RequestLogColumnId[];
   columnWidths?: RequestLogColumnWidths;
   onColumnWidthChange?: (column: RequestLogColumnId, width: number) => void;
@@ -308,6 +314,7 @@ export function RecentRequestsTable({
   offset,
   hasMore,
   filtersApplied = false,
+  liveContextKey = null,
   visibleColumns: configuredVisibleColumns,
   columnWidths,
   onColumnWidthChange,
@@ -316,6 +323,7 @@ export function RecentRequestsTable({
   onConversationClick,
 }: RecentRequestsTableProps) {
   const { t } = useTranslation();
+  const freshRequestIds = useFreshRequestIds(requests, liveContextKey);
   const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.name])), [models]);
   const requestPlanLabel = (request: RequestLog | null, missing: string): string => {
     if (!request?.planType) return missing;
@@ -445,7 +453,10 @@ export function RecentRequestsTable({
               const typeLabel = requestTypeLabel(request, t);
 
               return (
-                <TableRow key={request.requestId}>
+                <TableRow
+                  key={request.requestId}
+                  className={freshRequestIds.has(request.requestId) ? "request-log-row-arrived" : undefined}
+                >
                   {isColumnVisible("time") ? <TableCell className="pl-4 align-top">
                     <div className="leading-tight">
                       <div className="text-sm font-medium">{time.primary}</div>
