@@ -1,0 +1,5 @@
+- [x] 1. Select the default listed native prompt deterministically and neutralise its GPT identity for routed catalog rows; warn when none exists.
+- [x] 2. Name the destination model in the Codex identity of routed Responses requests.
+- [x] 3. Log an error when the Codex catalog exceeds the client's 1 MiB limit.
+- [x] 4. Cover selection, neutralisation, request-time naming, the catalog endpoint and the size check with tests.
+- [x] 5. Verify a Codex client on a Claude model receives the named Codex prompt end to end.

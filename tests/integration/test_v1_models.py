@@ -725,6 +725,75 @@ async def test_backend_codex_models_defaults_source_model_context_window(async_c
     assert source_entry["prefer_websockets"] is False
 
 
+@pytest.mark.asyncio
+async def test_backend_codex_models_gives_source_rows_the_neutral_default_native_prompt(async_client):
+    def native(slug: str, priority: int, template: str, *, visibility: str = "list") -> UpstreamModel:
+        return replace(
+            _make_upstream_model(
+                slug,
+                base_instructions=template,
+                raw={
+                    "shell_type": "shell_command",
+                    "visibility": visibility,
+                    "availability_nux": None,
+                    "model_messages": {"instructions_template": template},
+                },
+            ),
+            priority=priority,
+        )
+
+    models = [
+        native("gpt-hidden", 0, "You are Codex, an agent based on GPT-5. Hidden.", visibility="hide"),
+        native("gpt-default", 1, "You are Codex, an agent based on GPT-6. Default."),
+        native("gpt-later", 2, "You are Codex, an agent based on GPT-6. Later."),
+    ]
+    await get_model_registry().update({"plus": models, "pro": models})
+    await _create_model_source(
+        async_client,
+        name="codex-source-instructions",
+        model="external-instructions-model",
+        supports_responses=True,
+    )
+
+    response = await async_client.get("/backend-api/codex/models")
+
+    assert response.status_code == 200
+    entries = {entry["slug"]: entry for entry in response.json()["models"]}
+    assert entries["external-instructions-model"]["base_instructions"] == "You are Codex, an agent. Default."
+    assert entries["gpt-default"]["base_instructions"] == "You are Codex, an agent based on GPT-6. Default."
+
+
+@pytest.mark.asyncio
+async def test_backend_codex_models_logs_source_rows_without_native_prompt(async_client, caplog):
+    models = [_make_upstream_model("gpt-no-prompt")]
+    await get_model_registry().update({"plus": models, "pro": models})
+    await _create_model_source(
+        async_client,
+        name="codex-source-no-prompt",
+        model="external-no-prompt-model",
+        supports_responses=True,
+    )
+
+    with caplog.at_level("WARNING", logger="app.modules.proxy.api"):
+        response = await async_client.get("/backend-api/codex/models")
+
+    assert response.status_code == 200
+    entry = next(item for item in response.json()["models"] if item["slug"] == "external-no-prompt-model")
+    assert entry["base_instructions"] == ""
+    assert "codex_catalog_routed_instructions_unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_backend_codex_models_logs_catalog_over_client_limit(async_client, caplog, monkeypatch):
+    monkeypatch.setattr(proxy_api, "CODEX_MODEL_CATALOG_MAX_BYTES", 10)
+
+    with caplog.at_level("ERROR", logger="app.modules.proxy.api"):
+        response = await async_client.get("/backend-api/codex/models")
+
+    assert response.status_code == 200
+    assert "codex_catalog_exceeds_client_limit" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("case", "raw_tools", "expected_tools"),
     [

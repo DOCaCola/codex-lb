@@ -25,7 +25,7 @@ from aiohttp import web
 from sqlalchemy import select
 from starlette.requests import Request
 
-from app.db.models import ApiKeyUsageReservation, ModelSource, RequestLog
+from app.db.models import ApiKeyUsageReservation, ModelSource, ModelSourceModel, RequestLog
 from app.db.session import SessionLocal
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy import source_dispatch as dispatch_module
@@ -1074,6 +1074,7 @@ async def test_admission_estimate_exception_is_covered_by_the_route_helper_latch
         supports_responses=True,
         max_concurrency=1,
     )
+    source.models = [ModelSourceModel(model="src-model", is_enabled=True)]
 
     def exploding_estimate(_payload: object) -> object:
         raise RuntimeError("estimate exploded")

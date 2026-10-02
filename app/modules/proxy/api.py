@@ -234,6 +234,7 @@ from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.model_sources.catalog import (
     source_model_audio_cost_usd,
+    source_model_display_name,
     source_model_request_overrides,
     source_model_supported_tool_types,
     source_model_supports_reasoning,
@@ -272,6 +273,7 @@ from app.modules.model_sources.forwarding import (
 from app.modules.model_sources.forwarding import (
     stream_responses as stream_source_responses,
 )
+from app.modules.model_sources.instructions import name_routed_identity, routed_base_instructions
 from app.modules.model_sources.projection import strip_source_telemetry
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.selection import (
@@ -3980,6 +3982,18 @@ async def _build_codex_models_response_body(
     if not models and not metadata_models and not source_models:
         return JSONResponse(content=CodexModelsResponse(models=[], data=[]).model_dump(mode="json"))
 
+    # Every key sees the same routed prompt: it derives from the unscoped
+    # native catalog, not from the models this key may list.
+    routed_instructions = routed_base_instructions(
+        model for model in registry.get_models_with_fallback().values() if _is_codex_backend_catalog_model(model)
+    )
+    if routed_instructions is None and visible_source_models:
+        logger.warning(
+            "codex_catalog_routed_instructions_unavailable source_models=%d",
+            len(visible_source_models),
+        )
+        routed_instructions = ""
+
     entries: list[CodexModelEntry] = []
     data: list[ModelListItem] = []
     seen_slugs: set[str] = set()
@@ -4033,7 +4047,11 @@ async def _build_codex_models_response_body(
         if model.slug in seen_slugs:
             continue
         if visibility_allowed_models is None:
-            entry = _to_codex_model_entry(model, context_window_overrides=context_window_overrides)
+            entry = _to_codex_model_entry(
+                model,
+                context_window_overrides=context_window_overrides,
+                base_instructions=routed_instructions,
+            )
             entries.append(entry)
             seen_slugs.add(model.slug)
             if model.supported_in_api and entry.visibility == "list":
@@ -4054,6 +4072,7 @@ async def _build_codex_models_response_body(
                 visibility_allowed_models=visibility_allowed_models,
                 exact_source_allowed_models=exact_source_allowed_models,
             ),
+            base_instructions=routed_instructions,
         )
         entries.append(entry)
         seen_slugs.add(model.slug)
@@ -4069,7 +4088,15 @@ async def _build_codex_models_response_body(
     # Codex sorts by priority, not response order. Keep native priorities intact.
     for priority, entry in enumerate(entries[source_entries_start:], start=source_priority_start):
         entry.priority = priority
-    return JSONResponse(content=CodexModelsResponse(models=entries, data=data).model_dump(mode="json"))
+    response = JSONResponse(content=CodexModelsResponse(models=entries, data=data).model_dump(mode="json"))
+    if len(response.body) > CODEX_MODEL_CATALOG_MAX_BYTES:
+        logger.error(
+            "codex_catalog_exceeds_client_limit bytes=%d limit=%d models=%d",
+            len(response.body),
+            CODEX_MODEL_CATALOG_MAX_BYTES,
+            len(entries),
+        )
+    return response
 
 
 async def _build_models_response(api_key: ApiKeyData | None) -> Response:
@@ -4285,6 +4312,11 @@ def _is_codex_backend_catalog_model(model: UpstreamModel) -> bool:
 
 _CODEX_WIRE_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
 
+# Codex rejects a ``model_catalog_url`` body above 1 MiB and falls back to its
+# bundled catalog (codex-rs/model-provider/src/models_endpoint.rs,
+# ``MAX_MODEL_CATALOG_BYTES``).
+CODEX_MODEL_CATALOG_MAX_BYTES = 1024 * 1024
+
 
 def _codex_model_truncation_policy(model: UpstreamModel) -> CodexTruncationPolicy:
     if "truncation_policy" in model.raw:
@@ -4319,7 +4351,11 @@ def _codex_wire_default_reasoning_level(model: UpstreamModel) -> str | None:
 
 
 def _to_codex_model_entry(
-    model: UpstreamModel, *, context_window_overrides: Mapping[str, int], visibility: str | None = None
+    model: UpstreamModel,
+    *,
+    context_window_overrides: Mapping[str, int],
+    visibility: str | None = None,
+    base_instructions: str | None = None,
 ) -> CodexModelEntry:
     raw = model.raw
     reasoning_levels = _codex_wire_reasoning_levels(model)
@@ -4364,7 +4400,7 @@ def _to_codex_model_entry(
         slug=model.slug,
         display_name=model.display_name,
         description=model.description,
-        base_instructions=model.base_instructions,
+        base_instructions=model.base_instructions if base_instructions is None else base_instructions,
         default_reasoning_level=_codex_wire_default_reasoning_level(model),
         supported_reasoning_levels=reasoning_levels,
         supported_in_api=model.supported_in_api,
@@ -6119,6 +6155,11 @@ def _shape_source_responses_payload(
     """Project the client body onto what the source may see (telemetry stripped, reasoning aliases resolved)."""
 
     source_payload = lower_agent_messages(strip_source_telemetry(payload.model_dump_for_forwarding()))
+    instructions = source_payload.get("instructions")
+    if isinstance(instructions, str):
+        source_payload["instructions"] = name_routed_identity(
+            instructions, source_model_display_name(source, payload.model)
+        )
     lower_opaque_compaction_items_for_model_source(source_payload)
     preserve_materialized_provider_alias = payload._codex_lb_provider_reasoning_effort_materialized and (
         api_key is None or (api_key.enforced_reasoning_effort is None and api_key.allowed_reasoning_efforts is None)

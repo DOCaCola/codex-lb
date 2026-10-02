@@ -212,6 +212,14 @@ def source_model_supports_reasoning(source: ModelSource, model: str) -> bool:
     return _raw_metadata(entry).get("supports_reasoning") is True
 
 
+def source_model_display_name(source: ModelSource, model: str) -> str:
+    """The catalog display name of a source model being dispatched."""
+    entry = _enabled_source_model(source, model)
+    if entry is None:
+        raise LookupError(f"Model {model!r} is not enabled on source {source.id}")
+    return entry.display_name or entry.model
+
+
 def source_model_request_overrides(source: ModelSource, model: str) -> dict[str, JsonValue]:
     """Operator-configured request overrides for a source model.
 

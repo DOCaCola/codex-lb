@@ -4651,4 +4651,43 @@ async def test_direct_source_routing_forwards_only_constructed_headers(async_cli
     assert len(seen_headers) == 1
     assert_source_saw_only_constructed_headers(seen_headers[0], source_token="token-header-proof")
     assert "client_metadata" not in seen_bodies[0]
+
+
+@pytest.mark.asyncio
+async def test_source_routing_names_destination_model_in_codex_identity(async_client, source_upstream) -> None:
+    seen_bodies: list[dict[str, object]] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        seen_bodies.append(await request.json())
+        response = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(
+            b'data: {"type":"response.completed","sequence_number":0,"response":{"id":"resp_identity",'
+            b'"object":"response","status":"completed","output":[],'
+            b'"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+        )
+        await response.write_eof()
+        return response
+
+    base_url = await source_upstream(handler)
+    model = "source-identity-model"
+    await _create_model_source(async_client, name="identity", model=model, base_url=base_url, supports_responses=True)
+
+    async with async_client.stream(
+        "POST",
+        "/v1/responses",
+        json={
+            "model": model,
+            # A parent's native prompt replayed into a routed subagent.
+            "instructions": "You are Codex, an agent based on GPT-6. You and the user share one workspace.",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+            "stream": True,
+        },
+    ) as response:
+        assert response.status_code == 200
+        await response.aread()
+
+    assert seen_bodies[0]["instructions"] == (
+        "You are Codex, an agent running on source-identity-model. You and the user share one workspace."
+    )
     assert "stream_options" not in seen_bodies[0]
