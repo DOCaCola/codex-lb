@@ -2,12 +2,18 @@
 //!
 //! This crate intentionally has no async runtime or networking dependencies. Wire
 //! compatibility can therefore be tested independently from either implementation.
+//!
+//! Commands are newline-terminated JSON. A command that carries a request body or
+//! a websocket message declares its size in `payload_bytes`, and exactly that many
+//! raw bytes follow the newline. Bulk payloads are therefore never escaped into
+//! JSON or base64 on the way to the worker.
 
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const CAPABILITIES: &[&str] = &[
     "failure_provenance_v1",
+    "framed_payload_v1",
     "http",
     "http2_profile_v1",
     "http_compact_collect_v1",
@@ -33,12 +39,12 @@ pub enum NativeCommand {
     WebsocketSendText {
         request_id: String,
         command_id: String,
-        text: String,
+        payload_bytes: usize,
     },
     WebsocketSendBinary {
         request_id: String,
         command_id: String,
-        data: String,
+        payload_bytes: usize,
     },
     WebsocketClose {
         request_id: String,
@@ -51,13 +57,31 @@ pub enum NativeCommand {
     },
 }
 
+impl NativeCommand {
+    /// Number of raw payload bytes that follow this command's JSON line.
+    pub fn payload_bytes(&self) -> usize {
+        match self {
+            Self::Request(request) => request.payload_bytes.unwrap_or(0),
+            Self::WebsocketSendText { payload_bytes, .. }
+            | Self::WebsocketSendBinary { payload_bytes, .. } => *payload_bytes,
+            Self::ClientHello { .. }
+            | Self::WebsocketConnect(_)
+            | Self::WebsocketClose { .. }
+            | Self::Cancel { .. } => 0,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 pub struct NativeRequest {
     pub request_id: String,
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub body: Option<String>,
+    /// Size of the raw request body that follows the command; absent for a
+    /// request without a body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_bytes: Option<usize>,
     pub timeout_ms: Option<u64>,
     pub connect_timeout_ms: Option<u64>,
     pub proxy_url: Option<String>,

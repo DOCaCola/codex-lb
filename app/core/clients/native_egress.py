@@ -28,6 +28,7 @@ _NATIVE_PROTOCOL_HANDSHAKE_TIMEOUT_SECONDS = 2.0
 _REQUIRED_NATIVE_CAPABILITIES = frozenset(
     {
         "failure_provenance_v1",
+        "framed_payload_v1",
         "http",
         "http2_profile_v1",
         "http_compact_collect_v1",
@@ -499,13 +500,10 @@ class NativeEgressWebSocket:
         )
 
     async def send_text(self, text: str) -> None:
-        await self._send("websocket_send_text", text=text)
+        await self._send("websocket_send_text", payload=text.encode("utf-8"))
 
     async def send_bytes(self, data: bytes) -> None:
-        await self._send(
-            "websocket_send_binary",
-            data=base64.b64encode(data).decode("ascii"),
-        )
+        await self._send("websocket_send_binary", payload=data)
 
     async def receive(self) -> NativeWebSocketMessage:
         if self._completed and self._messages.empty():
@@ -572,7 +570,14 @@ class NativeEgressWebSocket:
     def response_header(self, name: str) -> str | None:
         return self.headers.get(name)
 
-    async def _send(self, event_type: str, *, allow_closing: bool = False, **payload: object) -> None:
+    async def _send(
+        self,
+        event_type: str,
+        *,
+        allow_closing: bool = False,
+        payload: bytes | None = None,
+        **fields: object,
+    ) -> None:
         if self._completed or (self._closing and not allow_closing):
             raise NativeEgressTransportError(
                 "native websocket is closed",
@@ -590,8 +595,9 @@ class NativeEgressWebSocket:
                     "type": event_type,
                     "request_id": self._request_id,
                     "command_id": command_id,
-                    **payload,
+                    **fields,
                 },
+                payload=payload,
             )
             await asyncio.wait_for(
                 asyncio.shield(future),
@@ -818,7 +824,6 @@ class SubprocessNativeEgressClient:
             "method": request.method,
             "url": request.url,
             "headers": list(request.headers.items()),
-            "body": base64.b64encode(request.body).decode("ascii") if request.body is not None else None,
             "timeout_ms": (
                 max(1, round(request.timeout_seconds * 1000)) if request.timeout_seconds is not None else None
             ),
@@ -841,7 +846,7 @@ class SubprocessNativeEgressClient:
             ),
         }
         try:
-            await self._send_command(process, generation, request_event)
+            await self._send_command(process, generation, request_event, payload=request.body)
             head_timeout = request.response_head_timeout_seconds or request.timeout_seconds
             if request.timeout_seconds is not None and head_timeout is not None:
                 head_timeout = min(head_timeout, request.timeout_seconds)
@@ -1082,7 +1087,10 @@ class SubprocessNativeEgressClient:
         process: asyncio.subprocess.Process,
         generation: int,
         command: Mapping[str, object],
+        *,
+        payload: bytes | None = None,
     ) -> None:
+        """Write one command line, followed by its raw payload when it carries one."""
         async with self._write_lock:
             if process is not self._process or generation != self._generation or process.returncode is not None:
                 raise NativeEgressTransportError("native helper exited before command dispatch")
@@ -1090,7 +1098,11 @@ class SubprocessNativeEgressClient:
             if stdin is None:
                 raise NativeEgressTransportError("native helper stdin is unavailable")
             try:
+                if payload is not None:
+                    command = {**command, "payload_bytes": len(payload)}
                 stdin.write(json.dumps(command, separators=(",", ":")).encode("utf-8") + b"\n")
+                if payload is not None:
+                    stdin.write(payload)
                 await stdin.drain()
             except (BrokenPipeError, ConnectionResetError) as exc:
                 raise NativeEgressTransportError("native helper closed during command dispatch") from exc

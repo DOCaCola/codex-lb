@@ -573,6 +573,7 @@ from app.modules.proxy._service.support import (
     _http_error_status_from_payload,  # noqa: F401
     _HTTPBridgeSession,
     _HTTPBridgeSessionKey,
+    _InputFingerprints,
     _is_account_neutral_error_code,
     _is_local_account_cap_code,  # noqa: F401
     _is_ttft_event,  # noqa: F401
@@ -684,7 +685,6 @@ from app.modules.proxy._service.websocket.helpers import (
     _prepare_websocket_request_state_for_visible_output_replay,  # noqa: F401
     _record_websocket_continuity_completion,  # noqa: F401
     _record_websocket_responses_lite_acceptance,  # noqa: F401
-    _refresh_websocket_request_input_fingerprint_from_text,  # noqa: F401
     _release_websocket_response_create_gate,  # noqa: F401
     _rewrite_websocket_continuity_corruption_event,  # noqa: F401
     _rewrite_websocket_downstream_response_id,  # noqa: F401
@@ -716,7 +716,6 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_precreated_auth_error_code,  # noqa: F401
     _websocket_precreated_retry_error_code,  # noqa: F401
     _websocket_receive_timeout_for_pending_requests,  # noqa: F401
-    _websocket_request_text_is_account_neutral_fresh_replay,  # noqa: F401
     _websocket_response_id,  # noqa: F401
     _websocket_top_level_error_payload,  # noqa: F401
     _wrapped_websocket_error_event,  # noqa: F401
@@ -2497,6 +2496,7 @@ def _input_prefix_matches_stored_context(
     *,
     stored_count: int,
     stored_fingerprint: str | None,
+    fingerprints: _InputFingerprints | None = None,
 ) -> bool:
     if stored_count <= 0 or stored_fingerprint is None:
         return False
@@ -2504,7 +2504,9 @@ def _input_prefix_matches_stored_context(
         return False
     if len(input_value) <= stored_count:
         return False
-    return _fingerprint_input_items(cast(list[JsonValue], input_value)[:stored_count]) == stored_fingerprint
+    if fingerprints is None:
+        return _fingerprint_input_items(cast(list[JsonValue], input_value)[:stored_count]) == stored_fingerprint
+    return fingerprints.prefix(stored_count) == stored_fingerprint
 
 
 def _is_missing_thread_goal_protocol_error(exc: ProxyResponseError) -> bool:

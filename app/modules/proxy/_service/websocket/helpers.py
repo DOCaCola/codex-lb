@@ -61,7 +61,6 @@ from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
-    extract_input_file_ids,
 )
 from app.core.types import JsonValue
 from app.core.utils.shared_future import (
@@ -296,6 +295,8 @@ from app.modules.proxy._service.support import (
     _clear_websocket_request_error_overrides,
     _DeferredKeyedStreamHealthPenalty,
     _event_type_from_payload,
+    _InputFingerprints,
+    _request_body_is_account_neutral_fresh_replay,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketContinuityAnchor,
     _WebSocketContinuityState,
@@ -359,7 +360,6 @@ from app.modules.proxy.http_bridge_forwarding import (
 from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
-from app.modules.proxy.replay_safety import responses_payload_is_account_neutral_fresh_replay
 from app.modules.proxy.selection_errors import USAGE_LIMIT_REACHED
 
 
@@ -478,7 +478,7 @@ def _prepare_websocket_request_state_for_visible_output_replay(
         _install_fresh_replay_body(
             request_state,
             fresh_request_text,
-            account_neutral=_websocket_request_text_is_account_neutral_fresh_replay(fresh_request_text),
+            account_neutral=_request_body_is_account_neutral_fresh_replay(request_state, fresh_request_text),
             release_owner_pin=(
                 request_state.previous_response_id is None or request_state.proxy_injected_previous_response_id
             ),
@@ -504,22 +504,6 @@ def _websocket_owner_switch_has_other_pending_requests(
     return any(pending is not request_state for pending in pending_requests)
 
 
-def _websocket_request_text_is_account_neutral_fresh_replay(request_text: str | None) -> bool:
-    if not isinstance(request_text, str):
-        return False
-    try:
-        payload = json.loads(request_text)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    event_type = payload.get("type")
-    if event_type is not None and event_type != "response.create":
-        return False
-    payload.pop("type", None)
-    return responses_payload_is_account_neutral_fresh_replay(cast(dict[str, JsonValue], payload))
-
-
 def _bind_websocket_request_dispatch_owner(
     request_state: "_WebSocketRequestState",
     *,
@@ -527,7 +511,7 @@ def _bind_websocket_request_dispatch_owner(
     exact_request_text: str,
 ) -> bool:
     required_account_id = request_state.replay_required_account_id
-    if _websocket_request_text_is_account_neutral_fresh_replay(exact_request_text):
+    if _request_body_is_account_neutral_fresh_replay(request_state, exact_request_text):
         return required_account_id is None or required_account_id == account_id
     if required_account_id is not None and required_account_id != account_id:
         return False
@@ -547,7 +531,7 @@ def _install_verified_fresh_replay(
     if require_proxy_injected_previous_response_id and not request_state.proxy_injected_previous_response_id:
         return None
     fresh_request_text = request_state.fresh_upstream_request_text
-    account_neutral = _websocket_request_text_is_account_neutral_fresh_replay(fresh_request_text)
+    account_neutral = _request_body_is_account_neutral_fresh_replay(request_state, fresh_request_text)
     if require_account_neutral and not account_neutral:
         return None
     if not account_neutral and (request_state.replay_required_account_id or request_state.preferred_account_id) is None:
@@ -584,6 +568,12 @@ def _install_fresh_replay_body(
     anchor the proxy is not entitled to release (a client-supplied
     ``previous_response_id``): the fresh body is still what goes upstream,
     but it stays with the owner the anchored body was bound to.
+
+    The input continuity fields (``input_item_count`` /
+    ``input_full_fingerprint``) are left as they are. Every path that retains
+    a fresh body has already set them to the full client input that body
+    carries, and the next turn's prefix match compares against the client's
+    raw input, not the sanitized upstream body.
     """
     replay_required_account_id = request_state.replay_required_account_id or request_state.preferred_account_id
     turn_state_owner_account_id = (
@@ -599,7 +589,6 @@ def _install_fresh_replay_body(
     request_state.proxy_injected_previous_response_id = False
     request_state.fresh_upstream_request_is_retry_safe = False
     request_state.responses_lite_model = request_state.fresh_upstream_request_responses_lite_model
-    _refresh_websocket_request_input_fingerprint_from_text(request_state)
     return fresh_request_text
 
 
@@ -694,7 +683,7 @@ def _prepare_websocket_request_state_for_account_switch(
 ) -> str | None:
     """Return an unsent request body only when moving accounts is proven safe."""
     if request_state.previous_response_id is None:
-        if not _websocket_request_text_is_account_neutral_fresh_replay(request_state.request_text):
+        if not _request_body_is_account_neutral_fresh_replay(request_state, request_state.request_text):
             return None
         return request_state.request_text
     return _install_verified_fresh_replay(request_state)
@@ -718,6 +707,7 @@ def _websocket_continuity_anchor_for_payload(
     raw_source_model: str | None,
     codex_session_affinity: bool,
     api_key_id: str | None = None,
+    input_fingerprints: _InputFingerprints | None = None,
 ) -> _WebSocketContinuityAnchor | None:
     """Select a matching session anchor, retiring any known upstream rejection."""
     if continuity_state is None or not codex_session_affinity:
@@ -752,6 +742,7 @@ def _websocket_continuity_anchor_for_payload(
         responses_payload.input,
         stored_count=stored_count,
         stored_fingerprint=continuity_state.last_completed_input_prefix_fingerprint,
+        fingerprints=input_fingerprints,
     ):
         return None
     return _WebSocketContinuityAnchor(
@@ -793,6 +784,7 @@ def _websocket_client_previous_response_full_resend_is_retry_safe(
     previous_response_id: str | None,
     input_value: JsonValue,
     continuity_state: _WebSocketContinuityState | None,
+    input_fingerprints: _InputFingerprints | None = None,
 ) -> bool:
     if previous_response_id is None or not isinstance(input_value, list):
         return False
@@ -813,6 +805,7 @@ def _websocket_client_previous_response_full_resend_is_retry_safe(
             input_value,
             stored_count=continuity_state.last_completed_input_count,
             stored_fingerprint=continuity_state.last_completed_input_prefix_fingerprint,
+            fingerprints=input_fingerprints,
         )
     return True
 
@@ -1149,23 +1142,12 @@ def _websocket_auth_failure_permanent_code(message: str | None) -> str:
     return _facade()._WEBSOCKET_AUTH_INVALIDATED_FAILURE_CODE
 
 
-def _websocket_fresh_request_blocks_account_switch(request_state: _WebSocketRequestState) -> bool:
-    try:
-        fresh_payload = json.loads(request_state.fresh_upstream_request_text or "null")
-    except (TypeError, json.JSONDecodeError):
-        return True
-    if not isinstance(fresh_payload, dict):
-        return True
-    fresh_input = fresh_payload.get("input") if isinstance(fresh_payload, dict) else None
-    return bool(extract_input_file_ids(fresh_input))
-
-
 def _websocket_auth_request_can_switch_account(request_state: _WebSocketRequestState) -> bool:
     if request_state.file_required_preferred_account:
         return False
     if request_state.previous_response_id is None:
-        return request_state.request_text is None or _websocket_request_text_is_account_neutral_fresh_replay(
-            request_state.request_text
+        return request_state.request_text is None or _request_body_is_account_neutral_fresh_replay(
+            request_state, request_state.request_text
         )
     if not (
         request_state.proxy_injected_previous_response_id
@@ -1173,9 +1155,8 @@ def _websocket_auth_request_can_switch_account(request_state: _WebSocketRequestS
         and request_state.fresh_upstream_request_text
     ):
         return False
-    return _websocket_request_text_is_account_neutral_fresh_replay(
-        request_state.fresh_upstream_request_text
-    ) and not _websocket_fresh_request_blocks_account_switch(request_state)
+    # Neutrality already rejects account-scoped uploaded files.
+    return _request_body_is_account_neutral_fresh_replay(request_state, request_state.fresh_upstream_request_text)
 
 
 def _prepare_websocket_request_state_for_auth_replay(
@@ -1315,30 +1296,6 @@ async def _websocket_full_resend_conflicts_with_visible_pending(
         return False
     async with pending_lock:
         return any(pending is not request_state and pending.downstream_visible for pending in pending_requests)
-
-
-def _refresh_websocket_request_input_fingerprint_from_text(request_state: _WebSocketRequestState) -> None:
-    if not request_state.request_text:
-        request_state.input_item_count = 0
-        request_state.input_full_fingerprint = None
-        return
-    try:
-        payload = json.loads(request_state.request_text)
-    except json.JSONDecodeError:
-        request_state.input_item_count = 0
-        request_state.input_full_fingerprint = None
-        return
-    if not isinstance(payload, dict):
-        request_state.input_item_count = 0
-        request_state.input_full_fingerprint = None
-        return
-    input_items = payload.get("input")
-    if not isinstance(input_items, list):
-        request_state.input_item_count = 0
-        request_state.input_full_fingerprint = None
-        return
-    request_state.input_item_count = len(input_items)
-    request_state.input_full_fingerprint = _facade()._fingerprint_input_items(cast(list[JsonValue], input_items))
 
 
 def _websocket_top_level_error_payload(payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:

@@ -719,7 +719,7 @@ def responses_payload_is_account_neutral_fresh_replay(payload: Mapping[str, Json
         return False
     if not _text_controls_are_account_neutral(payload.get("text")):
         return False
-    if not _client_metadata_is_account_neutral(payload.get("client_metadata")):
+    if not client_metadata_is_account_neutral(payload.get("client_metadata")):
         return False
 
     input_value = payload.get("input")
@@ -797,7 +797,7 @@ def _text_controls_are_account_neutral(text: JsonValue | None) -> bool:
     )
 
 
-def _client_metadata_is_account_neutral(client_metadata: JsonValue | None) -> bool:
+def client_metadata_is_account_neutral(client_metadata: JsonValue | None) -> bool:
     if client_metadata is None:
         return True
     if not isinstance(client_metadata, dict) or not set(client_metadata) <= _ACCOUNT_NEUTRAL_CLIENT_METADATA_FIELDS:

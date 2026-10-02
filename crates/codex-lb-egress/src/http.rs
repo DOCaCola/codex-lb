@@ -71,6 +71,7 @@ impl ClientPool {
 
 pub(crate) async fn execute_request(
     request: NativeRequest,
+    body: Option<Vec<u8>>,
     client: reqwest::Client,
     output: &Output,
 ) -> Result<NativeEvent, RequestError> {
@@ -81,8 +82,8 @@ pub(crate) async fn execute_request(
     if let Some(timeout_ms) = request.timeout_ms {
         builder = builder.timeout(Duration::from_millis(timeout_ms));
     }
-    if let Some(encoded_body) = request.body {
-        builder = builder.body(base64::engine::general_purpose::STANDARD.decode(encoded_body)?);
+    if let Some(body) = body {
+        builder = builder.body(body);
     }
 
     let mut response = builder.send().await?;

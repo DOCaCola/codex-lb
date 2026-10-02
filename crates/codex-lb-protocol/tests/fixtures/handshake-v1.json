@@ -9,6 +9,7 @@
     "protocol_version": 1,
     "capabilities": [
       "failure_provenance_v1",
+      "framed_payload_v1",
       "http",
       "http2_profile_v1",
       "http_compact_collect_v1",
