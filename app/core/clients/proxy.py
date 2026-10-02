@@ -114,6 +114,7 @@ from app.core.types import JsonObject, JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.usage.live_hub import publish_live_usage
 from app.core.usage.live_snapshots import EVENT_MARKER, parse_rate_limit_event_text, parse_rate_limit_headers
+from app.core.utils.encoded_json import EncodedJsonObject, encode_json_object
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.proxy_env import resolve_http_proxy_from_env
 from app.core.utils.request_id import get_request_id
@@ -3639,6 +3640,7 @@ async def stream_responses(
     native_egress_client: NativeEgressClient | None = None,
     synthesize_routing_hint: bool = False,
     thread_cache_identity: ThreadCacheIdentity | None = None,
+    request_body_source: EncodedJsonObject | None = None,
 ) -> AsyncGenerator[str, None]:
     effective_allow_direct_egress = allow_direct_egress or (route is None and session is not None)
     # aclosing() at every hop lets a consumer's aclose() reach the upstream
@@ -3666,6 +3668,7 @@ async def stream_responses(
                 native_egress_client=native_egress_client,
                 synthesize_routing_hint=synthesize_routing_hint,
                 thread_cache_identity=thread_cache_identity,
+                request_body_source=request_body_source,
             )
         ) as upstream_events,
     ):
@@ -3700,7 +3703,14 @@ async def _stream_responses_with_session(
     native_egress_client: NativeEgressClient | None = None,
     synthesize_routing_hint: bool = False,
     thread_cache_identity: ThreadCacheIdentity | None = None,
+    request_body_source: EncodedJsonObject | None = None,
 ) -> AsyncGenerator[str, None]:
+    """Stream one Responses request upstream.
+
+    ``request_body_source`` is the already-encoded body this request was
+    parsed from. Members the shaping below leaves unchanged keep that
+    encoding in the sent body instead of being serialized again.
+    """
     settings = with_dashboard_overrides(get_settings())
     headers = apply_codex_installation_headers(
         headers,
@@ -3806,7 +3816,7 @@ async def _stream_responses_with_session(
         native_egress_client or discover_native_egress_client() if route is None and transport == "http" else None
     )
     payload_json = (
-        json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
+        encode_json_object(payload_dict, request_body_source)
         if active_native_egress_client is not None or "upstream_payload" in settings.trace_channels
         else None
     )
@@ -4254,7 +4264,7 @@ async def _stream_responses_with_session(
         transport = "http"
         payload_dict = http_payload_dict
         payload_json = (
-            json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
+            encode_json_object(payload_dict, request_body_source)
             if "upstream_payload" in settings.trace_channels
             else None
         )

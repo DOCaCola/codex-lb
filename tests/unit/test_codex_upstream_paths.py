@@ -17,6 +17,7 @@ from aiohttp.client_reqrep import ConnectionKey
 from aiohttp.test_utils import TestServer
 
 import app.core.clients.proxy as proxy_module
+import app.core.utils.encoded_json as encoded_json_module
 from app.core.clients.codex import CodexClient, CodexRequestResult, CodexTransportError, CodexWebSocketResult
 from app.core.clients.files import create_file, finalize_file
 from app.core.clients.proxy import (
@@ -1846,10 +1847,11 @@ async def test_stream_responses_python_http_prepares_only_consumed_json(
     else:
         assert len(expected_body) < proxy_module._ws_transport_payload_budget_bytes()
     monkeypatch.setattr(proxy_module, "discover_native_egress_client", lambda: None)
-    # Observe only this owning module's JSON calls, leaving aiohttp's real
-    # request serializer and all preparation/stream code unchanged.
+    # Observe only the JSON calls of the modules that prepare the body, leaving
+    # aiohttp's real request serializer and all preparation/stream code unchanged.
     preparation_json = MagicMock(wraps=json)
     monkeypatch.setattr(proxy_module, "json", preparation_json)
+    monkeypatch.setattr(encoded_json_module, "json", preparation_json)
     caplog.set_level(logging.INFO, logger=proxy_module.__name__)
 
     async with TestServer(origin) as server, aiohttp.ClientSession() as session:

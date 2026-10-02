@@ -19,6 +19,15 @@ from app.core.utils.sse import parse_sse_data_json, parse_sse_data_json_text
 logger = logging.getLogger(__name__)
 
 
+def utf8_size(text: str) -> int:
+    """Return the UTF-8 size of ``text`` without encoding an ASCII string.
+
+    ``str.isascii`` reads a flag CPython keeps on every string, so ASCII
+    frames (every ``ensure_ascii`` frame the proxy builds) cost no copy.
+    """
+    return len(text) if text.isascii() else len(text.encode("utf-8"))
+
+
 def _restore_native_collaboration_message(message: UpstreamWebSocketMessage) -> UpstreamWebSocketMessage:
     """Return the client's collaboration names for one upstream frame."""
     if message.kind != "text" or message.text is None or UPSTREAM_NAMESPACE not in message.text:
@@ -141,14 +150,13 @@ class ResponsesTransport:
     async def send_text(self, text: str) -> None:
         async with self._send_lock:
             await self._check_send_open()
-            if len(text.encode("utf-8")) > self._max_frame_bytes:
+            frame_bytes = utf8_size(text)
+            if frame_bytes > self._max_frame_bytes:
                 # Serialize HTTP turns on this connection. Unlike a native WS
                 # send, each HTTP turn allocates a response and producer task.
                 await self._http_idle.wait()
                 await self._check_send_open()
-                logger.info(
-                    "responses_transport_selected transport=http reason=frame_size bytes=%s", len(text.encode("utf-8"))
-                )
+                logger.info("responses_transport_selected transport=http reason=frame_size bytes=%s", frame_bytes)
                 self._http_idle.clear()
                 task = self._spawn(self._read_http(text))
                 task.add_done_callback(lambda _: self._http_idle.set())

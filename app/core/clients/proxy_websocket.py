@@ -70,6 +70,7 @@ from app.core.resilience.network_recovery import (
 )
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
+from app.core.utils.encoded_json import decode_json_object
 from app.core.utils.proxy_env import resolve_websocket_proxy_from_env
 from app.core.utils.request_id import get_request_id
 
@@ -1337,7 +1338,7 @@ async def connect_responses_websocket(
     routing_hint: tuple[str, str | None] | None = None,
 ) -> UpstreamWebSocket:
     from app.core.clients.proxy import UPSTREAM_RESPONSE_CREATE_MAX_BYTES, stream_responses
-    from app.core.clients.responses_transport import ResponsesTransport
+    from app.core.clients.responses_transport import ResponsesTransport, utf8_size
 
     settings = get_settings()
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
@@ -1356,7 +1357,11 @@ async def connect_responses_websocket(
         )
 
     async def stream_http(text: str) -> AsyncGenerator[str, None]:
-        payload = json.loads(text)
+        # The frame is parsed once. Its members keep their encoded text, so the
+        # HTTP body re-encodes only what the HTTP shaping changes (``type``,
+        # ``stream``, Lite metadata) and reuses the history verbatim.
+        frame = decode_json_object(text)
+        payload = dict(frame.values)
         payload.pop("type", None)
         payload["stream"] = True
         async with aclosing(
@@ -1372,14 +1377,14 @@ async def connect_responses_websocket(
                 allow_direct_egress=allow_direct_egress,
                 enforce_openai_sdk_contract=False,
                 synthesize_routing_hint=routing_hint is not None,
+                request_body_source=frame,
             )
         ) as events:
             async for event in events:
                 yield event
 
     oversized = (
-        initial_request_text is not None
-        and len(initial_request_text.encode("utf-8")) > UPSTREAM_RESPONSE_CREATE_MAX_BYTES
+        initial_request_text is not None and utf8_size(initial_request_text) > UPSTREAM_RESPONSE_CREATE_MAX_BYTES
     )
     return ResponsesTransport(
         None if oversized else await connect(),
