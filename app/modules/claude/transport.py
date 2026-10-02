@@ -40,6 +40,7 @@ from app.modules.model_sources.forwarding import (
     _response_json,
     _source_client_timeout,
     source_stream_idle_seconds,
+    unreachable_error,
 )
 
 
@@ -126,6 +127,7 @@ async def _open_responses(
             retry_after=exc.retry_after,
             timeout_phase=exc.timeout_phase,
             upstream_headers=exc.upstream_headers,
+            pre_dispatch=exc.pre_dispatch,
         ) from None
     transport = SourceStreamTransport(stack, scheduler=scheduler)
     native_observer = NativeObserver(holder)
@@ -360,4 +362,4 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
     except ValidationError as exc:
         raise _failure("invalid_upstream_response", "Claude returned invalid usage metadata") from exc
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise _failure("model_source_unreachable", "Claude transport failed") from exc
+        raise unreachable_error(prepared.source, exc) from exc

@@ -19,6 +19,7 @@ from app.core.config.dashboard_overrides import with_dashboard_overrides
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.openai.parsing import classify_event_type
+from app.core.resilience.network_recovery import is_pre_dispatch_connection_failure
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.shared_future import (
@@ -62,6 +63,14 @@ SOURCE_STREAM_WITHHELD_CAP_BYTES = 2 * 1_048_576
 TimeoutPhase = Literal["connect", "header", "first_frame", "idle"]
 FrameKind = Literal["non_content", "content", "success_terminal", "failure_terminal"]
 
+_SOURCE_LABELS = {"claude": "Claude", "openrouter": "OpenRouter"}
+
+
+def source_label(source: ModelSource) -> str:
+    """The provider named in gateway-generated errors for ``source``."""
+
+    return _SOURCE_LABELS.get(source.kind, "OpenAI-compatible model source")
+
 
 class ModelSourceForwardingError(Exception):
     def __init__(
@@ -73,6 +82,7 @@ class ModelSourceForwardingError(Exception):
         retry_after: str | None = None,
         timeout_phase: TimeoutPhase | None = None,
         upstream_headers: Mapping[str, str] | None = None,
+        pre_dispatch: bool = False,
     ) -> None:
         super().__init__(str(payload))
         self.status_code = status_code
@@ -83,6 +93,9 @@ class ModelSourceForwardingError(Exception):
         # Which bounded phase expired for ``model_source_timeout``/``model_source_idle_timeout``.
         self.timeout_phase = timeout_phase
         self.upstream_headers = dict(upstream_headers or {})
+        # The connection failed before any request byte was sent (TLS excluded):
+        # replaying it cannot duplicate an upstream generation.
+        self.pre_dispatch = pre_dispatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,9 +346,11 @@ async def forward_chat_completion(
             else await _response_json(response)
         )
         if response.status >= 400:
-            raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=_error_payload(data))
+            raise _upstream_status_error(
+                response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
+            )
         if data is None:
-            raise _invalid_upstream_response_error(response.status)
+            raise _invalid_upstream_response_error(source, response.status)
         result = SourceChatCompletion(
             payload=tool_names.restore(data),
             usage=_usage_from_chat_payload(data),
@@ -348,7 +363,7 @@ async def forward_chat_completion(
         )
     except (aiohttp.ClientError, TimeoutError) as exc:
         await _await_cleanup_deferring_cancellation(stack.aclose())
-        raise _unreachable_error(exc) from exc
+        raise unreachable_error(source, exc) from exc
     except BaseException:
         await _await_cleanup_deferring_cancellation(stack.aclose())
         raise
@@ -398,6 +413,7 @@ async def stream_chat_completion(
     )
     transport = SourceStreamTransport(stack, scheduler=scheduler)
     body = _source_stream_body(
+        source,
         response,
         first_chunk,
         usage_parser,
@@ -447,11 +463,11 @@ async def forward_responses(
                         raise _credentials_rejected_error(response, source)
                     data = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
                     raise _upstream_status_error(
-                        response, source, encryptor=encryptor, error_payload=_error_payload(data)
+                        response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
                     )
                 data = await _response_json(response)
                 if data is None:
-                    raise _invalid_upstream_response_error(response.status)
+                    raise _invalid_upstream_response_error(source, response.status)
                 return SourceResponsesCompletion(
                     payload=tool_names.restore(data),
                     usage=_usage_from_responses_payload(data),
@@ -463,7 +479,7 @@ async def forward_responses(
                     upstream_status_code=response.status,
                 )
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise _unreachable_error(exc) from exc
+        raise unreachable_error(source, exc) from exc
 
 
 async def forward_audio_transcription(
@@ -501,7 +517,7 @@ async def forward_audio_transcription(
                         response,
                         source,
                         encryptor=encryptor,
-                        error_payload=_error_payload_from_body(body, response_content_type),
+                        error_payload=_error_payload_from_body(source, body, response_content_type),
                     )
                 return SourceAudioTranscription(
                     body=body,
@@ -512,7 +528,7 @@ async def forward_audio_transcription(
                     upstream_status_code=response.status,
                 )
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise _unreachable_error(exc) from exc
+        raise unreachable_error(source, exc) from exc
 
 
 async def forward_embeddings(
@@ -532,17 +548,17 @@ async def forward_embeddings(
                 data = await _response_json(response)
                 if response.status >= 400:
                     raise _upstream_status_error(
-                        response, source, encryptor=encryptor, error_payload=_error_payload(data)
+                        response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
                     )
                 if data is None:
-                    raise _invalid_upstream_response_error(response.status)
+                    raise _invalid_upstream_response_error(source, response.status)
                 return SourceEmbeddings(
                     payload=data,
                     usage=_usage_from_embeddings_payload(data),
                     upstream_status_code=response.status,
                 )
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise _unreachable_error(exc) from exc
+        raise unreachable_error(source, exc) from exc
 
 
 async def stream_responses(
@@ -580,6 +596,7 @@ async def stream_responses(
     usage_holder.first_frame_at = clock.monotonic()
     transport = SourceStreamTransport(stack, scheduler=scheduler)
     body = _source_stream_body(
+        source,
         response,
         first_chunk,
         usage_parser,
@@ -617,7 +634,7 @@ async def _next_source_chunk(chunks: AsyncIterator[bytes]) -> bytes | None:
         raise _SourceBudgetExpired(exc) from exc
 
 
-async def _first_source_chunk(chunks: AsyncIterator[bytes]) -> bytes | None:
+async def _first_source_chunk(source: ModelSource, chunks: AsyncIterator[bytes]) -> bytes | None:
     """The first chunk of a stream whose open returned at the headers, read under the source's total budget alone.
 
     A budget or transport failure is the ``502 model_source_unreachable``
@@ -633,10 +650,11 @@ async def _first_source_chunk(chunks: AsyncIterator[bytes]) -> bytes | None:
     except StopAsyncIteration:
         return None
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise _unreachable_error(exc) from exc
+        raise unreachable_error(source, exc) from exc
 
 
 async def _source_stream_body(
+    source: ModelSource,
     response: aiohttp.ClientResponse,
     first_chunk: bytes | None,
     usage_parser: SourceStreamUsageParser,
@@ -703,7 +721,7 @@ async def _source_stream_body(
             # The open returned at the headers: a client that leaves during
             # prompt processing cancels this wait, and the ``finally`` below
             # releases the connection and the pooled lease at once.
-            chunk = await _first_source_chunk(chunks)
+            chunk = await _first_source_chunk(source, chunks)
             if chunk is None:
                 # EOF before the first chunk: a clean empty stream to the
                 # client that already holds the ``200`` (``main`` parity).
@@ -716,7 +734,7 @@ async def _source_stream_body(
                 except _SourceBudgetExpired as exc:
                     raise exc.original from exc.original.__cause__
                 except TimeoutError as exc:
-                    raise _idle_timeout_error(idle_seconds) from exc
+                    raise _idle_timeout_error(source, idle_seconds) from exc
                 if chunk is None:
                     # EOF: an unterminated final record is still a frame.
                     usage_parser.finish()
@@ -741,7 +759,7 @@ async def _source_stream_body(
                     for pending in released:
                         yield pending
                 elif withheld_bytes > SOURCE_STREAM_WITHHELD_CAP_BYTES:
-                    raise _withheld_cap_error(withheld_bytes)
+                    raise _withheld_cap_error(source, withheld_bytes)
             chunk = None
         if withheld:
             if usage_holder.first_content_seen:
@@ -816,19 +834,21 @@ async def _open_source_stream(
         except aiohttp.ConnectionTimeoutError as exc:
             # ``connect`` / ``sock_connect`` expired: the source never accepted
             # a connection, which is the existing "unreachable" verdict.
-            raise _unreachable_error(exc, timeout_phase="connect") from exc
+            raise unreachable_error(source, exc, timeout_phase="connect") from exc
         except aiohttp.ClientError as exc:
-            raise _unreachable_error(exc) from exc
+            raise unreachable_error(source, exc) from exc
         except TimeoutError as exc:
             if header_deadline_seconds is None:
                 # Only the source's total budget was armed: the pre-hardening verdict.
-                raise _unreachable_error(exc) from exc
+                raise unreachable_error(source, exc) from exc
             raise _timeout_error("header", source, elapsed=clock.monotonic() - opened_at) from exc
         if response.status >= 400:
             if recode_credential_failures and _recode_credentials(source, response.status):
                 raise _credentials_rejected_error(response, source)
             data = await _read_error_body(response, source=source, scheduler=scheduler)
-            raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=_error_payload(data))
+            raise _upstream_status_error(
+                response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
+            )
         if first_frame_deadline_seconds is None:
             return stack, response, None
         try:
@@ -840,9 +860,9 @@ async def _open_source_stream(
             # nothing.
             raise _timeout_error("first_frame", source, elapsed=clock.monotonic() - opened_at) from exc
         except aiohttp.ClientError as exc:
-            raise _unreachable_error(exc) from exc
+            raise unreachable_error(source, exc) from exc
         if not first_chunk:
-            raise empty_stream_error(response.status)
+            raise empty_stream_error(source, response.status)
         return stack, response, first_chunk
     except BaseException:
         await _await_cleanup_deferring_cancellation(stack.aclose(), scheduler=scheduler)
@@ -953,7 +973,8 @@ def _credentials_rejected_error(response: aiohttp.ClientResponse, source: ModelS
     """
 
     logger.warning(
-        "OpenAI-compatible model source %s rejected the proxy's credentials (HTTP %s)",
+        "%s %s rejected the proxy's credentials (HTTP %s)",
+        source_label(source),
         source.id,
         response.status,
     )
@@ -961,7 +982,7 @@ def _credentials_rejected_error(response: aiohttp.ClientResponse, source: ModelS
         status_code=502,
         payload={
             "error": {
-                "message": "OpenAI-compatible model source rejected the proxy's credentials",
+                "message": f"{source_label(source)} rejected the proxy's credentials",
                 "type": "upstream_error",
                 "code": "model_source_credentials_error",
             }
@@ -974,7 +995,8 @@ def _credentials_rejected_error(response: aiohttp.ClientResponse, source: ModelS
 def _timeout_error(phase: TimeoutPhase, source: ModelSource, *, elapsed: float) -> ModelSourceForwardingError:
     deadline = SOURCE_HEADER_DEADLINE_SECONDS if phase == "header" else SOURCE_FIRST_FRAME_DEADLINE_SECONDS
     logger.warning(
-        "OpenAI-compatible model source %s exceeded the %s deadline (%.0fs) after %.1fs",
+        "%s %s exceeded the %s deadline (%.0fs) after %.1fs",
+        source_label(source),
         source.id,
         phase,
         deadline,
@@ -985,7 +1007,7 @@ def _timeout_error(phase: TimeoutPhase, source: ModelSource, *, elapsed: float) 
         status_code=504,
         payload={
             "error": {
-                "message": f"OpenAI-compatible model source did not send {detail} within {deadline:.0f}s",
+                "message": f"{source_label(source)} did not send {detail} within {deadline:.0f}s",
                 "type": "upstream_error",
                 "code": "model_source_timeout",
             }
@@ -995,12 +1017,12 @@ def _timeout_error(phase: TimeoutPhase, source: ModelSource, *, elapsed: float) 
     )
 
 
-def _idle_timeout_error(idle_seconds: float) -> ModelSourceForwardingError:
+def _idle_timeout_error(source: ModelSource, idle_seconds: float) -> ModelSourceForwardingError:
     return ModelSourceForwardingError(
         status_code=504,
         payload={
             "error": {
-                "message": f"OpenAI-compatible model source stream went idle for {idle_seconds:.0f}s",
+                "message": f"{source_label(source)} stream went idle for {idle_seconds:.0f}s",
                 "type": "upstream_error",
                 "code": "model_source_idle_timeout",
             }
@@ -1010,14 +1032,14 @@ def _idle_timeout_error(idle_seconds: float) -> ModelSourceForwardingError:
     )
 
 
-def empty_stream_error(response_status: int) -> ModelSourceForwardingError:
+def empty_stream_error(source: ModelSource, response_status: int) -> ModelSourceForwardingError:
     """A ``2xx`` stream that ended before its first chunk: the open's verdict, and the stream owners' row verdict."""
 
     return ModelSourceForwardingError(
         status_code=502,
         payload={
             "error": {
-                "message": "OpenAI-compatible model source closed the stream before the first frame",
+                "message": f"{source_label(source)} closed the stream before the first frame",
                 "type": "upstream_error",
                 "code": "invalid_upstream_response",
             }
@@ -1026,7 +1048,7 @@ def empty_stream_error(response_status: int) -> ModelSourceForwardingError:
     )
 
 
-def _withheld_cap_error(withheld_bytes: int) -> ModelSourceForwardingError:
+def _withheld_cap_error(source: ModelSource, withheld_bytes: int) -> ModelSourceForwardingError:
     """A hook is armed and the source produced only bookkeeping past the withheld-bytes cap (fail closed, I11)."""
 
     return ModelSourceForwardingError(
@@ -1034,7 +1056,7 @@ def _withheld_cap_error(withheld_bytes: int) -> ModelSourceForwardingError:
         payload={
             "error": {
                 "message": (
-                    "OpenAI-compatible model source sent "
+                    f"{source_label(source)} sent "
                     f"{withheld_bytes} bytes without a content frame (limit {SOURCE_STREAM_WITHHELD_CAP_BYTES})"
                 ),
                 "type": "upstream_error",
@@ -1045,18 +1067,27 @@ def _withheld_cap_error(withheld_bytes: int) -> ModelSourceForwardingError:
     )
 
 
-def _unreachable_error(exc: Exception, *, timeout_phase: TimeoutPhase | None = None) -> ModelSourceForwardingError:
+def unreachable_error(
+    source: ModelSource, exc: Exception, *, timeout_phase: TimeoutPhase | None = None
+) -> ModelSourceForwardingError:
+    """A transport failure; ``pre_dispatch`` when a typed connector failure proves nothing was sent.
+
+    TLS verification is also pre-dispatch, but it is a stable configuration
+    failure, so it never qualifies for a replay.
+    """
+
     return ModelSourceForwardingError(
         status_code=502,
         payload={
             "error": {
-                "message": f"OpenAI-compatible model source request failed: {exc.__class__.__name__}",
+                "message": f"{source_label(source)} request failed: {exc.__class__.__name__}",
                 "type": "upstream_error",
                 "code": "model_source_unreachable",
             }
         },
         upstream_status_code=None,
         timeout_phase=timeout_phase,
+        pre_dispatch=is_pre_dispatch_connection_failure(exc) and not isinstance(exc, aiohttp.ClientSSLError),
     )
 
 
@@ -1098,7 +1129,7 @@ def _source_api_key_secret(source: ModelSource, *, encryptor: TokenEncryptor | N
             status_code=502,
             payload={
                 "error": {
-                    "message": "OpenAI-compatible model source credentials could not be decrypted",
+                    "message": f"{source_label(source)} credentials could not be decrypted",
                     "type": "upstream_error",
                     "code": "model_source_credentials_error",
                 }
@@ -1146,12 +1177,12 @@ async def _response_json(response: aiohttp.ClientResponse) -> dict[str, JsonValu
     return data if isinstance(data, dict) else {"data": data}
 
 
-def _invalid_upstream_response_error(response_status: int) -> ModelSourceForwardingError:
+def _invalid_upstream_response_error(source: ModelSource, response_status: int) -> ModelSourceForwardingError:
     return ModelSourceForwardingError(
         status_code=502,
         payload={
             "error": {
-                "message": "OpenAI-compatible model source returned a non-JSON response",
+                "message": f"{source_label(source)} returned a non-JSON response",
                 "type": "upstream_error",
                 "code": "invalid_upstream_response",
             }
@@ -1160,31 +1191,31 @@ def _invalid_upstream_response_error(response_status: int) -> ModelSourceForward
     )
 
 
-def _error_payload(data: Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
+def _error_payload(source: ModelSource, data: Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
     error = data.get("error") if data is not None else None
     if is_json_mapping(error):
         return {"error": dict(error)}
     return {
         "error": {
-            "message": "OpenAI-compatible model source returned an error",
+            "message": f"{source_label(source)} returned an error",
             "type": "upstream_error",
             "code": "model_source_error",
         }
     }
 
 
-def _error_payload_from_body(body: bytes, content_type: str | None) -> dict[str, JsonValue]:
+def _error_payload_from_body(source: ModelSource, body: bytes, content_type: str | None) -> dict[str, JsonValue]:
     if _is_json_content_type(content_type):
         try:
             parsed = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, JSONDecodeError):
             parsed = None
         if isinstance(parsed, Mapping):
-            return _error_payload(parsed)
+            return _error_payload(source, parsed)
     upstream_message = _text_error_message(body)
     return {
         "error": {
-            "message": upstream_message or "OpenAI-compatible model source returned an error",
+            "message": upstream_message or f"{source_label(source)} returned an error",
             "type": "upstream_error",
             "code": "model_source_error",
         }

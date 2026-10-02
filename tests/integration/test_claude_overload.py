@@ -1,13 +1,16 @@
 import asyncio
 import json
+import ssl
 
+import aiohttp
 import pytest
+from aiohttp.client_reqrep import ConnectionKey
 from sqlalchemy import select
 
 from app.db.models import ClaudeCooldown
 from app.db.session import SessionLocal
 from app.modules.claude import transport
-from app.modules.model_sources.forwarding import ModelSourceForwardingError
+from app.modules.model_sources.forwarding import ModelSourceForwardingError, unreachable_error
 from app.modules.proxy.source_dispatch import SourceDispatch
 from tests.integration.test_claude_inference import MODEL, install_upstream
 from tests.integration.test_claude_routing import pool as pool
@@ -65,6 +68,50 @@ async def test_http_overload_policy(async_client, pool, monkeypatch, status, kin
     assert response.status_code == (200 if sends == 2 and not repeat else status)
     if response.status_code != 200:
         assert response.headers["retry-after"] == hint
+    async with SessionLocal() as session:
+        assert list(await session.scalars(select(ClaudeCooldown))) == []
+
+
+_KEY = ConnectionKey("api.anthropic.com", 443, True, True, None, None, None)
+
+
+@pytest.mark.parametrize(
+    "failure,failures,sends,status",
+    [
+        (aiohttp.ClientConnectorDNSError(_KEY, OSError(-3, "Temporary failure in name resolution")), 2, 3, 200),
+        (aiohttp.ClientConnectorError(_KEY, ConnectionRefusedError(111, "refused")), 9, 4, 502),
+        (aiohttp.ClientConnectorCertificateError(_KEY, ssl.SSLCertVerificationError("bad cert")), 9, 1, 502),
+        (aiohttp.ServerDisconnectedError(), 9, 1, 502),
+    ],
+    ids=["dns_recovers", "refused_exhausts_budget", "tls", "after_dispatch"],
+)
+@pytest.mark.parametrize("path", ["/v1/messages", "/v1/responses", "/backend-api/codex/responses"])
+async def test_pre_dispatch_connect_retry(async_client, pool, monkeypatch, failure, failures, sends, status, path):
+    captured, closed = install_upstream(monkeypatch)
+    monkeypatch.setattr("app.modules.claude.overload.random.uniform", lambda a, b: 0.001)
+    original = transport._open_source_stream
+    attempts = []
+
+    async def send(source, *args, **kwargs):
+        attempts.append(source.id)
+        if len(attempts) <= failures:
+            raise unreachable_error(source, failure)
+        return await original(source, *args, **kwargs)
+
+    monkeypatch.setattr(transport, "_open_source_stream", send)
+    body = {"model": MODEL, "stream": True}
+    body.update(
+        {"messages": [{"role": "user", "content": "Hi"}], "max_tokens": 100}
+        if path.endswith("messages")
+        else {"input": "Hi"}
+    )
+    response = await async_client.post(path, json=body)
+    assert len(attempts) == sends
+    assert len(set(attempts)) == 1
+    assert len(captured) == len(closed)
+    assert response.status_code == status
+    if status != 200:
+        assert f"Claude request failed: {type(failure).__name__}" in response.text
     async with SessionLocal() as session:
         assert list(await session.scalars(select(ClaudeCooldown))) == []
 

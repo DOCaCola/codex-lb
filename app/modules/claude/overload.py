@@ -1,4 +1,8 @@
-"""Explicit overload refusal policy; never infer replay safety from network errors."""
+"""Same-account replay policy for refusals that prove no generation started.
+
+Explicit overload refusals and pre-dispatch connection failures qualify; replay
+safety is never inferred from ambiguous network errors.
+"""
 
 import math
 import random
@@ -32,6 +36,13 @@ def retry_delay(error: ModelSourceForwardingError, *, now: datetime, available: 
         if not math.isfinite(seconds):
             return None
         delay = max(delay, seconds)
+    return delay if delay < available else None
+
+
+def connect_retry_delay(attempt: int, *, available: float) -> float | None:
+    """Jittered backoff for the ``attempt``-th (zero-based) pre-dispatch retry, doubling per retry."""
+
+    delay = random.uniform(0.25, 0.5) * 2**attempt
     return delay if delay < available else None
 
 

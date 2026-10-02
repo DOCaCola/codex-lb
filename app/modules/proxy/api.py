@@ -252,6 +252,7 @@ from app.modules.model_sources.forwarding import (
     SourceUsage,
     SourceUsageHolder,
     forward_chat_completion,
+    source_label,
 )
 from app.modules.model_sources.forwarding import (
     empty_stream_error as source_empty_stream_error,
@@ -5150,7 +5151,7 @@ async def _source_embeddings_response(
         await _release_reservation(reservation)
         error = openai_error(
             "usage_unavailable",
-            "OpenAI-compatible model source embeddings response did not include token usage for a limited API key",
+            f"{source_label(source)} embeddings response did not include token usage for a limited API key",
             error_type="server_error",
         )
         await _log_source_chat_completion(
@@ -5184,7 +5185,7 @@ async def _source_embeddings_response(
         return _logged_error_json_response(
             request,
             502,
-            _source_usage_settlement_failed_error(),
+            _source_usage_settlement_failed_error(source),
             headers=rate_limit_headers,
         )
     await _log_source_chat_completion(
@@ -5271,7 +5272,7 @@ async def _source_audio_transcription_response(
             await _release_reservation(reservation)
             error = openai_error(
                 "usage_unavailable",
-                "OpenAI-compatible model source transcription response did not include token usage "
+                f"{source_label(source)} transcription response did not include token usage "
                 "or a usable duration for a limited API key",
                 error_type="server_error",
             )
@@ -5308,7 +5309,7 @@ async def _source_audio_transcription_response(
         return _logged_error_json_response(
             request,
             502,
-            _source_usage_settlement_failed_error(),
+            _source_usage_settlement_failed_error(source),
             headers=rate_limit_headers,
         )
     await _log_source_chat_completion(
@@ -5581,12 +5582,12 @@ async def _dispatch_source_responses_response(
         record_refusals,
         recover_authentication,
     )
-    from app.modules.claude.overload import is_overload, retry_delay, wait_for_retry
+    from app.modules.claude.overload import connect_retry_delay, is_overload, retry_delay, wait_for_retry
 
     recovery = FailoverState() if source.kind == "claude" else None
     recovery_clock = clock_for(context.service) if context is not None else REAL_CLOCK
     recovery_scheduler = scheduler_for(context.service) if context is not None else REAL_SCHEDULER
-    overload_deadline = recovery_clock.monotonic() + min(10.0, float(source.timeout_seconds or 10))
+    recovery_deadline = recovery_clock.monotonic() + min(10.0, float(source.timeout_seconds or 10))
     while True:
         if recovery is not None and recovery.last_error is not None and await request.is_disconnected():
             return Response()
@@ -5621,11 +5622,33 @@ async def _dispatch_source_responses_response(
         except ModelSourceForwardingError as exc:
             if recovery is None or recovery.stream_opened or recovery.budget.remaining == remaining:
                 raise
+            if exc.pre_dispatch:
+                if recovery.budget.remaining == 0:
+                    raise
+                delay = connect_retry_delay(
+                    recovery.connect_retries, available=recovery_deadline - recovery_clock.monotonic()
+                )
+                if delay is None:
+                    raise
+                recovery.connect_retries += 1
+                recovery.last_error = exc
+                recovery.retry_source_id = recovery.source_id
+                logger.info(
+                    "claude_connect_retry source_id=%s attempt=%d delay_ms=%d",
+                    recovery.source_id,
+                    recovery.connect_retries,
+                    int(delay * 1000),
+                )
+                if not await wait_for_retry(request, delay, clock=recovery_clock, scheduler=recovery_scheduler):
+                    return Response()
+                if recovery_clock.monotonic() >= recovery_deadline:
+                    raise
+                continue
             if is_overload(exc):
                 if recovery.overload_retried or recovery.budget.remaining == 0:
                     raise
                 delay = retry_delay(
-                    exc, now=recovery_clock.now(), available=overload_deadline - recovery_clock.monotonic()
+                    exc, now=recovery_clock.now(), available=recovery_deadline - recovery_clock.monotonic()
                 )
                 if delay is None:
                     raise
@@ -5635,7 +5658,7 @@ async def _dispatch_source_responses_response(
                 logger.info("claude_overload_retry source_id=%s delay_ms=%d", recovery.source_id, int(delay * 1000))
                 if not await wait_for_retry(request, delay, clock=recovery_clock, scheduler=recovery_scheduler):
                     return Response()
-                if recovery_clock.monotonic() >= overload_deadline:
+                if recovery_clock.monotonic() >= recovery_deadline:
                     raise
                 continue
             if is_authentication_failure(exc):
@@ -5819,7 +5842,7 @@ async def _dispatch_source_responses_attempt(
         return _logged_error_json_response(
             request,
             503,
-            _model_source_busy_error(),
+            _model_source_busy_error(source),
             headers={**rate_limit_headers, "Retry-After": "1"},
         )
     try:
@@ -6002,7 +6025,7 @@ async def _dispatch_source_responses_attempt(
         await owner.finish_with_forwarding_error(exc)
         if owner.settlement_failed:
             return _logged_error_json_response(
-                request, 502, _source_usage_settlement_failed_error(), headers=rate_limit_headers
+                request, 502, _source_usage_settlement_failed_error(source), headers=rate_limit_headers
             )
         raise
     except ClientDisconnectedDuringOpen as exc:
@@ -6170,7 +6193,7 @@ async def _finish_non_stream_source_dispatch(
         )
         error = openai_error(
             "usage_unavailable",
-            "OpenAI-compatible model source response did not include usage for a limited API key",
+            f"{source_label(owner.source)} response did not include usage for a limited API key",
             error_type="server_error",
         )
         return _logged_error_json_response(request, 502, error, headers=rate_limit_headers)
@@ -6194,7 +6217,7 @@ async def _finish_non_stream_source_dispatch(
         return _logged_error_json_response(
             request,
             502,
-            _source_usage_settlement_failed_error(),
+            _source_usage_settlement_failed_error(owner.source),
             headers=rate_limit_headers,
         )
     return JSONResponse(content=result.payload, status_code=200, headers=rate_limit_headers)
@@ -6213,10 +6236,10 @@ def _source_error_response_headers(
     return headers
 
 
-def _model_source_busy_error() -> OpenAIErrorEnvelope:
+def _model_source_busy_error(source: ModelSource) -> OpenAIErrorEnvelope:
     return openai_error(
         "model_source_busy",
-        "OpenAI-compatible model source is at its configured concurrency limit",
+        f"{source_label(source)} is at its configured concurrency limit",
         error_type="upstream_error",
     )
 
@@ -6589,7 +6612,7 @@ async def _source_chat_completion_response(
         await _release_reservation(reservation)
         error = openai_error(
             "usage_unavailable",
-            "OpenAI-compatible model source response did not include usage for a limited API key",
+            f"{source_label(source)} response did not include usage for a limited API key",
             error_type="server_error",
         )
         await _log_source_chat_completion(
@@ -6641,7 +6664,7 @@ async def _source_chat_completion_response(
         return _logged_error_json_response(
             request,
             502,
-            _source_usage_settlement_failed_error(),
+            _source_usage_settlement_failed_error(source),
             headers=rate_limit_headers,
         )
     _, log_deferred_cancellation = await _await_result_deferring_cancellation(
@@ -6686,7 +6709,7 @@ async def _buffered_limited_source_chat_stream_response(
         if not chunks and not buffer_limit_exceeded:
             # The source closed before its first chunk and nothing reached
             # the client: the open's own verdict, before any byte (decision 50).
-            raise source_empty_stream_error(upstream_status_code)
+            raise source_empty_stream_error(source, upstream_status_code)
         if buffer_limit_exceeded:
             # Returning while the generator is suspended at a yield would keep
             # the leased upstream session/response open until GC finalizes the
@@ -6695,7 +6718,7 @@ async def _buffered_limited_source_chat_stream_response(
             await _release_reservation(reservation)
             error = openai_error(
                 "source_stream_buffer_limit_exceeded",
-                "OpenAI-compatible model source stream exceeded the limited-key accounting buffer",
+                f"{source_label(source)} stream exceeded the limited-key accounting buffer",
                 error_type="server_error",
             )
             await _log_source_chat_completion(
@@ -6768,7 +6791,7 @@ async def _buffered_limited_source_chat_stream_response(
         await _release_reservation(reservation)
         error = openai_error(
             "model_source_stream_error",
-            "OpenAI-compatible model source stream failed",
+            f"{source_label(source)} stream failed",
             error_type="server_error",
         )
         await _log_source_chat_completion(
@@ -6786,7 +6809,7 @@ async def _buffered_limited_source_chat_stream_response(
         await _release_reservation(reservation)
         error = openai_error(
             "usage_unavailable",
-            "OpenAI-compatible model source stream did not include usage for a limited API key",
+            f"{source_label(source)} stream did not include usage for a limited API key",
             error_type="server_error",
         )
         await _log_source_chat_completion(
@@ -6835,7 +6858,7 @@ async def _buffered_limited_source_chat_stream_response(
         return _logged_error_json_response(
             request,
             502,
-            _source_usage_settlement_failed_error(),
+            _source_usage_settlement_failed_error(source),
             headers=rate_limit_headers,
         )
     _, log_deferred_cancellation = await _await_result_deferring_cancellation(
@@ -7123,7 +7146,7 @@ async def _source_chat_stream_with_settlement(
             # holds the ``200``, so the body ended as the clean empty stream
             # ``main`` relayed (the reservation was released above with no
             # usage); the row keeps the open's verdict (decision 50).
-            verdict = source_empty_stream_error(upstream_status_code)
+            verdict = source_empty_stream_error(source, upstream_status_code)
             status = "error"
             error_code = _source_error_code(verdict.payload)
             error_message = _source_error_message(verdict.payload)
@@ -9700,10 +9723,10 @@ def _reservation_requires_usage(reservation: ApiKeyUsageReservationData | None) 
     return bool(reservation and reservation.has_applicable_limits)
 
 
-def _source_usage_settlement_failed_error() -> OpenAIErrorEnvelope:
+def _source_usage_settlement_failed_error(source: ModelSource) -> OpenAIErrorEnvelope:
     return openai_error(
         "usage_settlement_failed",
-        "OpenAI-compatible model source usage could not be settled",
+        f"{source_label(source)} usage could not be settled",
         error_type="server_error",
     )
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import ssl
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from types import SimpleNamespace
 from typing import cast
@@ -11,6 +12,7 @@ from typing import cast
 import aiohttp
 import anyio
 import pytest
+from aiohttp.client_reqrep import ConnectionKey
 
 import app.modules.model_sources.forwarding as forwarding_module
 from app.core.crypto import TokenEncryptor
@@ -222,7 +224,9 @@ def test_audio_seconds_ignores_nonpositive_and_nonjson() -> None:
 
 
 def test_audio_error_payload_preserves_text_body() -> None:
-    payload = _error_payload_from_body(b"missing required field: file", "text/plain; charset=utf-8")
+    payload = _error_payload_from_body(
+        _responses_source(), b"missing required field: file", "text/plain; charset=utf-8"
+    )
     error = cast(dict[str, object], payload["error"])
     assert isinstance(error, dict)
 
@@ -985,7 +989,41 @@ async def test_open_source_stream_connect_timeout_stays_unreachable_with_connect
     assert error.status_code == 502
     assert error.timeout_phase == "connect"
     assert cast(dict[str, object], error.payload["error"])["code"] == "model_source_unreachable"
+    assert error.pre_dispatch
     assert lease.released == 1
+
+
+_CONNECTION_KEY = ConnectionKey("api.anthropic.com", 443, True, True, None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("exc", "pre_dispatch"),
+    [
+        (aiohttp.ClientConnectorDNSError(_CONNECTION_KEY, OSError(-3, "Temporary failure in name resolution")), True),
+        (aiohttp.ClientConnectorError(_CONNECTION_KEY, ConnectionRefusedError(111, "refused")), True),
+        (aiohttp.ClientConnectorCertificateError(_CONNECTION_KEY, ssl.SSLCertVerificationError("bad cert")), False),
+        (aiohttp.ServerDisconnectedError(), False),
+        (aiohttp.ClientOSError(104, "connection reset"), False),
+    ],
+    ids=["dns", "refused", "tls", "disconnected", "reset"],
+)
+def test_unreachable_error_marks_only_replay_safe_connect_failures(exc: Exception, pre_dispatch: bool) -> None:
+    assert forwarding_module.unreachable_error(_responses_source(), exc).pre_dispatch is pre_dispatch
+
+
+@pytest.mark.parametrize(
+    ("kind", "label"),
+    [("claude", "Claude"), ("openrouter", "OpenRouter"), ("openai_compatible", "OpenAI-compatible model source")],
+)
+def test_source_errors_name_the_serving_provider(kind: str, label: str) -> None:
+    source = _responses_source()
+    source.kind = kind
+    exc = aiohttp.ClientConnectorDNSError(_CONNECTION_KEY, OSError(-3, "dns"))
+    error = cast(dict[str, object], forwarding_module.unreachable_error(source, exc).payload["error"])
+    assert error["message"] == f"{label} request failed: ClientConnectorDNSError"
+    assert error["code"] == "model_source_unreachable"
+    timeout = cast(dict[str, object], forwarding_module._timeout_error("header", source, elapsed=21).payload["error"])
+    assert str(timeout["message"]).startswith(f"{label} did not send response headers")
 
 
 @pytest.mark.asyncio
@@ -998,6 +1036,7 @@ async def test_open_source_stream_transport_error_is_unreachable(monkeypatch: py
     assert excinfo.value.status_code == 502
     assert excinfo.value.timeout_phase is None
     assert cast(dict[str, object], excinfo.value.payload["error"])["code"] == "model_source_unreachable"
+    assert not excinfo.value.pre_dispatch
 
 
 @pytest.mark.asyncio
@@ -1472,10 +1511,18 @@ def test_synthetic_source_chat_stream_aclose_is_a_no_op() -> None:
 @pytest.mark.parametrize(
     ("label", "error"),
     [
-        ("idle_timeout", forwarding_module._idle_timeout_error(300.0)),
-        ("unreachable", forwarding_module._unreachable_error(aiohttp.ClientPayloadError("mid-body"))),
-        ("withheld_cap", forwarding_module._withheld_cap_error(forwarding_module.SOURCE_STREAM_WITHHELD_CAP_BYTES + 1)),
-        ("empty_stream", forwarding_module.empty_stream_error(200)),
+        ("idle_timeout", forwarding_module._idle_timeout_error(_responses_source(), 300.0)),
+        (
+            "unreachable",
+            forwarding_module.unreachable_error(_responses_source(), aiohttp.ClientPayloadError("mid-body")),
+        ),
+        (
+            "withheld_cap",
+            forwarding_module._withheld_cap_error(
+                _responses_source(), forwarding_module.SOURCE_STREAM_WITHHELD_CAP_BYTES + 1
+            ),
+        ),
+        ("empty_stream", forwarding_module.empty_stream_error(_responses_source(), 200)),
     ],
     ids=lambda value: value if isinstance(value, str) else "",
 )
