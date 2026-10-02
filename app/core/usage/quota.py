@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from app.core import usage as usage_core
-from app.db.models import AccountStatus
+from app.db.models import AccountCreditPolicy, AccountStatus
 
 
 def apply_usage_quota(
@@ -18,9 +18,17 @@ def apply_usage_quota(
     credits_has: bool | None = None,
     credits_unlimited: bool | None = None,
     credits_balance: float | None = None,
+    credit_policy: AccountCreditPolicy = AccountCreditPolicy.SPEND,
     infer_status_from_usage: bool = True,
     now: float | None = None,
 ) -> tuple[AccountStatus, float | None, float | None]:
+    """Derive an account's quota status from its usage windows.
+
+    Under ``AccountCreditPolicy.NEVER`` spendable credits never override an
+    exhausted window, and exhaustion is always inferred from usage: upstream
+    bills credits instead of refusing, so no upstream rejection would ever
+    block the account.
+    """
     now = time.time() if now is None else now
     used_percent = primary_used
     reset_at = runtime_reset
@@ -28,11 +36,14 @@ def apply_usage_quota(
     if status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED):
         return status, used_percent, reset_at
 
-    has_credit_override = _has_credit_override(
+    has_credit_override = has_spendable_credits(
+        credit_policy=credit_policy,
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
     )
+    if credit_policy == AccountCreditPolicy.NEVER:
+        infer_status_from_usage = True
     if secondary_used is not None:
         if secondary_used >= 100.0:
             if has_credit_override:
@@ -104,13 +115,19 @@ def _fallback_primary_reset(primary_window_minutes: int | None, *, now: float) -
     return now + float(window_minutes) * 60.0
 
 
-def _has_credit_override(
+def account_credit_policy(value: str) -> AccountCreditPolicy:
+    return AccountCreditPolicy(value)
+
+
+def has_spendable_credits(
     *,
+    credit_policy: AccountCreditPolicy,
     credits_has: bool | None,
     credits_unlimited: bool | None,
     credits_balance: float | None,
 ) -> bool:
-    return _has_usable_credits(
+    """Return whether the account may spend credits once a window is exhausted."""
+    return credit_policy == AccountCreditPolicy.SPEND and _has_usable_credits(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,

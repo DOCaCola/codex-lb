@@ -15,7 +15,7 @@ from app.core.cache.invalidation import (
 )
 from app.core.model_routing import reasoning_allowed
 from app.core.openai.model_registry import get_model_registry
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountCreditPolicy, AccountStatus
 from app.db.session import SessionLocal, close_session
 
 if TYPE_CHECKING:
@@ -96,18 +96,32 @@ _ROUTING_UNAVAILABLE_STATUSES = frozenset(
         AccountStatus.DEACTIVATED,
     }
 )
+# Quota blocks that stop an account which may not spend credits: upstream
+# bills credits instead of refusing, so its live sessions would keep running.
+_CREDIT_POLICY_BLOCKED_STATUSES = frozenset(
+    {
+        AccountStatus.QUOTA_EXCEEDED,
+        AccountStatus.RATE_LIMITED,
+    }
+)
+
+
+def credit_policy_blocks_status(credit_policy: AccountCreditPolicy, status: AccountStatus) -> bool:
+    return credit_policy == AccountCreditPolicy.NEVER and status in _CREDIT_POLICY_BLOCKED_STATUSES
 
 
 class RoutingAvailabilityCache:
     """Cluster-coherent view of which accounts are unavailable for routing.
 
-    The cache keeps a snapshot of committed account statuses (``{account_id: status}``)
+    The cache keeps a snapshot of committed account statuses and credit policies
     seeded at poller start and rebuilt on every ``account_routing`` bump. An account is
-    routing-unavailable when its committed status is PAUSED / DEACTIVATED, or the id
+    routing-unavailable when its committed status is PAUSED / DEACTIVATED, or it is
+    quota-blocked under the ``never`` credit policy, or the id
     is absent from the snapshot (deleted), or a local mark
     overlay entry exists (covering the same-replica window between a mark and the
-    snapshot rebuild). RATE_LIMITED and QUOTA_EXCEEDED deliberately do NOT map to
-    unavailable, preserving cooldown-state bridge-session reuse.
+    snapshot rebuild). For accounts that may spend credits, RATE_LIMITED and
+    QUOTA_EXCEEDED deliberately do NOT map to unavailable, preserving
+    cooldown-state bridge-session reuse.
 
     When the snapshot is unseeded (unit tests, poller not running) the cache degrades
     to the historical process-local set semantics.
@@ -116,6 +130,8 @@ class RoutingAvailabilityCache:
     def __init__(self, session_factory: Callable[[], AsyncSession] | None = None) -> None:
         self._session_factory = session_factory
         self._snapshot: dict[str, AccountStatus] | None = None
+        self._credit_policies: dict[str, AccountCreditPolicy] = {}
+        self._local_credit_policies: dict[str, AccountCreditPolicy] = {}
         self._local_marks: set[str] = set()
         self._models: dict[str, tuple[bool, tuple[str, ...]]] = {}
         self._local_models: dict[str, tuple[bool, tuple[str, ...]]] = {}
@@ -144,6 +160,17 @@ class RoutingAvailabilityCache:
             or (account.all_models is not False, tuple(account.selected_models or ()))
         )
 
+    def set_credit_policy(self, account_id: str, credit_policy: AccountCreditPolicy) -> None:
+        self._local_credit_policies[account_id] = credit_policy
+        _request_account_routing_bump()
+
+    def credit_policy(self, account_id: str) -> AccountCreditPolicy:
+        return (
+            self._local_credit_policies.get(account_id)
+            or self._credit_policies.get(account_id)
+            or AccountCreditPolicy.SPEND
+        )
+
     @property
     def seeded(self) -> bool:
         return self._snapshot is not None
@@ -165,7 +192,11 @@ class RoutingAvailabilityCache:
         if snapshot is None:
             return False
         status = snapshot.get(account_id)
-        return status is None or status in _ROUTING_UNAVAILABLE_STATUSES
+        return (
+            status is None
+            or status in _ROUTING_UNAVAILABLE_STATUSES
+            or credit_policy_blocks_status(self.credit_policy(account_id), status)
+        )
 
     async def refresh_from_db(self) -> None:
         """Rebuild the snapshot from committed account statuses.
@@ -188,6 +219,7 @@ class RoutingAvailabilityCache:
         marks_before_refresh = frozenset(self._local_marks)
         models_before_refresh = dict(self._local_models)
         reasoning_before_refresh = dict(self._local_reasoning)
+        credit_policies_before_refresh = dict(self._local_credit_policies)
         factory = self._session_factory or SessionLocal
         session = factory()
         try:
@@ -198,22 +230,30 @@ class RoutingAvailabilityCache:
                     Account.all_models,
                     Account.selected_models,
                     Account.reasoning_restrictions,
+                    Account.credit_policy,
                 )
             )
             rows = result.all()
-            snapshot: dict[str, AccountStatus] = {account_id: status for account_id, status, _, _, _ in rows}
-            models = {account_id: (all_models, tuple(selected)) for account_id, _, all_models, selected, _ in rows}
-            reasoning = {account_id: restrictions for account_id, _, _, _, restrictions in rows}
+            snapshot: dict[str, AccountStatus] = {row.id: row.status for row in rows}
+            models = {row.id: (row.all_models, tuple(row.selected_models)) for row in rows}
+            reasoning = {row.id: row.reasoning_restrictions for row in rows}
+            credit_policies = {row.id: AccountCreditPolicy(row.credit_policy) for row in rows}
         finally:
             await close_session(session)
         self._snapshot = snapshot
         self._models = models
         self._reasoning = reasoning
+        self._credit_policies = credit_policies
         self._local_reasoning = {
             key: value for key, value in self._local_reasoning.items() if reasoning_before_refresh.get(key) is not value
         }
         self._local_models = {
             key: value for key, value in self._local_models.items() if models_before_refresh.get(key) is not value
+        }
+        self._local_credit_policies = {
+            key: value
+            for key, value in self._local_credit_policies.items()
+            if credit_policies_before_refresh.get(key) is not value
         }
         self._local_marks = {
             account_id
@@ -221,11 +261,14 @@ class RoutingAvailabilityCache:
             if account_id not in marks_before_refresh
             or (status := snapshot.get(account_id)) is None
             or status in _ROUTING_UNAVAILABLE_STATUSES
+            or credit_policy_blocks_status(self.credit_policy(account_id), status)
         }
 
     def reset(self) -> None:
         """Drop all state (snapshot back to unseeded). Test isolation helper."""
         self._snapshot = None
+        self._credit_policies.clear()
+        self._local_credit_policies.clear()
         self._local_marks.clear()
         self._models.clear()
         self._local_models.clear()
@@ -261,6 +304,20 @@ def clear_account_routing_unavailable(account_id: str) -> None:
 
 def clear_all_account_routing_unavailable() -> None:
     _routing_availability_cache.reset()
+
+
+def record_account_quota_status(account_id: str, credit_policy: AccountCreditPolicy, status: AccountStatus) -> None:
+    """Propagate a persisted quota status change of an account that may not spend credits.
+
+    Such an account's open sessions are only stopped through routing
+    availability, so its quota blocks and recoveries must reach every replica.
+    """
+    if credit_policy != AccountCreditPolicy.NEVER:
+        return
+    if credit_policy_blocks_status(credit_policy, status):
+        _routing_availability_cache.mark_unavailable(account_id)
+    elif status == AccountStatus.ACTIVE:
+        _routing_availability_cache.clear_unavailable(account_id)
 
 
 def is_account_routing_unavailable(account_id: str) -> bool:

@@ -18,10 +18,12 @@ import {
   reactivateAccount,
   setAccountAlias,
   updateAccount,
+  updateAccountCreditPolicy,
   updateAccountLimitWarmup,
   updateAccountRoutingPolicy,
 } from "@/features/accounts/api";
 import type {
+  AccountCreditPolicy,
   AccountRoutingPolicy,
   AccountUsageResetConsumeResponse,
 } from "@/features/accounts/schemas";
@@ -201,6 +203,23 @@ export function useAccountMutations() {
     },
   });
 
+  const creditPolicyMutation = useMutation({
+    mutationFn: ({
+      accountId,
+      creditPolicy,
+    }: {
+      accountId: string;
+      creditPolicy: AccountCreditPolicy;
+    }) => updateAccountCreditPolicy(accountId, creditPolicy),
+    onSuccess: () => {
+      toast.success(t("accounts.toasts.creditPolicySet"));
+      void invalidateAccountRelatedQueries(queryClient);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t("accounts.toasts.creditPolicyUpdateFailed"));
+    },
+  });
+
   const exportAuthMutation = useMutation({
     mutationFn: exportAccountAuth,
     onSuccess: () => {
@@ -253,6 +272,7 @@ export function useAccountMutations() {
     exportAuthMutation,
     limitWarmupMutation,
     routingPolicyMutation,
+    creditPolicyMutation,
     updateMutation,
     resetCreditConsumeMutation,
   };

@@ -23,12 +23,15 @@ from app.core.middleware.multipart_content_encoding import raise_for_unsupported
 from app.core.multipart import ACCOUNT_IMPORT_MULTIPART_POLICY, bounded_multipart_form, read_bounded_upload
 from app.core.multipart_fields import required_upload
 from app.core.upstream_proxy import UpstreamProxyRouteError
+from app.db.models import AccountCreditPolicy
 from app.dependencies import AccountsContext, get_accounts_context, get_proxy_service_for_app
 from app.modules.accounts.repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
     AccountAliasResponse,
     AccountAuthExportResponse,
+    AccountCreditPolicyUpdateRequest,
+    AccountCreditPolicyUpdateResponse,
     AccountDeleteResponse,
     AccountImportResponse,
     AccountLimitWarmupUpdateRequest,
@@ -429,6 +432,19 @@ async def update_account_routing_policy(
     if not success:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     return AccountRoutingPolicyUpdateResponse(account_id=account_id, routing_policy=payload.routing_policy)
+
+
+@router.put("/{account_id}/credit-policy", response_model=AccountCreditPolicyUpdateResponse)
+async def update_account_credit_policy(
+    account_id: str,
+    payload: AccountCreditPolicyUpdateRequest,
+    _write_access=Depends(require_dashboard_permission(Permission.ACCOUNTS_WRITE)),
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountCreditPolicyUpdateResponse:
+    credit_policy = AccountCreditPolicy(payload.credit_policy)
+    if not await context.service.set_credit_policy(account_id, credit_policy):
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    return AccountCreditPolicyUpdateResponse(account_id=account_id, credit_policy=credit_policy.value)
 
 
 @router.delete("/{account_id}", response_model=AccountDeleteResponse)

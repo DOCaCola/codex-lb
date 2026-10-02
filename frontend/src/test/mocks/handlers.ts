@@ -223,6 +223,10 @@ const AccountRoutingPolicyPayloadSchema = z.object({
   routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
 });
 
+const AccountCreditPolicyPayloadSchema = z.object({
+  creditPolicy: z.enum(["spend", "never"]),
+});
+
 const SettingsPayloadSchema = z.looseObject({
   stickyThreadsEnabled: z.boolean().optional(),
   upstreamStreamTransport: z
@@ -1173,6 +1177,42 @@ export const handlers = [
       return HttpResponse.json({
         accountId,
         routingPolicy: account.routingPolicy,
+      });
+    },
+  ),
+
+  http.put(
+    "/api/accounts/:accountId/credit-policy",
+    async ({ params, request }) => {
+      const accountId = String(params.accountId);
+      const account = findAccount(accountId);
+      if (!account) {
+        return HttpResponse.json(
+          {
+            error: { code: "account_not_found", message: "Account not found" },
+          },
+          { status: 404 },
+        );
+      }
+      const payload = await parseJsonBody(
+        request,
+        AccountCreditPolicyPayloadSchema,
+      );
+      if (!payload) {
+        return HttpResponse.json(
+          {
+            error: {
+              code: "validation_error",
+              message: "Invalid credit policy payload",
+            },
+          },
+          { status: 422 },
+        );
+      }
+      account.creditPolicy = payload.creditPolicy;
+      return HttpResponse.json({
+        accountId,
+        creditPolicy: account.creditPolicy,
       });
     },
   ),

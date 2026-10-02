@@ -140,6 +140,44 @@ async def test_pause_via_api_marks_peer_routing_unavailable(async_client, db_set
 
 
 @pytest.mark.asyncio
+async def test_credit_policy_via_api_fences_quota_blocked_account_on_peer(async_client, db_setup) -> None:
+    """A quota-blocked account keeps serving open sessions while it may spend
+    credits; forbidding credits makes it routing-unavailable on every replica."""
+    account_id = "acct-bus-credit-policy"
+    await _insert_account(account_id, AccountStatus.QUOTA_EXCEEDED)
+
+    b_cache, b_poller = _make_replica_b_routing()
+    await b_cache.refresh_from_db()
+    await b_poller._poll_once()
+    assert b_cache.is_unavailable(account_id) is False
+
+    response = await async_client.put(f"/api/accounts/{account_id}/credit-policy", json={"creditPolicy": "never"})
+    assert response.status_code == 200
+    assert response.json() == {"accountId": account_id, "creditPolicy": "never"}
+    await b_poller._poll_once()
+    assert b_cache.is_unavailable(account_id) is True
+
+    listed = await async_client.get("/api/accounts")
+    assert {item["accountId"]: item["creditPolicy"] for item in listed.json()["accounts"]}[account_id] == "never"
+
+    response = await async_client.put(f"/api/accounts/{account_id}/credit-policy", json={"creditPolicy": "spend"})
+    assert response.status_code == 200
+    await b_poller._poll_once()
+    assert b_cache.is_unavailable(account_id) is False
+
+
+@pytest.mark.asyncio
+async def test_credit_policy_rejects_unknown_policy_and_account(async_client, db_setup) -> None:
+    account_id = "acct-credit-policy-invalid"
+    await _insert_account(account_id)
+
+    invalid = await async_client.put(f"/api/accounts/{account_id}/credit-policy", json={"creditPolicy": "sometimes"})
+    assert invalid.status_code == 422
+    missing = await async_client.put("/api/accounts/acct-missing/credit-policy", json={"creditPolicy": "never"})
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_remote_pause_stops_stale_bridge_session_reuse(db_setup, poller_slot) -> None:
     """A warm bridge session pinned to a stale ACTIVE account snapshot is refused
     once a peer's pause converges over the bus (product path: helpers.py reuse gate)."""

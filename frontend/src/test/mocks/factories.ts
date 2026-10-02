@@ -131,6 +131,7 @@ export function createAccountSummary(
 		displayName: "primary@example.com",
 		planType: "plus",
 		routingPolicy: "normal",
+		creditPolicy: "spend",
 		status: "active",
 		securityWorkAuthorized: false,
 		usage: {

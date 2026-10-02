@@ -30,15 +30,20 @@ from app.core.usage.models import (
     UsagePayload,
     UsageWindow,
 )
+from app.core.usage.quota import account_credit_policy, apply_usage_quota
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.utils.request_id import get_request_id
 from app.core.utils.shared_future import wait_on_shared_future
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager, _clean_optional
 from app.modules.accounts.background_repository import BackgroundAccountsRepository
-from app.modules.proxy.account_cache import get_account_selection_cache, mark_account_routing_unavailable
+from app.modules.proxy.account_cache import (
+    get_account_selection_cache,
+    mark_account_routing_unavailable,
+    record_account_quota_status,
+)
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.background_repository import BackgroundAdditionalUsageRepository, BackgroundUsageRepository
 from app.modules.usage.plan_downgrade_observations import (
@@ -830,6 +835,12 @@ class UsageUpdater:
         )
         usage_written = any(_usage_entry_written(entry) for entry in entries)
         await self._recover_quota_status_from_usage(account, primary=primary, secondary=secondary, monthly=monthly)
+        await self._enforce_credit_policy_from_usage(
+            account,
+            primary=primary,
+            long_window=monthly or secondary,
+            now_epoch=now_epoch,
+        )
         return AccountRefreshResult(usage_written=usage_written)
 
     async def _deactivate_for_client_error(self, account: Account, exc: UsageFetchError) -> None:
@@ -989,6 +1000,72 @@ class UsageUpdater:
         account.deactivation_reason = None
         account.reset_at = target_reset_at
         account.blocked_at = None
+        record_account_quota_status(account.id, account_credit_policy(account.credit_policy), target_status)
+
+    async def _enforce_credit_policy_from_usage(
+        self,
+        account: Account,
+        *,
+        primary: UsageWindow | None,
+        long_window: UsageWindow | None,
+        now_epoch: int,
+    ) -> None:
+        """Block an exhausted account whose policy forbids spending credits.
+
+        Upstream bills credits instead of rejecting such an account, so no
+        upstream 429 marks it. This refresh also covers accounts that only
+        serve already-open sessions and are therefore never re-selected.
+        """
+        credit_policy = account_credit_policy(account.credit_policy)
+        if not self._auth_manager or credit_policy != AccountCreditPolicy.NEVER:
+            return
+        if account.status != AccountStatus.ACTIVE:
+            return
+        target_status, _, target_reset_at = apply_usage_quota(
+            status=account.status,
+            primary_used=primary.used_percent if primary is not None else None,
+            primary_reset=(
+                _reset_at(primary.reset_at, primary.reset_after_seconds, now_epoch) if primary is not None else None
+            ),
+            primary_window_minutes=_window_minutes(primary.limit_window_seconds) if primary is not None else None,
+            runtime_reset=None,
+            secondary_used=long_window.used_percent if long_window is not None else None,
+            secondary_reset=(
+                _reset_at(long_window.reset_at, long_window.reset_after_seconds, now_epoch)
+                if long_window is not None
+                else None
+            ),
+            credit_policy=credit_policy,
+            now=float(now_epoch),
+        )
+        if target_status == AccountStatus.ACTIVE:
+            return
+        reset_at = int(target_reset_at) if target_reset_at is not None else None
+        repo = cast(AccountsRepositoryWithStatusComparePort, self._auth_manager._repo)
+        updated = await repo.update_status_if_current(
+            account.id,
+            target_status,
+            None,
+            reset_at,
+            blocked_at=None,
+            expected_status=AccountStatus.ACTIVE,
+            expected_deactivation_reason=account.deactivation_reason,
+            expected_reset_at=account.reset_at,
+            expected_blocked_at=account.blocked_at,
+        )
+        if not updated:
+            await self._sync_account_from_repo(account)
+            return
+        account.status = target_status
+        account.reset_at = reset_at
+        account.blocked_at = None
+        logger.info(
+            "account_credit_policy_block account_id=%s status=%s reset_at=%s",
+            account.id,
+            target_status.value,
+            reset_at,
+        )
+        record_account_quota_status(account.id, credit_policy, target_status)
 
     async def _sync_account_from_repo(self, account: Account) -> None:
         if not self._accounts_repo:

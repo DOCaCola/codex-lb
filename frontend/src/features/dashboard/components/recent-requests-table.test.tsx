@@ -502,6 +502,7 @@ describe("RecentRequestsTable", () => {
              planType: "plus",
              status: "active",
              limitWarmupEnabled: false,
+             creditPolicy: "spend",
              additionalQuotas: [],
            },
          ]}

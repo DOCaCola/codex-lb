@@ -471,7 +471,11 @@ from app.modules.proxy._service.websocket.helpers import (
     _wrapped_websocket_error_event,
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
-from app.modules.proxy.account_cache import is_account_model_allowed, is_account_reasoning_allowed
+from app.modules.proxy.account_cache import (
+    is_account_model_allowed,
+    is_account_reasoning_allowed,
+    is_account_routing_unavailable,
+)
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
     _is_synthesized_turn_state,
@@ -599,6 +603,14 @@ def _log_websocket_persist_conflict(context: str, exc: RefreshError, account_id:
         )
 
 
+_OWNER_SWITCH_BLOCKED_MESSAGE = (
+    "Previous response owner differs while another response is still streaming; retry after the terminal frame."
+)
+_ACCOUNT_UNAVAILABLE_SWITCH_BLOCKED_MESSAGE = (
+    "The upstream account became unavailable while another response is still streaming; retry after the terminal frame."
+)
+
+
 async def _reject_websocket_owner_switch_blocked(
     proxy: Any,
     websocket: WebSocket,
@@ -610,9 +622,7 @@ async def _reject_websocket_owner_switch_blocked(
     response_create_gate: asyncio.Semaphore,
     downstream_activity: _DownstreamWebSocketActivity,
     error_code: str = "previous_response_owner_unavailable",
-    error_message: str = (
-        "Previous response owner differs while another response is still streaming; retry after the terminal frame."
-    ),
+    error_message: str = _OWNER_SWITCH_BLOCKED_MESSAGE,
 ) -> None:
     await proxy._release_websocket_request_state_reservation(request_state)
     await proxy._write_websocket_connect_failure(
@@ -2574,7 +2584,13 @@ class _WebSocketMixin:
                     and account is not None
                 ):
                     required_owner_id = request_state.preferred_account_id
-                    if required_owner_id is not None and required_owner_id != account.id:
+                    owner_switch_required = required_owner_id is not None and required_owner_id != account.id
+                    # A pause or a credit-policy block makes the live socket's
+                    # account unroutable. Its open upstream socket must not keep
+                    # serving new turns, so the turn leaves it like an owner
+                    # switch does.
+                    account_unavailable = is_account_routing_unavailable(account.id)
+                    if owner_switch_required or account_unavailable:
                         async with pending_lock:
                             owner_switch_blocked = _websocket_owner_switch_has_other_pending_requests(
                                 request_state, pending_requests
@@ -2591,11 +2607,35 @@ class _WebSocketMixin:
                                 api_key=api_key,
                                 response_create_gate=response_create_gate,
                                 downstream_activity=downstream_activity,
+                                error_code=(
+                                    "previous_response_owner_unavailable"
+                                    if owner_switch_required
+                                    else "account_unavailable"
+                                ),
+                                error_message=(
+                                    _OWNER_SWITCH_BLOCKED_MESSAGE
+                                    if owner_switch_required
+                                    else _ACCOUNT_UNAVAILABLE_SWITCH_BLOCKED_MESSAGE
+                                ),
                             )
                             request_state = None
                             text_data = None
                             payload = None
                             continue
+                        if account_unavailable and not owner_switch_required:
+                            # Only the proxy's own anchor is released here: it
+                            # lives on the socket being retired. Upstream state
+                            # the client referenced keeps the turn on its owner,
+                            # and the connect path then fails closed.
+                            switch_text = _prepare_websocket_request_state_for_account_switch(request_state)
+                            if switch_text is not None:
+                                text_data = switch_text
+                            _facade().logger.info(
+                                "websocket_upstream_retired_account_unavailable request_id=%s account_id=%s movable=%s",
+                                request_state.request_id,
+                                account.id,
+                                switch_text is not None,
+                            )
                         # The anchor remains unchanged. The normal connect path
                         # below must select the resolved owner or fail closed.
                         await retire_current_upstream()

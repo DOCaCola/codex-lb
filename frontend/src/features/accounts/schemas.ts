@@ -81,6 +81,7 @@ export const AccountSummarySchema = z.object({
   seatType: z.string().nullable().optional(),
   planType: z.string(),
   routingPolicy: z.enum(["normal", "burn_first", "preserve"]).optional(),
+  creditPolicy: z.enum(["spend", "never"]),
   status: z.string(),
   securityWorkAuthorized: z.boolean().optional(),
   usage: AccountUsageSchema.nullable().optional(),
@@ -240,6 +241,7 @@ export const AccountUsageResetConsumeResponseSchema = z.object({
 });
 
 const AccountRoutingPolicySchema = z.enum(["normal", "burn_first", "preserve"]);
+const AccountCreditPolicySchema = z.enum(["spend", "never"]);
 
 export const AccountAliasRequestSchema = z.object({
   alias: z.string().max(255).nullable(),
@@ -261,6 +263,15 @@ export const AccountLimitWarmupUpdateResponseSchema = z.object({
 
 export const AccountRoutingPolicyUpdateRequestSchema = z.object({
   routingPolicy: AccountRoutingPolicySchema,
+});
+
+export const AccountCreditPolicyUpdateRequestSchema = z.object({
+  creditPolicy: AccountCreditPolicySchema,
+});
+
+export const AccountCreditPolicyUpdateResponseSchema = z.object({
+  accountId: z.string(),
+  creditPolicy: AccountCreditPolicySchema,
 });
 
 export const AccountModelSelectionRequestSchema = z.object({
@@ -370,6 +381,7 @@ export type ConsumeRateLimitResetCreditResponse = z.infer<
   typeof ConsumeRateLimitResetCreditResponseSchema
 >;
 export type AccountRoutingPolicy = z.infer<typeof AccountRoutingPolicySchema>;
+export type AccountCreditPolicy = z.infer<typeof AccountCreditPolicySchema>;
 export type AccountAliasResponse = z.infer<typeof AccountAliasResponseSchema>;
 export type AccountLimitWarmupStatus = z.infer<
   typeof AccountLimitWarmupStatusSchema

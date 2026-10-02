@@ -31,6 +31,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
           {
@@ -40,6 +41,7 @@ describe("AccountList", () => {
             planType: "pro",
             status: "paused",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
         ]}
@@ -77,6 +79,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             usage: {
               primaryRemainingPercent: 42,
               secondaryRemainingPercent: 18,
@@ -94,6 +97,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             usage: {
               primaryRemainingPercent: 82,
               secondaryRemainingPercent: 73,
@@ -130,6 +134,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             usage: {
               primaryRemainingPercent: 42,
               secondaryRemainingPercent: 18,
@@ -147,6 +152,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             usage: {
               primaryRemainingPercent: 82,
               secondaryRemainingPercent: 73,
@@ -181,6 +187,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             usage: {
               primaryRemainingPercent: 42,
               secondaryRemainingPercent: null,
@@ -198,6 +205,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             usage: {
               primaryRemainingPercent: 82,
               secondaryRemainingPercent: null,
@@ -232,6 +240,7 @@ describe("AccountList", () => {
             planType: "pro",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:30:00.000Z",
             additionalQuotas: [],
           },
@@ -242,6 +251,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
             additionalQuotas: [],
           },
@@ -272,6 +282,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
             additionalQuotas: [],
           },
@@ -282,6 +293,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:20:00.000Z",
             additionalQuotas: [],
           },
@@ -312,6 +324,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
             additionalQuotas: [],
           },
@@ -322,6 +335,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:40:00.000Z",
             additionalQuotas: [],
           },
@@ -352,6 +366,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
           {
@@ -361,6 +376,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T11:30:00.000Z",
             additionalQuotas: [],
           },
@@ -371,6 +387,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:40:00.000Z",
             additionalQuotas: [],
           },
@@ -381,6 +398,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
             additionalQuotas: [],
           },
@@ -415,6 +433,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
         ]}
@@ -462,6 +481,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
         ]}
@@ -488,6 +508,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
         ]}
@@ -514,6 +535,7 @@ describe("AccountList", () => {
           planType: "plus",
           status: "active",
           limitWarmupEnabled: false,
+          creditPolicy: "spend",
           additionalQuotas: [],
         }))}
         selectedAccountId={null}
@@ -544,6 +566,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
           {
@@ -553,6 +576,7 @@ describe("AccountList", () => {
             planType: "pro",
             status: "reauth_required",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
         ]}
@@ -581,6 +605,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             isEmailDuplicate: false,
             additionalQuotas: [],
           },
@@ -591,6 +616,7 @@ describe("AccountList", () => {
             planType: "plus",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             isEmailDuplicate: true,
             additionalQuotas: [],
           },
@@ -601,6 +627,7 @@ describe("AccountList", () => {
             planType: "pro",
             status: "active",
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
             additionalQuotas: [],
           },
         ]}

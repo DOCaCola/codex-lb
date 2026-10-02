@@ -57,7 +57,7 @@ from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.resilience.toggles import resolve_resilience_toggles
-from app.core.usage.quota import apply_usage_quota
+from app.core.usage.quota import account_credit_policy, apply_usage_quota
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
@@ -158,6 +158,7 @@ from app.modules.proxy.account_cache import (
     is_account_model_allowed,
     is_account_reasoning_allowed,
     mark_account_routing_unavailable,
+    record_account_quota_status,
 )
 from app.modules.proxy.account_eligibility import (
     account_access_token_expires_at,
@@ -2069,6 +2070,8 @@ class LoadBalancer:
             account.deactivation_reason = state.deactivation_reason
             account.reset_at = reset_at_int
             account.blocked_at = blocked_at_int
+            if status_changed:
+                record_account_quota_status(account.id, account_credit_policy(account.credit_policy), state.status)
 
     async def _persist_state_if_current(
         self,
@@ -2103,6 +2106,8 @@ class LoadBalancer:
                 account.deactivation_reason = state.deactivation_reason
                 account.reset_at = reset_at_int
                 account.blocked_at = blocked_at_int
+                if status_changed:
+                    record_account_quota_status(account.id, account_credit_policy(account.credit_policy), state.status)
             return updated
         return True
 
@@ -2500,6 +2505,7 @@ def _state_from_account(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
+        credit_policy=account_credit_policy(account.credit_policy),
         infer_status_from_usage=False,
         now=now,
     )

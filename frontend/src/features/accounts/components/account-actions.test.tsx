@@ -28,6 +28,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -67,6 +68,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={onLimitWarmupChange}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -98,6 +100,7 @@ describe("AccountActions", () => {
           onSecurityWorkAuthorizedChange={vi.fn()}
           onLimitWarmupChange={vi.fn()}
           onRoutingPolicyChange={vi.fn()}
+          onCreditPolicyChange={vi.fn()}
         />
       </MemoryRouter>,
     );
@@ -124,6 +127,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -150,6 +154,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={onRoutingPolicyChange}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -177,6 +182,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -210,6 +216,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -238,6 +245,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -270,6 +278,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -300,6 +309,7 @@ describe("AccountActions", () => {
           onSecurityWorkAuthorizedChange={vi.fn()}
           onLimitWarmupChange={vi.fn()}
           onRoutingPolicyChange={vi.fn()}
+          onCreditPolicyChange={vi.fn()}
         />,
       );
 
@@ -332,6 +342,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -365,6 +376,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 
@@ -397,6 +409,7 @@ describe("AccountActions", () => {
           onSecurityWorkAuthorizedChange={vi.fn()}
           onLimitWarmupChange={vi.fn()}
           onRoutingPolicyChange={vi.fn()}
+          onCreditPolicyChange={vi.fn()}
         />,
       );
 
@@ -432,6 +445,7 @@ describe("AccountActions", () => {
           onSecurityWorkAuthorizedChange={vi.fn()}
           onLimitWarmupChange={vi.fn()}
           onRoutingPolicyChange={vi.fn()}
+          onCreditPolicyChange={vi.fn()}
         />,
       );
 
@@ -462,6 +476,7 @@ describe("AccountActions", () => {
         onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
       />,
     );
 

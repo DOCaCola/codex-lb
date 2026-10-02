@@ -20,6 +20,7 @@ from app.core.utils.time import utcnow
 from app.db.account_identity_lock import advisory_lock_key, lock_postgresql_account_identities
 from app.db.models import (
     Account,
+    AccountCreditPolicy,
     AccountLimitWarmup,
     AccountStatus,
     AccountUsageRollup,
@@ -1044,6 +1045,18 @@ class AccountsRepository:
                 # synchronous delete did once the row was removed.
                 .where(Account.delete_requested_at.is_(None))
                 .values(routing_policy=routing_policy)
+                .returning(Account.id)
+            )
+            await self._session.commit()
+            return result.scalar_one_or_none() is not None
+
+    async def update_credit_policy(self, account_id: str, credit_policy: AccountCreditPolicy) -> bool:
+        async with sqlite_writer_section():
+            result = await self._session.execute(
+                update(Account)
+                .where(Account.id == account_id)
+                .where(Account.delete_requested_at.is_(None))
+                .values(credit_policy=credit_policy.value)
                 .returning(Account.id)
             )
             await self._session.commit()

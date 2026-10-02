@@ -9,7 +9,7 @@ from typing import TypeVar, cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, UsageHistory
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.proxy._service.rate_limit import _RateLimitMixin
@@ -105,7 +105,12 @@ class _RefreshRateLimitService(_RateLimitMixin):
         self._repo_factory = repo_factory
 
 
-def _account(account_id: str, *, plan_type: str) -> Account:
+def _account(
+    account_id: str,
+    *,
+    plan_type: str,
+    credit_policy: AccountCreditPolicy = AccountCreditPolicy.SPEND,
+) -> Account:
     return Account(
         id=account_id,
         chatgpt_account_id=f"workspace-{account_id}",
@@ -116,6 +121,7 @@ def _account(account_id: str, *, plan_type: str) -> Account:
         id_token_encrypted=b"id",
         last_refresh=datetime(2025, 1, 1),
         status=AccountStatus.ACTIVE,
+        credit_policy=credit_policy,
     )
 
 
@@ -143,10 +149,14 @@ def _usage(
     )
 
 
-def _service_and_guard(*, session: _FakeSession | None = None) -> tuple[_TestRateLimitService, _SharedSessionGuard]:
+def _service_and_guard(
+    *,
+    session: _FakeSession | None = None,
+    credit_holder_policy: AccountCreditPolicy = AccountCreditPolicy.SPEND,
+) -> tuple[_TestRateLimitService, _SharedSessionGuard]:
     guard = _SharedSessionGuard()
     plus_account = _account("plus", plan_type="plus")
-    free_account = _account("free", plan_type="free")
+    free_account = _account("free", plan_type="free", credit_policy=credit_holder_policy)
     primary = _usage(
         1,
         account_id=plus_account.id,
@@ -279,6 +289,24 @@ async def test_rate_limit_payload_detaches_pre_refresh_rows() -> None:
     await service.get_rate_limit_payload()
 
     assert session.expunge_all_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_credits_exclude_accounts_that_never_spend_credits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.modules.proxy._service.rate_limit.time.time", lambda: _NOW_EPOCH)
+    service, _ = _service_and_guard(credit_holder_policy=AccountCreditPolicy.NEVER)
+
+    headers = await service._compute_rate_limit_headers()
+    payload = await service.get_rate_limit_payload()
+
+    # Only the plus account's empty credit state remains in the pool.
+    assert headers["x-codex-credits-has-credits"] == "false"
+    assert headers["x-codex-credits-balance"] == "0.00"
+    assert payload.credits is not None
+    assert payload.credits.has_credits is False
+    assert payload.credits.balance == "0.0"
 
 
 @pytest.mark.asyncio

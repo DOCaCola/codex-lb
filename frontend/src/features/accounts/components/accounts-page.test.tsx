@@ -107,6 +107,7 @@ function mockAccountsQuery(accounts: AccountSummary[]) {
     setAliasMutation: idleMutation(),
     limitWarmupMutation: idleMutation(),
     routingPolicyMutation: idleMutation(),
+    creditPolicyMutation: idleMutation(),
     updateMutation: idleMutation(),
   } as unknown as ReturnType<typeof useAccounts>);
 }
@@ -128,6 +129,7 @@ function account(overrides: Partial<AccountSummary>): AccountSummary {
     status: "active",
     additionalQuotas: [],
     limitWarmupEnabled: false,
+    creditPolicy: "spend",
     ...overrides,
   };
 }
@@ -307,6 +309,7 @@ describe("AccountsPage", () => {
       setAliasMutation: idleMutation(),
       limitWarmupMutation: idleMutation(),
       routingPolicyMutation: idleMutation(),
+      creditPolicyMutation: idleMutation(),
       updateMutation: idleMutation(),
     } as unknown as ReturnType<typeof useAccounts>);
 
@@ -349,6 +352,7 @@ describe("AccountsPage", () => {
       setAliasMutation: idleMutation(),
       limitWarmupMutation: idleMutation(),
       routingPolicyMutation: idleMutation(),
+      creditPolicyMutation: idleMutation(),
       updateMutation: idleMutation(),
     } as unknown as ReturnType<typeof useAccounts>);
 
@@ -395,6 +399,7 @@ describe("AccountsPage", () => {
       setAliasMutation: idleMutation(),
       limitWarmupMutation: idleMutation(),
       routingPolicyMutation: idleMutation(),
+      creditPolicyMutation: idleMutation(),
       updateMutation: idleMutation(),
     } as unknown as ReturnType<typeof useAccounts>);
 
@@ -452,6 +457,7 @@ describe("AccountsPage", () => {
       setAliasMutation: idleMutation(),
       limitWarmupMutation: idleMutation(),
       routingPolicyMutation: idleMutation(),
+      creditPolicyMutation: idleMutation(),
       updateMutation: idleMutation(),
     } as unknown as ReturnType<typeof useAccounts>);
 
@@ -515,6 +521,7 @@ describe("AccountsPage", () => {
       setAliasMutation: idleMutation(),
       limitWarmupMutation: idleMutation(),
       routingPolicyMutation: idleMutation(),
+      creditPolicyMutation: idleMutation(),
       updateMutation: idleMutation(),
     } as unknown as ReturnType<typeof useAccounts>);
 

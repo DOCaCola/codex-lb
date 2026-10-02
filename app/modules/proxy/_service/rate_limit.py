@@ -5,8 +5,9 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Protocol, cast
 
 from app.core import usage as usage_core
+from app.core.usage.quota import account_credit_policy
 from app.core.usage.types import UsageWindowRow
-from app.db.models import Account, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, UsageHistory
 from app.db.session import detach_session_objects
 from app.modules.accounts.background_repository import BackgroundAccountsRepository
 from app.modules.proxy.helpers import (
@@ -126,7 +127,7 @@ class _RateLimitMixin:
             if monthly_summary is not None:
                 headers.update(_rate_limit_headers("monthly", monthly_summary))
 
-            headers.update(_credits_headers(await self._latest_usage_entries(repos, account_map)))
+            headers.update(_credits_headers(await self._spendable_credit_usage_entries(repos, account_map)))
         return headers
 
     async def get_rate_limit_payload(self) -> RateLimitStatusPayloadData:
@@ -183,7 +184,7 @@ class _RateLimitMixin:
                     monthly_window,
                     limit_reached=limit_reached,
                 ),
-                credits=_credits_snapshot(await self._latest_usage_entries(repos, account_map)),
+                credits=_credits_snapshot(await self._spendable_credit_usage_entries(repos, account_map)),
                 additional_rate_limits=additional_rate_limits,
             )
 
@@ -215,11 +216,17 @@ class _RateLimitMixin:
         latest = await repos.usage.latest_by_account(window=window)
         return [usage_history_to_window_row(entry) for entry in latest.values() if entry.account_id in account_map]
 
-    async def _latest_usage_entries(
+    async def _spendable_credit_usage_entries(
         self,
         repos: ProxyRepositories,
         account_map: dict[str, Account],
     ) -> list[UsageHistory]:
+        # Credits an account's policy forbids spending are not pool credits.
+        account_map = {
+            account_id: account
+            for account_id, account in account_map.items()
+            if account_credit_policy(account.credit_policy) == AccountCreditPolicy.SPEND
+        }
         if not account_map:
             return []
         latest = await repos.usage.latest_by_account()

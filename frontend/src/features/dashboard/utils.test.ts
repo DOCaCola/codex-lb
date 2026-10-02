@@ -34,6 +34,7 @@ function account(overrides: Partial<AccountSummary> & Pick<AccountSummary, "acco
     planType: overrides.planType ?? "plus",
     status: overrides.status ?? "active",
     limitWarmupEnabled: overrides.limitWarmupEnabled ?? false,
+    creditPolicy: overrides.creditPolicy ?? "spend",
     limitWarmup: overrides.limitWarmup ?? null,
     usage: overrides.usage ?? null,
     resetAtPrimary: overrides.resetAtPrimary ?? null,

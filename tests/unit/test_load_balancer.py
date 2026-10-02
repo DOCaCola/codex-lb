@@ -27,7 +27,7 @@ from app.core.balancer import (
 )
 from app.core.balancer.logic import DRAIN_PRIMARY_THRESHOLD_PCT, PROBE_QUIET_SECONDS
 from app.core.usage.quota import apply_usage_quota
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, UsageHistory
 from app.modules.proxy._load_balancer.tunables import RoutingTunables
 from app.modules.proxy.load_balancer import (
     RuntimeState,
@@ -2532,6 +2532,41 @@ def test_state_from_account_reactivates_persisted_quota_exceeded_with_spendable_
     selection = select_account([state], now=now, routing_strategy="single_account")
     assert selection.account is not None
     assert selection.account.account_id == state.account_id
+
+
+def test_state_from_account_never_credit_policy_keeps_exhausted_account_blocked_with_credits():
+    now = 1_788_706_800.0
+    secondary_reset = 1_789_131_968
+    account = _make_test_account(status=AccountStatus.ACTIVE, plan_type="pro")
+    account.credit_policy = AccountCreditPolicy.NEVER.value
+
+    state = _state_from_account(
+        account=account,
+        primary_entry=_make_test_usage(
+            window="primary",
+            used_percent=0.0,
+            reset_at=1_788_722_939,
+            recorded_at=_epoch_to_naive_utc(now - 30),
+            window_minutes=300,
+        ),
+        secondary_entry=_make_test_usage(
+            window="secondary",
+            used_percent=100.0,
+            reset_at=secondary_reset,
+            recorded_at=_epoch_to_naive_utc(now - 5),
+            window_minutes=10080,
+            credits_has=True,
+            credits_unlimited=False,
+            credits_balance=60_800.0,
+        ),
+        runtime=RuntimeState(),
+        now=now,
+    )
+
+    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    assert state.reset_at == secondary_reset
+    selection = select_account([state], now=now, routing_strategy="single_account")
+    assert selection.account is None
 
 
 def test_state_from_account_zeroes_stale_exhausted_primary_usage_after_reset(monkeypatch):
@@ -5730,6 +5765,49 @@ def test_apply_usage_quota_allows_secondary_100_when_credits_exist():
     assert status == AccountStatus.ACTIVE
     assert used_percent == 11.0
     assert reset_at is None
+
+
+@pytest.mark.parametrize("infer_status_from_usage", [True, False])
+def test_apply_usage_quota_never_credit_policy_blocks_exhausted_secondary_despite_credits(
+    infer_status_from_usage: bool,
+) -> None:
+    status, used_percent, reset_at = apply_usage_quota(
+        status=AccountStatus.ACTIVE,
+        primary_used=11.0,
+        primary_reset=None,
+        primary_window_minutes=None,
+        runtime_reset=None,
+        secondary_used=100.0,
+        secondary_reset=1_700_010_000,
+        credits_has=True,
+        credits_unlimited=False,
+        credits_balance=959.0,
+        credit_policy=AccountCreditPolicy.NEVER,
+        infer_status_from_usage=infer_status_from_usage,
+    )
+    assert status == AccountStatus.QUOTA_EXCEEDED
+    assert used_percent == 100.0
+    assert reset_at == 1_700_010_000
+
+
+def test_apply_usage_quota_never_credit_policy_infers_exhausted_primary() -> None:
+    status, used_percent, reset_at = apply_usage_quota(
+        status=AccountStatus.ACTIVE,
+        primary_used=100.0,
+        primary_reset=1_700_005_000,
+        primary_window_minutes=300,
+        runtime_reset=None,
+        secondary_used=40.0,
+        secondary_reset=1_700_010_000,
+        credits_has=True,
+        credits_unlimited=True,
+        credits_balance=None,
+        credit_policy=AccountCreditPolicy.NEVER,
+        infer_status_from_usage=False,
+    )
+    assert status == AccountStatus.RATE_LIMITED
+    assert used_percent == 100.0
+    assert reset_at == 1_700_005_000
 
 
 @pytest.mark.parametrize("credits_balance", [None, 0.0])

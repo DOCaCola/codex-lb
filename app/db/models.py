@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -64,6 +65,13 @@ class AccountRoutingPolicy(str, Enum):
     PRESERVE = "preserve"
 
 
+class AccountCreditPolicy(str, Enum):
+    """Whether purchased credits may serve traffic after a quota window is exhausted."""
+
+    SPEND = "spend"
+    NEVER = "never"
+
+
 class StickySessionKind(str, Enum):
     CODEX_SESSION = "codex_session"
     STICKY_THREAD = "sticky_thread"
@@ -122,6 +130,18 @@ class Account(Base):
         server_default=text("'normal'"),
         nullable=False,
     )
+    credit_policy: Mapped[str] = mapped_column(
+        String,
+        default=AccountCreditPolicy.SPEND.value,
+        server_default=text("'spend'"),
+        nullable=False,
+    )
+
+    def __init__(self, **kwargs: Any) -> None:
+        # Routing reads the policy before an account is ever flushed, so a new
+        # instance carries the column default instead of waiting for INSERT.
+        kwargs.setdefault("credit_policy", AccountCreditPolicy.SPEND.value)
+        super().__init__(**kwargs)
 
     access_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     refresh_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

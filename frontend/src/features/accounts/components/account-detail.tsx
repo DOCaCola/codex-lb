@@ -12,6 +12,7 @@ import { AccountProxyBinding } from "@/features/accounts/components/account-prox
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
 import type {
+  AccountCreditPolicy,
   AccountRoutingPolicy,
   AccountSummary,
   AccountUsageResetCredits,
@@ -46,6 +47,10 @@ export type AccountDetailProps = {
     accountId: string,
     routingPolicy: AccountRoutingPolicy,
   ) => void;
+  onCreditPolicyChange: (
+    accountId: string,
+    creditPolicy: AccountCreditPolicy,
+  ) => void;
   onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
   upstreamProxyAdmin?: UpstreamProxyAdmin | null;
   onProxyBindingSave?: (accountId: string, payload: AccountProxyBindingRequest) => Promise<unknown>;
@@ -73,6 +78,7 @@ export function AccountDetail({
   limitWarmupGloballyEnabled,
   onLimitWarmupChange,
   onRoutingPolicyChange,
+  onCreditPolicyChange,
   onSecurityWorkAuthorizedChange,
   upstreamProxyAdmin = null,
   onProxyBindingSave,
@@ -193,6 +199,7 @@ export function AccountDetail({
             limitWarmupGloballyEnabled={limitWarmupGloballyEnabled}
             onLimitWarmupChange={onLimitWarmupChange}
             onRoutingPolicyChange={onRoutingPolicyChange}
+            onCreditPolicyChange={onCreditPolicyChange}
             onSecurityWorkAuthorizedChange={onSecurityWorkAuthorizedChange}
           />
         )}

@@ -33,6 +33,7 @@ describe("AccountDetail", () => {
         onResetCredit={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={onRoutingPolicyChange}
+        onCreditPolicyChange={vi.fn()}
         onSecurityWorkAuthorizedChange={vi.fn()}
       />,
     );
@@ -41,6 +42,38 @@ describe("AccountDetail", () => {
     await user.click(await screen.findByRole("option", { name: "Preserve" }));
 
     expect(onRoutingPolicyChange).toHaveBeenCalledWith(account.accountId, "preserve");
+  });
+
+  it("lets operators forbid spending credits after quota exhaustion", async () => {
+    const user = userEvent.setup();
+    const onCreditPolicyChange = vi.fn();
+    const account = createAccountSummary({ creditPolicy: "spend" });
+
+    renderWithClient(
+      <AccountDetail
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onResetUsage={vi.fn()}
+        onSetAlias={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onResetCredit={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={onCreditPolicyChange}
+        onSecurityWorkAuthorizedChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "Credits" })).toHaveTextContent("Spend credits");
+    await user.click(screen.getByRole("combobox", { name: "Credits" }));
+    await user.click(await screen.findByRole("option", { name: "Never spend credits" }));
+
+    expect(onCreditPolicyChange).toHaveBeenCalledWith(account.accountId, "never");
   });
 
   it("disables alias and proxy binding controls for read-only guests", () => {
@@ -64,6 +97,7 @@ describe("AccountDetail", () => {
         onResetCredit={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
         onSecurityWorkAuthorizedChange={vi.fn()}
         onProxyBindingSave={onProxyBindingSave}
         upstreamProxyAdmin={createUpstreamProxyAdmin({
@@ -98,6 +132,7 @@ describe("AccountDetail", () => {
         onResetCredit={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
+        onCreditPolicyChange={vi.fn()}
         onSecurityWorkAuthorizedChange={vi.fn()}
         resetCredits={{ availableCount: 2 }}
       />,

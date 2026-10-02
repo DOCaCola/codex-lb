@@ -39,7 +39,7 @@ from app.core.upstream_proxy.cache import get_upstream_route_cache
 from app.core.upstream_proxy.resolver import _is_missing_upstream_proxy_schema
 from app.core.usage.models import UsagePayload
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
-from app.db.models import Account, AccountStatus, DashboardSettings
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, DashboardSettings
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.deletion import request_account_deletion_run
@@ -757,6 +757,16 @@ class AccountsService:
         result = await self._repo.update_routing_policy(account_id, routing_policy)
         if result:
             get_account_selection_cache().invalidate()
+        return result
+
+    async def set_credit_policy(self, account_id: str, credit_policy: AccountCreditPolicy) -> bool:
+        result = await self._repo.update_credit_policy(account_id, credit_policy)
+        if result:
+            # The policy decides whether a quota-blocked account still serves
+            # open sessions, so routing availability changes with it.
+            get_routing_availability_cache().set_credit_policy(account_id, credit_policy)
+            get_account_selection_cache().invalidate()
+            await propagate_account_routing_change()
         return result
 
     async def delete_account(self, account_id: str, *, delete_history: bool = False) -> bool:

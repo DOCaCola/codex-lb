@@ -701,6 +701,7 @@ describe("AccountSummarySchema light contract", () => {
       displayName: "User",
       planType: "pro",
       status: "active",
+      creditPolicy: "spend",
       capacityCreditsSecondary: 2000,
       remainingCreditsSecondary: 900,
     });
@@ -716,6 +717,7 @@ describe("AccountSummarySchema light contract", () => {
       displayName: "User",
       planType: "pro",
       status: "active",
+      creditPolicy: "spend",
       capacity_credits_primary: 500,
       remaining_credits_primary: 300,
       capacity_credits_secondary: 2000,

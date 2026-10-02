@@ -5,6 +5,8 @@ import {
   AccountAliasRequestSchema,
   AccountAliasResponseSchema,
   AccountAuthExportResponseSchema,
+  AccountCreditPolicyUpdateRequestSchema,
+  AccountCreditPolicyUpdateResponseSchema,
   AccountImportResponseSchema,
   AccountModelSettingsSchema,
   AccountModelSelectionRequestSchema,
@@ -32,6 +34,7 @@ import {
   RuntimeConnectAddressResponseSchema,
 } from "@/features/accounts/schemas";
 import type {
+  AccountCreditPolicy,
   AccountModelSelectionRequest,
   AccountRoutingPolicy,
   AccountUsageResetConsumeRequest,
@@ -111,6 +114,18 @@ export function updateAccountRoutingPolicy(
   return put(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/routing-policy`,
     AccountRoutingPolicyUpdateResponseSchema,
+    { body: payload },
+  );
+}
+
+export function updateAccountCreditPolicy(
+  accountId: string,
+  creditPolicy: AccountCreditPolicy,
+) {
+  const payload = AccountCreditPolicyUpdateRequestSchema.parse({ creditPolicy });
+  return put(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/credit-policy`,
+    AccountCreditPolicyUpdateResponseSchema,
     { body: payload },
   );
 }

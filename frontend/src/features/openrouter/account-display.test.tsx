@@ -276,6 +276,7 @@ describe("Unified provider accounts", () => {
             planType: "pro",
             additionalQuotas: [],
             limitWarmupEnabled: false,
+            creditPolicy: "spend",
           },
         ]}
         openRouterAccounts={[createOpenRouterAccount({ name: "Alpha" })]}

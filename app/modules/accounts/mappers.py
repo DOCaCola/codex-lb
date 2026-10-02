@@ -7,12 +7,12 @@ from app.core.auth import DEFAULT_EMAIL, DEFAULT_PLAN, extract_id_token_claims, 
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.usage.pacing import scheduled_remaining_percent
-from app.core.usage.quota import apply_usage_quota
+from app.core.usage.quota import account_credit_policy, apply_usage_quota
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.masking import mask_email
 from app.core.utils.time import from_epoch_seconds
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, AccountLimitWarmup, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAuthStatus,
@@ -270,6 +270,7 @@ def _account_to_summary(
         plan_type=plan_type,
         status=effective_status.value,
         routing_policy=_normalize_account_routing_policy(account.routing_policy),
+        credit_policy=account.credit_policy,
         security_work_authorized=bool(account.security_work_authorized),
         usage=AccountUsage(
             primary_remaining_percent=primary_remaining_percent,
@@ -358,6 +359,7 @@ def _effective_status_from_usage(
     credits_balance: float | None = None,
     allow_missing_runtime_reset_recovery: bool = False,
 ) -> AccountStatus:
+    credit_policy = account_credit_policy(account.credit_policy)
     long_window_usage = monthly_usage or secondary_usage
     long_window_used_percent = monthly_used_percent if monthly_usage is not None else secondary_used_percent
     if credits_has is None and credits_unlimited is None and credits_balance is None:
@@ -376,11 +378,12 @@ def _effective_status_from_usage(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
+        credit_policy=credit_policy,
     )
     if account.status == AccountStatus.RATE_LIMITED and status == AccountStatus.ACTIVE:
         if runtime_reset is None and allow_missing_runtime_reset_recovery:
             return status
-        if _has_credit_override(
+        if credit_policy == AccountCreditPolicy.SPEND and _has_credit_override(
             credits_has=credits_has,
             credits_unlimited=credits_unlimited,
             credits_balance=credits_balance,

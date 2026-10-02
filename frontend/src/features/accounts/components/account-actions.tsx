@@ -14,11 +14,13 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { AccountRoutingPolicyControl } from "./routing-policy";
+import { AccountCreditPolicyControl } from "./credit-policy";
 import { Switch } from "@/components/ui/switch";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import { formatLimitWarmupWindow } from "@/features/accounts/limit-warmup";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import type {
+  AccountCreditPolicy,
   AccountRoutingPolicy,
   AccountSummary,
 } from "@/features/accounts/schemas";
@@ -50,6 +52,10 @@ export type AccountActionsProps = {
     accountId: string,
     routingPolicy: AccountRoutingPolicy,
   ) => void;
+  onCreditPolicyChange: (
+    accountId: string,
+    creditPolicy: AccountCreditPolicy,
+  ) => void;
 };
 
 export function AccountActions({
@@ -70,6 +76,7 @@ export function AccountActions({
   onSecurityWorkAuthorizedChange,
   onLimitWarmupChange,
   onRoutingPolicyChange,
+  onCreditPolicyChange,
 }: AccountActionsProps) {
   const { t } = useTranslation();
   const dateDisplayFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
@@ -107,6 +114,13 @@ export function AccountActions({
           policy={account.routingPolicy ?? "normal"}
           disabled={busy || readOnly}
           onChange={(policy) => onRoutingPolicyChange(account.accountId, policy)}
+        />
+      ) : null}
+      {!showOperatorRecoveryAction ? (
+        <AccountCreditPolicyControl
+          policy={account.creditPolicy}
+          disabled={busy || readOnly}
+          onChange={(policy) => onCreditPolicyChange(account.accountId, policy)}
         />
       ) : null}
 

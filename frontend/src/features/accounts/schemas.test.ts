@@ -20,6 +20,7 @@ describe("AccountSummarySchema", () => {
       displayName: "User",
       planType: "pro",
       status: "active",
+      creditPolicy: "spend",
       usage: {
         primaryRemainingPercent: 85,
         secondaryRemainingPercent: null,
@@ -71,6 +72,7 @@ describe("AccountSummarySchema", () => {
       displayName: "User",
       planType: "pro",
       status: "active",
+      creditPolicy: "spend",
       routingPolicy: "preserve",
     });
 

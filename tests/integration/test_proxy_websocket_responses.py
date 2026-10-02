@@ -46,6 +46,7 @@ from app.modules.api_keys.service import (
     LimitRuleInput,
 )
 from app.modules.proxy._service.websocket import mixin as websocket_mixin_module
+from app.modules.proxy.account_cache import RoutingAvailabilityCache, mark_account_routing_unavailable
 from app.modules.proxy.affinity import _codex_session_selection_key
 from app.modules.proxy.capability_routing import (
     REQUIRED_CAPABILITY_HEADER,
@@ -150,6 +151,21 @@ def _stub_request_logging(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
+
+
+@pytest.fixture(autouse=True)
+def _unseeded_routing_availability(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep routing availability in process-local mode.
+
+    These tests fake upstream connections with accounts that are never stored, so a
+    snapshot seeded from the database would treat every one of them as deleted.
+    Only explicit marks make an account unavailable here.
+    """
+
+    async def skip_refresh(self) -> None:
+        del self
+
+    monkeypatch.setattr(RoutingAvailabilityCache, "refresh_from_db", skip_refresh)
 
 
 class _FakeUpstreamMessage:
@@ -4999,6 +5015,87 @@ def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_inst
             },
         ],
     )
+
+
+def _completed_turn_messages(response_id: str) -> list[_FakeUpstreamMessage]:
+    return [
+        _FakeUpstreamMessage(
+            "text",
+            text=json.dumps(
+                {"type": "response.created", "response": {"id": response_id, "status": "in_progress"}},
+                separators=(",", ":"),
+            ),
+        ),
+        _FakeUpstreamMessage(
+            "text",
+            text=json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": response_id,
+                        "status": "completed",
+                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                    },
+                },
+                separators=(",", ":"),
+            ),
+        ),
+    ]
+
+
+def test_v1_responses_websocket_leaves_upstream_of_account_that_became_unavailable(app_instance, monkeypatch):
+    alpha_upstream = _SequencedUpstreamWebSocket(_completed_turn_messages("resp_ws_alpha"))
+    beta_upstream = _SequencedUpstreamWebSocket(_completed_turn_messages("resp_ws_beta"))
+    connections = deque(
+        [
+            (account_fixture(id="acct_ws_alpha"), alpha_upstream),
+            (account_fixture(id="acct_ws_beta"), beta_upstream),
+        ]
+    )
+
+    class _FakeSettingsCache:
+        async def get(self):
+            return _websocket_settings()
+
+    async def allow_firewall(_websocket):
+        return None
+
+    async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
+        return None
+
+    async def fake_connect_proxy_websocket(self, headers, **kwargs):
+        del self, headers, kwargs
+        return connections.popleft()
+
+    async def fake_write_request_log(self, **kwargs):
+        del self, kwargs
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
+    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
+
+    def turn(text: str) -> str:
+        return json.dumps({"type": "response.create", "model": "gpt-5.4", "input": text, "stream": True})
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/v1/responses") as websocket:
+            websocket.send_text(turn("first"))
+            first_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+
+            # A pause or credit-policy block lands while the client keeps its
+            # socket open.
+            mark_account_routing_unavailable("acct_ws_alpha")
+
+            websocket.send_text(turn("second"))
+            second_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+
+    assert [event["type"] for event in first_events] == ["response.created", "response.completed"]
+    assert [event["response"]["id"] for event in second_events] == ["resp_ws_beta", "resp_ws_beta"]
+    assert len(alpha_upstream.sent_text) == 1
+    assert alpha_upstream.closed is True
+    assert [json.loads(text)["input"][0]["content"][0]["text"] for text in beta_upstream.sent_text] == ["second"]
 
 
 def test_v1_responses_websocket_archives_multiplexed_upstream_frames_by_response_id(app_instance, monkeypatch):

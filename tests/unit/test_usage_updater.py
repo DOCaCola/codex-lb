@@ -22,7 +22,8 @@ from app.core.usage.models import ReserveUsageSnapshot, UsagePayload
 from app.core.usage.refresh_scheduler import _select_long_window_entries
 from app.core.utils.shared_future import _WAITERS_ATTR, wait_on_shared_future
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountCreditPolicy, AccountStatus, UsageHistory
+from app.modules.proxy.account_cache import is_account_routing_unavailable, mark_account_routing_unavailable
 from app.modules.usage import updater as usage_updater_module
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.repository import UsageWindowWrite
@@ -1043,6 +1044,79 @@ async def test_force_refresh_usage_keeps_rate_limited_account_without_primary_or
     assert accounts_repo.status_updates == []
     assert account.status == AccountStatus.RATE_LIMITED
     assert account.reset_at == 12345
+
+
+@pytest.mark.asyncio
+async def test_never_credit_policy_blocks_exhausted_active_account_and_its_live_sessions() -> None:
+    accounts_repo = StubAccountsRepository()
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo)
+    account = _make_account("acc_credit_never_exhausted", "workspace_credit_never_exhausted")
+    account.credit_policy = AccountCreditPolicy.NEVER.value
+    account.reset_at = None
+    account.blocked_at = None
+    accounts_repo.accounts_by_id[account.id] = account
+    now_epoch = 1_790_000_000
+
+    await updater._enforce_credit_policy_from_usage(
+        account,
+        primary=usage_updater_module.UsageWindow(used_percent=0.0, reset_at=now_epoch + 3600),
+        long_window=usage_updater_module.UsageWindow(used_percent=100.0, reset_at=now_epoch + 86_400),
+        now_epoch=now_epoch,
+    )
+
+    assert accounts_repo.status_updates == [
+        {
+            "account_id": account.id,
+            "status": AccountStatus.QUOTA_EXCEEDED,
+            "deactivation_reason": None,
+            "reset_at": now_epoch + 86_400,
+            "blocked_at": None,
+        },
+    ]
+    assert account.status == AccountStatus.QUOTA_EXCEEDED
+    assert is_account_routing_unavailable(account.id) is True
+
+
+@pytest.mark.asyncio
+async def test_spend_credit_policy_leaves_exhausted_active_account_to_upstream() -> None:
+    accounts_repo = StubAccountsRepository()
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo)
+    account = _make_account("acc_credit_spend_exhausted", "workspace_credit_spend_exhausted")
+    accounts_repo.accounts_by_id[account.id] = account
+    now_epoch = 1_790_000_000
+
+    await updater._enforce_credit_policy_from_usage(
+        account,
+        primary=usage_updater_module.UsageWindow(used_percent=0.0, reset_at=now_epoch + 3600),
+        long_window=usage_updater_module.UsageWindow(used_percent=100.0, reset_at=now_epoch + 86_400),
+        now_epoch=now_epoch,
+    )
+
+    assert accounts_repo.status_updates == []
+    assert account.status == AccountStatus.ACTIVE
+    assert is_account_routing_unavailable(account.id) is False
+
+
+@pytest.mark.asyncio
+async def test_never_credit_policy_recovery_reopens_routing() -> None:
+    accounts_repo = StubAccountsRepository()
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo)
+    account = _make_account("acc_credit_never_recovered", "workspace_credit_never_recovered")
+    account.credit_policy = AccountCreditPolicy.NEVER.value
+    account.status = AccountStatus.RATE_LIMITED
+    account.reset_at = 12345
+    account.blocked_at = None
+    accounts_repo.accounts_by_id[account.id] = account
+    mark_account_routing_unavailable(account.id)
+
+    await updater._recover_quota_status_from_usage(
+        account,
+        primary=usage_updater_module.UsageWindow(used_percent=0.0),
+        secondary=usage_updater_module.UsageWindow(used_percent=80.0),
+    )
+
+    assert account.status == AccountStatus.ACTIVE
+    assert is_account_routing_unavailable(account.id) is False
 
 
 @pytest.mark.asyncio

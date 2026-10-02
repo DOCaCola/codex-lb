@@ -96,6 +96,7 @@ class AccountSummary(DashboardModel):
     seat_type: str | None = None
     plan_type: str
     routing_policy: str = Field(default="normal", pattern=r"^(normal|burn_first|preserve)$")
+    credit_policy: str = Field(default="spend", pattern=r"^(spend|never)$")
     status: str
     security_work_authorized: bool = False
     usage: AccountUsage | None = None
@@ -223,6 +224,15 @@ class AccountRoutingPolicyUpdateRequest(DashboardModel):
 class AccountRoutingPolicyUpdateResponse(DashboardModel):
     account_id: str
     routing_policy: str
+
+
+class AccountCreditPolicyUpdateRequest(DashboardModel):
+    credit_policy: str = Field(pattern=r"^(spend|never)$")
+
+
+class AccountCreditPolicyUpdateResponse(DashboardModel):
+    account_id: str
+    credit_policy: str
 
 
 class AccountDeleteResponse(DashboardModel):
