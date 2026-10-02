@@ -14,6 +14,7 @@ import pytest
 
 from app.core.crypto import TokenEncryptor
 from app.core.openai.parsing import parse_sse_event_payload
+from app.core.usage.request_operation import RequestOperation
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._service import observability as proxy_observability_module
 from app.modules.proxy._service.support import (
@@ -210,6 +211,7 @@ async def test_websocket_finalizer_records_bridge_upstream_transport_and_metric(
         {
             "account_id": "acc_bridge",
             "affinity_observation": None,
+            "request_operation": RequestOperation.UNKNOWN,
             "api_key": None,
             "request_id": "resp_bridge_success",
             "archive_request_id": None,
@@ -352,6 +354,7 @@ async def test_websocket_connect_failure_records_bridge_upstream_transport_and_m
         {
             "account_id": "acc_bridge",
             "affinity_observation": None,
+            "request_operation": RequestOperation.UNKNOWN,
             "api_key": None,
             "request_id": "resp_bridge_failure",
             "archive_request_id": None,
@@ -430,6 +433,7 @@ async def test_fail_pending_websocket_requests_records_bridge_upstream_transport
         {
             "account_id": "acc_bridge",
             "affinity_observation": None,
+            "request_operation": RequestOperation.UNKNOWN,
             "api_key": None,
             "request_id": "resp_bridge_pending_failure",
             "archive_request_id": None,

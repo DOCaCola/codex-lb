@@ -16,8 +16,7 @@ MERGE = "20260929_020000_merge_upstream_routing_heads"
 async def test_upstream_fork_heads_converge(tmp_path, start):
     url = f"sqlite+aiosqlite:///{tmp_path / 'merge.db'}"
     await to_thread.run_sync(lambda: run_upgrade(url, start, bootstrap_legacy=False))
-    await to_thread.run_sync(lambda: run_upgrade(url, "head", bootstrap_legacy=False))
-    assert not await to_thread.run_sync(lambda: check_schema_drift(url))
+    await to_thread.run_sync(lambda: run_upgrade(url, MERGE, bootstrap_legacy=False))
     engine = create_async_engine(url)
     try:
         async with engine.connect() as connection:
@@ -26,7 +25,7 @@ async def test_upstream_fork_heads_converge(tmp_path, start):
         await to_thread.run_sync(lambda: command.downgrade(_build_alembic_config(url), FORK))
         async with engine.connect() as connection:
             assert set(await connection.scalars(text("SELECT version_num FROM alembic_version"))) == {FORK, UPSTREAM}
-        assert not await to_thread.run_sync(lambda: check_schema_drift(url))
         await to_thread.run_sync(lambda: run_upgrade(url, "head", bootstrap_legacy=False))
+        assert not await to_thread.run_sync(lambda: check_schema_drift(url))
     finally:
         await engine.dispose()

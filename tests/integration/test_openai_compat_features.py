@@ -296,7 +296,7 @@ async def test_v1_responses_preserves_explicit_prompt_cache_for_model_source(asy
     seen = {}
     source = object()
 
-    async def fake_select(model, api_key, *, raw_model=None, require_streaming=False):
+    async def fake_select(model, api_key, *, raw_model=None, reasoning_effort=None, require_streaming=False):
         return source, model
 
     async def fake_source_response(

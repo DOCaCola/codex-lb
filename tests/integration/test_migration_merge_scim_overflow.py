@@ -23,7 +23,8 @@ def test_upgrade_and_schema_rollback(tmp_path: Path, branches: tuple[str, ...]) 
     engine = create_engine(f"sqlite:///{path}")
     config = _build_alembic_config(url)
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == [MERGE]
+    (head,) = script.get_heads()
+    assert MERGE in {revision.revision for revision in script.iterate_revisions(head, "base")}
     assert script.get_revision(MERGE).down_revision == (SCIM, RETIRE)
     assert script.get_revision(SCIM).down_revision == PARENT
     assert script.get_revision(RETIRE).down_revision == PARENT
@@ -41,8 +42,7 @@ def test_upgrade_and_schema_rollback(tmp_path: Path, branches: tuple[str, ...]) 
                         "VALUES ('retained-token','Test','digest','scim_test','test-provider')"
                     )
                 )
-        assert run_upgrade(url, "head", bootstrap_legacy=False).current_revision == MERGE
-        assert check_schema_drift(url) == ()
+        assert run_upgrade(url, MERGE, bootstrap_legacy=False).current_revision == MERGE
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT upstream_stream_transport FROM dashboard_settings WHERE id=1")) == "http"
@@ -60,7 +60,7 @@ def test_upgrade_and_schema_rollback(tmp_path: Path, branches: tuple[str, ...]) 
                 assert set(connection.scalars(text("SELECT version_num FROM alembic_version"))) == {SCIM, RETIRE}
                 assert inspect(connection).has_table("dashboard_scim_tokens")
                 assert not inspect(connection).has_table("model_source_pins")
-            run_upgrade(url, "head", bootstrap_legacy=False)
+            run_upgrade(url, MERGE, bootstrap_legacy=False)
 
         # Actual schema rollback requires both parents' downgrade code, not
         # merely removing the merge stamp or switching to the old image.

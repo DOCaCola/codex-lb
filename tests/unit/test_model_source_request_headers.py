@@ -7,7 +7,9 @@ telemetry (``x-openai-subagent``, ``x-openai-memgen-request``, ``x-codex-*``,
 than a filter: ``forwarding._source_headers`` builds ``Accept``,
 ``Content-Type`` and the source's own ``Authorization`` from scratch, every
 ``aiohttp`` call in the module passes exactly that builder's result, and the
-module has no access to the inbound request at all. Direct source routing is
+module has no access to the inbound request at all. Claude uses its own
+prepared provider headers through the shared stream opener; response headers
+are captured separately for provider observations. Direct source routing is
 therefore unchanged by construction; the route-level capture lives in
 ``tests/integration/test_model_source_routing.py``.
 """
@@ -21,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from app.db.models import ModelSource
 from app.modules.model_sources import forwarding
 
 # The complete set of header names the proxy itself puts on a source request.
@@ -31,11 +34,12 @@ _FORWARDING_PATH = Path(forwarding.__file__)
 _HTTP_METHODS = frozenset({"post", "get", "put", "patch", "delete", "request"})
 
 
-def _source(*, with_key: bool) -> Any:
-    return SimpleNamespace(
+def _source(*, with_key: bool, kind: str = "openai_compatible") -> ModelSource:
+    return ModelSource(
         id="src_headers",
+        kind=kind,
         base_url="http://127.0.0.1:9/v1",
-        api_key_encrypted="ciphertext" if with_key else None,
+        api_key_encrypted=b"ciphertext" if with_key else None,
     )
 
 
@@ -47,11 +51,12 @@ def _encryptor() -> Any:
 @pytest.mark.parametrize("accept", [None, "*/*"])
 @pytest.mark.parametrize("content_type", ["application/json", None])
 @pytest.mark.parametrize("with_key", [True, False])
+@pytest.mark.parametrize("kind", ["openai_compatible", "openrouter"])
 def test_source_headers_are_exactly_accept_content_type_and_the_source_authorization(
-    stream: bool, accept: str | None, content_type: str | None, with_key: bool
+    stream: bool, accept: str | None, content_type: str | None, with_key: bool, kind: str
 ) -> None:
     headers = forwarding._source_headers(
-        _source(with_key=with_key),
+        _source(with_key=with_key, kind=kind),
         encryptor=_encryptor(),
         stream=stream,
         accept=accept,
@@ -63,8 +68,11 @@ def test_source_headers_are_exactly_accept_content_type_and_the_source_authoriza
         expected.add("Content-Type")
     if with_key:
         expected.add("Authorization")
+    if kind == "openrouter":
+        expected.add("X-Title")
+        assert headers["X-Title"] == "codex-lb"
     assert set(headers) == expected
-    assert set(headers) <= SOURCE_REQUEST_HEADER_NAMES
+    assert set(headers) <= SOURCE_REQUEST_HEADER_NAMES | {"X-Title"}
     assert headers["Accept"] == (accept or ("text/event-stream" if stream else "application/json"))
     if content_type is not None:
         assert headers["Content-Type"] == content_type
@@ -90,11 +98,39 @@ def test_every_source_request_passes_the_constructed_headers_only() -> None:
         is_builder_call = (
             isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "_source_headers"
         )
-        assert is_builder_call, (keyword.lineno, ast.dump(value))
+        is_prepared_provider_headers = (
+            isinstance(value, ast.IfExp)
+            and ast.dump(value.test) == ast.dump(ast.parse("prepared_headers is not None", mode="eval").body)
+            and isinstance(value.body, ast.Name)
+            and value.body.id == "prepared_headers"
+            and isinstance(value.orelse, ast.Call)
+            and isinstance(value.orelse.func, ast.Name)
+            and value.orelse.func.id == "_source_headers"
+        )
+        assert is_builder_call or is_prepared_provider_headers, (keyword.lineno, ast.dump(value))
     # No request is issued with a positional/unknown header mapping either.
     for call in http_calls:
         assert not any(isinstance(arg, ast.Starred) for arg in call.args), call.lineno
-        assert all(keyword.arg is not None for keyword in call.keywords), call.lineno
+        for keyword in call.keywords:
+            if keyword.arg is None:
+                assert ast.dump(keyword.value) == ast.dump(
+                    ast.parse('{"allow_redirects": False} if prepared_headers is not None else {}', mode="eval").body
+                ), call.lineno
+
+    # Prepared headers have exactly one caller: the Claude transport's typed
+    # PreparedClaudeRequest, whose dispatch builder constructs provider headers.
+    prepared_callers = []
+    for path in (_FORWARDING_PATH.parents[2]).rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg == "prepared_headers":
+                    prepared_callers.append((path.relative_to(_FORWARDING_PATH.parents[2]).as_posix(), keyword.value))
+    assert len(prepared_callers) == 1
+    path, value = prepared_callers[0]
+    assert path == "modules/claude/transport.py"
+    assert ast.dump(value) == ast.dump(ast.parse("prepared.headers", mode="eval").body)
 
 
 def test_forwarding_has_no_access_to_inbound_request_headers() -> None:
@@ -118,7 +154,10 @@ def test_forwarding_has_no_access_to_inbound_request_headers() -> None:
         for argument in [*function.args.args, *function.args.kwonlyargs, *function.args.posonlyargs]
         if "headers" in argument.arg.lower()
     ]
-    assert header_like_parameters == [], header_like_parameters
+    assert header_like_parameters == [
+        ("_open_source_stream", "prepared_headers"),
+        ("__init__", "upstream_headers"),
+    ], header_like_parameters
 
 
 def test_source_header_builder_signature_has_no_inbound_input() -> None:

@@ -62,6 +62,8 @@ _FAIL_CLOSED_HTTP_ROUTES: frozenset[_RouteKey] = frozenset(
         ("HTTP", "POST", "/v1/chat/completions"),
         ("HTTP", "POST", "/v1/chat/completions/"),
         ("HTTP", "POST", "/v1/embeddings"),
+        ("HTTP", "POST", "/v1/messages"),
+        ("HTTP", "POST", "/v1/messages/count_tokens"),
         ("HTTP", "POST", "/v1/responses/compact"),
         ("HTTP", "POST", "/backend-api/transcribe"),
         ("HTTP", "POST", "/backend-api/files"),

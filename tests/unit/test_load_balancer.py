@@ -4543,7 +4543,8 @@ async def test_load_selection_inputs_serializes_usage_queries_on_shared_session(
 
 @pytest.mark.asyncio
 async def test_load_selection_inputs_sets_burn_first_override_for_additional_quota():
-    from app.modules.proxy.load_balancer import ROUTING_POLICY_BURN_FIRST, LoadBalancer
+    from app.core.balancer import ROUTING_POLICY_BURN_FIRST
+    from app.modules.proxy.load_balancer import LoadBalancer
 
     async def _mocked_additional_filter(
         self,
@@ -4658,7 +4659,8 @@ async def test_security_work_filter_preserves_additional_quota_metadata():
 
 @pytest.mark.asyncio
 async def test_load_selection_inputs_uses_canonicalized_additional_quota_alias_key():
-    from app.modules.proxy.load_balancer import ROUTING_POLICY_BURN_FIRST, LoadBalancer
+    from app.core.balancer import ROUTING_POLICY_BURN_FIRST
+    from app.modules.proxy.load_balancer import LoadBalancer
 
     async def _mocked_additional_filter(
         self,
@@ -4723,7 +4725,8 @@ async def test_load_selection_inputs_uses_canonicalized_additional_quota_alias_k
 
 @pytest.mark.asyncio
 async def test_load_selection_inputs_uses_registry_additional_quota_routing_policy_by_default():
-    from app.modules.proxy.load_balancer import ROUTING_POLICY_BURN_FIRST, LoadBalancer
+    from app.core.balancer import ROUTING_POLICY_BURN_FIRST
+    from app.modules.proxy.load_balancer import LoadBalancer
 
     async def _mocked_additional_filter(
         self,

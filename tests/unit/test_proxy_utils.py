@@ -121,6 +121,15 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
+def _native_websocket_source_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native proxy unit tests have no model-source repository or database."""
+    from app.modules.proxy._service.websocket import mixin as websocket_mixin
+
+    monkeypatch.setattr(websocket_mixin, "responses_model_is_source_owned", AsyncMock(return_value=False))
+    monkeypatch.setattr(websocket_mixin, "handle_source_frame", AsyncMock(return_value=False))
+
+
+@pytest.fixture(autouse=True)
 def _share_proxy_dashboard_caps_with_load_balancer(monkeypatch: pytest.MonkeyPatch) -> None:
     original_settings_cache_factory = proxy_service.get_settings_cache
 
@@ -52806,7 +52815,7 @@ async def test_submit_http_bridge_request_reinlines_final_text(monkeypatch):
         headers={},
         affinity=proxy_service._AffinityPolicy(key="sid-submit-inline"),
         request_model="gpt-5.5",
-        account=cast(Account, SimpleNamespace(id="acc-submit-inline")),
+        account=Account(id="acc-submit-inline"),
         upstream=upstream,
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -53081,7 +53090,7 @@ async def test_submit_http_bridge_request_checks_queue_before_inlining(monkeypat
         headers={},
         affinity=proxy_service._AffinityPolicy(key="sid-submit-queue-full"),
         request_model="gpt-5.5",
-        account=cast(Account, SimpleNamespace(id="acc-submit-queue-full")),
+        account=Account(id="acc-submit-queue-full"),
         upstream=cast(
             proxy_service.UpstreamWebSocket,
             SimpleNamespace(send_text=AsyncMock(), close=AsyncMock()),

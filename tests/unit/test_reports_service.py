@@ -7,7 +7,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.modules.reports.repository import DailyReportRangeTooLargeError, ReportsRepository
+from app.modules.reports.repository import (
+    AccountAggregateRow,
+    DailyReportAggregateRow,
+    DailyReportRangeTooLargeError,
+    ModelAggregateRow,
+    ReportsRepository,
+    SummaryAggregateRow,
+    UserAgentAggregateRow,
+)
 from app.modules.reports.service import InvalidReportDateRangeError, ReportsService
 
 pytestmark = pytest.mark.unit
@@ -49,7 +57,7 @@ async def test_get_reports_averages_use_inclusive_local_calendar_days(
     end_date: date,
     report_timezone: str,
 ) -> None:
-    summary = SimpleNamespace(
+    summary = SummaryAggregateRow(
         total_cost_usd=60.0,
         total_input_tokens=0,
         total_output_tokens=0,
@@ -142,7 +150,7 @@ async def test_get_reports_serializes_conversation_and_breakdown_request_counts(
     repo = SimpleNamespace(
         aggregate_summary=AsyncMock(
             side_effect=[
-                SimpleNamespace(
+                SummaryAggregateRow(
                     total_cost_usd=1.2,
                     total_input_tokens=12,
                     total_output_tokens=6,
@@ -155,7 +163,7 @@ async def test_get_reports_serializes_conversation_and_breakdown_request_counts(
                     total_cancelled=0,
                     active_accounts=1,
                 ),
-                SimpleNamespace(
+                SummaryAggregateRow(
                     total_cost_usd=0.4,
                     total_input_tokens=4,
                     total_output_tokens=2,
@@ -172,7 +180,7 @@ async def test_get_reports_serializes_conversation_and_breakdown_request_counts(
         ),
         aggregate_daily_rows=AsyncMock(
             return_value=[
-                SimpleNamespace(
+                DailyReportAggregateRow(
                     date="2026-06-01",
                     requests=2,
                     conversation_count=1,
@@ -190,12 +198,12 @@ async def test_get_reports_serializes_conversation_and_breakdown_request_counts(
                 )
             ]
         ),
-        aggregate_by_model=AsyncMock(return_value=[SimpleNamespace(model="gpt-5.1", cost_usd=1.2, request_count=2)]),
+        aggregate_by_model=AsyncMock(return_value=[ModelAggregateRow(model="gpt-5.1", cost_usd=1.2, request_count=2)]),
         aggregate_by_account=AsyncMock(
-            return_value=[SimpleNamespace(account_id="acc_reports", alias="Reports", cost_usd=1.2, request_count=2)]
+            return_value=[AccountAggregateRow(account_id="acc_reports", alias="Reports", cost_usd=1.2, request_count=2)]
         ),
         aggregate_by_useragent=AsyncMock(
-            return_value=[SimpleNamespace(useragent_group="opencode", cost_usd=1.2, request_count=2)]
+            return_value=[UserAgentAggregateRow(useragent_group="opencode", cost_usd=1.2, request_count=2)]
         ),
         earliest_report_activity_at=AsyncMock(return_value=datetime(2026, 5, 1, 0, 0, 0)),
     )

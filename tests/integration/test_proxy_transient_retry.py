@@ -1751,7 +1751,9 @@ async def test_stream_usage_limit_requests_immediate_refresh_so_pool_reports_exh
     fetch_started = asyncio.Event()
     release_fetch = asyncio.Event()
 
-    async def fake_fetch_usage(*, access_token, account_id, route=None, allow_direct_egress=True):
+    async def fake_fetch_usage(
+        *, access_token, account_id, route=None, allow_direct_egress=True, supports_luna_reserve=False
+    ):
         fetched.append(account_id)
         fetch_started.set()
         await release_fetch.wait()

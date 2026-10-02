@@ -1877,6 +1877,9 @@ async def test_scope_cancellation_finalizes_turn_when_connection_lease_release_f
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # The test supplies a native request preparer and fake repositories; source
+    # selection owns separate repository/authentication and routing tests.
+    monkeypatch.setattr(websocket_mixin, "handle_source_frame", AsyncMock(return_value=False))
     request_logs = _RequestLogsRecorder()
 
     @asynccontextmanager
@@ -2013,7 +2016,7 @@ async def test_scope_cancellation_finalizes_turn_when_connection_lease_release_f
     ) -> tuple[Account, UpstreamWebSocket]:
         request_state.websocket_stream_lease = cast(Any, connection_lease)
         return (
-            cast(Account, SimpleNamespace(id="account_scope_connection_release", codex_installation_id=None)),
+            Account(id="account_scope_connection_release", codex_installation_id=None),
             cast(UpstreamWebSocket, upstream),
         )
 

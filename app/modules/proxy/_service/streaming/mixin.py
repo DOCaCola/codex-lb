@@ -438,38 +438,6 @@ class _StreamingMixin(_StreamingRetryMixin):
     _resolve_upstream_route_for_account = _resolve_upstream_route_for_account_helper
     _select_account_with_budget_for_stream = _select_account_with_budget_for_stream_helper
 
-    def stream_responses(
-        self,
-        payload: ResponsesRequest,
-        headers: Mapping[str, str],
-        *,
-        codex_session_affinity: bool = False,
-        propagate_http_errors: bool = False,
-        openai_cache_affinity: bool = False,
-        api_key: ApiKeyData | None = None,
-        api_key_reservation: ApiKeyUsageReservationData | None = None,
-        suppress_text_done_events: bool = False,
-        request_transport: str = _REQUEST_TRANSPORT_HTTP,
-        client_ip: str | None = None,
-        enforce_openai_sdk_contract: bool = True,
-        required_account_id: str | None = None,
-    ) -> AsyncIterator[str]:
-        _maybe_log_proxy_request_payload("stream", payload, headers)
-        return self._stream_with_retry(
-            payload,
-            _facade().filter_inbound_headers(headers),
-            codex_session_affinity=codex_session_affinity,
-            propagate_http_errors=propagate_http_errors,
-            openai_cache_affinity=openai_cache_affinity,
-            api_key=api_key,
-            api_key_reservation=api_key_reservation,
-            suppress_text_done_events=suppress_text_done_events,
-            request_transport=request_transport,
-            client_ip=client_ip,
-            enforce_openai_sdk_contract=enforce_openai_sdk_contract,
-            required_account_id=required_account_id,
-        )
-
     async def _stream_once(
         self,
         account: Account,

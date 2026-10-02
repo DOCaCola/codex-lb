@@ -155,7 +155,7 @@ async def test_leader_election_follower_takes_over_after_release(db_setup, monke
 async def test_leader_election_follower_takes_over_after_expiry(db_setup, monkeypatch: pytest.MonkeyPatch):
     from app.core.scheduling.leader_election import LeaderElection
 
-    _enable_leader_election(monkeypatch, ttl_seconds=0.2)
+    _enable_leader_election(monkeypatch)
 
     election1 = LeaderElection(leader_id="instance-1")
     election2 = LeaderElection(leader_id="instance-2")
@@ -163,9 +163,18 @@ async def test_leader_election_follower_takes_over_after_expiry(db_setup, monkey
     assert await election1.try_acquire() is True
     assert await election2.try_acquire() is False
 
-    await asyncio.sleep(0.3)
+    # Expiry is database-owned. Move its authoritative timestamp into the past
+    # explicitly: a 200 ms lease can expire between the first two database
+    # round trips under xdist load, before the intended takeover assertion.
+    async with SessionLocal() as session:
+        await session.execute(
+            update(SchedulerLeader).where(SchedulerLeader.id == 1).values(expires_at=datetime(2000, 1, 1))
+        )
+        await session.commit()
 
     assert await election2.try_acquire() is True
+    async with SessionLocal() as session:
+        assert await session.scalar(select(SchedulerLeader.leader_id).where(SchedulerLeader.id == 1)) == "instance-2"
 
 
 @pytest.mark.asyncio

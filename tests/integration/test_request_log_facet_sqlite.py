@@ -127,6 +127,7 @@ async def test_options_avoid_repeated_live_cohort_scans(
     assert response.status_code == 200
     assert response.json() == {
         "accountIds": ["facet-a", "facet-b"],
+        "accountLabels": {},
         "apiKeys": [{"id": "facet-key", "name": "Facet key", "keyPrefix": "sk-facet"}],
         "modelOptions": [
             {"model": "model-a", "reasoningEffort": None},

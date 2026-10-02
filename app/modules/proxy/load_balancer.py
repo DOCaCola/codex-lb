@@ -18,8 +18,6 @@ from app.core.balancer import (
     HEALTH_TIER_PROBING,
     QUOTA_EXCEEDED_COOLDOWN_SECONDS,
     RATE_LIMITED_MIN_COOLDOWN_SECONDS,
-    ROUTING_POLICY_BURN_FIRST,
-    ROUTING_POLICY_PRESERVE,
     TRAFFIC_CLASS_FOREGROUND,
     TRAFFIC_CLASS_OPPORTUNISTIC,
     AccountState,
@@ -99,6 +97,11 @@ from app.modules.proxy._load_balancer.opportunistic_admission import (
     detached_runtime_snapshot,
     run_opportunistic_admission,
 )
+from app.modules.proxy._load_balancer.routing_policy import (
+    _additional_quota_routing_policy_override,
+    _normalize_account_routing_policy,
+    _parse_additional_quota_routing_policies,
+)
 from app.modules.proxy._load_balancer.sticky_selection import (
     _STICKY_EXISTING_UNSET,
     SelectionInputsProtocol,
@@ -174,11 +177,6 @@ from app.modules.proxy.fair_share import (
 )
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.quota_planner.logic import PlannerSettings
-from app.modules.usage.additional_quota_keys import (
-    canonicalize_additional_quota_key,
-    get_additional_quota_routing_policy,
-    normalize_additional_quota_key,
-)
 from app.modules.usage.mappers import usage_history_to_window_row
 
 if TYPE_CHECKING:
@@ -198,9 +196,6 @@ NO_PLAN_SUPPORT_FOR_MODEL = "no_plan_support_for_model"
 ADDITIONAL_QUOTA_DATA_UNAVAILABLE = "additional_quota_data_unavailable"
 ADDITIONAL_QUOTA_EXHAUSTED = "quota_exhausted"
 NO_ADDITIONAL_QUOTA_ELIGIBLE_ACCOUNTS = "no_additional_quota_eligible_accounts"
-_ROUTING_POLICY_NORMAL = "normal"
-_ACCOUNT_ROUTING_POLICIES = frozenset({_ROUTING_POLICY_NORMAL, ROUTING_POLICY_BURN_FIRST, ROUTING_POLICY_PRESERVE})
-_ADDITIONAL_QUOTA_ROUTING_POLICIES = _ACCOUNT_ROUTING_POLICIES | frozenset({"inherit"})
 CONTINUITY_OWNER_UNAVAILABLE = "continuity_owner_unavailable"
 CONTINUITY_OWNER_POLICY_CONFLICT = "continuity_owner_policy_conflict"
 _AMBIGUOUS_CONVERSATION_OWNER_CODE = "conversation_owner_unavailable"
@@ -2242,47 +2237,9 @@ def _record_api_key_fair_share_rejection() -> None:
         api_key_fair_share_rejections_total.inc()
 
 
-def _normalize_account_routing_policy(value: str | None) -> str:
-    if value in _ACCOUNT_ROUTING_POLICIES:
-        return value
-    return _ROUTING_POLICY_NORMAL
-
-
 async def _load_dashboard_additional_quota_routing_overrides() -> dict[str, str]:
     dashboard_settings = await get_settings_cache().get()
     return _parse_additional_quota_routing_policies(dashboard_settings.additional_quota_routing_policies_json)
-
-
-def _additional_quota_routing_policy_override(limit_name: str | None, policies: dict[str, str]) -> str | None:
-    if limit_name is None:
-        return None
-    normalized_limit_name = canonicalize_additional_quota_key(limit_name=limit_name)
-    if normalized_limit_name is None:
-        return None
-    policy = get_additional_quota_routing_policy(normalized_limit_name, overrides=policies)
-    if policy == "inherit":
-        return None
-    return policy
-
-
-def _parse_additional_quota_routing_policies(raw_policies: str) -> dict[str, str]:
-    if not raw_policies:
-        return {}
-    try:
-        parsed = json.loads(raw_policies)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    policies: dict[str, str] = {}
-    for quota_key, policy in parsed.items():
-        if not isinstance(quota_key, str) or not isinstance(policy, str):
-            continue
-        normalized_key = normalize_additional_quota_key(quota_key)
-        normalized_policy = policy.strip().lower()
-        if normalized_key and normalized_policy in _ADDITIONAL_QUOTA_ROUTING_POLICIES:
-            policies[normalized_key] = normalized_policy
-    return policies
 
 
 def _state_from_account(

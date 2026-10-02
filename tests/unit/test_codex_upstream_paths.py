@@ -595,7 +595,11 @@ async def test_compact_responses_sanitizes_foreign_reasoning_for_native_upstream
     )
 
     sent_reasoning = client.calls[0]["json"]["input"][0]
-    assert sent_reasoning == {"type": "reasoning", "content": []}
+    assert sent_reasoning == {
+        "type": "reasoning",
+        "content": [],
+        "summary": [{"type": "summary_text", "text": "foreign plaintext"}],
+    }
 
 
 @pytest.mark.asyncio
@@ -1022,7 +1026,11 @@ async def test_stream_responses_sanitizes_foreign_reasoning_for_native_upstream(
     ]
 
     sent_reasoning = client.calls[0]["json"]["input"][0]
-    assert sent_reasoning == {"type": "reasoning", "content": []}
+    assert sent_reasoning == {
+        "type": "reasoning",
+        "content": [],
+        "summary": [{"type": "summary_text", "text": "foreign plaintext"}],
+    }
     assert "foreign plaintext" in str(payload.to_payload()["input"])
 
 

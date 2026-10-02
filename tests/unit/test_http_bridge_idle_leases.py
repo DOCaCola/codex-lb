@@ -17,7 +17,7 @@ import pytest
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocket
 from app.core.errors import openai_error
-from app.db.models import AccountStatus
+from app.db.models import Account, AccountStatus
 from app.modules.api_keys.service import ApiKeyRequestUsageBudget
 from app.modules.proxy import service as proxy_service
 from app.modules.proxy._load_balancer.tunables import RoutingTunables
@@ -52,7 +52,7 @@ def _make_bridge_session(
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.2",
-        account=cast(Any, SimpleNamespace(id="acc-bridge", status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=Account(id="acc-bridge", status=AccountStatus.ACTIVE, plan_type="plus"),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),

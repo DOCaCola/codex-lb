@@ -6,7 +6,6 @@ import json
 import time
 from collections import deque
 from contextlib import nullcontext
-from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -15,7 +14,7 @@ import pytest
 
 from app.core.clients.proxy_websocket import UpstreamWebSocket
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage as _FakeUpstreamMessage
-from app.db.models import AccountStatus
+from app.db.models import Account, AccountStatus
 from app.modules.proxy import service as proxy_service
 
 pytestmark = pytest.mark.e2e
@@ -161,7 +160,7 @@ def _make_session(upstream: _CancelThenRetryUpstreamWebSocket) -> proxy_service.
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.5",
-        account=cast(Any, SimpleNamespace(id="acc-cancel-retry-e2e", status=AccountStatus.ACTIVE)),
+        account=Account(id="acc-cancel-retry-e2e", status=AccountStatus.ACTIVE),
         upstream=cast(UpstreamWebSocket, upstream),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),

@@ -1608,7 +1608,7 @@ def _make_dummy_bridge_session(session_key: proxy_module._HTTPBridgeSessionKey) 
         headers={},
         affinity=proxy_module._AffinityPolicy(),
         request_model="gpt-5.4",
-        account=cast(Account, SimpleNamespace(id=None, status=AccountStatus.ACTIVE, plan_type="plus")),
+        account=Account(id=None, status=AccountStatus.ACTIVE, plan_type="plus"),
         upstream=cast(proxy_module.UpstreamWebSocket, SimpleNamespace(close=_close)),
         upstream_control=proxy_module._WebSocketUpstreamControl(),
         pending_lock=anyio.Lock(),
@@ -3528,7 +3528,7 @@ async def test_v1_responses_http_bridge_closes_disallowed_session_before_owner_m
     stale_session = _make_dummy_bridge_session(key)
     alias_key = proxy_module._http_bridge_turn_state_alias_key("http_turn_owner_retry", key.api_key_id)
 
-    cast(Any, stale_session).account = SimpleNamespace(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")
+    stale_session.account = Account(id="acc-stale", status=AccountStatus.ACTIVE, plan_type="plus")
     cast(Any, stale_session).api_key = stale_api_key
     cast(Any, stale_session).upstream = upstream
     stale_session.downstream_turn_state_aliases.add("http_turn_owner_retry")
@@ -12007,7 +12007,7 @@ async def test_v1_responses_http_bridge_inflight_waiter_rejects_service_tier_pro
         session = _make_dummy_bridge_session(key)
         session.account = cast(
             Account,
-            SimpleNamespace(id=account_id, status=AccountStatus.ACTIVE, plan_type="pro"),
+            Account(id=account_id, status=AccountStatus.ACTIVE, plan_type="pro"),
         )
         session.request_model = request_model
         session.request_service_tier = request_service_tier

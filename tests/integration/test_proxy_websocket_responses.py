@@ -1267,7 +1267,11 @@ def test_backend_responses_websocket_sanitizes_source_reasoning_for_native_upstr
     assert created["type"] == "response.created"
     assert completed["type"] == "response.completed"
     sent_input = json.loads(upstream.sent_text[0])["input"]
-    assert sent_input[0] == {"type": "reasoning", "content": []}
+    assert sent_input[0] == {
+        "type": "reasoning",
+        "content": [],
+        "summary": [{"type": "summary_text", "text": "provider reasoning"}],
+    }
     assert "id" not in sent_input[1]
     assert sent_input[2]["content"][0]["text"] == "continue natively"
 

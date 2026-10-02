@@ -288,51 +288,6 @@ class _HTTPBridgeMixin(
         self._http_bridge_background_cleanup_failed |= any(isinstance(result, BaseException) for result in results)
         return not self._http_bridge_background_cleanup_failed
 
-    async def _fail_http_bridge_inflight_session_creation(
-        self,
-        key: "_HTTPBridgeSessionKey",
-        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
-        exc: BaseException,
-    ) -> bool:
-        if inflight_future is None:
-            return False
-        async with self._http_bridge_lock:
-            current_future = self._http_bridge_inflight_sessions.get(key)
-            if current_future is not inflight_future:
-                return False
-            if getattr(inflight_future, "_http_bridge_handoff", False):
-                return False
-            self._http_bridge_inflight_sessions.pop(key, None)
-            if inflight_future.done():
-                return True
-            if isinstance(exc, asyncio.CancelledError):
-                inflight_future.cancel()
-            else:
-                inflight_future.set_exception(exc)
-                inflight_future.exception()
-            return True
-
-    async def _evict_http_bridge_inflight_waiter(
-        self,
-        inflight_future: asyncio.Future["_HTTPBridgeSession"],
-        exc: BaseException,
-    ) -> "_HTTPBridgeSessionKey | None":
-        async with self._http_bridge_lock:
-            stale_key = None
-            for candidate_key, candidate_future in self._http_bridge_inflight_sessions.items():
-                if candidate_future is inflight_future:
-                    stale_key = candidate_key
-                    break
-            if stale_key is None:
-                return None
-            if getattr(inflight_future, "_http_bridge_handoff", False):
-                return None
-            self._http_bridge_inflight_sessions.pop(stale_key, None)
-            if not inflight_future.done():
-                inflight_future.set_exception(exc)
-                inflight_future.exception()
-            return stale_key
-
     @overload
     async def _get_or_create_http_bridge_session(
         self,

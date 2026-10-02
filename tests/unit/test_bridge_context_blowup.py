@@ -32,7 +32,7 @@ import pytest
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocket
 from app.core.errors import openai_error
-from app.db.models import AccountStatus
+from app.db.models import Account, AccountStatus
 from app.modules.proxy import service as proxy_service
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio(loop_scope="session")]
@@ -58,7 +58,7 @@ def _make_session(*, closed: bool = False) -> proxy_service._HTTPBridgeSession:
             kind=proxy_service.StickySessionKind.CODEX_SESSION,
         ),
         request_model="gpt-5.4",
-        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        account=Account(id="acc-1", status=AccountStatus.ACTIVE),
         upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
         upstream_control=proxy_service._WebSocketUpstreamControl(),
         pending_requests=deque(),

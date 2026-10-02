@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+from app.core.usage.coverage import CostCoverage
 from app.modules.request_logs.repository import (
     ConversationFacet,
     ConversationListResult,
@@ -30,6 +31,7 @@ def test_to_conversations_only_emits_api_key_fields_for_resolved_safe_name(
                 total_tokens=0,
                 cached_input_tokens=0,
                 cost_usd=0.0,
+                cost_coverage=CostCoverage(),
             )
         ],
         account_facets=[],

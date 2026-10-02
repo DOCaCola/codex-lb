@@ -202,7 +202,7 @@ def assert_output_outside_repo(
             f"Use one of {', '.join(SUGGESTED_OUTPUT_ROOTS)}."
         )
     for root in forbidden_roots:
-        root_path = Path(root)
+        root_path = Path(root).resolve()
         if resolved == root_path or root_path in resolved.parents:
             raise CaptureRefusal(
                 f"output directory must not live under {root} (storage policy): {resolved}. "
