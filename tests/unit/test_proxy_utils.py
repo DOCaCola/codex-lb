@@ -26935,6 +26935,7 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
         last_completed_response_id="resp_completed_anchor",
         last_completed_model_selector="gpt-5.1",
         last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+        last_completed_upstream_connection_id="conn-live",
     )
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
@@ -26957,6 +26958,7 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
         openai_cache_affinity_max_age_seconds=300,
         api_key=api_key,
         continuity_state=continuity_state,
+        upstream_connection_id="conn-live",
     )
 
     upstream_payload = json.loads(prepared.text_data)
@@ -26964,6 +26966,7 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
     assert upstream_payload["input"] == [new_input]
     assert prepared.request_state.previous_response_id == "resp_completed_anchor"
     assert prepared.request_state.proxy_injected_previous_response_id is True
+    assert prepared.request_state.proxy_injected_anchor_connection_id == "conn-live"
     assert prepared.request_state.input_item_count == 4
     assert prepared.request_state.input_full_fingerprint == proxy_service._fingerprint_input_items(
         [*historical_input, new_input]
@@ -26973,6 +26976,68 @@ async def test_prepare_websocket_response_create_request_injects_anchor_for_code
     fresh_payload = json.loads(prepared.request_state.fresh_upstream_request_text)
     assert "previous_response_id" not in fresh_payload
     assert fresh_payload["input"] == [*historical_input, new_input]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream_connection_id", [None, "conn-replacement"], ids=["new-connection", "other-live"])
+async def test_prepare_websocket_response_create_request_keeps_full_replay_off_the_anchor_connection(
+    monkeypatch,
+    upstream_connection_id: str | None,
+):
+    """An anchor completed on another upstream connection is never injected.
+
+    Upstream keeps ``store=false`` responses only in the memory of the
+    connection that produced them, so the client full replay goes unanchored.
+    """
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    api_key = _make_api_key_data("key_ws_retired_anchor_connection")
+
+    class Settings:
+        trace_channels = frozenset()
+
+    historical_input: list[JsonValue] = [
+        {"role": "user", "content": [{"type": "input_text", "text": "old question"}]},
+        {"type": "function_call", "name": "shell_command", "call_id": "call_old", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_old", "output": "old output"},
+    ]
+    new_input: JsonValue = {"role": "user", "content": [{"type": "input_text", "text": "next question"}]}
+    continuity_state = proxy_service._WebSocketContinuityState(
+        last_completed_input_count=len(historical_input),
+        last_completed_response_id="resp_completed_anchor",
+        last_completed_model_selector="gpt-5.1",
+        last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+        last_completed_upstream_connection_id="conn-retired",
+    )
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
+
+    prepared = await service._prepare_websocket_response_create_request(
+        cast(
+            dict[str, JsonValue],
+            {
+                "type": "response.create",
+                "model": "gpt-5.1",
+                "input": [*historical_input, new_input],
+            },
+        ),
+        headers={"session_id": "turn_ws_retired_anchor_connection"},
+        codex_session_affinity=True,
+        openai_cache_affinity=True,
+        sticky_threads_enabled=False,
+        openai_cache_affinity_max_age_seconds=300,
+        api_key=api_key,
+        continuity_state=continuity_state,
+        upstream_connection_id=upstream_connection_id,
+    )
+
+    upstream_payload = json.loads(prepared.text_data)
+    assert "previous_response_id" not in upstream_payload
+    assert upstream_payload["input"] == [*historical_input, new_input]
+    assert prepared.request_state.proxy_injected_previous_response_id is False
+    assert prepared.request_state.proxy_injected_anchor_connection_id is None
 
 
 @pytest.mark.asyncio
@@ -27220,6 +27285,7 @@ async def test_prepare_websocket_response_create_request_retires_injected_anchor
         last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
         last_pending_function_call_ids=["call_old"],
         last_pending_tool_call_types={"call_old": "function_call"},
+        last_completed_upstream_connection_id="conn-live",
     )
     monkeypatch.setattr(websocket_helpers_module, "_websocket_stale_previous_response_index", {})
     websocket_helpers_module._remember_websocket_stale_previous_response(
@@ -27247,6 +27313,7 @@ async def test_prepare_websocket_response_create_request_retires_injected_anchor
         openai_cache_affinity_max_age_seconds=300,
         api_key=api_key,
         continuity_state=continuity_state,
+        upstream_connection_id="conn-live",
     )
 
     upstream_payload = json.loads(prepared.text_data)
@@ -27372,6 +27439,7 @@ async def test_prepare_websocket_response_create_request_does_not_fresh_retry_in
         last_completed_response_id="resp_completed_anchor",
         last_completed_model_selector="gpt-5.1",
         last_completed_input_prefix_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+        last_completed_upstream_connection_id="conn-live",
     )
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: Settings())
@@ -27394,6 +27462,7 @@ async def test_prepare_websocket_response_create_request_does_not_fresh_retry_in
         openai_cache_affinity_max_age_seconds=300,
         api_key=api_key,
         continuity_state=continuity_state,
+        upstream_connection_id="conn-live",
     )
 
     upstream_payload = json.loads(prepared.text_data)
@@ -52154,7 +52223,8 @@ async def test_retry_http_bridge_precreated_request_strips_retry_safe_injected_a
 
 
 @pytest.mark.asyncio
-async def test_retry_http_bridge_precreated_request_keeps_file_backed_injected_anchor_owner_bound(monkeypatch):
+async def test_retry_http_bridge_precreated_request_withdraws_file_backed_injected_anchor_owner_bound(monkeypatch):
+    """The retry reconnects, retiring the anchor; the file-backed replay stays with its owner."""
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     account = _make_account("acc_bridge_file_backed_anchor")
@@ -52212,7 +52282,12 @@ async def test_retry_http_bridge_precreated_request_keeps_file_backed_injected_a
         idle_ttl_seconds=30.0,
         last_upstream_close_code=1011,
     )
-    reconnect = AsyncMock(return_value=None)
+    request_state.proxy_injected_anchor_connection_id = session.connection_id
+
+    async def replace_connection(*_args: object, **_kwargs: object) -> None:
+        session.connection_id = "conn-after-reconnect"
+
+    reconnect = AsyncMock(side_effect=replace_connection)
     monkeypatch.setattr(service, "_reconnect_http_bridge_session", reconnect)
 
     retried = await service._retry_http_bridge_precreated_request(session)
@@ -52224,13 +52299,13 @@ async def test_retry_http_bridge_precreated_request_keeps_file_backed_injected_a
         require_same_account=False,
         require_preferred_account=True,
     )
-    send_text.assert_awaited_once_with(original_text)
-    assert request_state.request_text == original_text
-    assert request_state.previous_response_id == "resp_anchor"
-    assert request_state.preferred_account_id == account.id
+    send_text.assert_awaited_once_with(fresh_text)
+    assert request_state.request_text == fresh_text
+    assert request_state.previous_response_id is None
+    # The file-backed replay is not account-neutral: it stays with the file owner.
+    assert request_state.replay_required_account_id == account.id
     assert request_state.excluded_account_ids == set()
-    assert request_state.proxy_injected_previous_response_id is True
-    assert request_state.fresh_upstream_request_is_retry_safe is True
+    assert request_state.proxy_injected_previous_response_id is False
     assert request_state.replay_count == 1
 
 

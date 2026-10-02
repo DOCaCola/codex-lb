@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any, Iterator, Mapping, NoReturn, cast
+from uuid import uuid4
 
 import aiohttp
 import anyio
@@ -447,6 +448,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _upstream_websocket_disconnect_message,
     _websocket_accepted_replay_can_switch_account,
     _websocket_accepted_replay_may_exclude_account,
+    _websocket_anchor_connection_retired_error,
     _websocket_auth_failure_requires_reauth,
     _websocket_capability_metadata_values,
     _websocket_client_previous_response_full_resend_is_retry_safe,
@@ -1520,6 +1522,10 @@ class _WebSocketMixin:
         client_send_lock = anyio.Lock()
         response_create_gate = asyncio.Semaphore(1)
         upstream: UpstreamWebSocket | None = None
+        # Identity of ``upstream``. Upstream keeps ``store=false`` responses
+        # only in the memory of the connection that produced them, so
+        # proxy-injected anchors are bound to this id.
+        upstream_connection_id: str | None = None
         upstream_reader: asyncio.Task[None] | None = None
         upstream_control: _WebSocketUpstreamControl | None = None
         continuity_state = proxy._websocket_continuity_state_for_request(
@@ -1871,6 +1877,7 @@ class _WebSocketMixin:
                                     prohibit_fast_mode=prohibit_fast_mode,
                                     api_key=api_key,
                                     continuity_state=continuity_state,
+                                    upstream_connection_id=upstream_connection_id if upstream is not None else None,
                                     useragent=useragent,
                                     useragent_group=useragent_group,
                                     conversation_id=conversation_id,
@@ -1912,6 +1919,9 @@ class _WebSocketMixin:
                                         prohibit_fast_mode=prohibit_fast_mode,
                                         api_key=api_key,
                                         continuity_state=continuity_state,
+                                        upstream_connection_id=(
+                                            upstream_connection_id if upstream is not None else None
+                                        ),
                                         useragent=useragent,
                                         useragent_group=useragent_group,
                                         conversation_id=conversation_id,
@@ -2730,6 +2740,7 @@ class _WebSocketMixin:
                         # owner when a transparent replay reconnects.
                         upstream_turn_state = None
                     upstream_account_id = account.id
+                    upstream_connection_id = uuid4().hex
                     upstream_requires_security_work_authorized = request_state.require_security_work_authorized
                     upstream_turn_state = _facade()._upstream_turn_state_from_socket(upstream) or upstream_turn_state
                     upstream_control = _WebSocketUpstreamControl()
@@ -2779,6 +2790,39 @@ class _WebSocketMixin:
                             )
                         )
                         request_state.account_response_create_release = proxy._load_balancer.release_account_lease
+                    if (
+                        text_data is not None
+                        and request_state is not None
+                        and payload is not None
+                        and _is_websocket_response_create(payload)
+                    ):
+                        if (
+                            request_state.proxy_injected_previous_response_id
+                            and request_state.proxy_injected_anchor_connection_id != upstream_connection_id
+                        ):
+                            # The connection that completed the injected
+                            # anchor retired before this frame was sent, and
+                            # no other connection can resolve it. Send the
+                            # client's own unanchored request instead; a
+                            # request without one relied on the anchor for its
+                            # context and fails closed before dispatch.
+                            anchor_response_id = request_state.previous_response_id
+                            fresh_request_text = _install_verified_fresh_replay(
+                                request_state,
+                                require_account_neutral=False,
+                            )
+                            outcome = "fail_closed" if fresh_request_text is None else "full_history_resend"
+                            _facade().logger.info(
+                                "websocket_session_anchor_withdrawn request_id=%s response_id=%s "
+                                "reason=anchor_connection_retired outcome=%s",
+                                request_state.request_id,
+                                anchor_response_id,
+                                outcome,
+                            )
+                            if fresh_request_text is None:
+                                raise _websocket_anchor_connection_retired_error()
+                            text_data = fresh_request_text
+                        request_state.upstream_connection_id = upstream_connection_id
                     if (
                         text_data is not None
                         and request_state is not None
@@ -3256,6 +3300,7 @@ class _WebSocketMixin:
         api_key: ApiKeyData | None,
         prohibit_fast_mode: bool = False,
         continuity_state: "_WebSocketContinuityState | None" = None,
+        upstream_connection_id: str | None = None,
         useragent: str | None = None,
         useragent_group: str | None = None,
         conversation_id: str | None = None,
@@ -3467,6 +3512,7 @@ class _WebSocketMixin:
                 responses_payload=responses_payload,
                 raw_source_model=raw_source_model,
                 codex_session_affinity=codex_session_affinity,
+                upstream_connection_id=upstream_connection_id,
                 api_key_id=refreshed_api_key.id if refreshed_api_key is not None else None,
             )
         if session_anchor is not None:
@@ -3566,6 +3612,7 @@ class _WebSocketMixin:
         original_full_resend_input: JsonValue | None = None
         if session_anchor is not None:
             request_state.proxy_injected_previous_response_id = True
+            request_state.proxy_injected_anchor_connection_id = session_anchor.upstream_connection_id
             request_state.input_item_count = original_input_item_count or request_state.input_item_count
             request_state.input_full_fingerprint = original_input_fingerprint
             if original_full_resend_payload is not None:

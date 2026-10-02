@@ -454,14 +454,23 @@ def _bind_http_bridge_proxy_injected_anchor(
     response_id: str | None,
     proxy_injected: bool = True,
     fence_request_id: str | None = None,
+    anchor_connection_id: str | None = None,
 ) -> None:
-    """Bind denial provenance to the response id currently carried by a request."""
+    """Bind denial provenance to the response id currently carried by a request.
+
+    ``anchor_connection_id`` names the upstream connection that completed the
+    injected anchor. Only that connection can resolve a ``store=false``
+    response, so an anchor bound without one is withdrawn at the send boundary.
+    """
     previous_fence_request_id = request_state.denied_proxy_injected_anchor_fence_request_id
     _release_http_bridge_denied_anchor_fences(service, request_state.request_id)
     if previous_fence_request_id is not None and previous_fence_request_id != request_state.request_id:
         _release_http_bridge_denied_anchor_fences(service, previous_fence_request_id)
     request_state.previous_response_id = response_id
     request_state.proxy_injected_previous_response_id = proxy_injected and response_id is not None
+    request_state.proxy_injected_anchor_connection_id = (
+        anchor_connection_id if request_state.proxy_injected_previous_response_id else None
+    )
     request_state.denied_proxy_injected_anchor_fence_response_id = (
         response_id if request_state.proxy_injected_previous_response_id else None
     )
@@ -481,6 +490,27 @@ def _bind_http_bridge_proxy_injected_anchor(
             response_id,
             effective_fence_request_id,
         )
+
+
+def _http_bridge_session_anchor_connection_id(session: _HTTPBridgeSession, response_id: str) -> str | None:
+    """Return the session's connection when it completed ``response_id`` itself."""
+    return session.connection_id if response_id == session.last_completed_response_id else None
+
+
+def _http_bridge_anchor_connection_retired_error() -> ProxyResponseError:
+    """Error for a delta-only request whose anchor's upstream connection has closed.
+
+    It is always raised before anything reaches upstream.
+    """
+    return ProxyResponseError(
+        404,
+        openai_error(
+            "bridge_previous_response_not_found",
+            "The upstream connection holding the conversation state this request relies on "
+            "has closed; resend the full conversation history or start a new conversation.",
+        ),
+        local_pre_dispatch_refusal=True,
+    )
 
 
 def _forget_http_bridge_denied_anchor_fence(

@@ -8231,11 +8231,17 @@ async def test_v1_responses_http_bridge_classifies_responses_lite_developer_inte
     async_client,
     app_instance,
     monkeypatch,
+    caplog,
     developer_message_extra,
     fresh_developer_message,
     leading_input_item,
     preserves_full_resend,
 ):
+    """A Responses Lite full resend after the owning connection is gone is
+    classified against the stored turn: only a proven resend keeps the
+    durable full-resend proof (and its owner-bound routing). Either way the
+    replacement connection cannot resolve the durable anchor, so the client's
+    full body is dispatched unanchored."""
     _install_bridge_settings(monkeypatch, enabled=True)
     account_id = await _import_account(
         async_client,
@@ -8356,6 +8362,7 @@ async def test_v1_responses_http_bridge_classifies_responses_lite_developer_inte
             "output": "/workspace",
         },
     ]
+    caplog.set_level(logging.INFO, logger="app.modules.proxy.service")
     second_task = asyncio.create_task(
         async_client.post(
             "/v1/responses",
@@ -8388,11 +8395,20 @@ async def test_v1_responses_http_bridge_classifies_responses_lite_developer_inte
     assert len(first_upstream.sent_text) == 1
     assert len(replay_upstream.sent_text) == 1
     replay_payload = json.loads(replay_upstream.sent_text[0])
-    if preserves_full_resend:
-        assert "previous_response_id" not in replay_payload
-        assert replay_payload["input"] == full_resend
-    else:
-        assert replay_payload["previous_response_id"] == "resp_bridge_custom_1"
+    assert "previous_response_id" not in replay_payload
+    # A response-owned item id names a ``store=false`` item that the new
+    # connection cannot resolve, so the unanchored dispatch carries the item
+    # content without it.
+    assert replay_payload["input"] == [
+        {key: value for key, value in item.items() if key != "id"} if item.get("id") == "msg_response_owned" else item
+        for item in full_resend
+    ]
+    preserved = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=fresh_reattach_full_resend_preserved" in record.getMessage()
+    ]
+    assert bool(preserved) is preserves_full_resend
 
 
 @pytest.mark.asyncio
@@ -8840,6 +8856,14 @@ async def test_v1_responses_http_bridge_rebinds_immediately_when_the_owner_canno
     The scheduled sweep frees a dormant thread six hours after its last turn.
     That is too late for the turn a user is actually waiting on, so the connect
     failure retires the owner in place and rebinds within the same request.
+
+    The resume is a client full resend whose history the stored turn cannot
+    prove (the client edited its earlier message), so it is not eligible for the
+    account-neutral replay and only retirement lets it move. A fresh connection
+    cannot resolve the durable anchor (store=false responses live only on the
+    upstream connection that completed them), so the rebound body goes out
+    unanchored; a delta-only resume has no context to rebind with and fails
+    closed before owner selection.
     """
     _install_bridge_settings(monkeypatch, enabled=True)
     owner_account_id = await _import_account(
@@ -8939,7 +8963,16 @@ async def test_v1_responses_http_bridge_rebinds_immediately_when_the_owner_canno
             json={
                 "model": "gpt-5.1",
                 "instructions": "Return exactly OK.",
-                "input": "continue",
+                "input": [
+                    {"role": "user", "content": [{"type": "input_text", "text": "hello, edited by the client"}]},
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "OK"}],
+                    },
+                    {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+                ],
                 "prompt_cache_key": "http-bridge-instant-retire",
             },
         ),
@@ -8948,6 +8981,9 @@ async def test_v1_responses_http_bridge_rebinds_immediately_when_the_owner_canno
 
     assert second.status_code == 200
     assert served_account_ids[-1] == healthy_account.id
+    rebound_payload = json.loads(upstream.sent_text[-1])
+    assert "previous_response_id" not in rebound_payload
+    assert len(rebound_payload["input"]) == 3
     retired = [record.getMessage() for record in caplog.records if "owner_retired_on_request" in record.getMessage()]
     assert len(retired) == 1
     assert "outcome=rebind_without_anchor" in retired[0]
@@ -9860,15 +9896,14 @@ async def test_backend_responses_http_bridge_declines_cross_account_anchor_and_s
         candidate for candidate in service._http_bridge_sessions.values() if candidate.account.id == serving_account.id
     )
     assert bridge_session.codex_session is True
-    # The turn settled on the serving account, so the gate is free and the
-    # session anchor is now owned by the account that actually created it.
+    # The turn settled on the serving connection, so the gate is free and the
+    # session anchor is the response that connection actually created.
     assert bridge_session.response_create_gate.locked() is False
     assert bridge_session.last_completed_response_id == "resp_cross_account_serving_1"
-    assert bridge_session.last_completed_response_account_id == serving_account.id
 
-    # Same-account continuity is untouched: once the durable record names the
-    # account that actually created the response, the very next turn anchors on
-    # it instead of resending the whole history.
+    # Same-connection continuity is untouched: the very next turn on the live
+    # connection anchors on its own response instead of resending the whole
+    # history.
     durable_record = _durable_record(
         account_id=serving_account.id,
         latest_response_id="resp_cross_account_serving_1",
@@ -16570,15 +16605,18 @@ async def test_prepare_http_bridge_request_preserves_existing_client_metadata(ap
     assert first_request_state.request_id != second_request_state.request_id
 
 
-class _EventsWithoutCreatedUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
-    """Streams response events but never ``response.created``, then closes.
+class _InterruptedCustomToolThenWedgedUpstreamWebSocket(_InterruptedCustomToolUpstreamWebSocket):
+    """Completes turn 1 with an unresolved ``custom_tool_call``, then wedges.
 
-    Models the #1534 production wedge: a reattached HTTP-bridge stream that
-    delivers upstream response events whose ``response.created`` is never
-    assigned, so the turn can only end without a completed response.
+    The follow-up on the same live connection carries the proxy-injected
+    anchor and gets the #1534 wedge: response events stream but
+    ``response.created`` never arrives, then the socket closes.
     """
 
     async def send_text(self, text: str) -> None:
+        if not self.sent_text:
+            await super().send_text(text)
+            return
         self.sent_text.append(text)
         for delta in ("thinking", " harder"):
             await self._messages.put(
@@ -16594,13 +16632,15 @@ class _EventsWithoutCreatedUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
 
 
 @pytest.mark.asyncio
-async def test_v1_responses_http_bridge_quarantines_reattach_that_streams_without_response_created(
+async def test_v1_responses_http_bridge_quarantines_anchored_turn_that_streams_without_response_created(
     async_client, app_instance, monkeypatch
 ):
-    """Regression for #1534: a reattach that streams events but never gets
-    ``response.created`` must quarantine the session so the next request does
-    not rebuild the identical anchored reattach and instead completes on the
-    fresh no-anchor path."""
+    """Regression for #1534: an anchored turn that streams events but never
+    gets ``response.created`` must quarantine the session so the next request
+    does not rebuild the identical anchored attach and instead completes on
+    the fresh no-anchor path. The anchor is injected only on the live
+    connection that completed it; the fresh path runs on a new connection,
+    where it cannot be resolved."""
     _install_bridge_settings_with_limits(monkeypatch, enabled=True, instance_id=socket.gethostname())
     account_id = await _import_account(
         async_client,
@@ -16610,10 +16650,9 @@ async def test_v1_responses_http_bridge_quarantines_reattach_that_streams_withou
     account = await _get_account(account_id)
     service = get_proxy_service_for_app(app_instance)
     http_bridge_quarantine_module._http_bridge_quarantine_registry(service).clear()
-    first_upstream = _ClosingInterruptedCustomToolUpstreamWebSocket("resp_quarantine_source")
-    wedged_upstream = _EventsWithoutCreatedUpstreamWebSocket("resp_quarantine_wedge")
+    wedged_upstream = _InterruptedCustomToolThenWedgedUpstreamWebSocket("resp_quarantine_source")
     fresh_upstream = _FakeBridgeUpstreamWebSocket("resp_quarantine_fresh")
-    upstreams = [first_upstream, wedged_upstream, fresh_upstream]
+    upstreams = [wedged_upstream, fresh_upstream]
     connect_count = 0
 
     async def fake_select_account_with_budget(self, deadline, **kwargs):
@@ -16641,7 +16680,12 @@ async def test_v1_responses_http_bridge_quarantines_reattach_that_streams_withou
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
     monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
 
-    session_headers = {"x-codex-session-id": "quarantine-silent-reattach"}
+    # The turn-state header makes the bridge session a Codex continuity
+    # session, which arms the live-connection anchor injection.
+    session_headers = {
+        "x-codex-session-id": "quarantine-silent-reattach",
+        "x-codex-turn-state": "quarantine-silent-reattach-turn",
+    }
     historical_input = [
         {"role": "user", "content": [{"type": "input_text", "text": "leading question"}]},
         {
@@ -16715,11 +16759,12 @@ async def test_v1_responses_http_bridge_quarantines_reattach_that_streams_withou
         timeout=_TEST_SYNC_TIMEOUT_SECONDS,
     )
 
-    # The reattach injected the durable anchor and then wedged: events flowed
-    # but response.created never arrived, so the turn fails terminally.
+    # The live connection injected its own completed response as the anchor
+    # and then wedged: events flowed but response.created never arrived, so
+    # the turn fails terminally.
     assert second.status_code != 200
-    assert len(wedged_upstream.sent_text) == 1
-    wedged_payload = json.loads(wedged_upstream.sent_text[0])
+    assert len(wedged_upstream.sent_text) == 2
+    wedged_payload = json.loads(wedged_upstream.sent_text[1])
     assert wedged_payload["previous_response_id"] == "resp_bridge_custom_1"
     quarantined_entries = [
         entry
@@ -16742,11 +16787,11 @@ async def test_v1_responses_http_bridge_quarantines_reattach_that_streams_withou
         timeout=_TEST_SYNC_TIMEOUT_SECONDS,
     )
 
-    # The quarantined key must not rebuild the identical anchored reattach:
-    # the client's own full resend goes upstream unanchored and completes.
+    # The quarantined key must not rebuild the identical anchored attach: the
+    # client's own full resend goes upstream unanchored and completes.
     assert third.status_code == 200, third.text
     assert third.json()["id"] == "resp_quarantine_fresh_1"
-    assert connect_count == 3
+    assert connect_count == 2
     assert len(fresh_upstream.sent_text) == 1
     fresh_payload = json.loads(fresh_upstream.sent_text[0])
     assert "previous_response_id" not in fresh_payload
@@ -16765,11 +16810,11 @@ async def test_v1_responses_http_bridge_quarantined_unsafe_full_resend_dispatche
 ):
     """Regression for the #1534 session-state side door: a quarantined
     full-resend whose durable prefix is trimmable but whose fresh suffix does
-    NOT retain the prior output must go upstream genuinely unanchored. Before
-    the fix, the early durable-anchor injection was suppressed but session
-    hydration restored ``last_completed_response_id`` and the session-level
-    injection re-added the same anchor and trimmed the prefix — rebuilding the
-    wedge despite the ``fresh_reattach_anchor_skipped_quarantined`` log."""
+    NOT retain the prior output must go upstream genuinely unanchored and
+    untrimmed. Session hydration once restored ``last_completed_response_id``
+    from the durable row, so the session-level injection re-added the anchor
+    and trimmed the prefix. A fresh session now never carries an anchor from
+    another upstream connection, so no path can rebuild that reattach."""
     _install_bridge_settings_with_limits(monkeypatch, enabled=True, instance_id=socket.gethostname())
     account_id = await _import_account(
         async_client,
@@ -16779,10 +16824,9 @@ async def test_v1_responses_http_bridge_quarantined_unsafe_full_resend_dispatche
     account = await _get_account(account_id)
     service = get_proxy_service_for_app(app_instance)
     http_bridge_quarantine_module._http_bridge_quarantine_registry(service).clear()
-    first_upstream = _ClosingInterruptedCustomToolUpstreamWebSocket("resp_quarantine_unsafe_source")
-    wedged_upstream = _EventsWithoutCreatedUpstreamWebSocket("resp_quarantine_unsafe_wedge")
+    wedged_upstream = _InterruptedCustomToolThenWedgedUpstreamWebSocket("resp_quarantine_unsafe_source")
     fresh_upstream = _FakeBridgeUpstreamWebSocket("resp_quarantine_unsafe_fresh")
-    upstreams = [first_upstream, wedged_upstream, fresh_upstream]
+    upstreams = [wedged_upstream, fresh_upstream]
     connect_count = 0
 
     async def fake_select_account_with_budget(self, deadline, **kwargs):
@@ -16890,11 +16934,11 @@ async def test_v1_responses_http_bridge_quarantined_unsafe_full_resend_dispatche
         timeout=_TEST_SYNC_TIMEOUT_SECONDS,
     )
 
-    # The reattach injected the durable anchor and then wedged: the key is now
+    # The anchored follow-up on the live connection wedged: the key is now
     # quarantined.
     assert second.status_code != 200
-    assert len(wedged_upstream.sent_text) == 1
-    assert json.loads(wedged_upstream.sent_text[0])["previous_response_id"] == "resp_bridge_custom_1"
+    assert len(wedged_upstream.sent_text) == 2
+    assert json.loads(wedged_upstream.sent_text[1])["previous_response_id"] == "resp_bridge_custom_1"
     assert [
         entry
         for entry in http_bridge_quarantine_module._http_bridge_quarantine_registry(service).values()
@@ -16925,7 +16969,7 @@ async def test_v1_responses_http_bridge_quarantined_unsafe_full_resend_dispatche
     # no session-level re-injection of the same anchor, no prefix trim.
     assert third.status_code == 200, third.text
     assert third.json()["id"] == "resp_quarantine_unsafe_fresh_1"
-    assert connect_count == 3
+    assert connect_count == 2
     assert len(fresh_upstream.sent_text) == 1
     fresh_payload = json.loads(fresh_upstream.sent_text[0])
     assert "previous_response_id" not in fresh_payload

@@ -1609,7 +1609,6 @@ async def _invalidate_denied_http_bridge_anchor(
                 async with session.lifecycle_lock:
                     if session.last_completed_response_id == denied_response_id:
                         session.last_completed_response_id = None
-                        session.last_completed_response_account_id = None
                         session.last_completed_input_count = 0
                         session.last_completed_input_prefix_fingerprint = None
                         session.last_pending_tool_calls.clear()
@@ -4085,10 +4084,10 @@ class _HTTPBridgeUpstreamEventsMixin:
             # anchor for continuity lookups.
             if response_id is not None:
                 session.last_completed_response_id = response_id
-                # This response was completed on the session's current account, so
-                # that account owns the anchor. Record it so the anchor is only
-                # replayed on the same account (never after a cross-account failover).
-                session.last_completed_response_account_id = session.account.id
+                # Only completions on the session's current connection become
+                # injectable anchors: upstream keeps ``store=false`` responses
+                # only in the memory of the connection that produced them, and
+                # a reconnect clears this anchor.
                 # Remember which tool-call items the completed response left
                 # pending so an anchored follow-up that omits their outputs
                 # (interrupted turn) can receive synthetic interrupted

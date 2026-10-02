@@ -85,6 +85,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _capture_http_bridge_denied_anchor_fence,
     _effective_http_bridge_idle_ttl_seconds,
     _http_bridge_abandonment_may_settle_circuit,
+    _http_bridge_anchor_connection_retired_error,
     _http_bridge_continuity_bound_without_safe_replay,
     _http_bridge_durable_lookup_allows_turn_state_takeover,
     _http_bridge_eventless_budget_seconds,
@@ -1760,7 +1761,12 @@ class _HTTPBridgeStreamingMixin:
                 durable_lookup=durable_lookup,
             )
             forwards_to_active_owner = await self._http_bridge_can_forward_to_active_owner(durable_lookup)
-            fresh_reattach_can_use_durable_anchor = (
+            # A new upstream connection serves this hard-continuity
+            # conversation. Upstream keeps ``store=false`` responses only in
+            # the memory of the connection that produced them, so the durable
+            # anchor cannot be resolved there: a full resend goes unanchored,
+            # and a delta-only payload has lost the context it relies on.
+            fresh_reattach_after_durable_anchor = (
                 not live_local_session_exists
                 and not forwards_to_active_owner
                 and payload.previous_response_id is None
@@ -1799,7 +1805,7 @@ class _HTTPBridgeStreamingMixin:
                 # rebind), the suppression must still reach the session
                 # hydration, session-level injection, and recovery injection
                 # paths below.
-                fresh_reattach_can_use_durable_anchor = False
+                fresh_reattach_after_durable_anchor = False
                 fresh_reattach_anchor_suppressed_quarantined = True
                 _log_http_bridge_event(
                     "fresh_reattach_anchor_skipped_quarantined",
@@ -1810,16 +1816,13 @@ class _HTTPBridgeStreamingMixin:
                     cache_key_family=bridge_session_key.affinity_kind,
                     model_class=_extract_model_class(payload.model) if payload.model else None,
                 )
-            if (
-                fresh_reattach_can_use_durable_anchor
-                and payload_looks_like_full_resend
-                and durable_full_resend_has_safe_fresh_context
-            ):
-                if durable_full_resend_proof is not None and durable_full_resend_proof.matches(payload, durable_lookup):
+            if fresh_reattach_after_durable_anchor and payload_looks_like_full_resend:
+                if (
+                    durable_full_resend_has_safe_fresh_context
+                    and durable_full_resend_proof is not None
+                    and durable_full_resend_proof.matches(payload, durable_lookup)
+                ):
                     durable_full_resend_fresh_bridge_proof = durable_full_resend_proof
-                    # The client already supplied a proved complete fresh
-                    # request. Adding a durable anchor here can strand it on
-                    # the new WebSocket.
                     _log_http_bridge_event(
                         "fresh_reattach_full_resend_preserved",
                         bridge_session_key,
@@ -1829,38 +1832,17 @@ class _HTTPBridgeStreamingMixin:
                         cache_key_family=bridge_session_key.affinity_kind,
                         model_class=_extract_model_class(payload.model) if payload.model else None,
                     )
-                else:
-                    effective_payload = payload.model_copy(
-                        update={"previous_response_id": durable_lookup.latest_response_id}
-                    )
-                    proxy_injected_previous_response_id = True
-                    _fresh_request_state, fresh_upstream_request_text = prepare_bridge_request(payload)
-                    del _fresh_request_state
-                    _log_http_bridge_event(
-                        "fresh_reattach_anchor_injected",
-                        bridge_session_key,
-                        account_id=None,
-                        model=payload.model,
-                        detail=f"response_id={durable_lookup.latest_response_id}",
-                        cache_key_family=bridge_session_key.affinity_kind,
-                        model_class=_extract_model_class(payload.model) if payload.model else None,
-                    )
-            elif fresh_reattach_can_use_durable_anchor:
-                effective_payload = payload.model_copy(
-                    update={"previous_response_id": durable_lookup.latest_response_id}
-                )
-                proxy_injected_previous_response_id = True
-                _fresh_request_state, fresh_upstream_request_text = prepare_bridge_request(payload)
-                del _fresh_request_state
+            elif fresh_reattach_after_durable_anchor:
                 _log_http_bridge_event(
-                    "fresh_reattach_anchor_injected",
+                    "fresh_reattach_delta_fail_closed",
                     bridge_session_key,
-                    account_id=None,
+                    account_id=durable_lookup.account_id,
                     model=payload.model,
-                    detail=f"response_id={durable_lookup.latest_response_id}",
+                    detail=f"response_id={durable_lookup.latest_response_id}, reason=anchor_connection_retired",
                     cache_key_family=bridge_session_key.affinity_kind,
                     model_class=_extract_model_class(payload.model) if payload.model else None,
                 )
+                raise _http_bridge_anchor_connection_retired_error()
         account_neutral_recovery = is_http_bridge_account_neutral_replay(
             kind=bridge_session_key.affinity_kind,
             key=bridge_session_key.affinity_key,
@@ -1903,15 +1885,6 @@ class _HTTPBridgeStreamingMixin:
                 previous_response_trimmed_input_fingerprint = _fingerprint_input_items(previous_response_input_items)
                 effective_payload = effective_payload.model_copy(update={"input": trimmed_input_items})
         request_state, text_data = prepare_bridge_request(effective_payload)
-        if proxy_injected_previous_response_id and request_state.previous_response_id is not None:
-            # Capture denial provenance before owner lookups below can suspend
-            # while a detached predecessor rejects the same durable anchor.
-            _bind_http_bridge_proxy_injected_anchor(
-                self,
-                request_state,
-                response_id=request_state.previous_response_id,
-                fence_request_id=request_id,
-            )
         request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
         request_state.affinity_policy = affinity
         request_state.affinity_observation = AffinityObservation.retaining_source(
@@ -2051,19 +2024,7 @@ class _HTTPBridgeStreamingMixin:
             and request_state.preferred_account_id == continuity_preferred_account_id
         )
         file_required_preferred_account = rewritten_file_account_id is not None
-        if proxy_injected_previous_response_id:
-            request_state.proxy_injected_previous_response_id = True
-            request_state.proxy_injected_anchor_had_full_resend_payload = payload_looks_like_full_resend
-            request_state.fresh_upstream_request_text = fresh_upstream_request_text or text_data
-            # Durable-anchor injection runs when the incoming payload is
-            # *not* a full resend, or when a full resend failed the sealed
-            # owner-bound proof (missing owner metadata or fingerprint), so
-            # the captured unanchored text cannot be assumed to carry the
-            # complete conversational context the anchor was pointing at.
-            # Only the trim branch below (which verifies the stored prefix
-            # fingerprint) is allowed to flip this flag to ``True``.
-            request_state.fresh_upstream_request_is_retry_safe = False
-        elif (
+        if (
             effective_payload.previous_response_id is not None
             and payload_looks_like_full_resend
             and durable_full_resend_anchor_count is not None
@@ -2910,23 +2871,21 @@ class _HTTPBridgeStreamingMixin:
                     and isinstance(recovery_payload.input, list)
                     and len(recovery_payload.input) > durable_full_resend_anchor_count
                 ):
-                    # The recovery rebind above is allowed to bind this session to
-                    # an account other than the durable owner. A previous_response_id
-                    # is account-scoped upstream, so replaying the durable anchor on
-                    # a different account sends an anchor upstream cannot resolve
-                    # with the history trimmed away: no response.created arrives and
-                    # the per-bridge response-create gate wedges. Resend the full
-                    # history on the serving account instead.
-                    if durable_lookup.account_id != session.account.id:
+                    # Upstream keeps ``store=false`` responses only in the
+                    # memory of the connection that produced them. The durable
+                    # anchor is usable only when the rebound session is that
+                    # connection (ownership flapped back to this instance);
+                    # otherwise resend the full history on the serving session.
+                    if session.last_completed_response_id != durable_lookup.latest_response_id:
                         _log_http_bridge_event(
-                            "cross_account_anchor_declined",
+                            "anchor_declined",
                             bridge_session_key,
                             account_id=session.account.id,
                             model=recovery_payload.model,
                             detail=(
                                 "site=owner_forward_recovery, "
                                 f"response_id={durable_lookup.latest_response_id}, "
-                                f"anchor_account_id={durable_lookup.account_id}, "
+                                "reason=anchor_connection_mismatch, "
                                 "outcome=full_history_resend"
                             ),
                             cache_key_family=bridge_session_key.affinity_kind,
@@ -2955,12 +2914,6 @@ class _HTTPBridgeStreamingMixin:
                             recovery_anchor_fence_response_id,
                             request_id,
                         )
-                        if durable_lookup.latest_response_id != session.last_completed_response_id:
-                            session.last_pending_tool_calls = {}
-                        session.last_completed_response_id = durable_lookup.latest_response_id
-                        session.last_completed_response_account_id = durable_lookup.account_id
-                        session.last_completed_input_count = durable_full_resend_anchor_count
-                        session.last_completed_input_prefix_fingerprint = durable_full_resend_anchor_fingerprint
                         _log_http_bridge_event(
                             "owner_forward_recovery_anchor_injected",
                             bridge_session_key,
@@ -3015,6 +2968,9 @@ class _HTTPBridgeStreamingMixin:
                         retry_request_state.input_item_count = recovery_anchor_input_count
                         retry_request_state.input_full_fingerprint = recovery_anchor_input_fingerprint
                         retry_request_state.proxy_injected_previous_response_id = True
+                        # Injected only when the rebound session's own
+                        # connection completed the durable anchor.
+                        retry_request_state.proxy_injected_anchor_connection_id = session.connection_id
                         retry_request_state.denied_proxy_injected_anchor_fence_generation_at_prepare = (
                             recovery_anchor_fence_generation
                             if recovery_anchor_fence_generation is not None
@@ -3064,32 +3020,6 @@ class _HTTPBridgeStreamingMixin:
                             session.last_used_at = clock.monotonic()
                 return
         session = session_or_forward
-        if (
-            # A quarantine-suppressed anchor (#1534) must not be rehydrated
-            # into the session either: doing so would let the session-level
-            # injection below re-add the exact anchor the quarantine skipped
-            # and trim the prefix, rebuilding the wedged reattach.
-            not fresh_reattach_anchor_suppressed_quarantined
-            and not durable_full_resend_has_safe_fresh_context
-            and durable_full_resend_anchor_count is not None
-            and durable_full_resend_anchor_fingerprint is not None
-            and durable_lookup is not None
-            and durable_lookup.latest_response_id is not None
-        ):
-            if durable_lookup.latest_response_id != session.last_completed_response_id:
-                # The pending tool calls were recorded for the session's own
-                # last completed response; a durable anchor pointing elsewhere
-                # must not trigger interrupted-output injection.
-                session.last_pending_tool_calls = {}
-            session.last_completed_response_id = durable_lookup.latest_response_id
-            # The durable anchor is owned by the durable session's account, which
-            # may differ from this session's account after a failover. Record the
-            # owner so the session-anchor injection below can refuse to replay a
-            # cross-account previous_response_id (upstream cannot resolve it and
-            # would stall with no response.created — a wedged response-create gate).
-            session.last_completed_response_account_id = durable_lookup.account_id
-            session.last_completed_input_count = durable_full_resend_anchor_count
-            session.last_completed_input_prefix_fingerprint = durable_full_resend_anchor_fingerprint
         # --- Session-level previous_response_id injection ---
         # If the client didn't send previous_response_id and the durable
         # lookup didn't inject one, but this bridge session is carrying
@@ -3097,6 +3027,11 @@ class _HTTPBridgeStreamingMixin:
         # request on this logical conversation, inject the session's last
         # completed response ID so the trim branch below can strip the
         # already-stored prefix.
+        #
+        # Only completions on the session's current connection are
+        # injectable: upstream keeps ``store=false`` responses only in the
+        # memory of the connection that produced them. The anchor is bound to
+        # that connection and withdrawn if the session reconnects before send.
         #
         # Correctness guards:
         # - Soft affinity reuse (for example prompt cache / sticky-thread
@@ -3116,17 +3051,6 @@ class _HTTPBridgeStreamingMixin:
             stored_count=stored_count_preview,
             stored_fingerprint=stored_fingerprint_preview,
         )
-        # A previous_response_id is account-scoped upstream: only the account that
-        # created the response can resume it. If this session's serving account is
-        # not the anchor's owner (e.g. the session failed over after the durable
-        # owner became unavailable), injecting the anchor sends an unresolvable
-        # previous_response_id upstream with the history trimmed away — upstream
-        # then never emits response.created and the response-create gate wedges
-        # ("idle timeout waiting for SSE"). Fall through to a full-history resend.
-        session_anchor_account_owned = (
-            session.last_completed_response_account_id is not None
-            and session.last_completed_response_account_id == session.account.id
-        )
         recovery_session_can_anchor = is_http_bridge_account_neutral_replay(
             kind=session.key.affinity_kind,
             key=session.key.affinity_key,
@@ -3142,23 +3066,7 @@ class _HTTPBridgeStreamingMixin:
             and session.last_completed_response_id is not None
             and (session_anchor_trimmable or recovery_session_can_anchor)
         )
-        if session_anchor_candidate and not session_anchor_account_owned:
-            _log_http_bridge_event(
-                "cross_account_anchor_declined",
-                session.key,
-                account_id=session.account.id,
-                model=effective_payload.model,
-                detail=(
-                    "site=session_anchor, "
-                    f"response_id={session.last_completed_response_id}, "
-                    f"anchor_account_id={session.last_completed_response_account_id}, "
-                    "outcome=full_history_resend"
-                ),
-                cache_key_family=session.key.affinity_kind,
-                model_class=_extract_model_class(effective_payload.model) if effective_payload.model else None,
-                owner_check_applied=True,
-            )
-        if session_anchor_candidate and session_anchor_account_owned:
+        if session_anchor_candidate:
             fresh_upstream_request_text = text_data
             session_level_payload_looks_like_full_resend = _http_bridge_payload_looks_like_full_resend(
                 effective_payload
@@ -3179,7 +3087,9 @@ class _HTTPBridgeStreamingMixin:
                 payload=effective_payload,
                 durable_lookup=durable_lookup,
             )
-            request_state.preferred_account_id = durable_lookup.account_id if durable_lookup is not None else None
+            # The session's upstream connection completed the anchor, so its
+            # account owns it.
+            request_state.preferred_account_id = session.account.id
             request_state.excluded_account_ids.update(fresh_replay_excluded_account_ids)
             request_state.proxy_injected_previous_response_id = True
             request_state.proxy_injected_anchor_had_full_resend_payload = session_level_payload_looks_like_full_resend
@@ -3190,6 +3100,7 @@ class _HTTPBridgeStreamingMixin:
                     request_state,
                     response_id=request_state.previous_response_id,
                     fence_request_id=request_id,
+                    anchor_connection_id=session.connection_id,
                 )
             # Session-level anchor injection may be attached to a payload
             # that relied on the anchor for context (for example a
@@ -3332,6 +3243,9 @@ class _HTTPBridgeStreamingMixin:
                 request_state.input_full_fingerprint = previous_response_trimmed_input_fingerprint
             if proxy_injected_previous_response_id:
                 request_state.proxy_injected_previous_response_id = True
+                request_state.proxy_injected_anchor_connection_id = (
+                    previous_request_state.proxy_injected_anchor_connection_id
+                )
                 request_state.denied_proxy_injected_anchor_fence_response_id = (
                     previous_request_state.denied_proxy_injected_anchor_fence_response_id
                 )
@@ -3355,18 +3269,15 @@ class _HTTPBridgeStreamingMixin:
                     previous_request_state.proxy_injected_anchor_had_full_resend_payload
                 )
                 request_state.fresh_upstream_request_text = fresh_upstream_request_text
-                # The trim branch only fires when the untrimmed payload
-                # is a true full resend whose prefix exactly matches the
-                # already-stored context, so the unanchored request text
-                # is a safe fresh-turn replay target regardless of
-                # whether the anchor came from the durable or
-                # session-level injection path. Injection-only re-prepares
-                # keep the replay-safety decision made when the anchor was
-                # injected.
+                # The trim branch only fires when the untrimmed payload is a
+                # full resend whose prefix exactly matches the session's
+                # stored context. That untrimmed text is the client's own
+                # unanchored request, so it is the faithful replay when
+                # upstream rejects the injected anchor. Injection-only
+                # re-prepares keep the replay-safety decision made when the
+                # anchor was injected.
                 request_state.fresh_upstream_request_is_retry_safe = (
-                    (durable_full_resend_anchor_count is None or durable_full_resend_has_safe_fresh_context)
-                    if store_context_trim_applied
-                    else previous_request_state.fresh_upstream_request_is_retry_safe
+                    store_context_trim_applied or previous_request_state.fresh_upstream_request_is_retry_safe
                 )
             elif client_full_resend_fresh_upstream_request_text is not None:
                 request_state.fresh_upstream_request_text = client_full_resend_fresh_upstream_request_text
@@ -4185,6 +4096,11 @@ class _HTTPBridgeStreamingMixin:
                 # false there and cannot describe an id the retry never sends.
                 retry_request_state.proxy_injected_previous_response_id = (
                     request_state.proxy_injected_previous_response_id and retry_previous_response_id is not None
+                )
+                retry_request_state.proxy_injected_anchor_connection_id = (
+                    request_state.proxy_injected_anchor_connection_id
+                    if retry_request_state.proxy_injected_previous_response_id
+                    else None
                 )
                 retry_request_state.denied_proxy_injected_anchor_fence_generation_at_prepare = (
                     request_state.denied_proxy_injected_anchor_fence_generation_at_prepare

@@ -2377,14 +2377,19 @@ class _HTTPBridgeMixin(
                     release_selected_account_lease=release_selected_account_lease,
                     owner_rebind_affinity=owner_rebind_affinity,
                 )
-            if owner_rebind_affinity is not None or account.id != session.account.id:
+            account_changed = owner_rebind_affinity is not None or account.id != session.account.id
+            if account_changed:
                 await self._unregister_http_bridge_turn_states(session)
-                await self._unregister_http_bridge_previous_response_ids(session)
-                session.last_completed_response_id = None
-                session.last_completed_response_account_id = None
-                session.last_completed_input_count = 0
-                session.last_completed_input_prefix_fingerprint = None
-                session.last_pending_tool_calls.clear()
+            # Upstream keeps ``store=false`` responses only in the memory of
+            # the connection that produced them, so the replacement connection
+            # cannot resolve anything the old one completed, even on the same
+            # account.
+            await self._unregister_http_bridge_previous_response_ids(session)
+            session.last_completed_response_id = None
+            session.last_completed_input_count = 0
+            session.last_completed_input_prefix_fingerprint = None
+            session.last_pending_tool_calls.clear()
+            if account_changed:
                 session.affinity = _persistent_http_bridge_affinity(selection_affinity or session.affinity)
                 session.codex_session = session.key.affinity_kind == "thread_header"
                 session.upstream_turn_state = None

@@ -978,13 +978,13 @@ def _durable_anchor_lookup() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_bridge_connect_failure_records_prepared_anchor_provenance(
+async def test_bridge_delta_on_retired_anchor_connection_is_not_replayed_over_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The bridge injects the durable anchor into its own prepared payload
-    # before session creation runs. When creation then fails pre-submit, the
-    # surfaced error must say so: the raw path never injects a response
-    # anchor, so replaying the incoming payload would drop prior context.
+    # The durable anchor lives only on the upstream connection that produced
+    # it, so a delta relying on it fails closed before session creation. The
+    # refusal carries no pre-submit provenance: replaying the delta over raw
+    # HTTP would send the new turn alone and silently drop prior context.
     service = _bridge_service(monkeypatch, dashboard_transport="default")
     monkeypatch.setattr(
         http_bridge_streaming_module,
@@ -1020,14 +1020,17 @@ async def test_bridge_connect_failure_records_prepared_anchor_provenance(
     monkeypatch.setattr(service, "_http_bridge_has_live_local_session", AsyncMock(return_value=False))
     monkeypatch.setattr(service, "_http_bridge_can_forward_to_active_owner", AsyncMock(return_value=False))
     monkeypatch.setattr(service, "_resolve_websocket_previous_response_owner", AsyncMock(return_value="acc-1"))
+    session_creation = AsyncMock(side_effect=AssertionError("session creation must not run"))
+    monkeypatch.setattr(service, "_get_or_create_http_bridge_session", session_creation)
 
-    async def failing_session_creation(*_args: object, **_kwargs: object) -> Any:
-        raise _transport_error(502, "upstream_unavailable", "Request to upstream timed out")
+    async def fallback_must_not_run(*_args: object, **_kwargs: object):
+        raise AssertionError("raw HTTP must not replay a delta whose context was refused")
+        yield ""
 
-    monkeypatch.setattr(service, "_get_or_create_http_bridge_session", failing_session_creation)
+    monkeypatch.setattr(service, "_stream_with_retry", fallback_must_not_run)
 
     with pytest.raises(ProxyResponseError) as exc_info:
-        async for _chunk in service._stream_via_http_bridge(
+        async for _chunk in service._stream_http_bridge_or_retry(
             proxy_service.ResponsesRequest.model_validate(
                 {
                     "model": "gpt-5.6-sol",
@@ -1035,22 +1038,20 @@ async def test_bridge_connect_failure_records_prepared_anchor_provenance(
                     "input": [{"type": "message", "role": "user", "content": "next turn"}],
                 }
             ),
-            headers={"x-codex-turn-state": "http_turn_fresh"},
+            {"x-codex-turn-state": "http_turn_fresh"},
             codex_session_affinity=True,
-            propagate_http_errors=False,
+            propagate_http_errors=True,
             openai_cache_affinity=False,
             api_key=None,
             api_key_reservation=None,
             suppress_text_done_events=False,
-            idle_ttl_seconds=120.0,
-            codex_idle_ttl_seconds=1800.0,
-            max_sessions=8,
-            queue_limit=4,
         ):
             pass
 
-    assert getattr(exc_info.value, http_bridge_streaming_module._HTTP_BRIDGE_PRE_SUBMIT_FAILURE_ATTR, False) is True
-    assert getattr(exc_info.value, http_bridge_streaming_module._HTTP_BRIDGE_PREPARED_ANCHOR_ATTR, False) is True
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.payload["error"]["code"] == "bridge_previous_response_not_found"
+    assert getattr(exc_info.value, http_bridge_streaming_module._HTTP_BRIDGE_PRE_SUBMIT_FAILURE_ATTR, False) is False
+    session_creation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

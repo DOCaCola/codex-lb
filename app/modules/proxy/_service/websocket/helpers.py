@@ -555,6 +555,24 @@ def _install_verified_fresh_replay(
     return _install_fresh_replay_body(request_state, fresh_request_text, account_neutral=account_neutral)
 
 
+def _websocket_anchor_connection_retired_error() -> ProxyResponseError:
+    """Error for an injected anchor whose upstream connection closed before send.
+
+    Raised only when the request has no verified unanchored replay: it relied
+    on the anchor for its context, and no other connection can resolve it.
+    """
+    return ProxyResponseError(
+        404,
+        openai_error(
+            "previous_response_not_found",
+            "The upstream connection holding the conversation state this request relies on "
+            "has closed; resend the full conversation history or start a new conversation.",
+            error_type="invalid_request_error",
+        ),
+        local_pre_dispatch_refusal=True,
+    )
+
+
 def _install_fresh_replay_body(
     request_state: "_WebSocketRequestState",
     fresh_request_text: str,
@@ -703,6 +721,7 @@ def _prepare_websocket_request_state_for_account_switch(
 def _retire_websocket_continuity_anchor(continuity_state: _WebSocketContinuityState) -> None:
     """Drop the completed-response anchor and the state that only exists for it."""
     continuity_state.last_completed_response_id = None
+    continuity_state.last_completed_upstream_connection_id = None
     continuity_state.last_completed_response_transport = None
     continuity_state.last_completed_model_selector = None
     continuity_state.last_completed_input_count = 0
@@ -717,9 +736,17 @@ def _websocket_continuity_anchor_for_payload(
     responses_payload: ResponsesRequest,
     raw_source_model: str | None,
     codex_session_affinity: bool,
+    upstream_connection_id: str | None,
     api_key_id: str | None = None,
 ) -> _WebSocketContinuityAnchor | None:
-    """Select a matching session anchor, retiring any known upstream rejection."""
+    """Select a matching session anchor, retiring any known upstream rejection.
+
+    ``upstream_connection_id`` is the live upstream connection the request
+    would be sent on, or ``None`` when it needs a new one. Upstream resolves a
+    ``store=false`` response only on the connection that produced it, so an
+    anchor from any other connection is never injected: the client's own
+    unanchored request is what that connection can serve.
+    """
     if continuity_state is None or not codex_session_affinity:
         return None
     if responses_payload.previous_response_id is not None:
@@ -728,6 +755,9 @@ def _websocket_continuity_anchor_for_payload(
     if previous_response_id is None:
         return None
     if continuity_state.last_completed_response_transport == "http":
+        return None
+    anchor_connection_id = continuity_state.last_completed_upstream_connection_id
+    if anchor_connection_id is None or anchor_connection_id != upstream_connection_id:
         return None
     current_model_selector = raw_source_model or responses_payload.model
     # A model transition must keep the caller's full replay. Reusing the prior
@@ -757,6 +787,7 @@ def _websocket_continuity_anchor_for_payload(
     return _WebSocketContinuityAnchor(
         previous_response_id=previous_response_id,
         stored_input_item_count=stored_count,
+        upstream_connection_id=anchor_connection_id,
     )
 
 
@@ -836,6 +867,7 @@ def _record_websocket_continuity_completion(
     # is cleared rather than left stale when the completed turn cannot
     # provide one.
     continuity_state.last_completed_response_id = response_id
+    continuity_state.last_completed_upstream_connection_id = request_state.upstream_connection_id
     continuity_state.last_completed_response_transport = upstream_transport
     continuity_state.last_completed_model_selector = request_state.raw_source_model or request_state.model
     if request_state.input_item_count > 0 and request_state.input_full_fingerprint is not None:

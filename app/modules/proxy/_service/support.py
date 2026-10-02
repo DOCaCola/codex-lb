@@ -11,6 +11,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, NoReturn, Protocol, cast
+from uuid import uuid4
 
 import anyio
 
@@ -1101,6 +1102,13 @@ class _WebSocketRequestState:
     # explicit turn-state header guarantees continuity for stale recovery.
     hard_continuity_anchor: bool = False
     proxy_injected_previous_response_id: bool = False
+    # Upstream WebSocket connection that completed a proxy-injected anchor.
+    # Responses with ``store=false`` live only in that connection's memory, so
+    # the anchor is valid on that connection alone. ``None`` means no live
+    # connection of this proxy completed it.
+    proxy_injected_anchor_connection_id: str | None = None
+    # Upstream WebSocket connection this request was dispatched on.
+    upstream_connection_id: str | None = None
     # The durable lookup carried an anchor, but its owner was already stale,
     # ownerless, or lease-expired when this request arrived.  Such a request
     # must not be presented to the client as a retryable upstream timeout.
@@ -1368,6 +1376,9 @@ class _HTTPBridgeSession:
     queued_request_count: int
     last_used_at: float
     idle_ttl_seconds: float
+    # Identity of the current upstream connection. A reconnect replaces it,
+    # because the new connection cannot resolve responses the old one held.
+    connection_id: str = field(default_factory=lambda: uuid4().hex)
     # Wakes a reader that began an unbounded receive before the first request
     # was enqueued. The reader keeps one receive task alive across wakeups.
     upstream_reader_wakeup: asyncio.Event = field(default_factory=asyncio.Event)
@@ -1401,12 +1412,6 @@ class _HTTPBridgeSession:
     previous_response_alias_registration_generations: dict[str, int] = field(default_factory=dict)
     last_completed_input_count: int = 0
     last_completed_response_id: str | None = None
-    # Account that owns ``last_completed_response_id``. A previous_response_id
-    # anchor is account-scoped upstream, so it may only be replayed on the same
-    # account; when the session fails over to a different account this diverges
-    # from ``account.id`` and the anchor must NOT be injected. Kept in sync with
-    # ``last_completed_response_id`` at every setter.
-    last_completed_response_account_id: str | None = None
     last_completed_input_prefix_fingerprint: str | None = None
     last_pending_tool_calls: dict[str, str] = field(default_factory=dict)
     durable_session_id: str | None = None
@@ -1462,6 +1467,7 @@ class _HTTPBridgeSession:
         self.account = account
         self.headers = headers
         self.upstream = upstream
+        self.connection_id = uuid4().hex
         self.access_token_expires_at = access_token_expires_at
 
     def claim_liveness_settlement(self) -> bool:
@@ -1577,6 +1583,10 @@ def _http_bridge_session_supports_service_tier(
 class _WebSocketContinuityState:
     last_completed_input_count: int = 0
     last_completed_response_id: str | None = None
+    # Upstream WebSocket connection that completed ``last_completed_response_id``.
+    # Upstream keeps ``store=false`` responses only in that connection's
+    # memory, so the implicit anchor is valid on that connection alone.
+    last_completed_upstream_connection_id: str | None = None
     # HTTP fallback turns use independent Responses requests with ``store=false``.
     # Their response ids identify the completed turn for downstream recovery,
     # but cannot anchor a later upstream request.
@@ -1596,6 +1606,7 @@ class _WebSocketContinuityState:
 class _WebSocketContinuityAnchor:
     previous_response_id: str
     stored_input_item_count: int
+    upstream_connection_id: str
 
 
 @dataclass(slots=True)

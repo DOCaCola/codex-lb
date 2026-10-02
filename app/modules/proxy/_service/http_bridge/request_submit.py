@@ -97,6 +97,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _bind_http_bridge_proxy_injected_anchor,
     _build_http_bridge_prewarm_text,
     _http_bridge_abandonment_may_settle_circuit,
+    _http_bridge_anchor_connection_retired_error,
     _http_bridge_client_full_history_recovery_error,
     _http_bridge_denied_anchor_fence_advanced,
     _http_bridge_durable_lease_ttl_seconds,
@@ -109,6 +110,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_request_counts_against_queue,
     _http_bridge_request_state_holds_safe_replay,
     _http_bridge_retry_circuit_attempt_selection_for_pending_requests,
+    _http_bridge_session_anchor_connection_id,
     _log_http_bridge_event,
     _record_continuity_fail_closed,
     _record_http_bridge_prewarm_outcome,
@@ -133,6 +135,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _estimated_lease_tokens_from_request_usage_budget,
     _fingerprint_input_items,
     _inline_top_level_input_image_urls,
+    _install_verified_fresh_replay,
     _normalize_service_tier_value,
     _normalize_session_id,
     _prepare_websocket_request_state_for_account_switch,
@@ -416,6 +419,43 @@ def _text_with_thread_cache_identity(text_data: str, identity: ThreadCacheIdenti
     return json.dumps(frame, ensure_ascii=True, separators=(",", ":"))
 
 
+def _withdraw_http_bridge_retired_anchor(
+    session: "_HTTPBridgeSession",
+    request_state: _WebSocketRequestState,
+) -> str:
+    """Replace a proxy-injected anchor the session's connection cannot resolve.
+
+    Upstream keeps ``store=false`` responses only in the memory of the
+    connection that produced them. When the anchor came from another
+    connection (or this session reconnected after injecting it), the
+    client's own verified unanchored request is sent instead; a request
+    without one relied on the anchor for its context and fails closed.
+    """
+    anchor_response_id = request_state.previous_response_id
+    fresh_request_text = _install_verified_fresh_replay(request_state, require_account_neutral=False)
+    if fresh_request_text is None:
+        _log_http_bridge_event(
+            "anchor_withdrawn",
+            session.key,
+            account_id=session.account.id,
+            model=session.request_model,
+            detail=f"response_id={anchor_response_id}, reason=anchor_connection_retired, outcome=fail_closed",
+            cache_key_family=session.key.affinity_kind,
+            model_class=_extract_model_class(session.request_model) if session.request_model else None,
+        )
+        raise _http_bridge_anchor_connection_retired_error()
+    _log_http_bridge_event(
+        "anchor_withdrawn",
+        session.key,
+        account_id=session.account.id,
+        model=session.request_model,
+        detail=f"response_id={anchor_response_id}, reason=anchor_connection_retired, outcome=full_history_resend",
+        cache_key_family=session.key.affinity_kind,
+        model_class=_extract_model_class(session.request_model) if session.request_model else None,
+    )
+    return fresh_request_text
+
+
 async def _send_http_bridge_request_text_with_archive_id(
     session: "_HTTPBridgeSession",
     request_state: _WebSocketRequestState,
@@ -424,6 +464,11 @@ async def _send_http_bridge_request_text_with_archive_id(
     on_send_started: Callable[[], None] | None = None,
     clock: Clock = REAL_CLOCK,
 ) -> None:
+    if (
+        request_state.proxy_injected_previous_response_id
+        and request_state.proxy_injected_anchor_connection_id != session.connection_id
+    ):
+        text_data = _withdraw_http_bridge_retired_anchor(session, request_state)
     text_data = _text_with_operation_id(text_data, request_state.operation_id)
     text_data = _text_with_thread_cache_identity(text_data, _bridge_thread_cache_identity(session))
     # Operation metadata is added after the initial payload sizing pass. Check
@@ -1362,6 +1407,9 @@ class _HTTPBridgeRequestSubmitMixin:
                             self,
                             request_state,
                             response_id=terminal_hard_turn_response_id,
+                            anchor_connection_id=_http_bridge_session_anchor_connection_id(
+                                session, terminal_hard_turn_response_id
+                            ),
                         )
                         request_state.hard_continuity_anchor = True
                         operation_parent_response_id = terminal_hard_turn_response_id
@@ -1415,6 +1463,9 @@ class _HTTPBridgeRequestSubmitMixin:
                                     self,
                                     request_state,
                                     response_id=completed_response_id,
+                                    anchor_connection_id=_http_bridge_session_anchor_connection_id(
+                                        session, completed_response_id
+                                    ),
                                 )
                                 operation_parent_response_id = completed_response_id
                                 hard_turn_chain_advanced = True
@@ -2117,6 +2168,14 @@ class _HTTPBridgeRequestSubmitMixin:
                             ),
                             local_pre_dispatch_refusal=True,
                         )
+                    if (
+                        request_state.proxy_injected_previous_response_id
+                        and request_state.proxy_injected_anchor_connection_id != session.connection_id
+                    ):
+                        # Checked again at the send boundary for retries; here
+                        # it runs before the enqueue so a refusal leaves the
+                        # live session untouched.
+                        text_data = _withdraw_http_bridge_retired_anchor(session, request_state)
                     if (
                         request_state.verified_stale_anchor_replay
                         and request_state.verified_stale_anchor_retry_circuit_generation_captured

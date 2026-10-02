@@ -667,6 +667,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _clear_websocket_stale_previous_response_cache,  # noqa: F401
     _draining_websocket_request_states,  # noqa: F401
     _find_websocket_request_state_by_response_id,  # noqa: F401
+    _install_verified_fresh_replay,  # noqa: F401
     _is_websocket_previous_response_output_item,  # noqa: F401
     _is_websocket_response_create,  # noqa: F401
     _match_websocket_request_state_for_anonymous_event,  # noqa: F401

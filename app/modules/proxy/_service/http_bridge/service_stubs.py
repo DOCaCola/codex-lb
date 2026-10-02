@@ -344,6 +344,10 @@ def _prepare_websocket_request_state_for_visible_output_replay(*args: Any, **kwa
     return _service_global("_prepare_websocket_request_state_for_visible_output_replay")(*args, **kwargs)
 
 
+def _install_verified_fresh_replay(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_install_verified_fresh_replay")(*args, **kwargs)
+
+
 def _prepare_websocket_request_state_for_auth_replay(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_prepare_websocket_request_state_for_auth_replay")(*args, **kwargs)
 

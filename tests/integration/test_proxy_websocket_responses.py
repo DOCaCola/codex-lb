@@ -4325,11 +4325,14 @@ def test_backend_responses_websocket_accepts_and_reuses_generated_turn_state(app
     assert selections[1]["sticky_key"] == turn_state
     assert selections[1]["sticky_kind"] == proxy_module.StickySessionKind.CODEX_SESSION
     second_payload = json.loads(second_upstream.sent_text[0])
-    assert second_payload["previous_response_id"] == "resp_turn_state_first"
-    assert second_payload["input"] == [second_input]
+    # The turn-state token routes the reconnect to the same account, but the
+    # new upstream connection cannot resolve the first connection's
+    # ``store=false`` response: the client's full resend goes unanchored.
+    assert "previous_response_id" not in second_payload
+    assert second_payload["input"] == [first_input, second_input]
 
 
-def test_backend_responses_websocket_echoed_generated_turn_state_reuses_continuity_anchor(
+def test_backend_responses_websocket_echoed_generated_turn_state_keeps_full_resend_on_new_connection(
     app_instance,
     monkeypatch,
 ):
@@ -4458,8 +4461,8 @@ def test_backend_responses_websocket_echoed_generated_turn_state_reuses_continui
     first_upstream_payload = json.loads(first_upstream.sent_text[0])
     second_upstream_payload = json.loads(second_upstream.sent_text[0])
     assert "previous_response_id" not in first_upstream_payload
-    assert second_upstream_payload["previous_response_id"] == "resp_generated_anchor"
-    assert second_upstream_payload["input"] == [second_input]
+    assert "previous_response_id" not in second_upstream_payload
+    assert second_upstream_payload["input"] == [first_input, second_input]
     selection_headers = [cast(dict[str, str], selection["headers"]) for selection in selections]
     assert "x-codex-turn-state" not in selection_headers[0]
     assert selection_headers[1]["x-codex-turn-state"] == turn_state
@@ -14416,11 +14419,11 @@ class _TwoAccountWebSocketFailover:
         """Native Codex turn-state flow: the first connection (no header)
         completes turn 1 and the handshake hands the client a synthesized
         ``x-codex-turn-state``; the second connection echoes it and repeats the
-        history, so the request is classified ``turn_state`` (hard owner) while
-        the proxy injects the completed id as ``previous_response_id`` and
-        retains the full resend as the retry-safe fresh body. Each connection
+        history, so the request is classified ``turn_state``. Each connection
         opens its own upstream socket, so the owner's upstreams are consumed
-        one per connect."""
+        one per connect; because turn 1 completed on a different upstream
+        connection, its id is not injected as ``previous_response_id`` and the
+        full resend is sent unanchored."""
         result: tuple[list[dict[str, Any]], WebSocketDisconnect | None] = ([], None)
         with TestClient(app_instance) as client:
             with client.websocket_connect(
@@ -15029,14 +15032,18 @@ def _assert_turn_state_follow_up_re_sent_to_its_owner(
 ) -> None:
     assert [event["type"] for event in failover.turn_events[0]] == ["response.created", "response.completed"]
     assert not failover.refused_connects, failover.refused_connects
-    # Turn 1, the accepted follow-up, and its replay all connect to the owner;
-    # the turn-state owner is required on the reconnect, so it is never excluded.
+    # Turn 1, the accepted follow-up, and its replay all connect to the owner.
+    # The follow-up runs on a new upstream connection, so turn 1's id is not
+    # injected (store=false responses live only on the connection that
+    # completed them): the client's full resend goes out unanchored. Nothing
+    # upstream binds that body to an account, so the replay is not
+    # hard-pinned; session affinity still returns it to the owner.
     assert failover.connect_accounts == [failover.FIRST_ACCOUNT_ID] * 3, failover.connect_accounts
     assert failover.excluded_at_connect[-1] == set(), failover.excluded_at_connect
-    assert failover.required_at_connect[-1] == failover.FIRST_ACCOUNT_ID, failover.required_at_connect
-    anchored_payload = json.loads(accepted_upstream.sent_text[0])
-    assert anchored_payload["previous_response_id"] == "resp_ws_turn_state_turn_1"
-    assert anchored_payload["input"] == [failover.FOLLOW_UP_INPUT]
+    assert failover.required_at_connect[-1] is None, failover.required_at_connect
+    accepted_payload = json.loads(accepted_upstream.sent_text[0])
+    assert "previous_response_id" not in accepted_payload
+    assert accepted_payload["input"] == [failover.HISTORICAL_INPUT, failover.FOLLOW_UP_INPUT]
     assert len(owner_recovered_upstream.sent_text) == 1
     replayed_payload = json.loads(owner_recovered_upstream.sent_text[0])
     assert "previous_response_id" not in replayed_payload
@@ -15058,12 +15065,10 @@ def test_backend_responses_websocket_re_sends_a_turn_state_accepted_capacity_err
     error_message,
 ):
     """#2127 round 3 P1 (capacity path): in a native ``x-codex-turn-state``
-    session the accepted follow-up is owner-bound by the turn state itself.
-    The fresh-body install cleared the owner pin, the exclusion predicate saw
-    a movable replay and excluded the owner, and the session loop then
-    re-resolved and hard-required that same owner: ``previous_response_owner_
-    unavailable`` reached the client after ``response.created``, with no
-    replay. The replay must go back to the owner on a fresh socket."""
+    session the accepted, unanchored follow-up fails output-free with a
+    capacity terminal. It must be replayed on a fresh socket -- never surfaced
+    as ``previous_response_owner_unavailable`` after ``response.created`` --
+    and session affinity returns it to the owner."""
     failover, accepted_upstream, owner_recovered_upstream, other_account_upstream = _turn_state_owner_failover(
         [
             *_accepted_output_free_prelude("resp_ws_turn_state_accepted_capacity_failed"),
@@ -15095,8 +15100,8 @@ def test_backend_responses_websocket_re_sends_a_turn_state_accepted_abrupt_close
     monkeypatch,
 ):
     """#2127 round 3 P1 (transport-close path): same turn-state session, the
-    owner drops the socket after accepting the follow-up. The replay reconnects
-    to the owner with the fresh body instead of excluding it."""
+    owner drops the socket after accepting the follow-up. The full resend is
+    replayed on a fresh socket to the owner."""
     failover, accepted_upstream, owner_recovered_upstream, other_account_upstream = _turn_state_owner_failover(
         [
             *_accepted_output_free_prelude("resp_ws_turn_state_accepted_closed"),
