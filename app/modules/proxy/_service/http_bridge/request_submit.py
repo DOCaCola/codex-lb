@@ -152,7 +152,6 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _service_lease_http_session,
     _websocket_auth_failure_permanent_code,
     _websocket_auth_failure_requires_reauth,
-    _websocket_request_text_is_account_neutral_fresh_replay,
 )
 from app.modules.proxy._service.http_bridge.upstream_events import (
     _abandon_durable_http_bridge_continuity,
@@ -184,6 +183,10 @@ from app.modules.proxy._service.support import (
     _HTTPBridgeResponseCreateAttempt,
     _HTTPBridgeRetryCircuitAttemptSelection,
     _HTTPBridgeSession,
+    _inherit_stamped_request_body_account_neutrality,
+    _InputFingerprints,
+    _record_request_body_account_neutrality,
+    _request_body_is_account_neutral_fresh_replay,
     _request_log_client_fields,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketRequestState,
@@ -795,7 +798,13 @@ class _HTTPBridgeRequestSubmitMixin:
         request_log_id: str | None = None,
         enforce_openai_sdk_contract: bool = True,
         upstream_payload_base: JsonObject | None = None,
+        input_fingerprints: _InputFingerprints | None = None,
     ) -> tuple[_WebSocketRequestState, str]:
+        """Build the request state and its upstream body.
+
+        ``input_fingerprints``, when it describes ``payload.input``, supplies
+        the full input fingerprint from the caller's continuity pass.
+        """
         deduped_replayed_input_count: int | None = None
         deduped_replayed_input_fingerprint: str | None = None
         deduped_replayed_tool_call_count = 0
@@ -838,7 +847,11 @@ class _HTTPBridgeRequestSubmitMixin:
             payload_input_list = cast(list[JsonValue], payload_input)
             input_item_count = len(payload_input_list)
             if input_item_count > 0:
-                input_full_fingerprint = _fingerprint_input_items(payload_input_list)
+                input_full_fingerprint = (
+                    input_fingerprints.full()
+                    if input_fingerprints is not None and input_fingerprints.items is payload_input_list
+                    else _fingerprint_input_items(payload_input_list)
+                )
 
         resolved_request_id = request_id or f"ws_{uuid4().hex}"
         header_request_kind = _request_kind_from_headers(headers)
@@ -900,6 +913,7 @@ class _HTTPBridgeRequestSubmitMixin:
         text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
 
         request_state.request_text = text_data
+        _record_request_body_account_neutrality(request_state, text_data, upstream_payload)
         _enforce_response_create_size_limit(request_state)
         return request_state, text_data
 
@@ -931,6 +945,12 @@ class _HTTPBridgeRequestSubmitMixin:
         else:
             request_state.request_text = updated_text
             _enforce_response_create_size_limit(request_state)
+        _inherit_stamped_request_body_account_neutrality(
+            request_state,
+            [(text_data, updated_text)]
+            + ([(fresh_text, request_state.fresh_upstream_request_text)] if fresh_text is not None else []),
+            codex_installation_id,
+        )
         request_state.installation_stamp_installation_id = codex_installation_id
         request_state.installation_stamp_text = updated_text
         request_state.installation_stamp_fresh_text = request_state.fresh_upstream_request_text
@@ -4008,7 +4028,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 # identity on its owner unless a dedicated rebind path has
                 # already replaced the operation ID.
                 candidate_portable = request_state.operation_id is None and (
-                    _websocket_request_text_is_account_neutral_fresh_replay(candidate_text)
+                    _request_body_is_account_neutral_fresh_replay(request_state, candidate_text)
                 )
                 request_text = _prepare_websocket_request_state_for_visible_output_replay(request_state)
                 if request_text is None or request_text != candidate_text:

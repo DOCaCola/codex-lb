@@ -355,9 +355,12 @@ from app.modules.proxy._service.support import (
     _clear_websocket_request_error_overrides,
     _DownstreamWebSocketActivity,
     _finalize_ttft_reasoning_deltas,
+    _inherit_stamped_request_body_account_neutrality,
+    _InputFingerprints,
     _PreparedWebSocketRequest,
     _record_response_event,
     _record_websocket_route_metadata,
+    _request_body_is_account_neutral_fresh_replay,
     _request_log_client_fields,
     _sleep_for_account_selection_recovery,
     _stream_settlement_error_payload,
@@ -2830,15 +2833,27 @@ class _WebSocketMixin:
                         and account is not None
                         and _is_websocket_response_create(payload)
                     ):
+                        unstamped_text = text_data
+                        unstamped_fresh_text = request_state.fresh_upstream_request_text
                         text_data = _websocket_text_with_account_installation_id(text_data, account)
-                        if request_state.fresh_upstream_request_text is not None:
+                        if unstamped_fresh_text is not None:
                             fresh_upstream_request_text = _websocket_text_with_account_installation_id(
-                                request_state.fresh_upstream_request_text,
+                                unstamped_fresh_text,
                                 account,
                             )
                             _websocket_enforce_response_create_text_size(request_state, fresh_upstream_request_text)
                             request_state.fresh_upstream_request_text = fresh_upstream_request_text
                         request_state.request_text = text_data
+                        _inherit_stamped_request_body_account_neutrality(
+                            request_state,
+                            [(unstamped_text, text_data)]
+                            + (
+                                [(unstamped_fresh_text, fresh_upstream_request_text)]
+                                if unstamped_fresh_text is not None
+                                else []
+                            ),
+                            getattr(account, "codex_installation_id", None),
+                        )
                         _facade()._enforce_response_create_size_limit(request_state)
                     if (
                         text_data is not None
@@ -3456,6 +3471,14 @@ class _WebSocketMixin:
         client_full_resend_payload: ResponsesRequest | None = None
         client_full_resend_input_items: list[JsonValue] | None = None
         client_full_resend_retry_safe = False
+        # The client's input, fingerprinted in one pass on first use: the
+        # continuity prefix checks below and the request's own full
+        # fingerprint all describe this list.
+        client_input_fingerprints = (
+            _InputFingerprints(cast(list[JsonValue], responses_payload.input))
+            if isinstance(responses_payload.input, list)
+            else None
+        )
         if responses_payload.previous_response_id is not None and isinstance(responses_payload.input, list):
             previous_response_input_items = cast(list[JsonValue], responses_payload.input)
             client_full_resend_input_items = previous_response_input_items
@@ -3463,13 +3486,13 @@ class _WebSocketMixin:
                 previous_response_id=responses_payload.previous_response_id,
                 input_value=responses_payload.input,
                 continuity_state=continuity_state,
+                input_fingerprints=client_input_fingerprints,
             )
             trimmed_input_items = _trim_websocket_previous_response_input_items(previous_response_input_items)
             if len(trimmed_input_items) != len(previous_response_input_items):
+                assert client_input_fingerprints is not None
                 previous_response_trimmed_input_count = len(previous_response_input_items)
-                previous_response_trimmed_input_fingerprint = _facade()._fingerprint_input_items(
-                    previous_response_input_items
-                )
+                previous_response_trimmed_input_fingerprint = client_input_fingerprints.full()
                 responses_payload = responses_payload.model_copy(update={"input": trimmed_input_items})
         full_resend_client_metadata = client_metadata
         if client_full_resend_retry_safe and client_full_resend_input_items is not None:
@@ -3514,11 +3537,13 @@ class _WebSocketMixin:
                 codex_session_affinity=codex_session_affinity,
                 upstream_connection_id=upstream_connection_id,
                 api_key_id=refreshed_api_key.id if refreshed_api_key is not None else None,
+                input_fingerprints=client_input_fingerprints,
             )
         if session_anchor is not None:
+            assert client_input_fingerprints is not None
             original_input_items = cast(list[JsonValue], responses_payload.input)
             original_input_item_count = len(original_input_items)
-            original_input_fingerprint = _facade()._fingerprint_input_items(original_input_items)
+            original_input_fingerprint = client_input_fingerprints.full()
             original_full_resend_payload = responses_payload
             responses_payload = responses_payload.model_copy(
                 update={
@@ -3587,6 +3612,7 @@ class _WebSocketMixin:
                 client_metadata=client_metadata,
                 headers=headers,
                 session_id=session_id,
+                input_fingerprints=client_input_fingerprints,
             )
         except ProxyResponseError:
             await proxy._release_websocket_reservation(reservation)
@@ -4267,7 +4293,7 @@ class _WebSocketMixin:
             account is not None
             and request_state.replay_required_account_id is None
             and request_state.request_text is not None
-            and not _facade()._websocket_request_text_is_account_neutral_fresh_replay(request_state.request_text)
+            and not _request_body_is_account_neutral_fresh_replay(request_state, request_state.request_text)
         ):
             request_state.preferred_account_id = account.id
             request_state.replay_required_account_id = account.id

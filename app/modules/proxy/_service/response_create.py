@@ -46,6 +46,8 @@ from app.modules.proxy._service.support import (
     _PENDING_TOOL_CALL_ITEM_TYPES,
     _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE,
     _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES,
+    _InputFingerprints,
+    _record_request_body_account_neutrality,
     _WebSocketRequestState,
 )
 
@@ -157,8 +159,7 @@ def _prune_response_create_dumps(dump_dir: Path, *, max_pairs: int) -> None:
 
 def _fingerprint_input_items(items: Sequence[JsonValue]) -> str:
     """Return stable SHA-256 fingerprint for input list canonical JSON."""
-    canonical = json.dumps(list(items), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    return sha256(canonical.encode("utf-8")).hexdigest()
+    return _InputFingerprints(list(items)).full()
 
 
 def _input_part_is_image(part: JsonValue) -> bool:
@@ -249,12 +250,12 @@ def _responses_request_uses_image_generation(payload: ResponsesRequest) -> bool:
     return any(is_json_mapping(tool) and tool.get("type") == "image_generation" for tool in tools)
 
 
-def _response_create_text(
+def _response_create_payload(
     payload: ResponsesRequest,
     *,
     include_type_field: bool,
     client_metadata: Mapping[str, JsonValue] | None,
-) -> str:
+) -> dict[str, JsonValue]:
     upstream_payload = payload.to_payload()
     ensure_native_provider_history(upstream_payload)
     upstream_payload = sanitize_native_responses_input(upstream_payload)
@@ -271,6 +272,20 @@ def _response_create_text(
             or _payload_has_responses_lite_websocket_marker(upstream_payload)
         ),
     )
+    return upstream_payload
+
+
+def _response_create_text(
+    payload: ResponsesRequest,
+    *,
+    include_type_field: bool,
+    client_metadata: Mapping[str, JsonValue] | None,
+) -> str:
+    upstream_payload = _response_create_payload(
+        payload,
+        include_type_field=include_type_field,
+        client_metadata=client_metadata,
+    )
     return json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
 
 
@@ -284,12 +299,17 @@ def _response_create_text_with_size_guard(
 ) -> str | None:
     # Oversized replay bodies remain valid HTTP requests. Keep their full input;
     # the connection adapter decides transport from the final serialized frame.
-    text = _response_create_text(
+    upstream_payload = _response_create_payload(
         payload,
         include_type_field=include_type_field,
         client_metadata=client_metadata,
     )
-    return text if len(text.encode("utf-8")) <= responses_body_limit_bytes() else None
+    text = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
+    # ``ensure_ascii`` output is pure ASCII: its length is its UTF-8 size.
+    if len(text) > responses_body_limit_bytes():
+        return None
+    _record_request_body_account_neutrality(request_state, text, upstream_payload)
+    return text
 
 
 def _response_create_text_with_account_installation_id(

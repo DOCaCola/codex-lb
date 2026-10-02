@@ -58,6 +58,13 @@ async fn write_command(stdin: &mut ChildStdin, command: &NativeCommand) {
         .expect("send native helper command");
 }
 
+fn command_frame(command: &NativeCommand, payload: &[u8]) -> Vec<u8> {
+    let mut frame = serde_json::to_vec(command).expect("encode native helper command");
+    frame.push(b'\n');
+    frame.extend_from_slice(payload);
+    frame
+}
+
 async fn read_event(lines: &mut HelperLines, timeout_message: &str) -> NativeEvent {
     let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
         .await
@@ -95,7 +102,7 @@ fn sse_request(
         method: "GET".to_owned(),
         url,
         headers: vec![("accept".to_owned(), "text/event-stream".to_owned())],
-        body: None,
+        payload_bytes: None,
         timeout_ms: Some(2_000),
         connect_timeout_ms: Some(2_000),
         proxy_url: None,
@@ -171,7 +178,7 @@ async fn gzip_response_relay_crosses_native_helper_boundary() {
             method: "GET".to_owned(),
             url: format!("http://{address}/response"),
             headers: vec![("accept-encoding".to_owned(), "br, zstd, gzip".to_owned())],
-            body: None,
+            payload_bytes: None,
             timeout_ms: Some(2_000),
             connect_timeout_ms: Some(2_000),
             proxy_url: None,
@@ -279,7 +286,7 @@ async fn request_without_accept_encoding_reaches_origin_without_accept_encoding(
             method: "GET".to_owned(),
             url: format!("http://{address}/response"),
             headers: vec![("accept".to_owned(), "application/json".to_owned())],
-            body: None,
+            payload_bytes: None,
             timeout_ms: Some(2_000),
             connect_timeout_ms: Some(2_000),
             proxy_url: None,
@@ -552,5 +559,88 @@ async fn http_error_with_sse_options_preserves_raw_body_chunks() {
     assert_eq!(received, body);
 
     server.await.expect("origin task");
+    stop_helper(helper, stdin, lines).await;
+}
+
+#[tokio::test]
+async fn framed_request_bodies_reach_origin_byte_exact() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind origin");
+    let address = listener.local_addr().expect("origin address");
+    let bodies: [&[u8]; 2] = [b"{\"text\":\"line\nbreak\"}\xff", b"second\n"];
+    let server = tokio::spawn(async move {
+        let mut received = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept native helper");
+            let mut request = Vec::new();
+            let header_end = loop {
+                if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break index + 4;
+                }
+                let read = stream.read_buf(&mut request).await.expect("read request");
+                assert_ne!(read, 0, "request ended before headers completed");
+            };
+            let headers = String::from_utf8(request[..header_end].to_vec()).expect("ASCII headers");
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().expect("content-length"))
+                })
+                .expect("framed body must be sent with a content-length");
+            let mut body = request.split_off(header_end);
+            while body.len() < content_length {
+                let read = stream.read_buf(&mut body).await.expect("read request body");
+                assert_ne!(read, 0, "request ended before body completed");
+            }
+            assert_eq!(body.len(), content_length);
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .await
+                .expect("write response head");
+            stream.shutdown().await.expect("close origin");
+            received.push(body);
+        }
+        received
+    });
+
+    let (helper, mut stdin, mut lines) = start_helper().await;
+    let mut frames = Vec::new();
+    for (index, body) in bodies.iter().enumerate() {
+        let command = NativeCommand::Request(NativeRequest {
+            request_id: format!("framed-{index}"),
+            method: "POST".to_owned(),
+            url: format!("http://{address}/response"),
+            headers: Vec::new(),
+            payload_bytes: Some(body.len()),
+            timeout_ms: Some(2_000),
+            connect_timeout_ms: Some(2_000),
+            proxy_url: None,
+            sse: None,
+        });
+        frames.extend(command_frame(&command, body));
+    }
+    stdin
+        .write_all(&frames)
+        .await
+        .expect("send framed commands");
+
+    let mut ended = 0;
+    while ended < 2 {
+        match read_event(&mut lines, "framed request event timeout").await {
+            NativeEvent::End { .. } => ended += 1,
+            NativeEvent::Error { message, .. } => panic!("native helper request failed: {message}"),
+            _ => {}
+        }
+    }
+
+    let received = server.await.expect("origin task");
+    assert_eq!(received.len(), 2);
+    for body in bodies {
+        assert!(
+            received.iter().any(|candidate| candidate == body),
+            "origin must receive each framed body byte-exact"
+        );
+    }
     stop_helper(helper, stdin, lines).await;
 }

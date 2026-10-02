@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use base64::Engine as _;
 use codex_lb_protocol::{CAPABILITIES, NativeCommand, NativeEvent, PROTOCOL_VERSION};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_tungstenite::tungstenite::Message;
@@ -17,12 +16,53 @@ pub(crate) use crate::output::{Output, emit};
 type ActiveRequests = Arc<Mutex<HashMap<String, ActiveRequest>>>;
 pub type RequestError = Box<dyn std::error::Error + Send + Sync>;
 
+/// One command and the raw payload bytes that followed its JSON line.
+struct CommandFrame {
+    command: NativeCommand,
+    payload: Vec<u8>,
+}
+
 enum ActiveRequest {
     Http(oneshot::Sender<()>),
     WebSocket {
         commands: mpsc::Sender<WebSocketCommand>,
         abort: AbortHandle,
     },
+}
+
+/// Read the next command frame, or `None` at a clean end of input.
+async fn read_command_frame<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> Result<Option<CommandFrame>, RequestError> {
+    line.clear();
+    if reader.read_until(b'\n', line).await? == 0 {
+        return Ok(None);
+    }
+    let command: NativeCommand = serde_json::from_slice(line)?;
+    let mut payload = vec![0; command.payload_bytes()];
+    reader.read_exact(&mut payload).await?;
+    Ok(Some(CommandFrame { command, payload }))
+}
+
+/// Own stdin in a dedicated task. A payload read is not cancellation safe, so
+/// it must not race the dispatch loop's other branches.
+fn spawn_command_reader() -> mpsc::Receiver<Result<CommandFrame, RequestError>> {
+    let (frames_tx, frames_rx) = mpsc::channel(1);
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(tokio::io::stdin());
+        let mut line = Vec::new();
+        loop {
+            let Some(frame) = read_command_frame(&mut reader, &mut line).await.transpose() else {
+                break;
+            };
+            let failed = frame.is_err();
+            if frames_tx.send(frame).await.is_err() || failed {
+                break;
+            }
+        }
+    });
+    frames_rx
 }
 
 pub async fn run_stdio() -> Result<(), RequestError> {
@@ -34,16 +74,16 @@ pub async fn run_stdio() -> Result<(), RequestError> {
     let active: ActiveRequests = Arc::new(Mutex::new(HashMap::new()));
     let mut clients = ClientPool::default();
     let mut tasks = JoinSet::new();
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut frames = spawn_command_reader();
     let mut handshake_complete = false;
 
     loop {
         tokio::select! {
-            line = lines.next_line() => {
-                let Some(line) = line? else {
+            frame = frames.recv() => {
+                let Some(frame) = frame else {
                     break;
                 };
-                let command: NativeCommand = serde_json::from_str(&line)?;
+                let CommandFrame { command, payload } = frame?;
                 if !handshake_complete {
                     match command {
                         NativeCommand::ClientHello {
@@ -127,6 +167,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                             }
                         };
                         let request_id = request.request_id.clone();
+                        let body = request.payload_bytes.map(|_| payload);
                         let (cancel_tx, cancel_rx) = oneshot::channel();
                         active
                             .lock()
@@ -140,7 +181,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                                 // the cancellable future: stdout flush can yield after the
                                 // parent sees the terminal and closes stdin.
                                 biased;
-                                result = execute_request(request, client, &task_output) => {
+                                result = execute_request(request, body, client, &task_output) => {
                                     match result {
                                         Ok(terminal) => {
                                             let _ = emit(&task_output, &terminal).await;
@@ -219,8 +260,21 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                     NativeCommand::WebsocketSendText {
                         request_id,
                         command_id,
-                        text,
+                        ..
                     } => {
+                        let text = match String::from_utf8(payload) {
+                            Ok(text) => text,
+                            Err(_) => {
+                                emit_websocket_setup_error(
+                                    &output,
+                                    &request_id,
+                                    Some(command_id),
+                                    "native helper rejected websocket text data",
+                                )
+                                .await?;
+                                continue;
+                            }
+                        };
                         dispatch_websocket_command(
                             &active,
                             &output,
@@ -236,21 +290,8 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                     NativeCommand::WebsocketSendBinary {
                         request_id,
                         command_id,
-                        data,
+                        ..
                     } => {
-                        let decoded = match base64::engine::general_purpose::STANDARD.decode(data) {
-                            Ok(decoded) => decoded,
-                            Err(_) => {
-                                emit_websocket_setup_error(
-                                    &output,
-                                    &request_id,
-                                    Some(command_id),
-                                    "native helper rejected websocket binary data",
-                                )
-                                .await?;
-                                continue;
-                            }
-                        };
                         dispatch_websocket_command(
                             &active,
                             &output,
@@ -258,7 +299,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                             command_id.clone(),
                             WebSocketCommand::Send {
                                 command_id,
-                                message: Message::Binary(decoded.into()),
+                                message: Message::Binary(payload.into()),
                             },
                         )
                         .await?;

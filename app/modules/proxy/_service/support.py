@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 import time
@@ -10,6 +11,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import datetime
+from hashlib import sha256
 from typing import Any, Literal, NoReturn, Protocol, cast
 from uuid import uuid4
 
@@ -17,7 +19,11 @@ import anyio
 
 from app.core.auth.refresh import RefreshError, is_transient_refresh_contention, refresh_contention_kind
 from app.core.balancer.types import UpstreamError
-from app.core.clients.proxy import CodexControlRequestPrivacyPolicy, ProxyResponseError
+from app.core.clients.proxy import (
+    CodexControlRequestPrivacyPolicy,
+    ProxyResponseError,
+    apply_codex_installation_metadata,
+)
 from app.core.clients.proxy_websocket import (
     UPSTREAM_WEBSOCKET_TRANSPORT_FAILURE_DETAIL,
     UpstreamWebSocket,
@@ -51,6 +57,10 @@ from app.modules.proxy.load_balancer import (
     CatalogOmissionQuotaAdmission,
 )
 from app.modules.proxy.replay_output import ReplayOutputCollector
+from app.modules.proxy.replay_safety import (
+    client_metadata_is_account_neutral,
+    responses_payload_is_account_neutral_fresh_replay,
+)
 from app.modules.proxy.tool_call_dedupe import ToolCallDedupeKey
 from app.modules.proxy.work_admission import AdmissionLease
 
@@ -1157,6 +1167,12 @@ class _WebSocketRequestState:
     installation_stamp_installation_id: str | None = None
     installation_stamp_text: str | None = None
     installation_stamp_fresh_text: str | None = None
+    # Account-neutrality verdicts for the bodies this request currently holds,
+    # keyed by ``str`` identity like the installation stamp memo above:
+    # ``(body, body-without-client_metadata verdict, client_metadata)``.
+    # Maintained by the account-neutrality helpers below so routing never re-parses a
+    # multi-megabyte body.
+    body_account_neutrality: list[tuple[str, bool, JsonValue]] = field(default_factory=list)
     # Set only on the internally constructed one-shot request that replaces an
     # explicitly rejected stale anchor with a verified full-history payload.
     # It may bypass an older hard-key retry circuit without deleting that
@@ -2163,3 +2179,152 @@ def configured_upstream_stream_transport(dashboard_settings: Any) -> str:
 def upstream_websocket_transport_recently_failed() -> bool:
     marked_at = _upstream_ws_transport_failure_at
     return marked_at is not None and time.monotonic() - marked_at < UPSTREAM_WS_TRANSPORT_FAILURE_TTL_SECONDS
+
+
+class _InputFingerprints:
+    """Canonical fingerprints of one input list, sharing a single encoding pass.
+
+    The canonical encoding is compact ``json.dumps`` (``ensure_ascii``,
+    ``sort_keys``) of the list: ``[``, the items' own encodings joined by
+    ``,``, then ``]``. Hashing the items one at a time therefore yields the
+    digest of the whole list, and closing a copy of the running hash after
+    ``n`` items yields the fingerprint of ``items[:n]``. A turn needs the
+    stored-prefix fingerprint for its continuity checks and the full
+    fingerprint for its own continuity record; one pass produces both, so an
+    image-heavy history is encoded once per turn.
+
+    ``items`` must not be mutated while the object is in use; rewrites of the
+    input build a new list and therefore a new object.
+    """
+
+    __slots__ = ("items", "_full", "_prefixes")
+
+    def __init__(self, items: list[JsonValue]) -> None:
+        self.items = items
+        self._full: str | None = None
+        self._prefixes: dict[int, str] = {}
+
+    def full(self) -> str:
+        if self._full is None:
+            self._full = self._encode(prefix_count=None)
+        return self._full
+
+    def prefix(self, count: int) -> str:
+        """Return the fingerprint of ``items[:count]``."""
+        if count >= len(self.items):
+            return self.full()
+        if count not in self._prefixes:
+            self._full = self._encode(prefix_count=count)
+        return self._prefixes[count]
+
+    def _encode(self, *, prefix_count: int | None) -> str:
+        """Hash every item, recording the prefix fingerprint on the way; return the full one."""
+        digest = sha256(b"[")
+        for index, item in enumerate(self.items):
+            if index == prefix_count:
+                prefix_digest = digest.copy()
+                prefix_digest.update(b"]")
+                self._prefixes[index] = prefix_digest.hexdigest()
+            if index:
+                digest.update(b",")
+            encoded = json.dumps(item, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+            digest.update(encoded.encode("ascii"))
+        digest.update(b"]")
+        return digest.hexdigest()
+
+
+# Account-neutrality verdicts for request bodies, decided once per body.
+#
+# A body is account neutral when another account can serve it without
+# upstream state (``responses_payload_is_account_neutral_fresh_replay``).
+# Routing asks that question about the same body several times per turn, and
+# an image-heavy body is tens of megabytes, so the verdict is taken from the
+# payload while the body is built instead of re-parsing the serialized text.
+#
+# The verdict is kept in two parts: the body without ``client_metadata``, and
+# the metadata itself. The only rewrite between build and dispatch, the
+# account installation stamp, changes nothing but the metadata, so the body
+# part carries over and the metadata part is recomputed from the stamped
+# metadata with the same function the stamp applies.
+#
+# Entries live on ``_WebSocketRequestState.body_account_neutrality``, keyed by
+# ``str`` identity, and hold only bodies the request state still references,
+# so a superseded body is not kept alive. A body without an entry is parsed
+# once and remembered.
+
+_NEUTRALITY_VERDICT_EXCLUDED_FIELDS = frozenset({"type", "client_metadata"})
+
+
+def _split_account_neutrality_verdict(payload: Mapping[str, JsonValue]) -> tuple[bool, JsonValue]:
+    metadata = payload.get("client_metadata")
+    event_type = payload.get("type")
+    if event_type is not None and event_type != "response.create":
+        return False, metadata
+    body = {key: value for key, value in payload.items() if key not in _NEUTRALITY_VERDICT_EXCLUDED_FIELDS}
+    return responses_payload_is_account_neutral_fresh_replay(body), metadata
+
+
+def _store_account_neutrality_verdicts(
+    request_state: _WebSocketRequestState,
+    entries: list[tuple[str, bool, JsonValue]],
+) -> None:
+    new_texts = [entry[0] for entry in entries]
+    live_texts = (request_state.request_text, request_state.fresh_upstream_request_text, *new_texts)
+    request_state.body_account_neutrality = [
+        entry
+        for entry in request_state.body_account_neutrality
+        if any(entry[0] is text for text in live_texts) and not any(entry[0] is text for text in new_texts)
+    ]
+    request_state.body_account_neutrality.extend(entries)
+
+
+def _record_request_body_account_neutrality(
+    request_state: _WebSocketRequestState,
+    text: str,
+    payload: Mapping[str, JsonValue],
+) -> None:
+    """Remember the verdict for ``text``, the serialization of ``payload``."""
+    body_neutral, metadata = _split_account_neutrality_verdict(payload)
+    _store_account_neutrality_verdicts(request_state, [(text, body_neutral, metadata)])
+
+
+def _inherit_stamped_request_body_account_neutrality(
+    request_state: _WebSocketRequestState,
+    stamps: list[tuple[str, str]],
+    codex_installation_id: str | None,
+) -> None:
+    """Carry verdicts from each ``(source, stamped)`` body to its installation-stamped form.
+
+    Call after the stamped bodies are installed on the request state, so the
+    sources they replaced are released.
+    """
+    entries: list[tuple[str, bool, JsonValue]] = []
+    for source_text, stamped_text in stamps:
+        if stamped_text is source_text:
+            # The stamp left the body as it was; so is its verdict.
+            continue
+        for entry_text, body_neutral, metadata in request_state.body_account_neutrality:
+            if entry_text is source_text:
+                stamped: dict[str, JsonValue] = {"client_metadata": metadata}
+                apply_codex_installation_metadata(stamped, codex_installation_id)
+                entries.append((stamped_text, body_neutral, stamped.get("client_metadata")))
+                break
+    _store_account_neutrality_verdicts(request_state, entries)
+
+
+def _request_body_is_account_neutral_fresh_replay(request_state: _WebSocketRequestState, text: str | None) -> bool:
+    """Return whether ``text``, a body of ``request_state``, may move accounts."""
+    if text is None:
+        return False
+    for entry_text, body_neutral, metadata in request_state.body_account_neutrality:
+        if entry_text is text:
+            return body_neutral and client_metadata_is_account_neutral(metadata)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    body_neutral, metadata = _split_account_neutrality_verdict(cast(dict[str, JsonValue], payload))
+    _store_account_neutrality_verdicts(request_state, [(text, body_neutral, metadata)])
+    return body_neutral and client_metadata_is_account_neutral(metadata)

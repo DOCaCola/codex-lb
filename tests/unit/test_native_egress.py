@@ -30,7 +30,24 @@ _HELPER_PROTOCOL_PREAMBLE = r"""
 import json
 import sys
 
-hello = json.loads(sys.stdin.readline())
+
+def read_command():
+    line = sys.stdin.buffer.readline()
+    if not line:
+        return None
+    command = json.loads(line)
+    payload_bytes = command.pop("payload_bytes", None)
+    if payload_bytes is not None:
+        command["payload"] = sys.stdin.buffer.read(payload_bytes)
+    return command
+
+
+def commands():
+    while (command := read_command()) is not None:
+        yield command
+
+
+hello = read_command()
 assert hello == {
     "type": "client_hello",
     "min_protocol_version": 1,
@@ -41,6 +58,7 @@ print(json.dumps({
     "protocol_version": 1,
     "capabilities": [
         "failure_provenance_v1",
+        "framed_payload_v1",
         "http",
         "http2_profile_v1",
         "http_compact_collect_v1",
@@ -73,14 +91,13 @@ def _echo_helper_source() -> str:
 import base64
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
         continue
     assert command["headers"] == [["accept", "text/event-stream"]]
-    body = base64.b64decode(command["body"] or "")
+    body = command.get("payload", b"")
     head = {
         "type": "head",
         "request_id": request_id,
@@ -173,8 +190,7 @@ import json
 import sys
 
 requests = []
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": command["request_id"]}), flush=True)
         continue
@@ -220,8 +236,7 @@ import base64
 import json
 import sys
 
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
@@ -268,10 +283,9 @@ generation_file = pathlib.Path({str(generation_file)!r})
 generation = int(generation_file.read_text()) + 1 if generation_file.exists() else 1
 generation_file.write_text(str(generation))
 if generation == 1:
-    requests = [json.loads(sys.stdin.readline()), json.loads(sys.stdin.readline())]
+    requests = [read_command(), read_command()]
     os._exit(7)
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({{"type": "cancelled", "request_id": request_id}}), flush=True)
@@ -323,8 +337,7 @@ async def test_subprocess_native_egress_rejects_invalid_first_event(tmp_path: Pa
         """#!/usr/bin/env python3
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     if command["type"] == "request":
         print(json.dumps({"type": "chunk", "request_id": command["request_id"], "data": ""}), flush=True)
     else:
@@ -347,8 +360,7 @@ async def test_subprocess_native_egress_buffers_json_error_body(tmp_path: Path) 
 import base64
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     head = {
         "type": "head", "request_id": request_id, "status": 429,
@@ -376,8 +388,7 @@ async def test_subprocess_native_egress_preserves_helper_failure_provenance(tmp_
         """#!/usr/bin/env python3
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     print(json.dumps({
         "type": "error",
         "request_id": command["request_id"],
@@ -438,8 +449,7 @@ async def test_buffered_body_burst_reaches_active_consumer(tmp_path: Path, monke
 import base64
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
@@ -475,8 +485,7 @@ async def test_client_close_does_not_hang_when_stream_queue_is_full(tmp_path: Pa
 import base64
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
@@ -567,8 +576,7 @@ import json
 import sys
 
 interpreted = set()
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     kind = command["type"]
     if kind == "websocket_connect":
@@ -585,9 +593,9 @@ for line in sys.stdin:
         print(json.dumps({
             "type": "websocket_responses_text" if request_id in interpreted else "websocket_text",
             "request_id": request_id,
-            "text": command["text"] if request_id in interpreted else "echo:" + command["text"],
+            "text": command["payload"].decode() if request_id in interpreted else "echo:" + command["payload"].decode(),
             **({"event_type": "response.text.delta",
-                "payload": json.loads(command["text"]),
+                "payload": json.loads(command["payload"].decode()),
                 "payload_response_id": "r1", "sequence_number": 17}
                if request_id in interpreted else {}),
         }), flush=True)
@@ -598,7 +606,7 @@ for line in sys.stdin:
     elif kind == "websocket_send_binary":
         print(json.dumps({
             "type": "websocket_binary", "request_id": request_id,
-            "data": command["data"],
+            "data": base64.b64encode(command["payload"]).decode(),
         }), flush=True)
         print(json.dumps({
             "type": "websocket_sent", "request_id": request_id,
@@ -657,7 +665,7 @@ async def test_native_websocket_routes_frames_and_send_acknowledgements(tmp_path
     "replacement",
     [
         None,
-        ('"payload": json.loads(command["text"])', '"invalid_payload": None'),
+        ('"payload": json.loads(command["payload"].decode())', '"invalid_payload": None'),
         ('"payload_response_id": "r1"', '"missing_response_id": None'),
         ('"sequence_number": 17', '"missing_sequence_number": None'),
         ('"payload_response_id": "r1"', '"payload_response_id": 17'),
@@ -742,8 +750,7 @@ async def test_native_websocket_close_is_idempotent_after_peer_close_race(tmp_pa
 import json
 import sys
 
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "websocket_connect":
         print(json.dumps({
@@ -824,7 +831,7 @@ async def test_native_websocket_preserves_handshake_denial(tmp_path: Path) -> No
 import base64
 import json
 import sys
-command = json.loads(sys.stdin.readline())
+command = read_command()
 print(json.dumps({
     "type": "websocket_error", "request_id": command["request_id"],
     "command_id": None, "message": "native websocket handshake failed",
@@ -832,8 +839,7 @@ print(json.dumps({
     "status": 429, "headers": [["content-type", "application/json"]],
     "body": base64.b64encode(b'{"error":{"code":"rate_limit_exceeded"}}').decode(),
 }), flush=True)
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     print(json.dumps({"type": "cancelled", "request_id": command["request_id"]}), flush=True)
 """,
     )
@@ -863,7 +869,7 @@ async def test_native_websocket_preserves_liveness_timeout_phase(tmp_path: Path)
         """#!/usr/bin/env python3
 import json
 import sys
-command = json.loads(sys.stdin.readline())
+command = read_command()
 request_id = command["request_id"]
 print(json.dumps({"type": "websocket_open", "request_id": request_id, "status": 101, "headers": []}), flush=True)
 print(json.dumps({
@@ -872,8 +878,7 @@ print(json.dumps({
     "failure_phase": "liveness_timeout", "retryable_same_contract": False,
     "status": None, "headers": [], "body": None,
 }), flush=True)
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     print(json.dumps({"type": "cancelled", "request_id": command["request_id"]}), flush=True)
 """,
     )
@@ -905,7 +910,7 @@ async def test_native_websocket_carries_receive_failure_detail(tmp_path: Path) -
         """#!/usr/bin/env python3
 import json
 import sys
-command = json.loads(sys.stdin.readline())
+command = read_command()
 request_id = command["request_id"]
 print(json.dumps({"type": "websocket_open", "request_id": request_id, "status": 101, "headers": []}), flush=True)
 print(json.dumps({
@@ -914,8 +919,7 @@ print(json.dumps({
     "failure_phase": "protocol", "failure_detail": "protocol_reset_without_closing_handshake",
     "retryable_same_contract": False, "status": None, "headers": [], "body": None,
 }), flush=True)
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     print(json.dumps({"type": "cancelled", "request_id": command["request_id"]}), flush=True)
 """,
     )
@@ -946,12 +950,12 @@ async def test_native_websocket_helper_death_fails_pending_send_without_replay(t
 import json
 import os
 import sys
-command = json.loads(sys.stdin.readline())
+command = read_command()
 print(json.dumps({
     "type": "websocket_open", "request_id": command["request_id"],
     "status": 101, "headers": [],
 }), flush=True)
-json.loads(sys.stdin.readline())
+read_command()
 os._exit(9)
 """,
     )
@@ -976,8 +980,7 @@ def _sse_helper_source(events: list[dict[str, object]]) -> str:
     return f"""#!/usr/bin/env python3
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({{"type": "cancelled", "request_id": request_id}}), flush=True)
@@ -1057,12 +1060,13 @@ async def test_native_sse_failure_releases_owned_stream(
         "http_responses_events_v1",
         "http_responses_completion_v1",
         "websocket_responses_routing_v1",
+        "framed_payload_v1",
     ],
 )
 async def test_native_sse_capability_is_required_before_dispatch(tmp_path: Path, capability: str) -> None:
     helper = tmp_path / "native-helper"
     preamble = _HELPER_PROTOCOL_PREAMBLE.replace(f'        "{capability}",\n', "")
-    source = "#!/usr/bin/env python3\n" + preamble + "\nassert sys.stdin.readline() == ''\n"
+    source = "#!/usr/bin/env python3\n" + preamble + "\nassert read_command() is None\n"
     helper.write_text(source, encoding="utf-8")
     helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
     client = SubprocessNativeEgressClient(helper)
@@ -1168,8 +1172,7 @@ async def test_native_request_cancelled_before_head_unregisters_stream_in_cancel
     _write_helper(
         helper,
         """#!/usr/bin/env python3
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": command["request_id"]}), flush=True)
 """,
@@ -1178,8 +1181,8 @@ for line in sys.stdin:
     sent = asyncio.Event()
     original_send = client._send_command
 
-    async def send(process, generation, command):
-        await original_send(process, generation, command)
+    async def send(process, generation, command, *, payload=None):
+        await original_send(process, generation, command, payload=payload)
         if command.get("type") == "request":
             sent.set()
 
@@ -1291,8 +1294,7 @@ def _websocket_burst_helper_source(*, frames: int, frame_text: str, acknowledge:
 import json
 import sys
 
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     kind = command["type"]
     if kind == "websocket_connect":
@@ -1395,8 +1397,7 @@ async def test_burst_of_small_events_does_not_trip_the_queue_while_the_consumer_
 import base64
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
@@ -1435,8 +1436,7 @@ async def test_response_landing_exactly_on_the_byte_budget_still_completes(tmp_p
 import base64
 import json
 import sys
-for line in sys.stdin:
-    command = json.loads(line)
+for command in commands():
     request_id = command["request_id"]
     if command["type"] == "cancel":
         print(json.dumps({"type": "cancelled", "request_id": request_id}), flush=True)
