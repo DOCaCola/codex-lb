@@ -2862,7 +2862,7 @@ async def test_stream_responses_keepalive_interval_honours_dashboard_value_over_
 @pytest.mark.asyncio
 async def test_source_responses_stream_starts_sse_keepalive_before_first_upstream_event(monkeypatch):
     """Source-routed /v1/responses must keep SSE alive like account streams."""
-    from app.db.models import ModelSource
+    from app.db.models import ModelSource, ModelSourceModel
     from app.modules.model_sources.forwarding import SourceResponsesStream, SourceUsageHolder
 
     release_upstream = asyncio.Event()
@@ -2917,6 +2917,7 @@ async def test_source_responses_stream_starts_sse_keepalive_before_first_upstrea
         is_enabled=True,
         supports_chat_completions=False,
         supports_responses=True,
+        models=[ModelSourceModel(model="src-model", is_enabled=True)],
     )
 
     response = await proxy_api_module._source_responses_response(
@@ -2951,7 +2952,7 @@ async def test_source_responses_stream_starts_sse_keepalive_before_first_upstrea
 
 @pytest.mark.asyncio
 async def test_source_responses_stream_reassembles_crlf_event_blocks(monkeypatch):
-    from app.db.models import ModelSource
+    from app.db.models import ModelSource, ModelSourceModel
     from app.modules.model_sources.forwarding import SourceResponsesStream, SourceUsageHolder
 
     async def crlf_split_body():
@@ -2996,6 +2997,7 @@ async def test_source_responses_stream_reassembles_crlf_event_blocks(monkeypatch
         is_enabled=True,
         supports_chat_completions=False,
         supports_responses=True,
+        models=[ModelSourceModel(model="src-model", is_enabled=True)],
     )
 
     response = await proxy_api_module._source_responses_response(
@@ -3019,7 +3021,7 @@ async def test_source_responses_stream_reassembles_crlf_event_blocks(monkeypatch
 @pytest.mark.asyncio
 async def test_source_responses_forwards_unparseable_blocks_without_synthetic_terminal(monkeypatch):
     """Unparseable source data passes through verbatim instead of becoming response.failed."""
-    from app.db.models import ModelSource
+    from app.db.models import ModelSource, ModelSourceModel
     from app.modules.model_sources.forwarding import SourceResponsesStream, SourceUsageHolder
 
     malformed_block = 'data: {"type":"response.completed","response":{"id":"resp_unparseable"}\n\n'
@@ -3063,6 +3065,7 @@ async def test_source_responses_forwards_unparseable_blocks_without_synthetic_te
         is_enabled=True,
         supports_chat_completions=False,
         supports_responses=True,
+        models=[ModelSourceModel(model="src-model", is_enabled=True)],
     )
 
     response = await proxy_api_module._source_responses_response(
@@ -3485,7 +3488,7 @@ async def test_wrap_source_responses_preserves_crlf_framing_of_unchanged_events(
 
 @pytest.mark.asyncio
 async def test_source_responses_stream_preserves_split_utf8_and_crlf(monkeypatch):
-    from app.db.models import ModelSource
+    from app.db.models import ModelSource, ModelSourceModel
     from app.modules.model_sources.forwarding import SourceResponsesStream, SourceUsageHolder
 
     async def split_boundary_body():
@@ -3532,6 +3535,7 @@ async def test_source_responses_stream_preserves_split_utf8_and_crlf(monkeypatch
         is_enabled=True,
         supports_chat_completions=False,
         supports_responses=True,
+        models=[ModelSourceModel(model="src-model", is_enabled=True)],
     )
 
     response = await proxy_api_module._source_responses_response(
@@ -3562,7 +3566,7 @@ async def test_source_responses_normalize_error_still_settles_reservation(monkey
     on the normal-completion path -- released, never charged and never
     recorded as a client disconnect.
     """
-    from app.db.models import ModelSource
+    from app.db.models import ModelSource, ModelSourceModel
     from app.modules.model_sources.forwarding import SourceResponsesStream, SourceUsage, SourceUsageHolder
 
     settle_calls: list[object] = []
@@ -3625,6 +3629,7 @@ async def test_source_responses_normalize_error_still_settles_reservation(monkey
         is_enabled=True,
         supports_chat_completions=False,
         supports_responses=True,
+        models=[ModelSourceModel(model="src-model", is_enabled=True)],
     )
 
     response = await proxy_api_module._source_responses_response(
