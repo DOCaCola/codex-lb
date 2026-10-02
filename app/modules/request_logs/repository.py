@@ -1608,16 +1608,23 @@ class RequestLogsRepository:
             exclude_soft_deleted=True,
         )
 
-        source_ids = list(
-            await self._session.scalars(
-                select(RequestLog.model_source_id)
-                .where(*filters.conditions, RequestLog.model_source_id.is_not(None))
-                .distinct()
-                .order_by(RequestLog.model_source_id)
-            )
-        )
-        source_options = [f"source:{value}" for value in source_ids]
         unfiltered = not any((since, until, account_ids, api_key_ids, model_options, models, reasoning_efforts))
+        if unfiltered:
+            source_ids = [
+                value
+                for value in await self._distinct_skip_scan(RequestLog.model_source_id, filters.conditions)
+                if value
+            ]
+        else:
+            source_ids = list(
+                await self._session.scalars(
+                    select(RequestLog.model_source_id)
+                    .where(*filters.conditions, RequestLog.model_source_id.is_not(None))
+                    .distinct()
+                    .order_by(RequestLog.model_source_id)
+                )
+            )
+        source_options = [f"source:{value}" for value in source_ids]
         if unfiltered:
             # PostgreSQL has no loose index scan: with no user filters each
             # DISTINCT below is a full pass over request_logs, four times per

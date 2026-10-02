@@ -11,7 +11,16 @@ branch_labels = None
 depends_on = None
 
 
+def _columns(table: str) -> set[str]:
+    return {str(column["name"]) for column in sa.inspect(op.get_bind()).get_columns(table)}
+
+
 def upgrade() -> None:
+    # The state rewrite below belongs to the column's introduction. A schema
+    # that already has the column already holds automatic-limit state, which
+    # a replay must not reset.
+    if "routing_policy" in _columns("claude_accounts"):
+        return
     op.add_column("claude_accounts", sa.Column("routing_policy", sa.String(), nullable=False, server_default="normal"))
     accounts = sa.table("claude_accounts", sa.column("source_id", sa.String()), sa.column("state_json", sa.Text()))
     models = sa.table(
@@ -44,5 +53,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("claude_accounts") as batch:
-        batch.drop_column("routing_policy")
+    if "routing_policy" in _columns("claude_accounts"):
+        with op.batch_alter_table("claude_accounts") as batch:
+            batch.drop_column("routing_policy")

@@ -25,6 +25,7 @@ from sqlalchemy import (
     true,
 )
 from sqlalchemy import Enum as SqlEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.auth.dashboard_session_ttl import DEFAULT_DASHBOARD_SESSION_TTL_SECONDS
@@ -41,6 +42,11 @@ def _enum_values(enum_cls: type[Enum]) -> list[str]:
 
 def new_codex_installation_id() -> str:
     return str(uuid.uuid4())
+
+
+# PostgreSQL ``json`` has no equality operator, so its server defaults cannot
+# be compared by the schema drift check; ``jsonb`` can.
+JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
 
 class AccountStatus(str, Enum):
@@ -103,11 +109,13 @@ class Account(Base):
     seat_type: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_type: Mapped[str] = mapped_column(String, nullable=False)
     all_models: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
-    selected_models: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"), nullable=False)
-    reasoning_restrictions: Mapped[dict[str, list[str]]] = mapped_column(
-        JSON, default=dict, server_default=text("'{}'"), nullable=False
+    selected_models: Mapped[list[str]] = mapped_column(
+        JsonDocument, default=list, server_default=text("'[]'"), nullable=False
     )
-    reserve_usage: Mapped[JsonObject | None] = mapped_column(JSON, nullable=True)
+    reasoning_restrictions: Mapped[dict[str, list[str]]] = mapped_column(
+        JsonDocument, default=dict, server_default=text("'{}'"), nullable=False
+    )
+    reserve_usage: Mapped[JsonObject | None] = mapped_column(JsonDocument, nullable=True)
     routing_policy: Mapped[str] = mapped_column(
         String,
         default="normal",
@@ -3160,6 +3168,14 @@ Index(
     "idx_logs_live_status_error",
     RequestLog.status,
     RequestLog.error_code,
+    postgresql_where=text("deleted_at IS NULL"),
+    sqlite_where=text("deleted_at IS NULL"),
+)
+# The provider-source facet probe, under the same live-row predicate. Soft
+# deletion keeps model_source_id, so without it a probe walks the deleted rows.
+Index(
+    "idx_logs_model_source_live",
+    RequestLog.model_source_id,
     postgresql_where=text("deleted_at IS NULL"),
     sqlite_where=text("deleted_at IS NULL"),
 )

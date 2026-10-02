@@ -9,10 +9,16 @@ branch_labels = None
 depends_on = None
 
 
+def _columns(table: str) -> set[str]:
+    return {str(column["name"]) for column in sa.inspect(op.get_bind()).get_columns(table)}
+
+
 def upgrade() -> None:
-    op.add_column("accounts", sa.Column("reserve_usage", sa.JSON(), nullable=True))
+    if "reserve_usage" not in _columns("accounts"):
+        op.add_column("accounts", sa.Column("reserve_usage", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("accounts") as batch:
-        batch.drop_column("reserve_usage")
+    if "reserve_usage" in _columns("accounts"):
+        with op.batch_alter_table("accounts") as batch:
+            batch.drop_column("reserve_usage")

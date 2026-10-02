@@ -3379,3 +3379,86 @@ async def test_bridge_continuity_abandonment_migration_upgrade_and_downgrade(tmp
 
 
 # end bridge continuity abandonment
+
+
+_FORK_BASE_REVISION = "20260919_000000_merge_scim_overflow_heads"
+
+
+@pytest.mark.asyncio
+async def test_fork_revisions_replay_over_their_own_schema_without_rewriting_data(tmp_path):
+    """A ledger rewound below the fork revisions replays them without effect.
+
+    Upstream revisions guard their DDL on the reflected schema, so a replay
+    over a schema that already carries the change does nothing; the fork
+    revisions keep that contract, including the data rewrites that belong to a
+    column's introduction (the Claude automatic-limit reset here).
+    """
+    from alembic import command
+
+    from app.db.migrate import _build_alembic_config
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'fork-replay.sqlite'}"
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+    engine = create_async_engine(db_url)
+    state_json = '{"selections": [{"model": "claude-opus-5-5", "budget": 1}]}'
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("INSERT INTO model_sources (id, name, kind, base_url) VALUES ('src', 'Claude', 'claude', 'x')")
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO claude_accounts (source_id, credentials_encrypted, grant_fingerprint, expires_at, "
+                    "state_json) VALUES ('src', x'00', 'grant', '2026-10-02 00:00:00', :state)"
+                ),
+                {"state": state_json},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO model_source_models (source_id, model, context_window, is_enabled) "
+                    "VALUES ('src', 'claude-opus-5-5', 200000, 1)"
+                )
+            )
+
+        await to_thread.run_sync(lambda: command.stamp(_build_alembic_config(db_url), _FORK_BASE_REVISION, purge=True))
+        result = await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+        assert result.current_revision == _HEAD_REVISION
+
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT state_json FROM claude_accounts")) == state_json
+            model_row = (await conn.execute(text("SELECT context_window, is_enabled FROM model_source_models"))).one()
+            assert tuple(model_row) == (200000, 1)
+    finally:
+        await engine.dispose()
+
+    assert await to_thread.run_sync(lambda: check_schema_drift(db_url)) == ()
+
+
+@pytest.mark.asyncio
+async def test_request_logs_live_source_index_migration_upgrade_and_downgrade(tmp_path):
+    """The provider-source facet's live-row partial index round-trips (its plan is pinned on PostgreSQL)."""
+    from alembic import command
+
+    from app.db.migrate import _build_alembic_config
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'live-source-index.sqlite'}"
+    parent = "20261002_000000_account_json_documents"
+    index_name = "idx_logs_model_source_live"
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+    engine = create_async_engine(db_url)
+    try:
+        async with engine.connect() as conn:
+            rows = (await conn.execute(text("PRAGMA index_list('request_logs')"))).fetchall()
+            # PRAGMA index_list columns: seq, name, unique, origin, partial.
+            assert {str(row[1]): bool(row[4]) for row in rows}[index_name]
+        await to_thread.run_sync(lambda: command.downgrade(_build_alembic_config(db_url), parent))
+        async with engine.connect() as conn:
+            assert (
+                await conn.scalar(text("SELECT count(*) FROM sqlite_master WHERE name = :name"), {"name": index_name})
+                == 0
+            )
+        await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+    finally:
+        await engine.dispose()
+
+    assert await to_thread.run_sync(lambda: check_schema_drift(db_url)) == ()

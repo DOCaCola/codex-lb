@@ -1,0 +1,4 @@
+- [x] 1. Guard the DDL of every fork revision on the reflected schema in both directions, and gate the Claude limit and rollup coverage rewrites on their column's introduction.
+- [x] 2. Store the account JSON documents as PostgreSQL `jsonb` through a new revision and a `jsonb` ORM variant.
+- [x] 3. Add the provider-source live-row facet index, register it with the manual drift requirements, and serve the unfiltered source facet with the skip scan.
+- [x] 4. Cover replay over the fork revisions without data rewrites and the index round trip on SQLite. Verify downgrade below the fork base for migrated and model-built schemas on SQLite and PostgreSQL, and run the PostgreSQL suite.

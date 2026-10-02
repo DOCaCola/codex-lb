@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKey
+from app.db.models import Account, AccountStatus, ApiKey, ModelSource
 from app.db.session import SessionLocal, engine
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.request_logs.repository import RequestLogsRepository
@@ -514,6 +514,11 @@ async def test_request_logs_options_unfiltered_issues_no_distinct_statements(asy
         accounts_repo = AccountsRepository(session)
         logs_repo = RequestLogsRepository(session)
         await accounts_repo.upsert(_make_account("acc_shape", "shape@example.com"))
+        session.add_all(
+            ModelSource(id=source_id, name=name, base_url="https://provider.invalid/v1")
+            for source_id, name in (("shape-source", "Provider"), ("shape-deleted-source", "Deleted provider"))
+        )
+        await session.commit()
         for index, model in enumerate(("gpt-4o", "gpt-5.1", "o4-mini")):
             await logs_repo.add_log(
                 account_id="acc_shape",
@@ -526,6 +531,23 @@ async def test_request_logs_options_unfiltered_issues_no_distinct_statements(asy
                 error_code=None,
                 requested_at=now,
             )
+
+        for source_id in ("shape-source", "shape-deleted-source"):
+            log = await logs_repo.add_log(
+                account_id=None,
+                model_source_id=source_id,
+                request_id=f"req_{source_id}",
+                model="gpt-5.1",
+                input_tokens=10,
+                output_tokens=10,
+                latency_ms=100,
+                status="success",
+                error_code=None,
+                requested_at=now,
+            )
+            if source_id == "shape-deleted-source":
+                log.deleted_at = now
+        await session.commit()
 
     statements: list[str] = []
 
@@ -540,6 +562,8 @@ async def test_request_logs_options_unfiltered_issues_no_distinct_statements(asy
 
     assert response.status_code == 200
     assert len(response.json()["modelOptions"]) == 3
+    assert response.json()["accountIds"] == ["acc_shape", "source:shape-source"]
+    assert response.json()["accountLabels"] == {"source:shape-source": "Provider"}
     options_statements = [stmt for stmt in statements if "request_logs" in stmt]
     assert options_statements, "expected captured facet statements"
     assert not any(re.search(r"SELECT\s+DISTINCT\b", stmt, re.IGNORECASE) for stmt in options_statements)
@@ -564,10 +588,12 @@ _DEAD_COHORT_SEED_ROWS = 20_000
 # index; the bound is a constant, never the soft-deleted cohort size.
 _PROBE_ROW_BOUND = 1
 # Statement -> live-row index it must be served by. Every facet statement
-# carries the status clause, so the status/error-code pair is matched last;
-# account probes have no live index (soft deletion detaches account_id).
+# carries the status clause, so the status/error-code pair is matched last,
+# and ``model_source_id`` precedes its ``model`` prefix; account probes have no
+# live index (soft deletion detaches account_id).
 _LIVE_FACET_INDEX_BY_COLUMN: tuple[tuple[str, str | None], ...] = (
     ("request_logs.api_key_id", "idx_logs_live_api_key"),
+    ("request_logs.model_source_id", "idx_logs_model_source_live"),
     ("request_logs.model", "idx_logs_live_model_effort"),
     ("request_logs.account_id", None),
     ("request_logs.status", "idx_logs_live_status_error"),

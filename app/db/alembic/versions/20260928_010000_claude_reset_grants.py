@@ -10,7 +10,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("claude_cooldowns", sa.Column("evidence_json", sa.Text(), nullable=True))
+    inspector = sa.inspect(op.get_bind())
+    if "evidence_json" not in {str(column["name"]) for column in inspector.get_columns("claude_cooldowns")}:
+        op.add_column("claude_cooldowns", sa.Column("evidence_json", sa.Text(), nullable=True))
+    if inspector.has_table("claude_reset_operations"):
+        return
     op.create_table(
         "claude_reset_operations",
         sa.Column("operation_id", sa.String(), primary_key=True),
@@ -26,6 +30,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("claude_reset_operations")
-    with op.batch_alter_table("claude_cooldowns") as batch:
-        batch.drop_column("evidence_json")
+    inspector = sa.inspect(op.get_bind())
+    if inspector.has_table("claude_reset_operations"):
+        op.drop_table("claude_reset_operations")
+    if "evidence_json" in {str(column["name"]) for column in inspector.get_columns("claude_cooldowns")}:
+        with op.batch_alter_table("claude_cooldowns") as batch:
+            batch.drop_column("evidence_json")

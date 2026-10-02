@@ -10,6 +10,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("claude_session_owners"):
+        return
     op.create_table(
         "claude_session_owners",
         sa.Column("scope_hash", sa.String(), primary_key=True),
@@ -20,5 +22,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if not sa.inspect(op.get_bind()).has_table("claude_session_owners"):
+        return
     op.drop_index("ix_claude_session_owners_expires_at", table_name="claude_session_owners")
     op.drop_table("claude_session_owners")

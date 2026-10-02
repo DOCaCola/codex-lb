@@ -95,6 +95,7 @@ _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
             "idx_logs_live_api_key",
             "idx_logs_live_model_effort",
             "idx_logs_live_status_error",
+            "idx_logs_model_source_live",
         }
     ),
     "additional_usage_history": frozenset(

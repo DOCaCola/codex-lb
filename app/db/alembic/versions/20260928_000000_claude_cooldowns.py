@@ -10,6 +10,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("claude_cooldowns"):
+        return
     op.create_table(
         "claude_cooldowns",
         sa.Column(
@@ -21,4 +23,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("claude_cooldowns")
+    if sa.inspect(op.get_bind()).has_table("claude_cooldowns"):
+        op.drop_table("claude_cooldowns")
