@@ -24,7 +24,7 @@ from app.core.usage.pricing_catalog import (
     snapshot_updated_at,
 )
 from app.db.session import get_background_session
-from app.modules.request_logs.cost_backfill import backfill_missing_costs, repair_echoed_service_tiers
+from app.modules.request_logs.cost_backfill import backfill_missing_costs
 
 logger = logging.getLogger(__name__)
 _REFRESH_SECONDS = 3600
@@ -39,10 +39,6 @@ class MetadataRefreshScheduler:
     _refresh_at: float = 0.0
     _backfill_at: float = 0.0
     _cursor: int = 0
-    _tier_cursor: int = 0
-    # Live settlement no longer persists echoed tiers, so one complete repair
-    # pass per process settles the history before missing costs are priced.
-    _tiers_settled: bool = False
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -88,8 +84,6 @@ class MetadataRefreshScheduler:
             logger.warning("Metadata refresh failed; retaining last-good prices", exc_info=True)
 
     async def _backfill(self) -> bool:
-        if not self._tiers_settled:
-            return await self._repair_tiers()
         async with get_background_session() as session:
             batch = await backfill_missing_costs(session, after_id=self._cursor)
         self._cursor = batch.last_id
@@ -98,15 +92,6 @@ class MetadataRefreshScheduler:
             self._backfill_at = time.monotonic() + _REFRESH_SECONDS
         if batch.updated:
             logger.info("Backfilled missing request costs: updated=%d last_id=%d", batch.updated, batch.last_id)
-        return True
-
-    async def _repair_tiers(self) -> bool:
-        async with get_background_session() as session:
-            batch = await repair_echoed_service_tiers(session, after_id=self._tier_cursor)
-        self._tier_cursor = batch.last_id
-        self._tiers_settled = batch.scanned < 200
-        if batch.updated:
-            logger.info("Re-billed echoed service tiers: updated=%d last_id=%d", batch.updated, batch.last_id)
         return True
 
     async def _run_loop(self) -> None:

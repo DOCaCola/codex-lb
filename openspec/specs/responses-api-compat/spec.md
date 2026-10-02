@@ -1593,11 +1593,6 @@ NOT replace the requested tier, because the Codex backend echoes these values
 on turns served on the requested tier. A missing, unknown or more expensive
 actual tier MUST leave the requested tier billable.
 
-Request logs persisted before this rule whose billable tier is an echoed
-`default` or `auto` for a `priority` request MUST be re-billed at the requested
-tier, with the cost difference and tier change mirrored exactly into every
-folded usage aggregate.
-
 #### Scenario: Upstream echoes the default tier on a priority request
 - **WHEN** a client sends a Responses request with `service_tier: "priority"`
 - **AND** the upstream response later reports `service_tier: "default"` or `"auto"`
@@ -1630,12 +1625,6 @@ folded usage aggregate.
 - **AND** the upstream response reports a tier outside the known cost ranks
 - **THEN** the persisted request log entry records `requested_service_tier = "priority"`
 - **AND** the persisted request log entry records billable `service_tier = "priority"`
-
-#### Scenario: Historical echoed tiers are re-billed
-- **WHEN** a retained request log for a `priority` request carries an echoed `default` billable tier and a standard-rate cost
-- **THEN** the row is re-billed with `service_tier = "priority"` and the priority-rate cost
-- **AND** lifetime, report, hourly and demand aggregates change by exactly the cost difference, with hourly tier buckets moved and request counts unchanged
-- **AND** repeating the repair changes nothing
 
 ### Requirement: API key service tier enforcement applies to upstream Responses requests
 

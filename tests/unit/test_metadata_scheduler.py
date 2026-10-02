@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,7 +11,6 @@ from app.core.clients.codex_version import CodexVersionCache
 from app.core.usage import metadata_scheduler as module
 from app.core.usage import pricing_catalog as catalog
 from app.core.usage.pricing import ModelPrice, get_pricing_for_model
-from app.modules.request_logs.cost_backfill import BackfillBatch
 
 
 @pytest.fixture
@@ -107,25 +105,6 @@ async def test_compatible_partial_refresh_does_not_restart_backfill_cursor(setup
     scheduler = module.MetadataRefreshScheduler(_cursor=123)
     await scheduler._refresh()
     assert scheduler._cursor == 123
-
-
-async def test_backfill_settles_echoed_tiers_before_pricing_missing_costs(setup, monkeypatch):
-    @asynccontextmanager
-    async def session():
-        yield object()
-
-    repair = AsyncMock(side_effect=[BackfillBatch(200, 200, 400), BackfillBatch(3, 3, 403)])
-    missing = AsyncMock(return_value=BackfillBatch(0, 0, 0))
-    monkeypatch.setattr(module, "get_background_session", session)
-    monkeypatch.setattr(module, "repair_echoed_service_tiers", repair)
-    monkeypatch.setattr(module, "backfill_missing_costs", missing)
-    scheduler = module.MetadataRefreshScheduler()
-    for _ in range(3):
-        await scheduler._backfill()
-    assert [call.kwargs["after_id"] for call in repair.await_args_list] == [0, 400]
-    missing.assert_awaited_once()
-    await scheduler._backfill()
-    assert repair.await_count == 2
 
 
 @pytest.mark.parametrize("failed_operation", ["refresh", "backfill"])

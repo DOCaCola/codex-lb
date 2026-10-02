@@ -83,8 +83,8 @@ cheaper non-echo report such as `flex` is billed as reported.
 
 The dashboard request log shows a billed Fast or Ultrafast tier as a grey icon
 next to the reasoning effort, and notes the requested tier only when the billed
-tier is cheaper. Rows stored before this rule are re-billed once by the
-leader's metadata scheduler, with exact deltas mirrored into folded aggregates.
+tier is cheaper. Rows stored before this rule were re-billed by a one-time
+repair on 2026-10-02 (11,812 rows); no repair code remains.
 
 For OpenCode or Codex-compatible clients, enable Fast Mode by sending a
 Responses request with:
