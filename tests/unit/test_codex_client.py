@@ -12,6 +12,7 @@ from python_socks import ProxyType
 
 from app.core.clients import codex as codex_module
 from app.core.clients.codex import (
+    UPSTREAM_WEBSOCKET_LIVENESS,
     CodexClient,
     CodexTransportError,
     create_codex_session,
@@ -626,7 +627,7 @@ async def test_routed_websocket_prefers_native_and_preserves_route_metadata(
         headers={"Authorization": "Bearer token"},
         timeout=7,
         max_msg_size=4321,
-        heartbeat=120,
+        liveness=UPSTREAM_WEBSOCKET_LIVENESS,
         compress=15,
         protocols=("openai",),
     )
@@ -642,8 +643,8 @@ async def test_routed_websocket_prefers_native_and_preserves_route_metadata(
     assert request.headers["sec-websocket-protocol"] == "openai"
     assert request.connect_timeout_seconds == 7
     assert request.max_message_bytes == 4321
-    assert request.ping_interval_seconds == 120
-    assert request.ping_timeout_seconds == 60
+    assert request.ping_interval_seconds == 20.0
+    assert request.ping_timeout_seconds == 30.0
 
 
 @pytest.mark.asyncio
@@ -657,12 +658,17 @@ async def test_routed_websocket_preserves_noncompressed_aiohttp_semantics(
     result = await client.open_ws_with_route_metadata(
         "wss://upstream.test/responses",
         route=route,
+        liveness=UPSTREAM_WEBSOCKET_LIVENESS,
         compress=0,
     )
 
     assert result.native is False
     assert native.websocket_calls == []
     assert session.calls[0]["compress"] == 0
+    # aiohttp exposes one heartbeat knob and waits half of it for the pong;
+    # the pong bound is preserved.
+    assert session.calls[0]["heartbeat"] == 60.0
+    assert "liveness" not in session.calls[0]
 
 
 @pytest.mark.asyncio

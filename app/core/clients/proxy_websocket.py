@@ -27,6 +27,7 @@ from websockets.exceptions import (
 from websockets.typing import Origin, Subprotocol
 
 from app.core.clients.codex import (
+    UPSTREAM_WEBSOCKET_LIVENESS,
     CodexClient,
     CodexTransportError,
     codex_transport_error_message,
@@ -982,7 +983,7 @@ async def _connect_upstream_websocket(
         endpoint_id = route.endpoint_id
         active_route = route
         fallback_used = False
-        heartbeat = settings.proxy_downstream_websocket_idle_timeout_seconds if policy.enable_routed_heartbeat else None
+        liveness = UPSTREAM_WEBSOCKET_LIVENESS if policy.enable_routed_heartbeat else None
         protocol_kwargs = {"protocols": subprotocols} if subprotocols else {}
         try:
             opener = getattr(active_codex_client, "open_ws_with_route_metadata", None)
@@ -995,7 +996,7 @@ async def _connect_upstream_websocket(
                     headers=upstream_headers,
                     timeout=settings.upstream_connect_timeout_seconds,
                     max_msg_size=MAX_SSE_EVENT_BYTES,
-                    heartbeat=heartbeat,
+                    liveness=liveness,
                     compress=15,
                     native_interpret_responses=policy.include_responses_beta,
                     **protocol_kwargs,
@@ -1013,7 +1014,7 @@ async def _connect_upstream_websocket(
                     headers=upstream_headers,
                     timeout=settings.upstream_connect_timeout_seconds,
                     max_msg_size=MAX_SSE_EVENT_BYTES,
-                    heartbeat=heartbeat,
+                    heartbeat=liveness.aiohttp_heartbeat_seconds if liveness is not None else None,
                     compress=15,
                     **protocol_kwargs,
                 )
@@ -1103,9 +1104,7 @@ async def _connect_upstream_websocket(
         )
     # Ping/pong control frames verify transport liveness without treating valid
     # application-frame silence as an idle response.
-    ping_timeout = (
-        settings.proxy_downstream_websocket_idle_timeout_seconds if policy.enable_direct_ping_timeout else None
-    )
+    ping_timeout = UPSTREAM_WEBSOCKET_LIVENESS.pong_timeout_seconds if policy.enable_direct_ping_timeout else None
     native_client = discover_native_egress_client()
     if native_client is not None:
         native_headers = dict(upstream_headers)
@@ -1122,7 +1121,7 @@ async def _connect_upstream_websocket(
                     headers=native_headers,
                     connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
                     max_message_bytes=MAX_SSE_EVENT_BYTES,
-                    ping_interval_seconds=20.0,
+                    ping_interval_seconds=UPSTREAM_WEBSOCKET_LIVENESS.ping_interval_seconds,
                     ping_timeout_seconds=ping_timeout,
                     proxy_url=proxy_url,
                     interpret_responses=policy.include_responses_beta,
@@ -1168,6 +1167,7 @@ async def _connect_upstream_websocket(
             additional_headers=upstream_headers or None,
             user_agent_header=user_agent,
             open_timeout=settings.upstream_connect_timeout_seconds,
+            ping_interval=UPSTREAM_WEBSOCKET_LIVENESS.ping_interval_seconds,
             ping_timeout=ping_timeout,
             max_size=MAX_SSE_EVENT_BYTES,
             proxy=proxy_url,

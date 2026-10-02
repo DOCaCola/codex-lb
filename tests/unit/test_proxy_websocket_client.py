@@ -26,7 +26,7 @@ from websockets.http11 import Response
 
 import app.core.clients.http as http_module
 import app.core.clients.proxy_websocket as proxy_websocket_module
-from app.core.clients.codex import CodexTransportError, CodexWebSocketResult
+from app.core.clients.codex import UPSTREAM_WEBSOCKET_LIVENESS, CodexTransportError, CodexWebSocketResult
 from app.core.clients.native_egress import (
     NativeEgressProtocolError,
     NativeEgressTransportError,
@@ -575,8 +575,8 @@ async def test_connect_responses_websocket_uses_websockets_transport(monkeypatch
     assert kwargs["user_agent_header"] == "Codex CLI Test"
     assert kwargs["proxy"] is None
     assert kwargs["open_timeout"] == 7.0
-    assert "ping_interval" not in kwargs
-    assert kwargs["ping_timeout"] == 120.0
+    assert kwargs["ping_interval"] == 20.0
+    assert kwargs["ping_timeout"] == 30.0
     assert kwargs["max_size"] == 4321
     assert kwargs["compression"] == "deflate"
     assert "subprotocols" not in kwargs
@@ -628,7 +628,7 @@ async def test_connect_responses_websocket_prefers_native_direct_transport(monke
     assert request.connect_timeout_seconds == 7.0
     assert request.max_message_bytes == 4321
     assert request.ping_interval_seconds == 20.0
-    assert request.ping_timeout_seconds == 120.0
+    assert request.ping_timeout_seconds == 30.0
     assert request.proxy_url is None
     assert request.headers["Authorization"] == "Bearer access-token"
     assert request.headers["User-Agent"] == "Codex CLI Test"
@@ -826,7 +826,7 @@ async def test_connect_responses_websocket_routed_codex_call_preserves_size_limi
     assert call["route"] is route
     assert call["timeout"] == 7.0
     assert call["max_msg_size"] == 4321
-    assert call["heartbeat"] == 120.0
+    assert call["liveness"] is UPSTREAM_WEBSOCKET_LIVENESS
     assert call["compress"] == 15
     assert "max_size" not in call
     assert "protocols" not in call
@@ -923,7 +923,7 @@ async def test_connect_live_websocket_routed_call_disables_denial_replay_and_ena
     call = codex_client.calls[0]
     assert call["retry_handshake_status"] is False
     assert call["retry_network_errors"] is False
-    assert call["heartbeat"] == 120.0
+    assert call["liveness"] is UPSTREAM_WEBSOCKET_LIVENESS
     assert call["max_msg_size"] == 4321
     assert call["protocols"] is offered_subprotocols
     headers = cast(dict[str, str], call["headers"])

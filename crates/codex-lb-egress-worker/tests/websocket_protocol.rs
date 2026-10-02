@@ -1,6 +1,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+use futures_util::SinkExt;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -8,6 +9,7 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::oneshot;
 use tokio_tungstenite::accept_async_with_config;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tungstenite::extensions::ExtensionsConfig;
 use tungstenite::extensions::compression::deflate::DeflateConfig;
@@ -111,6 +113,74 @@ async fn missing_pong_emits_liveness_timeout() {
     assert_eq!(failure["type"], "websocket_error");
     assert_eq!(failure["failure_phase"], "liveness_timeout");
     assert_eq!(failure["retryable_same_contract"], false);
+
+    release_server
+        .send(())
+        .expect("release websocket server after liveness failure");
+    drop(stdin);
+    tokio::time::timeout(Duration::from_secs(2), helper.wait())
+        .await
+        .expect("helper exit timeout")
+        .expect("wait for helper");
+    server.await.expect("websocket server task");
+}
+
+#[tokio::test]
+async fn inbound_frames_keep_connection_alive_without_pong() {
+    const STREAMED_FRAMES: usize = 12;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind websocket server");
+    let address = listener.local_addr().expect("server address");
+    let (release_server, wait_for_liveness_failure) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept websocket client");
+        let mut websocket = accept_async_with_config(stream, Some(deflate_server_config()))
+            .await
+            .expect("accept websocket handshake");
+        // Stream output without ever polling the server stream, so no ping is
+        // answered. The stream spans several pong deadlines.
+        for index in 0..STREAMED_FRAMES {
+            websocket
+                .send(Message::text(format!("frame-{index}")))
+                .await
+                .expect("stream frame to helper");
+            tokio::time::sleep(Duration::from_millis(15)).await;
+        }
+        wait_for_liveness_failure
+            .await
+            .expect("liveness assertion must release websocket server");
+    });
+
+    let (mut helper, mut stdin, mut lines) = start_helper().await;
+    let connect = json!({
+        "type": "websocket_connect",
+        "request_id": "busy-stream-test",
+        "url": format!("ws://{address}/v1/responses"),
+        "headers": [],
+        "connect_timeout_ms": 2_000,
+        "max_message_bytes": 1_024,
+        "ping_interval_ms": 20,
+        "ping_timeout_ms": 40,
+        "proxy_url": null
+    });
+    write_command(&mut stdin, &connect).await;
+    let open = read_event(&mut lines, "open event timeout").await;
+    assert_eq!(open["type"], "websocket_open");
+
+    for index in 0..STREAMED_FRAMES {
+        let event = read_event(&mut lines, "streamed frame timeout").await;
+        assert_eq!(
+            event["type"], "websocket_text",
+            "busy stream tripped: {event}"
+        );
+        assert_eq!(event["text"], format!("frame-{index}"));
+    }
+
+    // Once the stream goes silent and the pong never comes, the bound applies.
+    let failure = read_event(&mut lines, "liveness event timeout").await;
+    assert_eq!(failure["type"], "websocket_error");
+    assert_eq!(failure["failure_phase"], "liveness_timeout");
 
     release_server
         .send(())

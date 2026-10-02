@@ -1094,7 +1094,7 @@ Background consumers derived from the stream budget (the quota warm-up claim lea
 
 ### Requirement: Responses upstream websocket liveness is bounded
 
-The proxy MUST configure direct and routed upstream Responses WebSocket transports with finite ping/pong liveness detection derived from `proxy_downstream_websocket_idle_timeout_seconds`, read as the effective dashboard-managed value (a non-NULL `dashboard_settings.proxy_downstream_websocket_idle_timeout_seconds` overrides the environment value) from the snapshot bound to the connection. A direct connection MUST use the native helper watchdog when native egress is selected and the Python `websockets` watchdog only on the pre-dispatch missing-helper fallback. When an established Responses WebSocket is terminated because its transport did not receive the required pong, the adapter MUST classify the failure as `upstream_websocket_liveness_timeout`. Direct WebSocket and HTTP bridge relay owners MUST treat that failure as account neutral, MUST NOT transparently replay a pending request whose delivery is ambiguous, MUST finalize its pending request ownership exactly once, and MUST retire the affected upstream socket so a later client retry opens a fresh connection. An HTTP bridge reader MUST suppress its own pending-deque settlement only when a concurrent submitter explicitly claimed liveness-settlement ownership under the session lifecycle lock; `session.closed` alone MUST NOT suppress settlement.
+The proxy MUST configure direct and routed upstream Responses WebSocket transports with a fixed ping/pong liveness bound that is independent of `proxy_downstream_websocket_idle_timeout_seconds`: a ping every 20 seconds, and the connection declared dead when no inbound frame arrives within 30 seconds of a ping. Any inbound frame, not only the matching pong, MUST count as proof of liveness for the native helper. A transport that exposes only a single heartbeat value MUST be configured so that its pong wait is 30 seconds. A direct connection MUST use the native helper watchdog when native egress is selected and the Python `websockets` watchdog only on the pre-dispatch missing-helper fallback. When an established Responses WebSocket is terminated because its transport did not receive the required pong, the adapter MUST classify the failure as `upstream_websocket_liveness_timeout`. Direct WebSocket and HTTP bridge relay owners MUST treat that failure as account neutral, MUST NOT transparently replay a pending request whose delivery is ambiguous, MUST finalize its pending request ownership exactly once, and MUST retire the affected upstream socket so a later client retry opens a fresh connection. An HTTP bridge reader MUST suppress its own pending-deque settlement only when a concurrent submitter explicitly claimed liveness-settlement ownership under the session lifecycle lock; `session.closed` alone MUST NOT suppress settlement.
 
 #### Scenario: Direct Responses websocket loses pong liveness
 
@@ -1108,11 +1108,24 @@ The proxy MUST configure direct and routed upstream Responses WebSocket transpor
 #### Scenario: Routed Responses websocket loses pong liveness
 
 - **GIVEN** a routed upstream Responses WebSocket has been established for an HTTP bridge or direct WebSocket client
-- **WHEN** the aiohttp heartbeat watchdog terminates it after a pong timeout
+- **WHEN** the native-helper or aiohttp heartbeat watchdog terminates it after a pong timeout
 - **THEN** the pending request fails with `upstream_websocket_liveness_timeout`
 - **AND** the request is not transparently replayed
 - **AND** the selected account receives no failure-health signal
 - **AND** the affected upstream socket is retired
+
+#### Scenario: Silent upstream connection is detected within the bound
+
+- **GIVEN** an upstream Responses WebSocket stops delivering frames and answering pings
+- **WHEN** 30 seconds pass after the next ping without an inbound frame
+- **THEN** the transport is declared dead with `upstream_websocket_liveness_timeout`
+- **AND** the downstream idle timeout does not extend that bound
+
+#### Scenario: Streaming output keeps the connection alive
+
+- **GIVEN** an upstream Responses WebSocket is streaming output frames
+- **WHEN** a pong is delayed behind that output beyond the pong timeout
+- **THEN** the native helper keeps the upstream socket open because inbound frames prove liveness
 
 #### Scenario: Long turn remains healthy through control frames
 
@@ -1140,8 +1153,9 @@ The proxy MUST configure direct and routed upstream Responses WebSocket transpor
 
 - **GIVEN** `CODEX_LB_PROXY_DOWNSTREAM_WEBSOCKET_IDLE_TIMEOUT_SECONDS=120` and an operator stores `45` through `PUT /api/settings`
 - **WHEN** a new downstream WebSocket connection is accepted on any replica
-- **THEN** its idle timeout and the derived upstream ping/pong liveness window use 45 seconds
-- **AND** connections accepted before the change keep the value they were bound with
+- **THEN** its idle timeout uses 45 seconds
+- **AND** its upstream WebSocket keeps the fixed 30-second pong bound
+- **AND** connections accepted before the change keep the idle value they were bound with
 
 ### Requirement: Upstream websocket drops penalize affected accounts
 

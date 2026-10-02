@@ -1640,7 +1640,7 @@
   "settings.upstreamTimeouts.streamIdle.label": "Stream idle timeout",
   "settings.upstreamTimeouts.streamIdle.description": "Seconds a started stream may stay silent between events before it is ended as idle.",
   "settings.upstreamTimeouts.websocketIdle.label": "Downstream WebSocket idle timeout",
-  "settings.upstreamTimeouts.websocketIdle.description": "Seconds without traffic before an idle client WebSocket is closed; also the upstream ping/pong liveness window.",
+  "settings.upstreamTimeouts.websocketIdle.description": "Seconds without traffic before an idle client WebSocket is closed.",
   "settings.upstreamTimeouts.keepalive.label": "SSE keepalive interval",
   "settings.upstreamTimeouts.keepalive.description": "Seconds between liveness frames sent to waiting SSE clients; 0 disables them.",
   "settings.upstreamTimeouts.streamBudget.label": "Responses stream request budget",

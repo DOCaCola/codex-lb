@@ -35,6 +35,35 @@ _TLS_TARGET_SCHEMES = frozenset({"https", "wss"})
 _CODEX_SKIP_AUTO_IDENTITY_HEADERS = frozenset({aiohttp.hdrs.ACCEPT, aiohttp.hdrs.ACCEPT_ENCODING})
 
 
+@dataclass(frozen=True, slots=True)
+class UpstreamWebSocketLiveness:
+    """Transport liveness bound for an upstream WebSocket.
+
+    A ping is sent every ``ping_interval_seconds``; the connection is declared
+    dead when no inbound frame of any kind arrives within
+    ``pong_timeout_seconds`` of that ping. It is independent of the
+    downstream client idle policy: an upstream turn may be silent at the
+    application layer for minutes, but a healthy transport answers pings
+    within seconds.
+    """
+
+    ping_interval_seconds: float
+    pong_timeout_seconds: float
+
+    @property
+    def aiohttp_heartbeat_seconds(self) -> float:
+        # aiohttp has a single knob: ping after ``heartbeat`` seconds without
+        # inbound data, then wait ``heartbeat / 2`` for the pong. Preserve the
+        # pong bound so slow proxies cannot trip the watchdog early.
+        return self.pong_timeout_seconds * 2
+
+
+UPSTREAM_WEBSOCKET_LIVENESS = UpstreamWebSocketLiveness(
+    ping_interval_seconds=20.0,
+    pong_timeout_seconds=30.0,
+)
+
+
 class CodexTransportError(RuntimeError):
     """Credential-safe routed transport failure.
 
@@ -366,9 +395,11 @@ class CodexClient:
         if route is None:
             raise ValueError("Codex upstream calls require a resolved upstream proxy route")
         interpret_responses = bool(kwargs.pop("native_interpret_responses", False))
+        liveness: UpstreamWebSocketLiveness | None = kwargs.pop("liveness", None)
         _reject_reserved(kwargs)
         endpoints = (route.endpoint, *route.fallbacks)
         _reject_credentialed_plaintext_target(url, endpoints)
+        aiohttp_kwargs = {**kwargs, "heartbeat": liveness.aiohttp_heartbeat_seconds} if liveness is not None else kwargs
         for index, endpoint in enumerate(endpoints):
             candidate = route.with_endpoint(endpoint, tuple(endpoints[index + 1 :]))
             context: Any | None = None
@@ -379,6 +410,7 @@ class CodexClient:
                     url,
                     endpoint.proxy_url,
                     kwargs,
+                    liveness=liveness,
                     interpret_responses=interpret_responses,
                 )
                 if self._native_egress_client is not None and native_request is not None:
@@ -397,13 +429,13 @@ class CodexClient:
                         native=True,
                     )
                 elif endpoint.scheme.startswith("socks"):
-                    websocket, context = await _open_ws_via_socks_proxy(url, endpoint, **kwargs)
+                    websocket, context = await _open_ws_via_socks_proxy(url, endpoint, **aiohttp_kwargs)
                     entered_context = context
                 else:
                     context = self._session.ws_connect(
                         url,
                         **endpoint.aiohttp_proxy_kwargs(),
-                        **kwargs,
+                        **aiohttp_kwargs,
                     )
                     if asyncio.iscoroutine(context):
                         context = await context
@@ -758,12 +790,12 @@ def _prepare_native_websocket_request(
     proxy_url: str,
     kwargs: Mapping[str, Any],
     *,
+    liveness: UpstreamWebSocketLiveness | None,
     interpret_responses: bool = False,
 ) -> NativeWebSocketRequest | None:
     supported = {
         "compress",
         "headers",
-        "heartbeat",
         "max_msg_size",
         "protocols",
         "timeout",
@@ -784,25 +816,17 @@ def _prepare_native_websocket_request(
         connect_timeout = float(kwargs.get("timeout", 10.0))
         max_message_bytes = int(kwargs.get("max_msg_size", 4 * 1024 * 1024))
         compress = int(kwargs.get("compress", 0))
-        heartbeat = kwargs.get("heartbeat")
-        ping_interval_seconds = float(heartbeat) if heartbeat is not None else None
-        ping_timeout_seconds = ping_interval_seconds / 2 if ping_interval_seconds is not None else None
     except (TypeError, ValueError):
         return None
-    if (
-        compress != 15
-        or connect_timeout <= 0
-        or max_message_bytes <= 0
-        or (ping_interval_seconds is not None and ping_interval_seconds <= 0)
-    ):
+    if compress != 15 or connect_timeout <= 0 or max_message_bytes <= 0:
         return None
     return NativeWebSocketRequest(
         url=url,
         headers=headers,
         connect_timeout_seconds=connect_timeout,
         max_message_bytes=max_message_bytes,
-        ping_interval_seconds=ping_interval_seconds,
-        ping_timeout_seconds=ping_timeout_seconds,
+        ping_interval_seconds=liveness.ping_interval_seconds if liveness is not None else None,
+        ping_timeout_seconds=liveness.pong_timeout_seconds if liveness is not None else None,
         proxy_url=proxy_url,
         interpret_responses=interpret_responses,
     )

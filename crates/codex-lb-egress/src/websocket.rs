@@ -113,24 +113,24 @@ pub(crate) async fn execute_websocket(
     let mut next_ping = Box::pin(tokio::time::sleep(ping_interval.unwrap_or(dormant_timer)));
     let mut pong_deadline = Box::pin(tokio::time::sleep(dormant_timer));
     let mut ping_sequence = 0_u64;
-    let mut awaiting_pong = None;
+    let mut awaiting_pong = false;
 
     loop {
         tokio::select! {
             _ = &mut next_ping, if ping_interval.is_some() => {
                 let interval = ping_interval.expect("guarded ping interval");
                 next_ping.as_mut().reset(tokio::time::Instant::now() + interval);
-                if awaiting_pong.is_none() {
+                if !awaiting_pong {
                     ping_sequence = ping_sequence.wrapping_add(1);
                     let payload = Bytes::copy_from_slice(&ping_sequence.to_be_bytes());
-                    websocket.send(Message::Ping(payload.clone())).await?;
+                    websocket.send(Message::Ping(payload)).await?;
                     if let Some(timeout) = ping_timeout {
-                        awaiting_pong = Some(payload);
+                        awaiting_pong = true;
                         pong_deadline.as_mut().reset(tokio::time::Instant::now() + timeout);
                     }
                 }
             }
-            _ = &mut pong_deadline, if awaiting_pong.is_some() => {
+            _ = &mut pong_deadline, if awaiting_pong => {
                 return Err(NativeWebSocketFailure::LivenessTimeout);
             }
             command = commands.recv() => {
@@ -198,6 +198,11 @@ pub(crate) async fn execute_websocket(
                 }
             }
             incoming = websocket.next() => {
+                // Any inbound frame proves the transport is alive. A pong
+                // queued behind streamed output must not trip the watchdog.
+                if matches!(incoming, Some(Ok(_))) {
+                    awaiting_pong = false;
+                }
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         let text = text.to_string();
@@ -243,11 +248,7 @@ pub(crate) async fn execute_websocket(
                             return Err(error.into());
                         }
                     }
-                    Some(Ok(Message::Pong(payload))) => {
-                        if awaiting_pong.as_ref().is_some_and(|expected| expected == &payload) {
-                            awaiting_pong = None;
-                        }
-                    }
+                    Some(Ok(Message::Pong(_))) => {}
                     Some(Ok(Message::Close(frame))) => {
                         let (code, reason) = frame
                             .map(|frame| {
