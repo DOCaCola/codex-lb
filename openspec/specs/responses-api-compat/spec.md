@@ -11072,7 +11072,7 @@ Requests above the WebSocket frame threshold but within the configured expanded 
 - **THEN** the proxy rejects the turn before dispatch and releases its reservation
 
 ### Requirement: Native WebSocket receive diagnostics preserve safe provenance
-The native WebSocket adapter MUST emit at most one warning per connection when a native receive exception is surfaced, identifying the opening request ID, an allowlisted failure phase, and the local queue name if the failure originated from a bounded queue. Unknown phase values MUST be reported as unknown. Expected cancellation and successful receives MUST NOT emit this warning. The warning MUST NOT include exception prose, payloads, headers, URLs, or credentials. Public error envelopes and recovery decisions MUST remain unchanged.
+The native WebSocket adapter MUST emit at most one warning per connection when a native receive exception is surfaced, identifying the opening request ID, an allowlisted failure phase, and the local queue name if the failure originated from a bounded queue. Unknown phase values MUST be reported as unknown. Expected cancellation and successful receives MUST NOT emit this warning. The warning MUST NOT include exception prose, payloads, headers, URLs, or credentials. Emitting the warning MUST NOT itself change public error envelopes or recovery decisions.
 
 #### Scenario: Backpressure failure retains its queue provenance
 - **WHEN** a local native WebSocket message queue overflows
@@ -11093,3 +11093,15 @@ Native ChatGPT Responses requests SHALL declare a client namespace named `collab
 #### Scenario: Incremental WebSocket turn without tools
 - **WHEN** an upstream response on a continued WebSocket turn contains a `collaboration-optimize` call
 - **THEN** the client receives it as a `collaboration` call
+
+### Requirement: Local WebSocket relay backpressure is account-neutral
+
+When a native upstream WebSocket fails with `consumer_backpressure`, the adapter MUST surface `local_websocket_backpressure` and treat it as an account-neutral transport code. The direct WebSocket and HTTP bridge relay owners MUST fail the affected pending turns terminally, without transparent replay and without an account-health penalty. The public error message MUST identify codex-lb's relay as the cause and MUST NOT describe an upstream close.
+
+#### Scenario: Relay backpressure fails the turn without blaming the account
+
+- **WHEN** a native WebSocket message queue overflows during a turn
+- **THEN** the pending turn fails with `local_websocket_backpressure`
+- **AND** the turn is not replayed
+- **AND** the selected account records no transient error
+- **AND** the error message does not say that upstream closed the WebSocket

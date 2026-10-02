@@ -38,6 +38,7 @@ from app.core.clients.proxy import codex_control_request as core_codex_control_r
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
 from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
 from app.core.clients.proxy_websocket import (
+    LOCAL_WEBSOCKET_BACKPRESSURE_CODE,
     UpstreamWebSocketMessage,
 )
 from app.core.clock import Scheduler
@@ -2171,6 +2172,9 @@ def _pop_terminal_websocket_request_state(
 
 
 def _upstream_websocket_disconnect_message(message: UpstreamWebSocketMessage) -> str:
+    if message.kind == "error" and message.error_code == LOCAL_WEBSOCKET_BACKPRESSURE_CODE and message.error:
+        # The socket did not close upstream; codex-lb's relay gave up on it.
+        return message.error
     if message.kind == "error" and message.error:
         return f"Upstream websocket closed before response.completed: {message.error}"
     if message.close_code is not None:

@@ -37,6 +37,7 @@ from app.core.clients.native_egress import (
 )
 from app.core.clients.proxy import ProxyResponseError, is_confirmed_pre_dispatch_transport_error
 from app.core.clients.proxy_websocket import (
+    LOCAL_WEBSOCKET_BACKPRESSURE_CODE,
     UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
     CodexUpstreamWebSocket,
     NativeUpstreamWebSocket,
@@ -45,6 +46,7 @@ from app.core.clients.proxy_websocket import (
     WebsocketsUpstreamWebSocket,
     connect_live_websocket,
     connect_responses_websocket,
+    is_account_neutral_websocket_error_code,
 )
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
 from tests.unit._proxy_test_helpers import runtime_basic_auth_url
@@ -348,7 +350,11 @@ async def test_native_receive_logs_safe_phase_once_with_opening_request_id(monke
     first = await websocket.receive()
     second = await websocket.receive()
     assert first == second
-    assert first.error == "Upstream websocket receive failed"
+    if phase == "consumer_backpressure":
+        assert first.error == "codex-lb relay fell behind the upstream websocket and dropped the turn"
+        assert first.error_code == LOCAL_WEBSOCKET_BACKPRESSURE_CODE
+    else:
+        assert first.error == "Upstream websocket receive failed"
     records = [r for r in caplog.records if r.message.startswith("native_websocket_receive_failed ")]
     assert len(records) == 1
     assert "request_id=ws_opening" in records[0].message
@@ -390,7 +396,11 @@ async def test_native_message_queue_overflow_reaches_receive_diagnostic(caplog):
         events.put_nowait({"type": "websocket_text", "text": "private-payload"})
     await asyncio.wait_for(native._pump_task, timeout=2)
     message = await adapter.receive()
-    assert message.error == "Upstream websocket receive failed"
+    assert message.error == "codex-lb relay fell behind the upstream websocket and dropped the turn"
+    # The relay's own queue overflowed: fail the turn without replay and
+    # without charging the selected account.
+    assert message.error_code == LOCAL_WEBSOCKET_BACKPRESSURE_CODE
+    assert is_account_neutral_websocket_error_code(message.error_code)
     assert "failure_phase=consumer_backpressure queue=websocket_messages" in caplog.text
     assert "private-payload" not in caplog.text
     client._abort_request.assert_awaited_once()

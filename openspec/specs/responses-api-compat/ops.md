@@ -4,7 +4,7 @@
 
 `native_websocket_receive_failed request_id=ws_... failure_phase=consumer_backpressure queue=websocket_messages`
 
-This warning is emitted once per failed native WebSocket, not for successful receives or expected cancellation. `request_id` identifies the connection-opening request. `websocket_messages` identifies the per-WebSocket message queue; `stream_events` identifies the helper reader's per-request event queue. Other phases distinguish helper lifecycle, liveness timeout, protocol, and transport faults; unrecognized phases become `unknown`. No exception prose, payloads, headers, or URLs are logged. Correlate timestamps with existing loop-lag and frame-size warnings. Public errors and account-health handling are unchanged.
+This warning is emitted once per failed native WebSocket, not for successful receives or expected cancellation. `request_id` identifies the connection-opening request. `websocket_messages` identifies the per-WebSocket message queue; `stream_events` identifies the helper reader's per-request event queue. Both are bounded by a 32 MiB byte budget and 4096 items, so this phase means codex-lb's relay stopped draining, not a burst. Other phases distinguish helper lifecycle, liveness timeout, protocol, and transport faults; unrecognized phases become `unknown`. No exception prose, payloads, headers, or URLs are logged. Correlate timestamps with existing loop-lag and frame-size warnings. A `websocket_messages` overflow fails the turn as `local_websocket_backpressure`: terminal, not replayed, and not charged to the account. Other phases keep their public errors and account-health handling.
 
 ## Purpose
 

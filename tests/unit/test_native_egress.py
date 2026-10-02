@@ -1166,7 +1166,9 @@ for line in sys.stdin:
 
 
 def test_bounded_event_queue_trips_on_bytes_or_events_and_releases_bytes_on_get() -> None:
-    queue = native_egress_module._BoundedEventQueue(max_events=4, max_bytes=10)
+    queue = native_egress_module._ByteBudgetQueue(
+        max_items=4, max_bytes=10, item_size=native_egress_module._event_payload_size
+    )
     queue.put_nowait({"type": "chunk", "data": "abcd"})
     queue.put_nowait({"type": "sse", "text": "efgh"})
     assert queue.queued_bytes == 8 and not queue.full()
@@ -1223,11 +1225,118 @@ def test_bounded_event_queue_trips_on_bytes_or_events_and_releases_bytes_on_get(
     # A lone event larger than the whole budget is accepted at an empty queue
     # (the SSE event size cap bounds it), so a single big chunk never fails;
     # anything but a zero-byte event is then rejected until it drains.
-    big = native_egress_module._BoundedEventQueue(max_events=8, max_bytes=10)
+    big = native_egress_module._ByteBudgetQueue(
+        max_items=8, max_bytes=10, item_size=native_egress_module._event_payload_size
+    )
     big.put_nowait({"type": "chunk", "data": "x" * 64})
     with pytest.raises(asyncio.QueueFull):
         big.put_nowait({"type": "chunk", "data": "y"})
     big.put_nowait({"type": "end"})
+
+
+def test_websocket_message_size_counts_retained_payload_bytes() -> None:
+    size = native_egress_module._websocket_message_size
+    assert size(NativeWebSocketMessage(kind="text", text="\u00e9\u00e9")) == 4
+    # An interpreted Responses message keeps its decoded payload beside the text.
+    assert size(NativeWebSocketMessage(kind="text", text="{}", responses_interpreted=True, payload={})) == 4
+    assert size(NativeWebSocketMessage(kind="binary", data=b"\x00\xff\x01")) == 3
+    assert size(NativeWebSocketMessage(kind="close", close_code=1000, close_reason="done")) == 4
+    assert size(NativeWebSocketMessage(kind="close", close_code=1000)) == 0
+    assert size(RuntimeError("terminal")) == 0
+
+
+def _websocket_burst_helper_source(*, frames: int, frame_text: str, acknowledge: bool) -> str:
+    return f"""#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    command = json.loads(line)
+    request_id = command["request_id"]
+    kind = command["type"]
+    if kind == "websocket_connect":
+        print(json.dumps({{
+            "type": "websocket_open", "request_id": request_id, "status": 101, "headers": [],
+        }}), flush=True)
+    elif kind == "websocket_send_text":
+        out = []
+        for index in range({frames}):
+            text = json.dumps({{"type": "response.output_text.delta", "delta": {frame_text!r}, "n": index}})
+            out.append(json.dumps({{
+                "type": "websocket_responses_text", "request_id": request_id, "text": text,
+                "event_type": "response.output_text.delta", "payload": json.loads(text),
+                "payload_response_id": "r1", "sequence_number": index,
+            }}))
+        if {acknowledge!r}:
+            out.append(json.dumps({{
+                "type": "websocket_sent", "request_id": request_id, "command_id": command["command_id"],
+            }}))
+        sys.stdout.write("\\n".join(out) + "\\n")
+        sys.stdout.flush()
+    elif kind == "websocket_close":
+        print(json.dumps({{
+            "type": "websocket_sent", "request_id": request_id, "command_id": command["command_id"],
+        }}), flush=True)
+        print(json.dumps({{
+            "type": "websocket_close", "request_id": request_id,
+            "code": command["code"], "reason": command["reason"],
+        }}), flush=True)
+    elif kind == "cancel":
+        print(json.dumps({{"type": "cancelled", "request_id": request_id}}), flush=True)
+"""
+
+
+def _responses_websocket_request() -> NativeWebSocketRequest:
+    return NativeWebSocketRequest(
+        url="wss://example.test/codex/responses",
+        headers={},
+        connect_timeout_seconds=2,
+        max_message_bytes=16 * 1024 * 1024,
+        interpret_responses=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_websocket_burst_drains_and_acknowledges_while_messages_are_queued(tmp_path: Path) -> None:
+    """A Responses turn bursts hundreds of deltas before the relay reads. The
+    former 64-message cap failed exactly this healthy-but-late consumer."""
+    helper = tmp_path / "native-helper"
+    _write_helper(helper, _websocket_burst_helper_source(frames=2000, frame_text="delta", acknowledge=True))
+    client = SubprocessNativeEgressClient(helper)
+    websocket = await client.websocket(_responses_websocket_request())
+
+    # The acknowledgement follows all 2000 messages; it must resolve while
+    # every one of them is still waiting for the consumer.
+    await asyncio.wait_for(websocket.send_text('{"type":"response.create"}'), timeout=5.0)
+    assert websocket._messages.qsize() == 2000
+
+    sequences = [(await websocket.receive()).routing for _ in range(2000)]
+    assert sequences == [NativeWebSocketRoutingMetadata("r1", index) for index in range(2000)]
+    assert websocket._messages.queued_bytes == 0
+    await websocket.close()
+    await asyncio.wait_for(client.aclose(), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_native_websocket_stalled_consumer_fails_at_the_message_byte_budget(tmp_path: Path) -> None:
+    helper = tmp_path / "native-helper"
+    # Each interpreted ~1 MiB frame counts twice (text plus decoded payload),
+    # so 24 frames exceed the 32 MiB budget while staying under the event cap.
+    _write_helper(
+        helper,
+        _websocket_burst_helper_source(frames=24, frame_text="x" * (1024 * 1024), acknowledge=False),
+    )
+    client = SubprocessNativeEgressClient(helper)
+    websocket = await client.websocket(_responses_websocket_request())
+
+    with pytest.raises(NativeEgressTransportError) as send_error:
+        await asyncio.wait_for(websocket.send_text('{"type":"response.create"}'), timeout=10.0)
+    assert send_error.value.failure_phase == "consumer_backpressure"
+    assert send_error.value.queue_name == "websocket_messages"
+    with pytest.raises(NativeEgressTransportError) as receive_error:
+        await asyncio.wait_for(websocket.receive(), timeout=2.0)
+    assert receive_error.value is send_error.value
+    await asyncio.wait_for(client.aclose(), timeout=2.0)
 
 
 @pytest.mark.asyncio

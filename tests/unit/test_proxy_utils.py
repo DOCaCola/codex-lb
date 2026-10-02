@@ -44,6 +44,7 @@ from app.core.balancer.types import UpstreamError
 from app.core.clients.codex import CodexClient, CodexRequestResult
 from app.core.clients.proxy import _build_upstream_headers, filter_inbound_headers
 from app.core.clients.proxy_websocket import (
+    LOCAL_WEBSOCKET_BACKPRESSURE_CODE,
     UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
     CodexUpstreamWebSocket,
     UpstreamWebSocket,
@@ -36210,8 +36211,8 @@ async def test_relay_upstream_websocket_latches_transport_end_before_pending_loc
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error_code",
-    ["proxy_network_unavailable", UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE],
-    ids=["process-network", "liveness-timeout"],
+    ["proxy_network_unavailable", UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE, LOCAL_WEBSOCKET_BACKPRESSURE_CODE],
+    ids=["process-network", "liveness-timeout", "local-backpressure"],
 )
 async def test_relay_upstream_websocket_account_neutral_failure_is_not_replayed(
     monkeypatch: pytest.MonkeyPatch,
@@ -36244,13 +36245,19 @@ async def test_relay_upstream_websocket_account_neutral_failure_is_not_replayed(
                 text=None,
                 data=None,
                 close_code=None,
-                error="Upstream websocket liveness failed",
+                error=error_text,
                 error_code=error_code,
             )
 
         async def close(self) -> None:
             self.closed = True
 
+    local_backpressure = error_code == LOCAL_WEBSOCKET_BACKPRESSURE_CODE
+    error_text = (
+        "codex-lb relay fell behind the upstream websocket and dropped the turn"
+        if local_backpressure
+        else "Upstream websocket liveness failed"
+    )
     request_state = proxy_service._WebSocketRequestState(
         request_id="ws_req_network_failure",
         model="gpt-5.1",
@@ -36293,6 +36300,13 @@ async def test_relay_upstream_websocket_account_neutral_failure_is_not_replayed(
     assert upstream.closed is True
     terminal = json.loads(downstream.sent_text[-1])
     assert terminal["response"]["error"]["code"] == error_code
+    if local_backpressure:
+        # The relay gave up locally; the message must not claim an upstream close.
+        assert terminal["response"]["error"]["message"] == error_text
+    else:
+        assert terminal["response"]["error"]["message"].startswith(
+            "Upstream websocket closed before response.completed"
+        )
 
 
 @pytest.mark.asyncio

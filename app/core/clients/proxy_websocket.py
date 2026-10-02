@@ -98,6 +98,10 @@ REALTIME_LIVE_CALL_ID_ROUTE_REGEX = (
 )
 _LIVE_CALL_ID_PATTERN = re.compile(rf"{REALTIME_LIVE_CALL_ID_ROUTE_REGEX}\Z")
 UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE = "upstream_websocket_liveness_timeout"
+# codex-lb's own relay stopped draining a native upstream WebSocket. Upstream
+# and the selected account are not implicated, and the turn may still be
+# running upstream.
+LOCAL_WEBSOCKET_BACKPRESSURE_CODE = "local_websocket_backpressure"
 _WEBSOCKETS_KEEPALIVE_TIMEOUT_REASON = "keepalive ping timeout"
 _AIOHTTP_HEARTBEAT_TIMEOUT_PREFIX = "No PONG received after "
 
@@ -235,6 +239,7 @@ def is_account_neutral_websocket_error_code(error_code: str | None) -> bool:
     return error_code in {
         PROCESS_NETWORK_UNAVAILABLE_CODE,
         UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
+        LOCAL_WEBSOCKET_BACKPRESSURE_CODE,
         "upstream_keepalive_timeout",
     }
 
@@ -510,6 +515,11 @@ def _native_websocket_transport_error(
         return UpstreamWebSocketTransportError(
             f"Upstream websocket {operation} failed",
             error_code=UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
+        )
+    if phase == "consumer_backpressure":
+        return UpstreamWebSocketTransportError(
+            "codex-lb relay fell behind the upstream websocket and dropped the turn",
+            error_code=LOCAL_WEBSOCKET_BACKPRESSURE_CODE,
         )
     account_neutral = phase in {"helper_exit", "helper_read", "helper_write", "shutdown"}
     return UpstreamWebSocketTransportError(
