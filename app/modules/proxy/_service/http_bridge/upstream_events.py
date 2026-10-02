@@ -102,6 +102,7 @@ from app.modules.proxy._service.http_bridge.retry_circuit import (
 )
 from app.modules.proxy._service.http_bridge.service_stubs import (
     _assign_websocket_response_id,
+    _attribute_upstream_websocket_failure,
     _await_cancelled_task,
     _build_stream_incomplete_terminal_event_for_request,
     _classify_upstream_close,
@@ -1735,6 +1736,7 @@ class _HTTPBridgeUpstreamEventsMixin:
         retire_detail: str | None = None,
         force_retire: bool = False,
         upstream_close_code: int | None = None,
+        transport_failure: UpstreamWebSocketMessage | None = None,
         response_events_seen: int | None = None,
         transport_classification: str | None = None,
         retry_circuit_attempt_selection: _HTTPBridgeRetryCircuitAttemptSelection | None = None,
@@ -1748,6 +1750,8 @@ class _HTTPBridgeUpstreamEventsMixin:
                 for request_state in session.pending_requests
                 if _http_bridge_request_counts_against_queue(request_state)
             )
+            if transport_failure is not None:
+                _attribute_upstream_websocket_failure(session.pending_requests, transport_failure)
             session.queued_request_count = max(0, session.queued_request_count - failed_pending_count)
             observed_response_events = max(
                 (getattr(request_state, "response_event_count", 0) for request_state in session.pending_requests),
@@ -2393,6 +2397,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                         session,
                         error_code=message.error_code or "stream_incomplete",
                         error_message=_upstream_websocket_disconnect_message(message),
+                        transport_failure=message,
                         upstream_close_code=message.close_code,
                         response_events_seen=response_events_seen,
                         transport_classification=(

@@ -432,6 +432,7 @@ pub(crate) async fn emit_websocket_setup_error(
             command_id,
             message: message.to_owned(),
             failure_phase: "setup".to_owned(),
+            failure_detail: None,
             retryable_same_contract: false,
             is_tls_verification_failure: false,
             status: None,
@@ -538,6 +539,7 @@ pub(crate) async fn emit_websocket_error(
             command_id,
             message: message.to_owned(),
             failure_phase: phase.to_owned(),
+            failure_detail: websocket_failure_detail(failure),
             retryable_same_contract: retryable,
             is_tls_verification_failure: tls_verification,
             status,
@@ -559,4 +561,49 @@ fn websocket_tls_verification_failure(failure: &NativeWebSocketFailure) -> bool 
         }
         _ => false,
     }
+}
+
+/// The failure's underlying error, named by variant only. Payloads (URLs,
+/// header values, frame contents) never cross into the detail.
+fn websocket_failure_detail(failure: &NativeWebSocketFailure) -> Option<String> {
+    match failure {
+        NativeWebSocketFailure::Connect(error) | NativeWebSocketFailure::WebSocket(error) => {
+            Some(websocket_error_detail(error))
+        }
+        NativeWebSocketFailure::Output(error) => {
+            Some(format!("io_{}", variant_name(&error.kind())))
+        }
+        NativeWebSocketFailure::Timeout | NativeWebSocketFailure::LivenessTimeout => None,
+    }
+}
+
+fn websocket_error_detail(error: &WebSocketError) -> String {
+    match error {
+        WebSocketError::Io(error) => format!("io_{}", variant_name(&error.kind())),
+        WebSocketError::Protocol(error) => format!("protocol_{}", variant_name(error)),
+        WebSocketError::Capacity(error) => format!("capacity_{}", variant_name(error)),
+        WebSocketError::Tls(error) => format!("tls_{}", variant_name(error)),
+        error => variant_name(error),
+    }
+}
+
+/// snake_case name of the variant `value` debug-prints as, without its payload.
+fn variant_name(value: &impl std::fmt::Debug) -> String {
+    let debug = format!("{value:?}");
+    let name = debug
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .next()
+        .unwrap_or_default();
+    let mut snake = String::with_capacity(name.len() + 8);
+    for (index, character) in name.char_indices() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                snake.push('_');
+            }
+            snake.push(character.to_ascii_lowercase());
+        } else {
+            snake.push(character);
+        }
+    }
+    snake
 }

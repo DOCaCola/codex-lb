@@ -412,6 +412,7 @@ from app.modules.proxy._service.warmup import (
 from app.modules.proxy._service.websocket.helpers import (
     _app_error_to_websocket_event,
     _assign_websocket_response_id,
+    _attribute_upstream_websocket_failure,
     _bind_websocket_request_dispatch_owner,
     _find_websocket_request_state_by_response_id,
     _forget_websocket_stale_previous_response,
@@ -1343,6 +1344,7 @@ async def _process_upstream_websocket_transport_end(
         return True
 
     sequenced_downstream_replay_refused = "sequenced_downstream_frame" in replay_refusal_reasons
+    _attribute_upstream_websocket_failure(reader_owned, message)
     await proxy._fail_pending_websocket_requests(
         account=account,
         account_id_value=account_id_value,
@@ -7364,6 +7366,9 @@ class _WebSocketMixin:
                     requested_service_tier=request_state.requested_service_tier,
                     actual_service_tier=request_state.actual_service_tier,
                     latency_first_token_ms=request_state.latency_first_token_ms,
+                    # Whether upstream accepted the turn before it failed.
+                    latency_response_created_ms=request_state.latency_response_created_ms,
+                    latency_first_upstream_event_ms=request_state.latency_first_upstream_event_ms,
                     session_id=request_state.session_id,
                     upstream_proxy_route_mode=request_state.upstream_proxy_route_mode,
                     upstream_proxy_pool_id=request_state.upstream_proxy_pool_id,

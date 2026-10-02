@@ -5,7 +5,7 @@ import json
 import sys
 import time
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -2180,6 +2180,24 @@ def _upstream_websocket_disconnect_message(message: UpstreamWebSocketMessage) ->
     if message.close_code is not None:
         return f"Upstream websocket closed before response.completed (close_code={message.close_code})"
     return "Upstream websocket closed before response.completed"
+
+
+def _attribute_upstream_websocket_failure(
+    request_states: Iterable[_WebSocketRequestState],
+    message: UpstreamWebSocketMessage,
+) -> None:
+    """Record where and how the upstream transport failed on each request's log.
+
+    Called once a terminal message is known not to be replayed, so a successful
+    replay never inherits the failed socket's attribution. A more specific
+    attribution set earlier (for example an eventless timeout) is kept.
+    """
+    if message.failure_phase is None:
+        return
+    for request_state in request_states:
+        if request_state.failure_phase_override is None:
+            request_state.failure_phase_override = message.failure_phase
+            request_state.failure_detail_override = message.failure_detail
 
 
 def _websocket_receive_timeout_for_pending_requests(

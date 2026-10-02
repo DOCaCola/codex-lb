@@ -341,6 +341,7 @@ async def test_native_receive_logs_safe_phase_once_with_opening_request_id(monke
             raise NativeEgressTransportError(
                 "secret-payload secret-authorization",
                 failure_phase=phase,
+                failure_detail="io_connection_reset" if phase == "transport" else None,
                 queue_name="websocket_messages" if phase == "consumer_backpressure" else None,
             )
 
@@ -362,8 +363,14 @@ async def test_native_receive_logs_safe_phase_once_with_opening_request_id(monke
     assert f"failure_phase={expected_phase}" in records[0].message
     assert "secret" not in records[0].message
     assert records[0].exc_info is None
+    # The request log receives the same attribution as the diagnostic line.
+    assert first.failure_phase == expected_phase
     if phase == "consumer_backpressure":
-        assert "queue=websocket_messages" in records[0].message
+        assert "failure_detail=websocket_messages" in records[0].message
+        assert first.failure_detail == "websocket_messages"
+    if phase == "transport":
+        assert "failure_detail=io_connection_reset" in records[0].message
+        assert first.failure_detail == "io_connection_reset"
 
 
 @pytest.mark.asyncio
@@ -374,7 +381,8 @@ async def test_native_protocol_error_diagnostic_omits_exception_text(caplog):
 
     message = await NativeUpstreamWebSocket(cast(Any, Connection())).receive()
     assert message.error == "Upstream websocket receive failed"
-    assert "failure_phase=protocol" in caplog.text
+    assert "failure_phase=protocol failure_detail=native_helper_protocol" in caplog.text
+    assert (message.failure_phase, message.failure_detail) == ("protocol", "native_helper_protocol")
     assert "secret-content" not in caplog.text
 
 
@@ -401,7 +409,7 @@ async def test_native_message_queue_overflow_reaches_receive_diagnostic(caplog):
     # without charging the selected account.
     assert message.error_code == LOCAL_WEBSOCKET_BACKPRESSURE_CODE
     assert is_account_neutral_websocket_error_code(message.error_code)
-    assert "failure_phase=consumer_backpressure queue=websocket_messages" in caplog.text
+    assert "failure_phase=consumer_backpressure failure_detail=websocket_messages" in caplog.text
     assert "private-payload" not in caplog.text
     client._abort_request.assert_awaited_once()
 

@@ -57,6 +57,15 @@ async fn read_event(lines: &mut HelperLines, timeout_message: &str) -> Value {
     .expect("decode native helper event")
 }
 
+/// Server config that accepts the helper's permessage-deflate offer.
+fn deflate_server_config() -> WebSocketConfig {
+    let mut extensions = ExtensionsConfig::default();
+    extensions.permessage_deflate = Some(DeflateConfig::default());
+    let mut config = WebSocketConfig::default();
+    config.extensions = extensions;
+    config
+}
+
 #[tokio::test]
 async fn missing_pong_emits_liveness_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -179,4 +188,106 @@ async fn explicit_cancel_aborts_websocket_and_emits_one_cancelled_event() {
         remaining_events.is_empty(),
         "explicit cancellation must emit exactly one terminal event: {remaining_events:?}"
     );
+}
+
+#[tokio::test]
+async fn dropped_connection_names_the_underlying_error() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind websocket server");
+    let address = listener.local_addr().expect("server address");
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept websocket client");
+        let websocket = accept_async_with_config(stream, Some(deflate_server_config()))
+            .await
+            .expect("accept websocket handshake");
+        // Drop the TCP stream without a close frame, as an upstream reset does.
+        drop(websocket);
+    });
+
+    let (mut helper, mut stdin, mut lines) = start_helper().await;
+    let connect = json!({
+        "type": "websocket_connect",
+        "request_id": "drop-test",
+        "url": format!("ws://{address}/v1/responses"),
+        "headers": [],
+        "connect_timeout_ms": 2_000,
+        "max_message_bytes": 1_024,
+        "ping_interval_ms": 20_000,
+        "ping_timeout_ms": 120_000,
+        "proxy_url": null
+    });
+    write_command(&mut stdin, &connect).await;
+    let open = read_event(&mut lines, "open event timeout").await;
+    assert_eq!(open["type"], "websocket_open");
+
+    let failure = read_event(&mut lines, "drop event timeout").await;
+    assert_eq!(failure["type"], "websocket_error");
+    assert_eq!(failure["failure_phase"], "protocol");
+    assert_eq!(
+        failure["failure_detail"],
+        "protocol_reset_without_closing_handshake"
+    );
+
+    server.await.expect("websocket server task");
+    drop(stdin);
+    tokio::time::timeout(Duration::from_secs(2), helper.wait())
+        .await
+        .expect("helper exit timeout")
+        .expect("wait for helper");
+}
+
+#[tokio::test]
+async fn oversized_message_names_the_capacity_limit() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind websocket server");
+    let address = listener.local_addr().expect("server address");
+    let (release_server, wait_for_failure) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept websocket client");
+        let mut websocket = accept_async_with_config(stream, Some(deflate_server_config()))
+            .await
+            .expect("accept websocket handshake");
+        futures_util::SinkExt::send(
+            &mut websocket,
+            tungstenite::Message::text("x".repeat(4_096)),
+        )
+        .await
+        .expect("send oversized message");
+        wait_for_failure
+            .await
+            .expect("capacity assertion must release websocket server");
+    });
+
+    let (mut helper, mut stdin, mut lines) = start_helper().await;
+    let connect = json!({
+        "type": "websocket_connect",
+        "request_id": "capacity-test",
+        "url": format!("ws://{address}/v1/responses"),
+        "headers": [],
+        "connect_timeout_ms": 2_000,
+        "max_message_bytes": 1_024,
+        "ping_interval_ms": 20_000,
+        "ping_timeout_ms": 120_000,
+        "proxy_url": null
+    });
+    write_command(&mut stdin, &connect).await;
+    let open = read_event(&mut lines, "open event timeout").await;
+    assert_eq!(open["type"], "websocket_open");
+
+    let failure = read_event(&mut lines, "capacity event timeout").await;
+    assert_eq!(failure["type"], "websocket_error");
+    assert_eq!(failure["failure_phase"], "protocol");
+    assert_eq!(failure["failure_detail"], "capacity_message_too_long");
+
+    release_server
+        .send(())
+        .expect("release websocket server after capacity failure");
+    server.await.expect("websocket server task");
+    drop(stdin);
+    tokio::time::timeout(Duration::from_secs(2), helper.wait())
+        .await
+        .expect("helper exit timeout")
+        .expect("wait for helper");
 }

@@ -174,6 +174,10 @@ pub enum NativeEvent {
         command_id: Option<String>,
         message: String,
         failure_phase: String,
+        /// Payload-free name of the underlying error variant (for example
+        /// `io_connection_reset`), recorded so a failure can be attributed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure_detail: Option<String>,
         retryable_same_contract: bool,
         is_tls_verification_failure: bool,
         status: Option<u16>,

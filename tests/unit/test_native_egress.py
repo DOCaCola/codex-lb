@@ -893,6 +893,47 @@ for line in sys.stdin:
         await websocket.receive()
 
     assert exc_info.value.failure_phase == "liveness_timeout"
+    assert exc_info.value.failure_detail is None
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_native_websocket_carries_receive_failure_detail(tmp_path: Path) -> None:
+    helper = tmp_path / "native-helper"
+    _write_helper(
+        helper,
+        """#!/usr/bin/env python3
+import json
+import sys
+command = json.loads(sys.stdin.readline())
+request_id = command["request_id"]
+print(json.dumps({"type": "websocket_open", "request_id": request_id, "status": 101, "headers": []}), flush=True)
+print(json.dumps({
+    "type": "websocket_error", "request_id": request_id,
+    "command_id": None, "message": "native websocket protocol failed",
+    "failure_phase": "protocol", "failure_detail": "protocol_reset_without_closing_handshake",
+    "retryable_same_contract": False, "status": None, "headers": [], "body": None,
+}), flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    print(json.dumps({"type": "cancelled", "request_id": command["request_id"]}), flush=True)
+""",
+    )
+    client = SubprocessNativeEgressClient(helper)
+    websocket = await client.websocket(
+        NativeWebSocketRequest(
+            url="wss://example.test/codex/responses",
+            headers={},
+            connect_timeout_seconds=2,
+            max_message_bytes=1024,
+        )
+    )
+
+    with pytest.raises(NativeEgressTransportError) as exc_info:
+        await websocket.receive()
+
+    assert exc_info.value.failure_phase == "protocol"
+    assert exc_info.value.failure_detail == "protocol_reset_without_closing_handshake"
     await client.aclose()
 
 

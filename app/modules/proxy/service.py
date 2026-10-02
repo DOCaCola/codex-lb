@@ -663,6 +663,7 @@ from app.modules.proxy._service.websocket import (
 from app.modules.proxy._service.websocket.helpers import (
     _app_error_to_websocket_event,  # noqa: F401
     _assign_websocket_response_id,  # noqa: F401
+    _attribute_upstream_websocket_failure,  # noqa: F401
     _clear_websocket_stale_previous_response_cache,  # noqa: F401
     _draining_websocket_request_states,  # noqa: F401
     _find_websocket_request_state_by_response_id,  # noqa: F401

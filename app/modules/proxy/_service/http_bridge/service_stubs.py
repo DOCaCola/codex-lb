@@ -376,6 +376,10 @@ def _upstream_websocket_disconnect_message(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_upstream_websocket_disconnect_message")(*args, **kwargs)
 
 
+def _attribute_upstream_websocket_failure(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_attribute_upstream_websocket_failure")(*args, **kwargs)
+
+
 def _await_cancelled_task(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_await_cancelled_task")(*args, **kwargs)
 

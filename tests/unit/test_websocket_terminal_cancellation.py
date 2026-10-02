@@ -14,7 +14,7 @@ import pytest
 from fastapi import WebSocket
 
 from app.core import shutdown as shutdown_state
-from app.core.clients.proxy_websocket import UpstreamWebSocket
+from app.core.clients.proxy_websocket import UpstreamWebSocket, UpstreamWebSocketMessage
 from app.core.clock import REAL_SCHEDULER, Scheduler
 from app.core.utils.time import utcnow
 from app.db.models import Account
@@ -1825,8 +1825,8 @@ async def test_reader_cancellation_after_transport_end_claim_waits_for_child_own
     monkeypatch.setattr(service, "_fail_pending_websocket_requests", blocking_cleanup)
 
     class _CloseUpstream:
-        async def receive(self) -> SimpleNamespace:
-            return SimpleNamespace(
+        async def receive(self) -> UpstreamWebSocketMessage:
+            return UpstreamWebSocketMessage(
                 kind="close",
                 text=None,
                 data=None,

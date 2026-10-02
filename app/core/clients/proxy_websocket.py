@@ -204,6 +204,10 @@ class UpstreamWebSocketMessage:
     close_reason: str | None = None
     error: str | None = None
     error_code: str | None = None
+    # Where and how a terminal ``error`` message's transport failed, recorded
+    # on the request log so a dropped turn can be attributed.
+    failure_phase: str | None = None
+    failure_detail: str | None = None
     transport: str = "websocket"
     responses_interpreted: bool = False
     event_type: str | None = None
@@ -453,19 +457,26 @@ class NativeUpstreamWebSocket:
             message = await self._websocket.receive()
         except NativeEgressError as exc:
             error = _native_websocket_transport_error(exc, operation="receive")
-            phase = exc.failure_phase if isinstance(exc, NativeEgressTransportError) else "protocol"
+            if isinstance(exc, NativeEgressTransportError):
+                phase = exc.failure_phase if exc.failure_phase in _NATIVE_RECEIVE_FAILURE_PHASES else "unknown"
+                detail = exc.failure_detail or exc.queue_name
+            else:
+                # The helper's own stdio framing broke, not the upstream socket.
+                phase, detail = "protocol", "native_helper_protocol"
             if not self._receive_failure_logged and phase != "cancelled":
                 self._receive_failure_logged = True
                 logger.warning(
-                    "native_websocket_receive_failed request_id=%s failure_phase=%s queue=%s",
+                    "native_websocket_receive_failed request_id=%s failure_phase=%s failure_detail=%s",
                     self._opening_request_id,
-                    phase if phase in _NATIVE_RECEIVE_FAILURE_PHASES else "unknown",
-                    exc.queue_name if isinstance(exc, NativeEgressTransportError) else None,
+                    phase,
+                    detail,
                 )
             return UpstreamWebSocketMessage(
                 kind="error",
                 error=str(error),
                 error_code=_relay_receive_error_code(error.error_code),
+                failure_phase=phase,
+                failure_detail=detail,
             )
         return UpstreamWebSocketMessage(
             kind=message.kind,
@@ -501,6 +512,7 @@ _NATIVE_RECEIVE_FAILURE_PHASES = frozenset(
         "helper_read",
         "helper_write",
         "shutdown",
+        "cancelled",
     }
 )
 
@@ -575,6 +587,8 @@ class CodexUpstreamWebSocket:
                 kind="error",
                 error=codex_transport_error_message("websocket receive", self._endpoint_id, classification_exc),
                 error_code=_relay_receive_error_code(error_code),
+                failure_phase="websocket_receive",
+                failure_detail=type(classification_exc).__name__,
             )
         if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
             liveness_exception = _aiohttp_stored_liveness_exception(self._websocket)
@@ -588,6 +602,8 @@ class CodexUpstreamWebSocket:
                         liveness_exception,
                     ),
                     error_code=UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
+                    failure_phase="liveness_timeout",
+                    failure_detail=type(liveness_exception).__name__,
                 )
             return UpstreamWebSocketMessage(
                 kind="close",
@@ -612,6 +628,8 @@ class CodexUpstreamWebSocket:
                     else "Upstream websocket error"
                 ),
                 error_code=_relay_receive_error_code(error_code),
+                failure_phase="websocket_receive",
+                failure_detail=type(exception).__name__ if exception is not None else None,
             )
         if msg.type == aiohttp.WSMsgType.TEXT:
             text = msg.data if isinstance(msg.data, str) else str(msg.data)

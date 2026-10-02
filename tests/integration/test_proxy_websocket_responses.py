@@ -162,6 +162,8 @@ class _FakeUpstreamMessage:
         close_code: int | None = None,
         error: str | None = None,
         error_code: str | None = None,
+        failure_phase: str | None = None,
+        failure_detail: str | None = None,
     ) -> None:
         self.kind = kind
         self.text = text
@@ -169,6 +171,8 @@ class _FakeUpstreamMessage:
         self.close_code = close_code
         self.error = error
         self.error_code = error_code
+        self.failure_phase = failure_phase
+        self.failure_detail = failure_detail
 
 
 class _FakeUpstreamWebSocket:

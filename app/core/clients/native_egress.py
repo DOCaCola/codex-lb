@@ -175,6 +175,7 @@ class NativeEgressTransportError(NativeEgressError):
         message: str,
         *,
         failure_phase: str = "request",
+        failure_detail: str | None = None,
         queue_name: Literal["stream_events", "websocket_messages"] | None = None,
         retryable_same_contract: bool = False,
         is_tls_verification_failure: bool = False,
@@ -184,6 +185,7 @@ class NativeEgressTransportError(NativeEgressError):
     ) -> None:
         super().__init__(message)
         self.failure_phase = failure_phase
+        self.failure_detail = failure_detail
         self.queue_name = queue_name
         self.retryable_same_contract = retryable_same_contract
         self.is_tls_verification_failure = is_tls_verification_failure
@@ -1286,6 +1288,7 @@ def _transport_error_from_event(event: Mapping[str, object]) -> NativeEgressTran
 def _websocket_error_from_event(event: Mapping[str, object]) -> NativeEgressTransportError:
     message = event.get("message")
     failure_phase = event.get("failure_phase")
+    failure_detail = event.get("failure_detail")
     retryable_same_contract = event.get("retryable_same_contract")
     is_tls_verification_failure = event.get("is_tls_verification_failure")
     status = event.get("status")
@@ -1303,6 +1306,7 @@ def _websocket_error_from_event(event: Mapping[str, object]) -> NativeEgressTran
     return NativeEgressTransportError(
         message if isinstance(message, str) else "native websocket failed",
         failure_phase=failure_phase if isinstance(failure_phase, str) else "websocket",
+        failure_detail=failure_detail if isinstance(failure_detail, str) else None,
         retryable_same_contract=retryable_same_contract if isinstance(retryable_same_contract, bool) else False,
         is_tls_verification_failure=(
             is_tls_verification_failure if isinstance(is_tls_verification_failure, bool) else False

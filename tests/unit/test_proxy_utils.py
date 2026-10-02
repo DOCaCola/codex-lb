@@ -48,6 +48,7 @@ from app.core.clients.proxy_websocket import (
     UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
     CodexUpstreamWebSocket,
     UpstreamWebSocket,
+    UpstreamWebSocketMessage,
     UpstreamWebSocketTransportError,
     WebsocketsUpstreamWebSocket,
 )
@@ -35096,10 +35097,10 @@ async def test_proxy_responses_websocket_liveness_race_awaits_reader_settlement(
         async def send_bytes(self, _data: bytes) -> None:
             return None
 
-        async def receive(self) -> SimpleNamespace:
+        async def receive(self) -> UpstreamWebSocketMessage:
             self.receive_count += 1
             if self.receive_count == 1:
-                return SimpleNamespace(
+                return UpstreamWebSocketMessage(
                     kind="text",
                     text=json.dumps(
                         {
@@ -35114,7 +35115,7 @@ async def test_proxy_responses_websocket_liveness_race_awaits_reader_settlement(
                     error_code=None,
                 )
             await self.second_send_started.wait()
-            return SimpleNamespace(
+            return UpstreamWebSocketMessage(
                 kind="error",
                 text=None,
                 data=None,
@@ -36239,8 +36240,8 @@ async def test_relay_upstream_websocket_account_neutral_failure_is_not_replayed(
         def __init__(self) -> None:
             self.closed = False
 
-        async def receive(self) -> SimpleNamespace:
-            return SimpleNamespace(
+        async def receive(self) -> UpstreamWebSocketMessage:
+            return UpstreamWebSocketMessage(
                 kind="error",
                 text=None,
                 data=None,
@@ -36328,8 +36329,8 @@ async def test_relay_upstream_websocket_liveness_timeout_preserves_sequenced_fai
         def __init__(self) -> None:
             self.closed = False
 
-        async def receive(self) -> SimpleNamespace:
-            return SimpleNamespace(
+        async def receive(self) -> UpstreamWebSocketMessage:
+            return UpstreamWebSocketMessage(
                 kind="error",
                 text=None,
                 data=None,
@@ -36604,7 +36605,7 @@ async def test_proxy_responses_websocket_replays_precreated_request_after_upstre
         async def send_bytes(self, _data: bytes) -> None:
             return None
 
-        async def receive(self) -> SimpleNamespace:
+        async def receive(self) -> UpstreamWebSocketMessage:
             message = await self._messages.get()
             if message.kind == "close":
                 if self._wait_before_close is not None:
@@ -36618,7 +36619,7 @@ async def test_proxy_responses_websocket_replays_precreated_request_after_upstre
 
     first_upstream = _RaceUpstreamWebSocket(
         [
-            SimpleNamespace(
+            UpstreamWebSocketMessage(
                 kind="text",
                 text=json.dumps(
                     {
@@ -36632,7 +36633,7 @@ async def test_proxy_responses_websocket_replays_precreated_request_after_upstre
                 error=None,
                 error_code=None,
             ),
-            SimpleNamespace(
+            UpstreamWebSocketMessage(
                 kind="text",
                 text=json.dumps(
                     {
@@ -36650,13 +36651,13 @@ async def test_proxy_responses_websocket_replays_precreated_request_after_upstre
                 error=None,
                 error_code=None,
             ),
-            SimpleNamespace(kind="close", text=None, data=None, close_code=1001, error=None, error_code=None),
+            UpstreamWebSocketMessage(kind="close", text=None, data=None, close_code=1001, error=None, error_code=None),
         ],
         wait_before_close=second_admission_started,
     )
     second_upstream = _RaceUpstreamWebSocket(
         [
-            SimpleNamespace(
+            UpstreamWebSocketMessage(
                 kind="text",
                 text=json.dumps(
                     {
@@ -36670,7 +36671,7 @@ async def test_proxy_responses_websocket_replays_precreated_request_after_upstre
                 error=None,
                 error_code=None,
             ),
-            SimpleNamespace(
+            UpstreamWebSocketMessage(
                 kind="text",
                 text=json.dumps(
                     {

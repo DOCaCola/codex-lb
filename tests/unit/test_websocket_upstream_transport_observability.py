@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import anyio
 import pytest
 
+from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
 from app.core.crypto import TokenEncryptor
 from app.core.openai.parsing import parse_sse_event_payload
 from app.core.usage.request_operation import RequestOperation
@@ -23,6 +24,7 @@ from app.modules.proxy._service.support import (
     _WebSocketRequestState,
     _WebSocketUpstreamControl,
 )
+from app.modules.proxy._service.websocket import helpers as websocket_helpers_module
 from app.modules.proxy._service.websocket import mixin as websocket_mixin_module
 from app.modules.proxy._service.websocket.mixin import _WebSocketMixin
 
@@ -452,6 +454,8 @@ async def test_fail_pending_websocket_requests_records_bridge_upstream_transport
             "requested_service_tier": None,
             "actual_service_tier": None,
             "latency_first_token_ms": None,
+            "latency_response_created_ms": None,
+            "latency_first_upstream_event_ms": None,
             "session_id": None,
             "upstream_proxy_route_mode": None,
             "upstream_proxy_pool_id": None,
@@ -524,6 +528,75 @@ async def test_fail_pending_websocket_requests_attributes_request_state_api_key(
 
     assert len(service.request_log_calls) == 1
     assert service.request_log_calls[0]["api_key"] is request_key
+
+
+@pytest.mark.asyncio
+async def test_fail_pending_websocket_requests_records_upstream_receive_failure_attribution(monkeypatch):
+    """A terminal upstream receive failure names its phase and underlying error
+    on the request log, together with whether upstream had accepted the turn."""
+    service = _DummyWebSocketService()
+    monkeypatch.setattr(websocket_mixin_module, "_record_upstream_transport_decision", lambda **_labels: None)
+    request_state = _WebSocketRequestState(
+        request_id="ws_receive_failure",
+        request_log_id="resp_receive_failure_log",
+        response_id="resp_receive_failure",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_WEBSOCKET,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+    request_state.latency_first_upstream_event_ms = 2100
+    request_state.latency_response_created_ms = 2100
+    message = UpstreamWebSocketMessage(
+        kind="error",
+        error="Upstream websocket receive failed",
+        failure_phase="protocol",
+        failure_detail="protocol_reset_without_closing_handshake",
+    )
+
+    websocket_helpers_module._attribute_upstream_websocket_failure([request_state], message)
+    await service._fail_pending_websocket_requests(
+        account_id_value="acc_receive_failure",
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        error_code="stream_incomplete",
+        error_message=websocket_helpers_module._upstream_websocket_disconnect_message(message),
+        api_key=None,
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    [log_call] = service.request_log_calls
+    assert log_call["error_message"] == (
+        "Upstream websocket closed before response.completed: Upstream websocket receive failed"
+    )
+    assert log_call["failure_phase"] == "protocol"
+    assert log_call["failure_detail"] == "protocol_reset_without_closing_handshake"
+    assert log_call["latency_response_created_ms"] == 2100
+    assert log_call["latency_first_upstream_event_ms"] == 2100
+
+
+def test_upstream_receive_failure_attribution_keeps_an_earlier_specific_attribution():
+    request_state = _WebSocketRequestState(
+        request_id="ws_attributed",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+    )
+    request_state.failure_phase_override = "upstream"
+    request_state.failure_detail_override = "missing_response_created_timeout"
+
+    websocket_helpers_module._attribute_upstream_websocket_failure(
+        [request_state],
+        UpstreamWebSocketMessage(kind="error", failure_phase="transport", failure_detail="io_connection_reset"),
+    )
+
+    assert request_state.failure_phase_override == "upstream"
+    assert request_state.failure_detail_override == "missing_response_created_timeout"
 
 
 _REASONING_REPLAY_MESSAGE = (
