@@ -2032,6 +2032,8 @@ class ClaudeAccount(Base):
     credentials_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     grant_fingerprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     identity_fingerprint: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    # Anthropic account UUID verified with identity_fingerprint; named in serving metadata.
+    provider_account_uuid: Mapped[str | None] = mapped_column(String, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     credential_status: Mapped[str] = mapped_column(String, nullable=False, default="ready", server_default="ready")
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")

@@ -64,15 +64,27 @@ def session_metadata(body: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
 
 
 def project_session(
-    body: dict[str, JsonValue], profile: RequestProfile, *, source_id: str, client_scope: str, synthesize: bool = False
+    body: dict[str, JsonValue],
+    profile: RequestProfile,
+    *,
+    source_id: str,
+    account_uuid: str,
+    client_scope: str,
+    synthesize: bool = False,
 ) -> bool:
+    """Bind session metadata to the Anthropic account that serves this request.
+
+    A pooled grant must never present another account's UUID, and translated
+    requests carry the serving account's UUID just as Claude Code does.
+    """
     identity = session_metadata(body)
     if identity is None:
         if not synthesize:
             return False
-        # A local installation identity, not a fabricated provider account UUID.
+        # A local installation identity scoped to the serving account and client.
         device = hashlib.sha256(json.dumps(["claude-device-v1", source_id, client_scope]).encode()).hexdigest()
-        identity = {"device_id": device, "account_uuid": "", "session_id": profile.session_id}
+        identity = {"device_id": device, "session_id": profile.session_id}
+    identity["account_uuid"] = account_uuid
     identity["session_id"] = profile.session_id
     parent = identity.get("parent_session_id")
     if isinstance(parent, str):

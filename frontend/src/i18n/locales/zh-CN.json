@@ -8,6 +8,8 @@
   "claude.subscription.enterprise": "Enterprise",
   "claude.subscription.unknown": "套餐未知",
   "claude.subscription.retained": "上次确认的订阅；元数据刷新失败",
+  "claude.extraUsage.badge": "额外用量",
+  "claude.extraUsage.title": "此 Anthropic 账户已启用额外用量；超出订阅限额的请求将被计费",
   "dashboard.weeklyPace.attributionCost": "估算 API 费用",
   "dashboard.weeklyPace.attributionCostDescription": "最近两小时内记录请求的 API 等效估算费用。",
   "dashboard.weeklyPace.attributionCostTooltip": "估算 API 费用 · 最近两小时：{{cost}}",

@@ -1,0 +1,4 @@
+- [x] 1. Add `provider_account_uuid` to Claude accounts and store it at enrollment, reconnect and identity binding, backfilling existing rows after a fingerprint check.
+- [x] 2. Project session metadata after the serving credential snapshot with the serving account's UUID for native and translated requests.
+- [x] 3. Expose `extraUsageEnabled` from provider usage and show the warning badge on Claude cards and list rows.
+- [x] 4. Add backend and frontend regressions; run tests, ruff, ty and strict OpenSpec validation.

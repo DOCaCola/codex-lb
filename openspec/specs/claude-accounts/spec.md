@@ -339,11 +339,19 @@ The gateway SHALL authenticate historical Claude state against the client scope 
 - **THEN** authentication succeeds without fork metadata, completed thinking keeps only its account preference, and active reasoning and search keep their original model and account owner
 
 ### Requirement: Synthesized identity coherence
-Translated Messages SHALL include a stable local device identity and the same scoped session identity in body metadata and headers. Unknown provider account identity MUST NOT be fabricated. Synthesized OS and architecture SHALL match the runtime; native reviewed headers SHALL remain caller-owned. No billing fingerprint SHALL be synthesized.
+Translated Messages SHALL include a stable local device identity and the same scoped session identity in body metadata and headers. Session metadata on every outbound Messages request that carries it SHALL name the authenticated provider account UUID of the serving account; a client-supplied account UUID MUST NOT be forwarded to another account, and an unauthenticated account identity MUST NOT be fabricated. The provider account UUID SHALL be persisted from the authenticated profile and checked against the enrolled identity before use. Synthesized OS and architecture SHALL match the runtime; native reviewed headers SHALL remain caller-owned. No billing fingerprint SHALL be synthesized.
 
 #### Scenario: Rotated credentials
 - **WHEN** the selected account refreshes its token within the same client conversation
 - **THEN** local device and session metadata remain stable without reusing identity across another client or account
+
+#### Scenario: Pooled native request
+- **WHEN** a native Claude Code request carrying its own account UUID is served by a different pooled account
+- **THEN** the outbound metadata names the serving account's UUID and preserves the remaining client metadata
+
+#### Scenario: Account enrolled before UUID persistence
+- **WHEN** an enrolled account without a stored provider UUID next uses its credentials
+- **THEN** its authenticated profile is checked against the enrolled identity and the UUID is stored, or the request fails if the identity differs
 
 ### Requirement: Reactive Claude quota failover
 The gateway SHALL classify upstream 429 refusals before health mutation. Fast-mode credit entitlement refusals SHALL NOT cool the pool. Shared or ambiguous unified quota rejection SHALL cool the account; proven overage-only and ordinary model limits SHALL cool only the requested model. Each restriction SHALL use only its attributable deadlines: a valid Retry-After SHALL be a minimum wait alongside explicit rejected-window resets, then an attributable aggregate reset when window resets are unavailable, then a 60-second default. Deadlines SHALL persist and never shorten on concurrent writes. The gateway MAY select another authorized eligible account before output, excluding failed accounts, and MUST rebuild identity, credentials and history projection for that target. Active reasoning and server-resource ownership MUST remain enforced. A logical request SHALL permit at most four physical sends including signature recovery. Canceled requests and errors after stream ownership SHALL NOT trigger account failover. Every failed attempt SHALL settle and release admission before another attempt; exhausted recovery SHALL preserve the last upstream refusal.
@@ -970,3 +978,10 @@ A Claude send whose connection failed before any request byte was dispatched (DN
 #### Scenario: Persistent outage
 - **WHEN** every send fails before dispatch
 - **THEN** the last connection failure is returned once the send budget or recovery window is exhausted
+
+### Requirement: Claude extra usage presentation
+Claude cards and account-list rows SHALL show a warning badge, in existing badge styling, when Anthropic usage data reports extra usage as enabled. The badge SHALL be absent when extra usage is disabled or unreported.
+
+#### Scenario: Extra usage enabled
+- **WHEN** the latest usage data reports extra usage enabled for an account
+- **THEN** its card and list row show an extra-usage badge explaining that requests beyond subscription limits are billed

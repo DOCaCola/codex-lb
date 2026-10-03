@@ -182,14 +182,6 @@ class ClaudeDispatchPreparer:
         body["model"] = model.removeprefix("anthropic/")
         projected = project_request(body, profile, endpoint=endpoint, translated=translated)
         transformations = projected.transformations
-        if project_session(
-            projected.body,
-            profile,
-            source_id=account.source_id,
-            client_scope=api_key.id if api_key else "anonymous",
-            synthesize=translated,
-        ):
-            transformations += ("session_identity",)
         retains_thinking = translated and retain_thinking(projected.body)
         if translated:
             cache_translated(projected.body)
@@ -234,6 +226,17 @@ class ClaudeDispatchPreparer:
             require_streaming=logical.get("stream") is True,
             reasoning_effort=reasoning_effort,
         )
+        # The serving account's provider UUID is bound by the snapshot above.
+        assert account.provider_account_uuid is not None
+        if project_session(
+            projected.body,
+            profile,
+            source_id=source_id,
+            account_uuid=account.provider_account_uuid,
+            client_scope=api_key.id if api_key else "anonymous",
+            synthesize=translated,
+        ):
+            transformations += ("session_identity",)
         headers["authorization"] = f"Bearer {snapshot.credentials.access_token.get_secret_value()}"
         return PreparedClaudeRequest(
             source=account.source,

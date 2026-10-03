@@ -6,7 +6,8 @@ import {
   AccountSelectionSurface,
 } from "@/components/account-surfaces";
 import { StatusBadge } from "@/components/status-badge";
-import { ExternalLink } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { CircleDollarSign, ExternalLink } from "lucide-react";
 import {
   CardQuotaGrid,
   MiniQuotaRow,
@@ -145,6 +146,7 @@ function Heading({ account }: { account: ClaudeAccount }) {
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        <ExtraUsageBadge account={account} />
         <RoutingPolicyBadge policy={account.routingPolicy} />
         <StatusBadge status={normalizeStatus(claudeStatus(account))} />
       </div>
@@ -181,7 +183,12 @@ export function ClaudeAccountCard({ account }: { account: ClaudeAccount }) {
       data-testid="claude-account-card"
       title={<ClaudeName account={account} />}
       subtitle={<>Claude · <ClaudePlan account={account} /></>}
-      status={<StatusBadge status={normalizeStatus(claudeStatus(account))} />}
+      status={
+        <span className="flex items-center gap-2">
+          <ExtraUsageBadge account={account} />
+          <StatusBadge status={normalizeStatus(claudeStatus(account))} />
+        </span>
+      }
       actions={
         <AccountCardAction asChild>
           <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
@@ -193,5 +200,20 @@ export function ClaudeAccountCard({ account }: { account: ClaudeAccount }) {
     >
       <ClaudeQuota account={account} variant="card" />
     </AccountCardSurface>
+  );
+}
+
+function ExtraUsageBadge({ account }: { account: ClaudeAccount }) {
+  const { t } = useTranslation();
+  if (!account.extraUsageEnabled) return null;
+  return (
+    <Badge
+      variant="outline"
+      title={t("claude.extraUsage.title")}
+      className="shrink-0 gap-1 border-amber-300 bg-amber-50 px-1.5 text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+    >
+      <CircleDollarSign className="h-3 w-3" aria-hidden="true" />
+      {t("claude.extraUsage.badge")}
+    </Badge>
   );
 }

@@ -8,6 +8,8 @@
   "claude.subscription.enterprise": "Enterprise",
   "claude.subscription.unknown": "Unknown plan",
   "claude.subscription.retained": "Last known subscription; metadata refresh failed",
+  "claude.extraUsage.badge": "Extra usage",
+  "claude.extraUsage.title": "Extra usage is enabled on this Anthropic account; requests beyond the subscription limits are billed",
   "dashboard.requestDetails.operation": "Operation",
   "dashboard.requests.operations.unknown": "Unknown",
   "dashboard.requests.operations.responses": "Responses",

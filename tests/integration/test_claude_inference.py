@@ -1104,7 +1104,9 @@ async def test_native_wire_identity_and_features_survive_route(async_client, poo
         "stream": True,
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": "high"},
-        "metadata": {"user_id": json.dumps({"device_id": "device", "session_id": session_id})},
+        "metadata": {
+            "user_id": json.dumps({"device_id": "device", "account_uuid": "client-account", "session_id": session_id})
+        },
     }
     original = deepcopy(body)
     for _ in range(2):
@@ -1117,6 +1119,9 @@ async def test_native_wire_identity_and_features_survive_route(async_client, poo
     wire_session = json.loads(wire_body["metadata"]["user_id"])["session_id"]
     assert wire_session == wire_headers["x-claude-code-session-id"] != session_id
     assert wire_session == second[3]["x-claude-code-session-id"]
+    # The profile stub reports each access token as its account UUID.
+    serving = wire_headers["authorization"].removeprefix("Bearer ")
+    assert json.loads(wire_body["metadata"]["user_id"])["account_uuid"] == serving != "client-account"
     assert wire_headers["x-client-request-id"] == "native-request"
     assert wire_headers["x-stainless-retry-count"] == "3"
     assert wire_headers["x-claude-code-agent-id"] == "agent"

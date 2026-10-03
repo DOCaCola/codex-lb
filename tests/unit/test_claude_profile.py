@@ -2,6 +2,7 @@ import json
 from copy import deepcopy
 
 import pytest
+from pydantic import JsonValue
 
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import (
@@ -227,13 +228,22 @@ def test_session_projection_scopes_parent_and_leaves_other_fields():
     }
     original = deepcopy(body)
     snapshot = profile(conversation_id=child)
-    assert project_session(body, snapshot, source_id="account-a", client_scope="key-a")
+    assert project_session(body, snapshot, source_id="account-a", account_uuid="serving-uuid", client_scope="key-a")
     identity = session_metadata(body)
+    assert identity is not None
     assert identity["session_id"] == snapshot.session_id
     assert identity["parent_session_id"] == profile(conversation_id=parent).session_id
-    assert identity["account_uuid"] == "account" and identity["extra"] == "preserved"
+    # A pooled grant presents its own account, never the client's original one.
+    assert identity["account_uuid"] == "serving-uuid"
+    assert identity["device_id"] == "device" and identity["extra"] == "preserved"
     assert body["metadata"]["other"] == "retained"
     assert original != body
+
+
+def test_native_request_without_metadata_is_not_given_session_identity():
+    body: dict[str, JsonValue] = {"messages": []}
+    assert not project_session(body, profile(native=True), source_id="a", account_uuid="uuid", client_scope="key")
+    assert "metadata" not in body
 
 
 @pytest.mark.parametrize("raw", ["opaque", "[]", "{}", '{"session_id":"bad","device_id":"d"}', 12])

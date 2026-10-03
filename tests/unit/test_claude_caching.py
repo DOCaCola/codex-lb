@@ -58,16 +58,18 @@ def test_earlier_turn_thinking_is_kept_only_when_thinking_is_on(thinking, retain
         assert "context_management" not in body
 
 
-def test_synthesized_identity_is_stable_scoped_and_not_a_provider_account():
+def test_synthesized_identity_is_stable_scoped_and_names_the_serving_account():
     def make(source="a", client="client", conversation="conversation"):
         profile = RequestProfile.create(
             version="2.1.283", source_id=source, client_scope=client, conversation_id=conversation, native=False
         )
         body = {"metadata": {"other": "preserved"}}
-        project_session(body, profile, source_id=source, client_scope=client, synthesize=True)
+        project_session(
+            body, profile, source_id=source, account_uuid=f"uuid-{source}", client_scope=client, synthesize=True
+        )
         identity = json.loads(body["metadata"]["user_id"])
         assert identity["session_id"] == profile.session_id
-        assert identity["account_uuid"] == ""
+        assert identity["account_uuid"] == f"uuid-{source}"
         assert body["metadata"]["other"] == "preserved"
         return identity
 

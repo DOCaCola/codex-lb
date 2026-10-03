@@ -17,7 +17,7 @@ from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
-from app.modules.claude.identity import authenticated_identity, profile_identity
+from app.modules.claude.identity import authenticated_profile, profile_identity
 from app.modules.claude.metadata import (
     CLAIM_LEASE,
     FETCH_TIMEOUT_SECONDS,
@@ -117,8 +117,8 @@ class ClaudeService:
     ) -> ClaudeAccountResponse:
         if not name.strip():
             raise ClaudeError("Account name is required")
-        identity = (
-            await authenticated_identity(self.client, self.repository, credentials)
+        profile = (
+            await authenticated_profile(self.client, self.repository, credentials)
             if credentials.expires_at > datetime.now(UTC)
             else None
         )
@@ -141,7 +141,8 @@ class ClaudeService:
             source=source,
             credentials_encrypted=encrypt_credentials(credentials, self.encryptor),
             grant_fingerprint=grant_fingerprint(credentials),
-            identity_fingerprint=identity,
+            identity_fingerprint=profile_identity(profile) if profile else None,
+            provider_account_uuid=profile.account.uuid if profile else None,
             expires_at=credentials.expires_at.replace(tzinfo=None),
             credential_status="ready",
             state_json=AccountState(subscription=subscription).model_dump_json(),
@@ -173,7 +174,8 @@ class ClaudeService:
             )
         if credentials.expires_at <= datetime.now(UTC):
             raise ClaudeError("Reconnect requires a current credential file or a new OAuth sign-in")
-        identity = await authenticated_identity(self.client, self.repository, credentials)
+        profile = await authenticated_profile(self.client, self.repository, credentials)
+        identity = profile_identity(profile)
         if identity != row.identity_fingerprint:
             raise ClaudeError("Reconnect must use the same authenticated Claude account and organization")
         try:
@@ -187,6 +189,7 @@ class ClaudeService:
                 .values(
                     credentials_encrypted=encrypt_credentials(credentials, self.encryptor),
                     grant_fingerprint=grant_fingerprint(credentials),
+                    provider_account_uuid=profile.account.uuid,
                     expires_at=credentials.expires_at.replace(tzinfo=None),
                     credential_status="ready",
                     generation=generation + 1,
@@ -433,6 +436,9 @@ class ClaudeService:
             is_enabled=row.source.is_enabled,
             credential_status=status,
             expires_at=row.expires_at.replace(tzinfo=UTC),
+            extra_usage_enabled=state.usage is not None
+            and state.usage.extra_usage is not None
+            and state.usage.extra_usage.is_enabled,
             state=state,
             quota=quota_status(state, now=datetime.now(UTC)),
         )

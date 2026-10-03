@@ -14,6 +14,7 @@ export const ClaudeAccountSchema = z.object({
   isEnabled: z.boolean(),
   credentialStatus: z.string(),
   expiresAt: z.string(),
+  extraUsageEnabled: z.boolean(),
   state: z.object({
     subscription: z.object({
       subscription_type: z.string().nullable(),

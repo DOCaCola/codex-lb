@@ -185,6 +185,13 @@ class QuotaWindow(BaseModel):
         return value.astimezone(UTC) if value is not None else None
 
 
+class ExtraUsage(BaseModel):
+    """Pay-as-you-go overage beyond the subscription; billed when enabled."""
+
+    model_config = ConfigDict(extra="allow")
+    is_enabled: bool
+
+
 class UsageSnapshot(BaseModel):
     # Preserve newer provider windows for display without guessing model ownership.
     model_config = ConfigDict(extra="allow")
@@ -192,6 +199,7 @@ class UsageSnapshot(BaseModel):
     seven_day: QuotaWindow | None = None
     seven_day_opus: QuotaWindow | None = None
     seven_day_sonnet: QuotaWindow | None = None
+    extra_usage: ExtraUsage | None = None
 
 
 class HeaderQuotaObservation(BaseModel):
@@ -281,6 +289,7 @@ class ClaudeAccountResponse(DashboardModel):
     is_enabled: bool
     credential_status: str
     expires_at: datetime
+    extra_usage_enabled: bool
     state: AccountState
     quota: QuotaStatus
 

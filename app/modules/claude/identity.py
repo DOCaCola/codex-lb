@@ -14,10 +14,11 @@ from app.modules.claude.schemas import AuthenticatedProfile, Credentials
 from app.modules.claude.version import ClaudeVersionService
 
 
-async def authenticated_identity(client: ClaudeClient, repository: ClaudeRepository, credentials: Credentials) -> str:
+async def authenticated_profile(
+    client: ClaudeClient, repository: ClaudeRepository, credentials: Credentials
+) -> AuthenticatedProfile:
     version = await ClaudeVersionService(repository.session).snapshot()
-    profile = await client.profile(credentials.access_token.get_secret_value(), version.version)
-    return profile_identity(profile)
+    return await client.profile(credentials.access_token.get_secret_value(), version.version)
 
 
 def profile_identity(profile: AuthenticatedProfile) -> str:
@@ -30,19 +31,27 @@ async def bind_identity(
     row = await repository.get(source_id)
     if row is None:
         raise ClaudeError("Claude account was removed")
-    if row.identity_fingerprint is not None:
+    if row.identity_fingerprint is not None and row.provider_account_uuid is not None:
         return
     generation = row.generation
-    fingerprint = await authenticated_identity(client, repository, credentials)
+    profile = await authenticated_profile(client, repository, credentials)
+    fingerprint = profile_identity(profile)
+    if row.identity_fingerprint is not None and row.identity_fingerprint != fingerprint:
+        raise ClaudeError("Claude credentials authenticate a different account and organization")
+    account_uuid = profile.account.uuid
     try:
         changed = await repository.session.scalar(
             update(ClaudeAccount)
             .where(
                 ClaudeAccount.source_id == source_id,
                 ClaudeAccount.generation == generation,
-                ClaudeAccount.identity_fingerprint.is_(None),
+                ClaudeAccount.identity_fingerprint.is_(None) | (ClaudeAccount.identity_fingerprint == fingerprint),
             )
-            .values(identity_fingerprint=fingerprint, version=ClaudeAccount.version + 1)
+            .values(
+                identity_fingerprint=fingerprint,
+                provider_account_uuid=account_uuid,
+                version=ClaudeAccount.version + 1,
+            )
             .returning(ClaudeAccount.source_id)
             .execution_options(synchronize_session=False)
         )
@@ -52,5 +61,10 @@ async def bind_identity(
         raise ClaudeError("This authenticated Claude account and organization are already enrolled") from exc
     if changed is None:
         current = await repository.get(source_id)
-        if current is None or current.generation != generation or current.identity_fingerprint != fingerprint:
+        if (
+            current is None
+            or current.generation != generation
+            or current.identity_fingerprint != fingerprint
+            or current.provider_account_uuid != account_uuid
+        ):
             raise ClaudeError("Claude credentials changed during identity verification; retry")

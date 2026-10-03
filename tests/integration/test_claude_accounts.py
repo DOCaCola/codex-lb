@@ -150,6 +150,39 @@ async def test_reconnect_preserves_identity_and_invalidates_old_refresh_generati
     assert "same authenticated Claude account" in rejected.text
 
 
+async def test_enrollment_binds_provider_account_uuid_and_backfills_existing_rows(async_client):
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        assert row.provider_account_uuid == "access-secret"
+        row.provider_account_uuid = None
+        await session.commit()
+    async with SessionLocal() as session:
+        await ClaudeAuth(ClaudeRepository(session), ClaudeClient(), TokenEncryptor()).credentials(source_id)
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        assert row.provider_account_uuid == "access-secret"
+
+
+async def test_identity_backfill_refuses_a_different_authenticated_account(async_client):
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        row.identity_fingerprint = "another-account"
+        row.provider_account_uuid = None
+        await session.commit()
+    async with SessionLocal() as session:
+        with pytest.raises(ClaudeError, match="different account"):
+            await ClaudeAuth(ClaudeRepository(session), ClaudeClient(), TokenEncryptor()).credentials(source_id)
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        assert row.provider_account_uuid is None
+
+
 async def test_catalog_refresh_preserves_snapshot_on_failure(async_client, monkeypatch):
     monkeypatch.setattr(
         ClaudeClient, "catalog", AsyncMock(return_value=[CatalogModel(id="claude-test", display_name="Test")])
@@ -290,6 +323,7 @@ async def test_refresh_owned_across_workers_and_rotation_survives_restart(async_
         assert row is not None
         assert row.generation == 2
         assert row.refresh_intent is None
+        assert row.provider_account_uuid == "rotated-access"
 
 
 async def test_definitive_refresh_rejection_can_recover_after_backoff(async_client):
@@ -383,3 +417,16 @@ async def test_selected_catalog_and_quota_api_preserve_missing_entitlement(async
         source = await ModelSourcesRepository(session).get_by_id(source_id)
         assert source is not None
         assert [(model.model, model.is_enabled) for model in source.models] == [("anthropic/claude-opus-5", False)]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_extra_usage_state_is_reported_from_provider_usage(async_client, monkeypatch, enabled):
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[]))
+    usage = UsageSnapshot.model_validate(
+        {"extra_usage": {"is_enabled": enabled, "monthly_limit": None, "credits_ever_enabled": enabled}}
+    )
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=usage))
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    response = await async_client.post(f"/api/claude-accounts/{source_id}/refresh")
+    assert response.status_code == 200, response.text
+    assert response.json()["extraUsageEnabled"] is enabled

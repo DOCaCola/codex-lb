@@ -31,6 +31,7 @@ const account: ClaudeAccount = {
   isEnabled: true,
   credentialStatus: "ready",
   expiresAt: "2026-09-25T20:00:00Z",
+  extraUsageEnabled: false,
   state: {
     subscription: null,
     subscription_updated_at: null,
@@ -70,6 +71,25 @@ afterEach(() => {
   useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
 });
 describe("Claude shared account surfaces", () => {
+  it("warns about billed extra usage only when the account enables it", () => {
+    const view = render(
+      <MemoryRouter>
+        <ClaudeAccountCard account={account} />
+        <ClaudeListItem account={account} selected={false} onSelect={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Extra usage")).toBeNull();
+    view.rerender(
+      <MemoryRouter>
+        <ClaudeAccountCard account={{ ...account, extraUsageEnabled: true }} />
+        <ClaudeListItem account={{ ...account, extraUsageEnabled: true }} selected={false} onSelect={() => {}} />
+      </MemoryRouter>,
+    );
+    const badges = screen.getAllByText("Extra usage");
+    expect(badges).toHaveLength(2);
+    expect(badges[0].closest("[title]")).toHaveAttribute("title", expect.stringContaining("billed"));
+  });
+
   it.each([
     ["free", "Free"], ["pro", "Pro"], ["max", "Max"],
     ["max_5x", "Max 5×"], ["max_20x", "Max 20×"],
