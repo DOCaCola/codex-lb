@@ -80,20 +80,32 @@ def test_completed_opaque_only_state_has_no_wire_block_but_keeps_original_histor
     assert "Original request" in str(body) and "Continue on Opus" in str(body)
     assert "call_native" in str(body) and "result" in str(body)
     assert "thinking" not in str(body)
-    assert "converted=0 omitted=1" in caplog.text
+    assert "converted=0 omitted=1 active=0" in caplog.text
     assert "gAAAA" not in caplog.text and "rs_native" not in caplog.text
     assert payload == original
 
 
 @pytest.mark.parametrize("compaction", [False, True])
 @pytest.mark.parametrize("readable", [False, True])
-def test_foreign_encrypted_reasoning_in_open_tool_loop_fails(compaction, readable):
+def test_foreign_encrypted_reasoning_in_open_tool_loop_is_projected(compaction, readable, caplog):
     payload = history(completed=False) if readable else history(completed=False, summary=None, content=None)
-    with pytest.raises(ClientPayloadError) as error:
-        project_foreign_replay(compact(payload) if compaction else payload, require_complete_history=compaction)
-    assert error.value.code == "nonportable_provider_history"
-    assert error.value.param == "input[1]"
-    assert str(error.value).startswith("Active reasoning continuation")
+    request = compact(payload) if compaction else payload
+    original = deepcopy(request)
+    with caplog.at_level("INFO"):
+        projected = project_foreign_replay(request, require_complete_history=compaction)
+    if readable:
+        assert at(projected["input"], 1, "role") == "assistant"
+        assert at(projected["input"], 1, "content", 0, "text") == "Sol context"
+        assert "converted=1 omitted=0 active=1" in caplog.text
+    else:
+        assert at(projected["input"], 1) == {"type": "reasoning", "summary": []}
+        assert "converted=0 omitted=1 active=1" in caplog.text
+    assert array(projected["input"])[2:] == request["input"][2:]
+    body = project_responses(projected, max_output_tokens=64000, reasoning=None).body
+    assert "gAAAA" not in str(body) and "rs_native" not in str(body)
+    assert "call_native" in str(body) and "result" in str(body)
+    assert "thinking" not in str(body)
+    assert request == original
 
 
 @pytest.mark.parametrize("ending", ["user", "assistant", "turn_aborted", "task"])
@@ -125,12 +137,12 @@ def test_compaction_projects_foreign_reasoning_of_closed_turns(ending, readable,
     assert request == original
 
 
-def test_commentary_inside_open_foreign_tool_loop_does_not_close_compaction_turn():
+def test_commentary_inside_open_foreign_tool_loop_does_not_close_compaction_turn(caplog):
     payload = history(completed=False)
     payload["input"][2:2] = [{"type": "message", "role": "assistant", "content": "Checking the lookup"}]
-    with pytest.raises(ClientPayloadError) as error:
+    with caplog.at_level("INFO"):
         project_foreign_replay(compact(payload), require_complete_history=True)
-    assert error.value.param == "input[1]"
+    assert "active=1" in caplog.text
 
 
 def test_compaction_requires_the_built_summarization_instruction():
@@ -139,12 +151,16 @@ def test_compaction_requires_the_built_summarization_instruction():
 
 
 @pytest.mark.parametrize("readable", [False, True])
-def test_canonical_external_task_closes_foreign_history_but_tool_results_do_not(readable):
+def test_canonical_external_task_closes_foreign_history_but_tool_results_do_not(readable, caplog):
     payload = history(completed=False) if readable else history(completed=False, summary=None, content=None)
-    with pytest.raises(ClientPayloadError, match="Active reasoning"):
+    with caplog.at_level("INFO"):
         project_foreign_replay(payload)
+    assert "active=1" in caplog.text
+    caplog.clear()
     payload["input"].append(TASK_INPUT)
-    projected = project_foreign_replay(payload)
+    with caplog.at_level("INFO"):
+        projected = project_foreign_replay(payload)
+    assert "active=0" in caplog.text
     if readable:
         assert at(projected["input"], 1, "role") == "assistant"
     else:

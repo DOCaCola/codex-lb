@@ -649,15 +649,25 @@ results do not. Empty plaintext reasoning retains its item position for errors.
 Completed opaque-only foreign history produces no Claude wire block but remains
 unchanged in retained logical history. Its temporary projection keeps an empty
 plaintext reasoning item so later diagnostics retain their input indices. The
-existing protocol renderer emits no block for that item. Active foreign encrypted
-continuations fail explicitly with `nonportable_provider_history` and the input
-index. Compaction applies the same boundary to the client-supplied history, with
-the appended summarization instruction split off structurally. A history ending
-with an assistant message is a closed turn; otherwise the last user or task
-input starts the active turn. Codex records interrupts as a `<turn_aborted>` user
-message, so interrupted turns are closed too. Only foreign ciphertext inside an
-open tool loop is refused. Plaintext-only compaction preserves readable
-reasoning.
+existing protocol renderer emits no block for that item. The active turn,
+including an open tool loop, is projected the same way. Compaction applies the
+same projection to the client-supplied history, with the appended summarization
+instruction split off structurally. The active-turn boundary still matters for
+genuine Claude envelopes and for the `active=` count in the projection log: a
+history ending with an assistant message is a closed turn; otherwise the last
+user or task input starts the active turn. Codex records interrupts as a
+`<turn_aborted>` user message, so interrupted turns are closed too.
+Plaintext-only compaction preserves readable reasoning.
+
+Active foreign ciphertext was refused until 2026-10-03. Thread `01a0f38a`
+switched from Sol to Opus 5.5 at 00:12:48 UTC directly after a Sol tool call
+and failed with `nonportable_provider_history`; it could only continue on Sol.
+Claude can never use that ciphertext, so refusing preserved nothing. OpenCodex
+`249462bf5`, CLIProxyAPI `2044a01f4`, OmniRoute `23a114848` and Sub2API
+`b8dece900` (inspected 2026-10-03) drop foreign reasoning regardless of the
+active turn; none refuses the request. Anthropic's adaptive thinking, used by
+Opus 5.5 and Sonnet 5.5, does not require an assistant turn to start with a
+thinking block.
 
 An earlier rule rejected all foreign ciphertext during compaction, because a
 display summary cannot prove the full encrypted state survived. Production on
@@ -679,8 +689,8 @@ empty-summary ciphertext alongside portable messages and tools. The revised
 policy preserves that visible conversation, not an unavailable private chain
 of thought. Retained native state is not deleted. CLIProxyAPI's inspected
 Responses-to-Claude converter omits foreign signatures instead of replaying
-unsigned thinking; our historical-only projection additionally retains readable
-summaries as ordinary text and enforces active/compaction checks.
+unsigned thinking; our projection additionally retains readable summaries as
+ordinary text.
 
 Inspected on 2026-09-30: OpenCodex
 `569e3e7dae48bafc54b8a1a7e3a85129befe2d98`, CLIProxyAPI

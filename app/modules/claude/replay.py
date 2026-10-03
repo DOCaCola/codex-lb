@@ -57,6 +57,7 @@ def project_foreign_replay(
     projected: list[JsonValue] = []
     converted = 0
     omitted = 0
+    active = 0
     for index, item in enumerate(items):
         if not isinstance(item, dict) or item.get("type") != "reasoning":
             projected.append(item)
@@ -70,13 +71,6 @@ def project_foreign_replay(
         if isinstance(token, str) and token.startswith(CLAUDE_REASONING_PREFIX):
             projected.append(item)
             continue
-        if token and index >= active_start:
-            raise ClientPayloadError(
-                "Active reasoning continuation contains encrypted state from another provider that Claude "
-                "cannot recover; continue with its original provider or supply portable context.",
-                param=param,
-                code="nonportable_provider_history",
-            )
         texts: list[str] = []
         for field, kind in (("summary", "summary_text"), ("content", "reasoning_text")):
             parts = item.get(field)
@@ -111,16 +105,18 @@ def project_foreign_replay(
             )
         else:
             # Keep item positions stable for subsequent signed-history diagnostics.
-            # Completed foreign private state has no Claude wire representation;
+            # Foreign private state has no Claude wire representation;
             # the original encrypted item remains in retained logical history.
             projected.append({"type": "reasoning", "summary": []})
         if token and not texts:
             omitted += 1
         else:
             converted += 1
+        if index >= active_start:
+            active += 1
     if not converted and not omitted:
         return payload
-    logger.info("claude_foreign_history_projection converted=%d omitted=%d", converted, omitted)
+    logger.info("claude_foreign_history_projection converted=%d omitted=%d active=%d", converted, omitted, active)
     return {**payload, "input": projected}
 
 

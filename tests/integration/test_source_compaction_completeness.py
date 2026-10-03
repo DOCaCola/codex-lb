@@ -269,10 +269,8 @@ def assert_portable_switch_summary(payload: dict[str, JsonValue]) -> None:
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
-@pytest.mark.parametrize("ending", ["assistant", "user"])
-async def test_compaction_after_provider_switch_projects_closed_foreign_turns(
-    async_client, pool, monkeypatch, path, ending
-):
+@pytest.mark.parametrize("ending", ["assistant", "user", "open"])
+async def test_compaction_after_provider_switch_projects_foreign_turns(async_client, pool, monkeypatch, path, ending):
     captured, _ = install_upstream(monkeypatch)
     response = await async_client.post(
         path, json={"model": MODEL, "instructions": "summarize", "input": switched_history(ending)}
@@ -283,33 +281,15 @@ async def test_compaction_after_provider_switch_projects_closed_foreign_turns(
     assert response.json()["output"][0]["type"] == "compaction"
 
 
-@pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
-async def test_compaction_refuses_open_foreign_tool_loop_without_dispatch(async_client, pool, monkeypatch, path):
-    captured, _ = install_upstream(monkeypatch)
-    response = await async_client.post(
-        path, json={"model": MODEL, "instructions": "summarize", "input": switched_history("open")[:4]}
-    )
-    assert response.status_code == 400, response.text
-    error = response.json()["error"]
-    assert (error["code"], error["param"]) == ("nonportable_provider_history", "input[1]")
-    assert error["message"].startswith("Active reasoning continuation")
-    assert not captured
-
-
 @pytest.mark.parametrize("path", ["/backend-api/codex/responses", "/v1/responses"])
 @pytest.mark.parametrize("ending", ["assistant", "open"])
 async def test_websocket_compaction_trigger_after_provider_switch(async_client, pool, monkeypatch, path, ending):
     captured, _ = install_upstream(monkeypatch)
-    history = switched_history(ending) if ending == "assistant" else switched_history(ending)[:4]
     async with websocket_session(async_client, path, f"switch-compact-{ending}") as turn:
-        result = await turn({"input": [*history, {"type": "compaction_trigger"}]}, allow_error=ending == "open")
-    if ending == "assistant":
-        assert [item["type"] for item in result["output"]] == ["compaction"]
-        assert len(captured) == 1
-        assert_portable_switch_summary(captured[0][2])
-    else:
-        assert "nonportable_provider_history" in json.dumps(result)
-        assert not captured
+        result = await turn({"input": [*switched_history(ending), {"type": "compaction_trigger"}]})
+    assert [item["type"] for item in result["output"]] == ["compaction"]
+    assert len(captured) == 1
+    assert_portable_switch_summary(captured[0][2])
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])
