@@ -7,11 +7,13 @@ import json
 import logging
 import re
 import time
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
+from app.core.utils.request_id import get_request_id
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import ToolIdentity
@@ -20,6 +22,9 @@ from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
 
 logger = logging.getLogger(__name__)
 _LOGGABLE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# Refusal is a sampling decision, not a finished turn: as content_filter, Codex applies
+# its content-filter guidance and retries instead of recording a silent completion.
+_INCOMPLETE_STOP_REASONS = ("max_tokens", "pause_turn", "refusal")
 
 
 class Usage(BaseModel):
@@ -94,6 +99,7 @@ class ResponsesProjection:
     partial_json: dict[int, str] = field(default_factory=dict)
     partial_json_bytes: dict[int, int] = field(default_factory=dict)
     search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
+    block_types: Counter[str] = field(default_factory=Counter)
     usage: Usage = field(default_factory=Usage)
     stop_reason: str | None = None
     started: bool = False
@@ -263,10 +269,18 @@ class ResponsesProjection:
             if self.stop_reason not in ("end_turn", "stop_sequence", "tool_use", "max_tokens", "pause_turn", "refusal"):
                 raise ClaudeError("Unknown Claude stop reason")
             self.stopped = True
-            incomplete_reasons = (
-                ("max_tokens", "pause_turn", "refusal") if self.chat_reasoning else ("max_tokens", "pause_turn")
+            status = "incomplete" if self.stop_reason in _INCOMPLETE_STOP_REASONS else "completed"
+            logger.info(
+                "claude_message_stop request_id=%s response_id=%s model=%s stop_reason=%s status=%s "
+                "blocks=%s output_tokens=%d",
+                get_request_id(),
+                self.response_id,
+                self.scope.model,
+                self.stop_reason,
+                status,
+                ",".join(f"{kind}:{count}" for kind, count in sorted(self.block_types.items())) or "none",
+                self.usage.output_tokens,
             )
-            status = "incomplete" if self.stop_reason in incomplete_reasons else "completed"
             return [self.event(f"response.{status}", response=self.envelope(status))]
         index = event.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
@@ -275,6 +289,7 @@ class ResponsesProjection:
             block = event.get("content_block")
             if not isinstance(block, dict) or index in self.outputs or index != len(self.outputs):
                 raise ClaudeError("Invalid Claude content_block_start")
+            self.block_types[str(block.get("type"))] += 1
             self.blocks[index] = deepcopy(block)
             item = self._item(index, block, final=False)
             self.outputs[index] = item

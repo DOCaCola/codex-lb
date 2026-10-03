@@ -160,11 +160,19 @@ Authenticated `/v1/messages` and `/v1/messages/count_tokens` SHALL preserve supp
 - **THEN** the gateway settles the failed attempt and returns a native SSE error event, not a Responses envelope or successful message_stop
 
 ### Requirement: Codex protocol adaptation
-Claude SHALL support Responses over downstream HTTP and WebSocket while using HTTPS/SSE upstream. Translation MUST preserve portable text, tool/custom-tool/namespace, image, reasoning and cache-usage semantics, or reject unsupported semantics explicitly. A custom tool with a lark or regex grammar format SHALL be projected as a single raw-text input whose description carries the grammar; the client remains responsible for validating that input. Claude catalog models SHALL advertise the freeform patch tool type. Truncation and pause_turn MUST NOT become completed. Durable continuation MUST be persisted before terminal delivery and scoped to compatible account/model state; compaction MUST preserve useful context.
+Claude SHALL support Responses over downstream HTTP and WebSocket while using HTTPS/SSE upstream. Translation MUST preserve portable text, tool/custom-tool/namespace, image, reasoning and cache-usage semantics, or reject unsupported semantics explicitly. A custom tool with a lark or regex grammar format SHALL be projected as a single raw-text input whose description carries the grammar; the client remains responsible for validating that input. Claude catalog models SHALL advertise the freeform patch tool type. Truncation and pause_turn MUST NOT become completed. A refusal stop reason MUST NOT become completed; it SHALL surface as an incomplete result with reason content_filter for every translated projection, preserving output and usage. Each translated message stop SHALL log its stop reason, resulting status, upstream content block type counts and output tokens, never content, reasoning, tool input or signatures. Durable continuation MUST be persisted before terminal delivery and scoped to compatible account/model state; compaction MUST preserve useful context.
 
 #### Scenario: Pause turn
 - **WHEN** Anthropic stops with pause_turn
 - **THEN** the Responses client receives an incomplete result and no hidden automatic continuation
+
+#### Scenario: Refusal
+- **WHEN** Anthropic stops with refusal on a translated Responses or Chat request, with or without visible reasoning
+- **THEN** the client receives an incomplete result with reason content_filter and the turn's usage, never a completed result
+
+#### Scenario: Stop diagnostics
+- **WHEN** a translated Claude message stops
+- **THEN** one log line records the stop reason, status, block type counts and output tokens without any content
 
 #### Scenario: Grammar-format custom tool
 - **WHEN** a Responses request declares a custom tool with a lark or regex grammar, such as Codex's apply_patch

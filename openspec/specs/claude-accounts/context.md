@@ -891,3 +891,18 @@ the child `thread-id`; completed thinking prefers its original account and activ
 reasoning or search still requires it. Fork metadata (`forked_from_thread_id`,
 `parent_session_id`) is never an authorization input; the latter remains an
 affinity hint only. Older envelopes still carry an ignored conversation field.
+
+### Refusal and stop diagnostics
+
+Translated Claude projections report `stop_reason: "refusal"` as incomplete
+`content_filter` regardless of reasoning display. Codex turns that into
+`ContentFilter`, records its content-filter guidance and retries; a completed
+refusal would instead end the task silently. OpenCodex `249462bf5` (#4312) maps
+the same way; CLIProxyAPI `2044a01f4` only on Chat. Native Messages clients see
+the raw stop reason and are unchanged.
+
+Every translated message stop logs `claude_message_stop` with stop reason,
+status, upstream block type counts and output tokens, so reasoning-only or empty
+turns (seen 2026-10-03 00:45–01:09 UTC on Opus 5.5) can be classified. An
+empty-completion guard is deferred until those logs show the cause; Codex
+already retries stream errors itself and persists reasoning items as they finish.

@@ -1,4 +1,5 @@
 import json
+import logging
 from copy import deepcopy
 
 import pytest
@@ -547,19 +548,72 @@ def test_streamed_malformed_tool_json_fails(fragments):
 
 
 @pytest.mark.parametrize(
-    "stop,status",
-    [("end_turn", "completed"), ("tool_use", "completed"), ("max_tokens", "incomplete"), ("pause_turn", "incomplete")],
+    "stop,status,reason",
+    [
+        ("end_turn", "completed", None),
+        ("tool_use", "completed", None),
+        ("max_tokens", "incomplete", "max_output_tokens"),
+        ("pause_turn", "incomplete", "pause_turn"),
+        ("refusal", "incomplete", "content_filter"),
+    ],
 )
-def test_terminal_semantics(stop, status):
-    response = ResponsesProjection(scope(), {}, codec()).complete(
+@pytest.mark.parametrize("chat_reasoning", [False, True])
+def test_terminal_semantics(stop, status, reason, chat_reasoning):
+    response = ResponsesProjection(scope(), {}, codec(), chat_reasoning=chat_reasoning).complete(
         {
             "id": "m",
             "content": [{"type": "text", "text": "answer"}],
             "stop_reason": stop,
-            "usage": {},
+            "usage": {"output_tokens": 3},
         }
     )
     assert response["status"] == status
+    assert response["incomplete_details"] == (None if reason is None else {"reason": reason})
+    assert at(response, "output", 0, "content", 0, "text") == "answer"
+    assert at(response, "usage", "output_tokens") == 3
+
+
+def test_streamed_refusal_is_incomplete_and_stop_log_has_counts_only(caplog):
+    adapter = ResponsesProjection(scope(), {}, codec())
+    native_events: list[dict[str, JsonValue]] = [
+        {"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 5}}},
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        },
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "secret plan"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "private words"}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": "refusal"}, "usage": {"output_tokens": 7}},
+        {"type": "message_stop"},
+    ]
+    events = []
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
+        for event in native_events:
+            events.extend(adapter.consume(event))
+    assert events[-1]["type"] == "response.incomplete"
+    assert at(events[-1], "response", "incomplete_details") == {"reason": "content_filter"}
+    assert at(events[-1], "response", "usage", "output_tokens") == 7
+    [line] = [record.getMessage() for record in caplog.records if "claude_message_stop" in record.getMessage()]
+    assert "response_id=resp_m" in line
+    assert "stop_reason=refusal status=incomplete blocks=text:1,thinking:1 output_tokens=7" in line
+    assert "secret" not in line and "private" not in line and "sig" not in line
+
+
+def test_empty_end_turn_stop_log_records_no_blocks(caplog):
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
+        response = ResponsesProjection(scope(), {}, codec()).complete(
+            {"id": "m", "content": [], "stop_reason": "end_turn", "usage": {"output_tokens": 0}}
+        )
+    assert response["status"] == "completed"
+    assert any(
+        "stop_reason=end_turn status=completed blocks=none output_tokens=0" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_stream_lifecycle_and_signature_deltas():
