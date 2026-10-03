@@ -1,4 +1,9 @@
-"""On-demand native-to-source handoff; never an archive of native input."""
+"""On-demand native-to-source handoff; never an archive of native input.
+
+Records are addressed by API key and checkpoint digest. The digest names a
+ciphertext only that key's client history carries, so forked conversations,
+which replay the same checkpoint under a new conversation ID, share them.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ from app.modules.model_sources.compaction import (
     SourceCompactionResultError,
     extract_completed_source_compaction_summary,
 )
-from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import ApiKeyScope, HTTPFallbackReplayStore
 from app.modules.proxy.request_policy import validate_model_access
 
 logger = logging.getLogger(__name__)
@@ -43,7 +48,7 @@ class NativeCheckpointOrigin:
 
 
 type HandoffGenerator = Callable[[NativeCheckpointOrigin, dict[str, JsonValue]], Awaitable[dict[str, JsonValue]]]
-type CheckpointResolver = Callable[[ReplayScope, dict[str, JsonValue]], Awaitable[list[JsonValue] | None]]
+type CheckpointResolver = Callable[[ApiKeyScope, dict[str, JsonValue]], Awaitable[list[JsonValue] | None]]
 
 
 def checkpoint_digest(ciphertext: str) -> str:
@@ -70,7 +75,7 @@ def handoff_store() -> HTTPFallbackReplayStore:
 
 
 async def remember_checkpoint_origin(
-    scope: ReplayScope | None, model: str, account_id: str, item: dict[str, JsonValue]
+    scope: ApiKeyScope | None, model: str, account_id: str, item: dict[str, JsonValue]
 ) -> None:
     ciphertext = item.get("encrypted_content")
     if scope is None or not isinstance(ciphertext, str):
@@ -109,8 +114,8 @@ class HandoffClaims:
             )
             return cursor.rowcount == 1
 
-    async def acquire(self, scope: ReplayScope, digest: str) -> tuple[str, str] | None:
-        key = hashlib.sha256(json.dumps([scope.api_key_id, scope.conversation_id, digest]).encode()).hexdigest()
+    async def acquire(self, scope: ApiKeyScope, digest: str) -> tuple[str, str] | None:
+        key = hashlib.sha256(json.dumps([scope.api_key_id, digest]).encode()).hexdigest()
         token = uuid4().hex
         try:
             acquired, cancellation = await _await_result_deferring_cancellation(
@@ -146,7 +151,7 @@ class CheckpointHandoff:
         self.api_key = api_key
         self.generate = generate
 
-    def _validate_access(self, scope: ReplayScope, model: str, account_id: str) -> None:
+    def _validate_access(self, scope: ApiKeyScope, model: str, account_id: str) -> None:
         validate_model_access(self.api_key, model)
         if (
             self.api_key is None
@@ -160,7 +165,7 @@ class CheckpointHandoff:
                 ),
             )
 
-    async def resolve(self, scope: ReplayScope, item: dict[str, JsonValue]) -> list[JsonValue] | None:
+    async def resolve(self, scope: ApiKeyScope, item: dict[str, JsonValue]) -> list[JsonValue] | None:
         ciphertext = item["encrypted_content"]
         assert isinstance(ciphertext, str)
         digest = checkpoint_digest(ciphertext)

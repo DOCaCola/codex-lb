@@ -36,6 +36,22 @@ class ReplayScope:
 
 
 @dataclass(frozen=True)
+class ApiKeyScope:
+    """Content-addressed records shared by every conversation of one API key."""
+
+    api_key_id: str
+
+
+type StoreScope = ReplayScope | ApiKeyScope
+
+
+def _scope_metadata(scope: StoreScope) -> dict[str, str | None]:
+    if isinstance(scope, ApiKeyScope):
+        return {"api_key_id": scope.api_key_id}
+    return {"api_key_id": scope.api_key_id, "conversation_id": scope.conversation_id}
+
+
+@dataclass(frozen=True)
 class ReplayHistory:
     account_id: str
     model: str
@@ -88,8 +104,8 @@ class HTTPFallbackReplayStore:
         self._resident: OrderedDict[Path, tuple[int, bytes]] = OrderedDict()
         self._limiter = anyio.CapacityLimiter(1)
 
-    def _path(self, scope: ReplayScope, response_id: str) -> Path:
-        key = json.dumps([scope.api_key_id, scope.conversation_id, response_id]).encode()
+    def _path(self, scope: StoreScope, response_id: str) -> Path:
+        key = json.dumps([*_scope_metadata(scope).values(), response_id]).encode()
         return self.directory / (hashlib.sha256(key).hexdigest() + ".replay")
 
     @contextmanager
@@ -146,7 +162,7 @@ class HTTPFallbackReplayStore:
             if not sidecar.with_suffix(".replay").exists():
                 sidecar.unlink()
 
-    async def load(self, scope: ReplayScope, response_id: str) -> ReplayHistory | None:
+    async def load(self, scope: StoreScope, response_id: str) -> ReplayHistory | None:
         try:
             return await anyio.to_thread.run_sync(self._load, scope, response_id, limiter=self._limiter)
         except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
@@ -211,7 +227,7 @@ class HTTPFallbackReplayStore:
                 )
             return result
 
-    def _load(self, scope: ReplayScope, response_id: str) -> ReplayHistory | None:
+    def _load(self, scope: StoreScope, response_id: str) -> ReplayHistory | None:
         with self._locked():
             self._prune()
             path = self._path(scope, response_id)
@@ -254,7 +270,7 @@ class HTTPFallbackReplayStore:
 
     async def remember(
         self,
-        scope: ReplayScope,
+        scope: StoreScope,
         response_id: str,
         request_text: str,
         output: list[JsonValue],
@@ -283,7 +299,7 @@ class HTTPFallbackReplayStore:
 
     def _remember(
         self,
-        scope: ReplayScope,
+        scope: StoreScope,
         response_id: str,
         request_text: str,
         output: list[JsonValue],
@@ -334,11 +350,7 @@ class HTTPFallbackReplayStore:
                     with os.fdopen(sidecar_fd, "wb") as stream:
                         stream.write(
                             json.dumps(
-                                {
-                                    "api_key_id": scope.api_key_id,
-                                    "conversation_id": scope.conversation_id,
-                                    "response_id": response_id,
-                                },
+                                {**_scope_metadata(scope), "response_id": response_id},
                                 separators=(",", ":"),
                             ).encode()
                         )

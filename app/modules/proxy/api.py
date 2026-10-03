@@ -5414,7 +5414,6 @@ async def _source_compaction_response(
         else:
             expanded = await materialize_source_checkpoints(
                 payload.model_dump(mode="json", exclude_none=True),
-                request.headers,
                 api_key,
                 resolve=resolve_checkpoint,
             )
@@ -5789,7 +5788,7 @@ async def _dispatch_source_responses_attempt(
             )
         elif native_request is None:
             expanded = await materialize_source_checkpoints(
-                payload.model_dump_for_forwarding(), request.headers, api_key, resolve=resolve_checkpoint
+                payload.model_dump_for_forwarding(), api_key, resolve=resolve_checkpoint
             )
             payload = payload.model_copy(update={"input": expanded.get("input")})
         source_payload = (

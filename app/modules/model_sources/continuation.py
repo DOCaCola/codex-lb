@@ -38,7 +38,6 @@ class SourceContinuation:
         self.chat_input: list[JsonValue] | None = None
         self.chat_instructions: str | None = None
         self.retain_incomplete = retain_incomplete
-        self.headers = request.headers
         self.api_key = api_key
 
     async def expand(
@@ -62,7 +61,7 @@ class SourceContinuation:
             result["input"] = history.expand(cast(list[JsonValue], delta))
             result.pop("previous_response_id", None)
         result["store"] = False
-        result = await materialize_source_checkpoints(result, self.headers, self.api_key, resolve=resolve)
+        result = await materialize_source_checkpoints(result, self.api_key, resolve=resolve)
         self.payload = result
         return deepcopy(result)
 

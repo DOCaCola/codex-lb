@@ -21,7 +21,7 @@ from app.core.utils.request_id import get_request_id, reset_request_id, set_requ
 from app.dependencies import ProxyContext
 from app.modules.proxy import api
 from app.modules.proxy.checkpoint_handoff import NativeCheckpointOrigin
-from app.modules.proxy.replay_store import ReplayScope
+from app.modules.proxy.replay_store import ApiKeyScope
 from app.modules.proxy.request_policy import validate_top_level_compaction_trigger_input_shape
 
 pytestmark = pytest.mark.unit
@@ -104,15 +104,13 @@ async def test_auxiliary_handoff_restores_parent_on_every_exit(monkeypatch, outc
     concurrent = asyncio.create_task(concurrent_parent())
     try:
         if outcome == "success":
-            await resolver(ReplayScope(None, "conversation"), {"type": "compaction", "encrypted_content": "checkpoint"})
+            await resolver(ApiKeyScope("key"), {"type": "compaction", "encrypted_content": "checkpoint"})
         else:
             expected_error = {"error": RuntimeError, "timeout": ProxyResponseError, "cancel": asyncio.CancelledError}[
                 outcome
             ]
             with pytest.raises(expected_error):
-                await resolver(
-                    ReplayScope(None, "conversation"), {"type": "compaction", "encrypted_content": "checkpoint"}
-                )
+                await resolver(ApiKeyScope("key"), {"type": "compaction", "encrypted_content": "checkpoint"})
         assert get_request_operation() == parent
         assert get_request_id() == "parent-request"
         assert await concurrent == (parent, "parent-request")

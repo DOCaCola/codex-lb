@@ -476,7 +476,7 @@ class _StreamingMixin(_StreamingRetryMixin):
         actual_service_tier: str | None = None
         reasoning_effort = payload.reasoning.effort if payload.reasoning else None
         session_id = _owner_lookup_session_id_from_headers(headers)
-        checkpoint_replay_scope = checkpoint_scope(headers, api_key)
+        checkpoint_replay_scope = checkpoint_scope(api_key)
         checkpoint_output = ReplayOutputCollector()
         # Keep selection/failover waits out of latency and TTFT, record them as
         # queue time, then re-anchor after this attempt's admission wait.

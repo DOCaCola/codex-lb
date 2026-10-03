@@ -507,7 +507,12 @@ from app.modules.proxy.capability_routing import (
     strip_capability_metadata,
 )
 from app.modules.proxy.checkpoint_handoff import handoff_store, origin_store
-from app.modules.proxy.checkpoint_history import checkpoint_store, is_checkpoint_item, retain_streamed_checkpoint
+from app.modules.proxy.checkpoint_history import (
+    checkpoint_scope,
+    checkpoint_store,
+    is_checkpoint_item,
+    retain_streamed_checkpoint,
+)
 from app.modules.proxy.continuity import resolve_required_account_id
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
@@ -7044,15 +7049,14 @@ class _WebSocketMixin:
                         session_id=request_state.session_id,
                     )
 
-        checkpoint_conversation = request_state.conversation_id or request_state.session_id
+        checkpoint_replay_scope = checkpoint_scope(api_key)
         checkpoint_request_text = request_state.fresh_upstream_request_text or request_state.request_text
         completed_response = payload.get("response") if payload is not None else None
         if (
             settlement_committed
             and event_type == "response.completed"
             and settlement.record_success
-            and api_key is not None
-            and checkpoint_conversation is not None
+            and checkpoint_replay_scope is not None
             and checkpoint_request_text is not None
             and isinstance(completed_response, dict)
         ):
@@ -7061,7 +7065,7 @@ class _WebSocketMixin:
                 await retain_streamed_checkpoint(
                     checkpoint_request_text,
                     {**completed_response, "output": output},
-                    ReplayScope(api_key.id, checkpoint_conversation),
+                    checkpoint_replay_scope,
                     account_id_value,
                 )
 

@@ -14,7 +14,7 @@ from app.core.openai.requests import ResponsesCompactRequest
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy import checkpoint_handoff as handoff
 from app.modules.proxy.checkpoint_history import CheckpointHistory, retain_native_checkpoint
-from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import ApiKeyScope, HTTPFallbackReplayStore
 from tests.simulation.virtual_time import VirtualClock
 
 pytestmark = pytest.mark.unit
@@ -53,7 +53,7 @@ async def env(monkeypatch, tmp_path):
     summaries = HTTPFallbackReplayStore(tmp_path / "summaries")
     monkeypatch.setattr(handoff, "origin_store", lambda: origins)
     monkeypatch.setattr(handoff, "handoff_store", lambda: summaries)
-    scope = ReplayScope("key", "thread")
+    scope = ApiKeyScope("key")
     await handoff.remember_checkpoint_origin(scope, "gpt-5.1", "owner", checkpoint())
     calls = []
 
@@ -73,16 +73,14 @@ async def test_provenance_capture_over_opaque_history_never_copies_input(monkeyp
         input=[checkpoint("OLDER_PRIVATE"), {"role": "user", "content": "PRIVATE_IMAGE_AND_HISTORY"}],
     )
     response = CompactResponsePayload.model_validate({"object": "response.compaction", "output": [checkpoint()]})
-    await retain_native_checkpoint(request, response, {"session_id": "thread"}, api_key(), "owner")
-    cached = await origins.load(ReplayScope("key", "thread"), handoff.checkpoint_digest("PRIVATE_NATIVE"))
+    await retain_native_checkpoint(request, response, api_key(), "owner")
+    cached = await origins.load(ApiKeyScope("key"), handoff.checkpoint_digest("PRIVATE_NATIVE"))
     assert cached.model == "gpt-5.1" and cached.account_id == "owner" and cached.input == []
     raw = b"".join(p.read_bytes() for p in origins.directory.glob("*.replay"))
     assert b"PRIVATE" not in raw and b"encrypted_content" not in raw
     assert sum(p.stat().st_size for p in origins.directory.glob("*.replay")) < 1024
-    await retain_native_checkpoint(
-        request, response.model_copy(update={"status": "failed"}), {"session_id": "thread"}, api_key(), "other-owner"
-    )
-    cached = await origins.load(ReplayScope("key", "thread"), handoff.checkpoint_digest("PRIVATE_NATIVE"))
+    await retain_native_checkpoint(request, response.model_copy(update={"status": "failed"}), api_key(), "other-owner")
+    cached = await origins.load(ApiKeyScope("key"), handoff.checkpoint_digest("PRIVATE_NATIVE"))
     assert cached.account_id == "owner"
 
 
@@ -93,8 +91,7 @@ async def test_restart_cache_and_scope_isolation(env, monkeypatch):
     assert "Portable task state" in json.dumps(first)
     monkeypatch.setattr(handoff, "handoff_store", lambda: HTTPFallbackReplayStore(summaries.directory))
     assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint()) == first
-    assert await resolver.resolve(ReplayScope("other", "thread"), checkpoint()) is None
-    assert await resolver.resolve(ReplayScope("key", "other"), checkpoint()) is None
+    assert await resolver.resolve(ApiKeyScope("other"), checkpoint()) is None
     assert len(calls) == 1 and calls[0][0].account_id == "owner" and calls[0][1] == checkpoint()
 
 
@@ -267,7 +264,7 @@ async def test_cancellation_during_claim_acquisition_releases_committed_claim(en
 async def test_abandoned_claim_expires_and_old_release_cannot_remove_new_claim(tmp_path):
     clock = VirtualClock()
     claims = handoff.HandoffClaims(tmp_path, clock=clock)
-    scope = ReplayScope("key", "thread")
+    scope = ApiKeyScope("key")
     first = await claims.acquire(scope, "digest")
     assert first is not None and await claims.acquire(scope, "digest") is None
     clock.advance(handoff.HANDOFF_TIMEOUT_SECONDS + 31)

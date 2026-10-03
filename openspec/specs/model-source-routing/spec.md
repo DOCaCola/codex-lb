@@ -264,12 +264,15 @@ Opaque native checkpoints without verified readable recovery, corrupt proxy summ
 
 ### Requirement: Verified readable native checkpoint recovery
 
-After successful settled native compaction, the proxy SHALL retain scoped,
+After successful settled native compaction, the proxy SHALL retain
 digest-bound original model/account provenance without copying the conversation
-or native ciphertext. Previously retained complete readable snapshots SHALL remain
+or native ciphertext. Checkpoint recovery state SHALL be scoped to the
+authenticated API key and addressed by the checkpoint digest; it MUST NOT depend
+on the client conversation ID, so forked conversations replaying the same
+checkpoint share it. Previously retained complete readable snapshots SHALL remain
 usable while valid. Native requests and compaction results MUST remain unchanged.
 Source preparation SHALL first use valid readable recovery before requesting a
-handoff. Missing or cross-scope provenance MUST NOT cause guessed-owner dispatch.
+handoff. Missing or cross-key provenance MUST NOT cause guessed-owner dispatch.
 
 Existing readable snapshot restoration SHALL preserve complete ordered semantic
 input. An exact recorded compact replacement prefix SHALL be removed only when it
@@ -282,8 +285,16 @@ aggregate counts or bounded reasons.
 - **THEN** only checkpoint provenance is captured and no summary request is made
 
 #### Scenario: Available readable recovery
-- **WHEN** source preparation finds a valid scoped readable checkpoint snapshot
+- **WHEN** source preparation finds a valid readable checkpoint snapshot for the same key
 - **THEN** it restores that input without additional native generation
+
+#### Scenario: Forked conversation
+- **WHEN** a conversation with a new conversation ID replays a checkpoint whose recovery state was recorded for the same key under another conversation
+- **THEN** source preparation uses that snapshot, provenance or handoff summary exactly as for the original conversation
+
+#### Scenario: Another API key
+- **WHEN** a different API key replays the same checkpoint ciphertext
+- **THEN** none of the original key's recovery state is used
 
 #### Scenario: Unknown legacy checkpoint
 - **WHEN** a checkpoint has neither readable recovery, a valid handoff summary nor verified provenance
@@ -317,12 +328,12 @@ NOT generate handoffs.
 
 Handoff summaries and provenance SHALL use bounded private 30-day retention,
 without storing the whole conversation. Successful handoffs SHALL be reused across
-turns and process restarts within the same authenticated conversation. Valid cached
-summaries SHALL remain usable after provenance expiry, subject to current access
-restrictions. Concurrent generation for the same checkpoint MUST NOT duplicate
-native requests. Expired, evicted or corrupt state MUST NOT produce partial
-context. Diagnostics MUST NOT include ciphertext, summary text or conversation
-content.
+turns, forked conversations and process restarts for the same authenticated API
+key. Valid cached summaries SHALL remain usable after provenance expiry, subject
+to current access restrictions. Concurrent generation for the same key and
+checkpoint MUST NOT duplicate native requests. Expired, evicted or corrupt state
+MUST NOT produce partial context. Diagnostics MUST NOT include ciphertext, summary
+text or conversation content.
 
 #### Scenario: HTTP and WebSocket switch
 - **WHEN** an authenticated source request replays a checkpoint with verified native provenance
@@ -332,8 +343,12 @@ content.
 - **WHEN** another source request replays a previously handed-off checkpoint
 - **THEN** the cached summary is reused without another native request
 
+#### Scenario: Forked source turn
+- **WHEN** a forked conversation of the same key replays a previously handed-off checkpoint
+- **THEN** the cached summary is reused without another native request
+
 #### Scenario: Concurrent switch
-- **WHEN** another worker is generating the same scoped handoff
+- **WHEN** another worker is generating the same handoff for the same key and checkpoint
 - **THEN** the request returns an explicit retryable busy error without duplicate generation
 
 #### Scenario: Owner unavailable or restricted
@@ -349,7 +364,7 @@ content.
 - **THEN** no handoff work or extra native usage occurs
 
 #### Scenario: Provenance expired after successful handoff
-- **WHEN** a valid scoped handoff summary outlives its original provenance
+- **WHEN** a valid handoff summary for the same key outlives its original provenance
 - **THEN** it is reused only after checking its recorded model/account against current key permissions
 
 ### Requirement: Independent dashboard model editing

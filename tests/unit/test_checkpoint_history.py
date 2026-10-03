@@ -13,7 +13,7 @@ from app.modules.proxy.checkpoint_history import (
     UnreadableCheckpointHistory,
     readable_checkpoint_input,
 )
-from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import ApiKeyScope, HTTPFallbackReplayStore
 
 pytestmark = pytest.mark.unit
 
@@ -101,7 +101,7 @@ def test_unknown_or_bound_state_is_not_partially_projected(item):
 
 @pytest.mark.asyncio
 async def test_successful_checkpoint_scope_restart_and_content_free_storage(tmp_path, caplog):
-    scope = ReplayScope("key", "thread")
+    scope = ApiKeyScope("key")
     store = HTTPFallbackReplayStore(tmp_path)
     service = CheckpointHistory(store, scope)
     req = request(history())
@@ -119,7 +119,7 @@ async def test_successful_checkpoint_scope_restart_and_content_free_storage(tmp_
         message("Continue"),
     ]
     assert req.model_dump() == before and payload["input"][0] == checkpoint()
-    for other_scope in [None, ReplayScope("other", "thread"), ReplayScope("key", "other")]:
+    for other_scope in [None, ApiKeyScope("other")]:
         if other_scope is None:
             assert await CheckpointHistory(store, other_scope).materialize(payload) == payload
         else:
@@ -130,7 +130,7 @@ async def test_successful_checkpoint_scope_restart_and_content_free_storage(tmp_
 
 @pytest.mark.asyncio
 async def test_compact_replacement_prefix_is_removed_exactly_once(tmp_path):
-    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ReplayScope("key", "thread"))
+    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ApiKeyScope("key"))
     original = [message("Task"), message("Keep"), message("Older answer", "assistant")]
     prefix = [message("Keep")]
     await service.remember(request(original), response(prefix=prefix), "owner")
@@ -148,7 +148,7 @@ async def test_compact_replacement_prefix_is_removed_exactly_once(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["failed", "incomplete", "in_progress"])
 async def test_noncompleted_compaction_does_not_seed_recovery(tmp_path, status):
-    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ReplayScope("key", "thread"))
+    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ApiKeyScope("key"))
     await service.remember(request(history()), response(status=status), "owner")
     assert not list(tmp_path.glob("*.replay"))
 
@@ -159,7 +159,7 @@ async def test_noncompleted_compaction_does_not_seed_recovery(tmp_path, status):
     [{"previous_response_id": "resp_missing"}, {"conversation": "conv_bound"}, {"prompt": {"id": "prompt_bound"}}],
 )
 async def test_unresolved_native_handle_does_not_seed_recovery(tmp_path, kwargs):
-    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ReplayScope("key", "thread"))
+    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ApiKeyScope("key"))
     await service.remember(request(history(), **kwargs), response(), "owner")
     assert not list(tmp_path.glob("*.replay"))
 
@@ -167,7 +167,7 @@ async def test_unresolved_native_handle_does_not_seed_recovery(tmp_path, kwargs)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["expired", "corrupt", "evicted", "oversize"])
 async def test_unavailable_state_keeps_explicit_checkpoint_error(tmp_path, failure):
-    scope = ReplayScope("key", "thread")
+    scope = ApiKeyScope("key")
     store = HTTPFallbackReplayStore(tmp_path, max_entries=1, max_entry_bytes=100 if failure == "oversize" else 100_000)
     service = CheckpointHistory(store, scope)
     await service.remember(request(history()), response(), "owner")
@@ -188,7 +188,7 @@ async def test_unavailable_state_keeps_explicit_checkpoint_error(tmp_path, failu
 @pytest.mark.asyncio
 async def test_chained_compact_materializes_before_previous_record_eviction(tmp_path):
     store = HTTPFallbackReplayStore(tmp_path, max_entries=1)
-    service = CheckpointHistory(store, ReplayScope("key", "thread"))
+    service = CheckpointHistory(store, ApiKeyScope("key"))
     await service.remember(request([message("Original context")]), response("first"), "owner")
     await service.remember(request([checkpoint("first"), message("New evidence")]), response("second"), "owner")
     recovered = await service.materialize({"input": [checkpoint("second"), message("Continue")]})
@@ -204,7 +204,7 @@ async def test_chained_compact_materializes_before_previous_record_eviction(tmp_
 
 @pytest.mark.asyncio
 async def test_mixed_checkpoints_fail_at_original_index_without_partial_mutation(tmp_path):
-    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ReplayScope("key", "thread"))
+    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ApiKeyScope("key"))
     await service.remember(request(history()), response(), "owner")
     payload = {"input": [checkpoint(), checkpoint("unobserved")]}
     original = deepcopy(payload)
@@ -220,6 +220,6 @@ async def test_mixed_checkpoints_fail_at_original_index_without_partial_mutation
     [[], [{"type": "reasoning", "encrypted_content": "private"}], [{"type": "mcp_call", "output": "important"}]],
 )
 async def test_empty_or_unrecoverable_semantic_history_is_not_retained(tmp_path, items):
-    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ReplayScope("key", "thread"))
+    service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path), ApiKeyScope("key"))
     await service.remember(request(items), response(), "owner")
     assert not list(tmp_path.glob("*.replay"))

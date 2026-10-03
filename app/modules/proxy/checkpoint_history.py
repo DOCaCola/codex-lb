@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
 from copy import deepcopy
 
 from app.core.config.settings import get_settings
@@ -23,10 +22,8 @@ from app.core.openai.requests import ResponsesCompactRequest
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.api_keys.service import ApiKeyData
-from app.modules.proxy._service.support import _request_log_client_fields
-from app.modules.proxy.affinity import _owner_lookup_session_id_from_headers
 from app.modules.proxy.checkpoint_handoff import CheckpointResolver, checkpoint_digest, remember_checkpoint_origin
-from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import ApiKeyScope, HTTPFallbackReplayStore
 
 logger = logging.getLogger(__name__)
 _METADATA = frozenset({"id", "status", "metadata", "client_metadata", "internal_chat_message_metadata_passthrough"})
@@ -42,11 +39,9 @@ class UnreadableCheckpointHistory(ValueError):
     """A bounded reason, never input content."""
 
 
-def checkpoint_scope(headers: Mapping[str, str], api_key: ApiKeyData | None) -> ReplayScope | None:
-    conversation_id = _request_log_client_fields(headers)[2] or _owner_lookup_session_id_from_headers(headers)
-    if api_key is None or not conversation_id:
-        return None
-    return ReplayScope(api_key.id, conversation_id)
+def checkpoint_scope(api_key: ApiKeyData | None) -> ApiKeyScope | None:
+    # Content-addressed per key: forks replay the same checkpoint under a new conversation ID.
+    return None if api_key is None else ApiKeyScope(api_key.id)
 
 
 def checkpoint_store() -> HTTPFallbackReplayStore:
@@ -178,7 +173,7 @@ def readable_checkpoint_input(items: JsonValue) -> list[JsonValue]:
 
 
 class CheckpointHistory:
-    def __init__(self, store: HTTPFallbackReplayStore, scope: ReplayScope | None) -> None:
+    def __init__(self, store: HTTPFallbackReplayStore, scope: ApiKeyScope | None) -> None:
         self.store = store
         self.scope = scope
 
@@ -289,16 +284,15 @@ class CheckpointHistory:
 
 async def materialize_source_checkpoints(
     payload: dict[str, JsonValue],
-    headers: Mapping[str, str],
     api_key: ApiKeyData | None,
     *,
     resolve: CheckpointResolver | None = None,
 ) -> dict[str, JsonValue]:
-    return await CheckpointHistory(checkpoint_store(), checkpoint_scope(headers, api_key)).materialize(payload, resolve)
+    return await CheckpointHistory(checkpoint_store(), checkpoint_scope(api_key)).materialize(payload, resolve)
 
 
 async def retain_checkpoint_provenance(
-    model: str, response: CompactResponsePayload, scope: ReplayScope | None, account_id: str
+    model: str, response: CompactResponsePayload, scope: ApiKeyScope | None, account_id: str
 ) -> None:
     if scope is None or response.error is not None or response.status not in (None, "completed"):
         return
@@ -320,11 +314,10 @@ async def retain_checkpoint_provenance(
 async def retain_native_checkpoint(
     request: ResponsesCompactRequest,
     response: CompactResponsePayload,
-    headers: Mapping[str, str],
     api_key: ApiKeyData | None,
     account_id: str,
 ) -> None:
-    await retain_checkpoint_provenance(request.model, response, checkpoint_scope(headers, api_key), account_id)
+    await retain_checkpoint_provenance(request.model, response, checkpoint_scope(api_key), account_id)
 
 
 def is_checkpoint_item(item: JsonValue) -> bool:
@@ -334,7 +327,7 @@ def is_checkpoint_item(item: JsonValue) -> bool:
 async def retain_streamed_checkpoint(
     request_text: str,
     response: dict[str, JsonValue],
-    scope: ReplayScope,
+    scope: ApiKeyScope,
     account_id: str,
 ) -> None:
     # The caller owns validated response.create JSON and has completed settlement.
@@ -345,7 +338,7 @@ async def retain_streamed_checkpoint(
 async def retain_completed_checkpoint(
     model: str,
     response: dict[str, JsonValue],
-    scope: ReplayScope,
+    scope: ApiKeyScope,
     account_id: str,
 ) -> None:
     # Successful native completion establishes provenance even for native deltas;

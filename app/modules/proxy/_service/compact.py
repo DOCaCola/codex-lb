@@ -1715,7 +1715,7 @@ class _CompactMixin:
                             request_service_tier=request_service_tier,
                         )
                         log_status = "success"
-                        await retain_native_checkpoint(payload, response, headers, api_key, account.id)
+                        await retain_native_checkpoint(payload, response, api_key, account.id)
                         return response
                     except ProxyResponseError as exc:
                         if exc.failure_phase == "usage_settlement":

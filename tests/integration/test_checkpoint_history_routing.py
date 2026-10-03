@@ -13,7 +13,7 @@ from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
 from app.modules.proxy import checkpoint_handoff, checkpoint_history
 from app.modules.proxy import service as proxy_service
-from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
+from app.modules.proxy.replay_store import ApiKeyScope, HTTPFallbackReplayStore
 from tests.integration import test_claude_provider_history as provider_fixtures
 from tests.integration.model_source_helpers import _create_model_source, stub_source_upstreams
 from tests.integration.test_claude_inference import install_upstream
@@ -61,7 +61,7 @@ async def recovery_env(async_client, opus_pool, monkeypatch, tmp_path):
         # These tests exercise already-retained readable snapshots. Production
         # now records only provenance; on-demand generation has separate tests.
         await checkpoint_history.CheckpointHistory(
-            HTTPFallbackReplayStore(tmp_path), ReplayScope(key.json()["id"], "checkpoint-switch")
+            HTTPFallbackReplayStore(tmp_path), ApiKeyScope(key.json()["id"])
         ).remember(
             ResponsesCompactRequest.model_validate({**payload, "instructions": payload.get("instructions") or ""}),
             CompactResponsePayload.model_validate({"object": "response.compaction", "output": [checkpoint()]}),
@@ -273,7 +273,7 @@ async def test_native_checkpoint_can_be_compacted_by_source(async_client, recove
     assert len(captured) == len(closed) == 1
 
 
-async def test_other_scope_cannot_use_retained_checkpoint(async_client, recovery_env):
+async def test_forked_conversation_uses_retained_checkpoint(async_client, recovery_env):
     headers, calls, captured, _, _ = recovery_env
     compact = await async_client.post(
         PATHS[0] + "/compact",
@@ -283,7 +283,26 @@ async def test_other_scope_cannot_use_retained_checkpoint(async_client, recovery
     assert compact.status_code == 200, compact.text
     response = await async_client.post(
         PATHS[0],
-        headers={**headers, "session_id": "other-thread"},
+        headers={**headers, "session_id": "forked-thread"},
+        json={"model": MODEL, "input": [checkpoint()], "stream": False},
+    )
+    assert response.status_code == 200, response.text
+    assert_readable(captured[0][2])
+
+
+async def test_other_api_key_cannot_use_retained_checkpoint(async_client, recovery_env):
+    headers, calls, captured, _, _ = recovery_env
+    compact = await async_client.post(
+        PATHS[0] + "/compact",
+        headers=headers,
+        json={"model": "gpt-5.1", "instructions": "Keep instructions", "input": history()},
+    )
+    assert compact.status_code == 200, compact.text
+    other = await async_client.post("/api/api-keys/", json={"name": "other-checkpoint-client"})
+    assert other.status_code == 200, other.text
+    response = await async_client.post(
+        PATHS[0],
+        headers={**headers, "authorization": "Bearer " + other.json()["key"]},
         json={"model": MODEL, "input": [checkpoint()], "stream": False},
     )
     assert response.status_code == 400, response.text

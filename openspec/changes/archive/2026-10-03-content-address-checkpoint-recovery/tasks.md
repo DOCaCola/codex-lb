@@ -1,0 +1,4 @@
+- [x] 1. Add a key-wide replay scope and address checkpoint snapshot, provenance, handoff and claim records by API key plus checkpoint digest.
+- [x] 2. Remove conversation inputs from checkpoint capture and materialization call sites.
+- [x] 3. Add fork regressions (snapshot, provenance handoff, cached summary, foreign key isolation) and update scope tests.
+- [x] 4. Run tests, ruff, ty and strict OpenSpec validation.

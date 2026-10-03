@@ -358,12 +358,14 @@ async def test_generic_source_handoff(async_client, handoff_env):
     assert outcome["text"] in wire and "Continue" in wire and "PRIVATE" not in wire
 
 
-async def test_unknown_or_cross_scope_checkpoint_never_generates(async_client, handoff_env):
+async def test_unknown_or_cross_key_checkpoint_never_generates(async_client, handoff_env):
     headers, generated, finished, captured, directory, outcome = handoff_env
     await observe_compact(async_client, headers, directory)
+    other = await async_client.post("/api/api-keys/", json={"name": "other-checkpoint-client"})
+    assert other.status_code == 200, other.text
     for input_item, request_headers in [
         ({**checkpoint(), "encrypted_content": "UNOBSERVED"}, headers),
-        (checkpoint(), {**headers, "session_id": "different-conversation"}),
+        (checkpoint(), {**headers, "authorization": "Bearer " + other.json()["key"]}),
     ]:
         response = await async_client.post(
             PATHS[1], headers=request_headers, json={"model": MODEL, "input": [input_item], "stream": False}
@@ -371,6 +373,18 @@ async def test_unknown_or_cross_scope_checkpoint_never_generates(async_client, h
         assert response.status_code == 400, response.text
         assert response.json()["error"]["code"] == "compaction_history_unavailable"
     assert not generated and not captured
+
+
+async def test_forked_conversation_shares_one_handoff(async_client, handoff_env):
+    headers, generated, finished, captured, directory, outcome = handoff_env
+    await observe_compact(async_client, headers, directory)
+    body = {"model": MODEL, "input": [checkpoint(), {"role": "user", "content": "Continue"}], "stream": False}
+    for request_headers in ({**headers, "session_id": "forked-conversation"}, headers):
+        response = await async_client.post(PATHS[1], headers=request_headers, json=body)
+        assert response.status_code == 200, response.text
+    assert len(generated) == len(finished) == 1
+    assert len(captured) == 2
+    assert all(outcome["text"] in json.dumps(source_body) for _, _, source_body, _ in captured)
 
 
 async def test_native_continuation_unchanged(async_client, handoff_env):
