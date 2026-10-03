@@ -7,7 +7,7 @@ boundary explicit prevents compatibility prefixes becoming conversation state.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from pydantic import JsonValue
@@ -54,6 +54,60 @@ def has_native_identity(body: dict[str, JsonValue]) -> bool:
 
 
 def project_request(
+    logical: dict[str, JsonValue],
+    profile: RequestProfile,
+    *,
+    endpoint: Literal["messages", "count_tokens"],
+    translated: bool = False,
+) -> RequestProjection:
+    projection = _project_request(logical, profile, endpoint=endpoint, translated=translated)
+    if not profile.native and _preserve_cache_ttl_order(logical, projection.body):
+        return replace(projection, transformations=(*projection.transformations, "cache_ttl_order"))
+    return projection
+
+
+def _cache_controls(body: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
+    """Visit cache policy locations only, never opaque tool payloads."""
+    blocks: list[JsonValue] = []
+    for key in ("tools", "system"):
+        value = body.get(key)
+        if isinstance(value, list):
+            blocks.extend(value)
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, list):
+                blocks.extend(content)
+    controls = [block.get("cache_control") for block in blocks if isinstance(block, dict)]
+    controls.append(body.get("cache_control"))
+    return [control for control in controls if isinstance(control, dict)]
+
+
+def _preserve_cache_ttl_order(logical: dict[str, JsonValue], body: dict[str, JsonValue]) -> bool:
+    original = _cache_controls(logical)
+    projected = _cache_controls(body)
+    # Invalid caller policy belongs to upstream validation, not normalization.
+    if any(control.get("type") != "ephemeral" or control.get("ttl", "5m") not in ("5m", "1h") for control in original):
+        return False
+    seen_short = False
+    for control in original:
+        if control.get("ttl", "5m") == "5m":
+            seen_short = True
+        elif seen_short:
+            return False
+    changed = False
+    later_long = False
+    for control in reversed(projected):
+        if control.get("ttl") == "1h":
+            later_long = True
+        elif later_long:
+            control["ttl"] = "1h"
+            changed = True
+    return changed
+
+
+def _project_request(
     logical: dict[str, JsonValue],
     profile: RequestProfile,
     *,

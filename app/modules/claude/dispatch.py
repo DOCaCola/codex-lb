@@ -192,6 +192,8 @@ class ClaudeDispatchPreparer:
         body["model"] = model.removeprefix("anthropic/")
         projected = project_request(body, profile, endpoint=endpoint, translated=translated)
         transformations = projected.transformations
+        if "cache_ttl_order" in transformations:
+            logger.info("claude_cache_ttl_order_normalized source_id=%s", account.source_id)
         retains_thinking = translated and retain_thinking(projected.body)
         if translated:
             cache_translated(projected.body)

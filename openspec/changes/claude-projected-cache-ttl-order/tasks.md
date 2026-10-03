@@ -1,0 +1,5 @@
+- [x] 1. Preserve valid TTL order after OAuth instruction projection.
+- [x] 2. Record explicit normalization without request content.
+- [x] 3. Cover mixed TTL, native passthrough and malformed caller policies.
+- [x] 4. Verify Messages and count_tokens wire payloads and regression suites.
+- [x] 5. Validate specs and changed-file lint/types.

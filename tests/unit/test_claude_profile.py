@@ -144,6 +144,67 @@ def test_native_body_is_preserved():
     assert project_request(request, profile(native=True), endpoint="messages").body == request
 
 
+@pytest.mark.parametrize("endpoint", ["messages", "count_tokens"])
+@pytest.mark.parametrize("short", [{"type": "ephemeral"}, {"type": "ephemeral", "ttl": "5m"}])
+def test_projection_repairs_only_relocated_mixed_ttl_order(endpoint, short):
+    request = logical()
+    request["system"][0]["cache_control"] = {"type": "ephemeral", "ttl": "1h", "scope": "organization"}
+    request["messages"][0]["content"] = [{"type": "text", "text": "hello", "cache_control": short}]
+    request["messages"][-1]["content"][0]["cache_control"] = {"type": "ephemeral", "ttl": "5m"}
+    original = deepcopy(request)
+    result = project_request(request, profile(), endpoint=endpoint)
+    assert at(result.body, "messages", 0, "content", 0, "cache_control") == {**short, "ttl": "1h"}
+    assert at(result.body, "messages", 1, "content", 0, "cache_control") == request["system"][0]["cache_control"]
+    assert at(result.body, "messages", 3, "content", 0, "cache_control", "ttl") == "5m"
+    assert "cache_ttl_order" in result.transformations
+    assert request == original
+    assert project_request(request, profile(), endpoint=endpoint).body == result.body
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("long", [False, True])
+def test_valid_cache_order_preserves_metadata(native, long):
+    request = logical()
+    ttl = "1h" if long else "5m"
+    request["system"][0]["cache_control"] = {"type": "ephemeral", "ttl": ttl, "scope": "organization"}
+    request["messages"][0]["content"] = [
+        {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral", "ttl": ttl}}
+    ]
+    result = project_request(request, profile(native=native), endpoint="messages")
+    assert "cache_ttl_order" not in result.transformations
+    if native:
+        assert result.body == request
+    else:
+        assert at(result.body, "messages", 0) == request["messages"][0]
+        assert at(result.body, "messages", 1, "content") == request["system"]
+
+
+@pytest.mark.parametrize("ttl", ["5m", "invalid", None])
+def test_projection_does_not_repair_invalid_caller_cache_policy(ttl):
+    request = logical()
+    request["tools"] = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": ttl}}]
+    request["system"][0]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+    request["messages"][0]["content"] = [{"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}]
+    result = project_request(request, profile(), endpoint="messages")
+    assert "cache_ttl_order" not in result.transformations
+    assert result.body["tools"] == request["tools"]
+    assert at(result.body, "messages", 0) == request["messages"][0]
+
+
+def test_automatic_cache_and_opaque_tool_payload_are_not_rewritten():
+    request = logical()
+    request["system"][0]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+    request["messages"][0]["content"] = [
+        {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+    ]
+    request["cache_control"] = {"type": "ephemeral", "ttl": "5m"}
+    request["messages"][1]["content"][1]["input"] = {"cache_control": {"type": "ephemeral", "ttl": "5m"}}
+    result = project_request(request, profile(), endpoint="messages")
+    assert result.body["cache_control"] == request["cache_control"]
+    assert at(result.body, "messages", 2, "content", 1, "input") == request["messages"][1]["content"][1]["input"]
+    assert "cache_ttl_order" in result.transformations
+
+
 @pytest.mark.parametrize("billing", ["cch=first; cc_prompt_id=main", "cch=changed; entrypoint=teammate"])
 def test_billing_first_native_cache_prefix_is_preserved(billing):
     request = logical()
