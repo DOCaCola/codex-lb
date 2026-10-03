@@ -92,6 +92,9 @@ async def _open_responses(
     scheduler: Scheduler = REAL_SCHEDULER,
     clock: Clock = REAL_CLOCK,
 ) -> SourceResponsesStream:
+    from app.modules.claude.threads import MessageThread, normalize_thread_error, record_message
+
+    thread = MessageThread.parse(prepared.body) if projection is None else None
     # SSE is also used for downstream non-stream requests. It provides native
     # liveness pings during long thinking without inventing output progress.
     payload = cast(dict[str, JsonValue], {**prepared.body, "stream": True})
@@ -117,7 +120,7 @@ async def _open_responses(
         await record_headers(
             prepared.source.id, prepared.credential_generation, exc.upstream_headers, requested_at=requested_at
         )
-        raise ModelSourceForwardingError(
+        safe_error = ModelSourceForwardingError(
             status_code=exc.status_code,
             payload=cast(
                 dict[str, JsonValue],
@@ -128,7 +131,8 @@ async def _open_responses(
             timeout_phase=exc.timeout_phase,
             upstream_headers=exc.upstream_headers,
             pre_dispatch=exc.pre_dispatch,
-        ) from None
+        )
+        raise normalize_thread_error(prepared.body, safe_error) from None
     transport = SourceStreamTransport(stack, scheduler=scheduler)
     native_observer = NativeObserver(holder)
     observer = SourceStreamUsageParser(holder, response_shape="responses")
@@ -219,6 +223,10 @@ async def _open_responses(
                     if projection is None:
                         native_observer.consume(cast(dict[str, JsonValue], safe_event))
                         if prepared.native_binding is not None:
+                            if thread is not None and event.get("type") == "message_start":
+                                await record_message(
+                                    prepared.native_binding.resource_scope, prepared.source.id, safe_event
+                                )
                             await record_origins(prepared.native_binding.resource_scope, prepared.source.id, safe_event)
                         yield (
                             format_sse_event(cast(dict[str, JsonValue], safe_event)).encode()
@@ -292,6 +300,9 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
 
 
 async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
+    from app.modules.claude.threads import MessageThread, normalize_thread_error, record_message
+
+    thread = MessageThread.parse(prepared.body) if not count_tokens else None
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     requested_at = datetime.now(UTC)
@@ -313,13 +324,14 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                 if data is None:
                     raise _failure("invalid_upstream_response", "Claude returned invalid JSON")
                 if response.status >= 400:
-                    raise ModelSourceForwardingError(
+                    error = ModelSourceForwardingError(
                         status_code=response.status,
                         payload=cast(dict[str, JsonValue], _redact_json_value(data, secret)),
                         upstream_status_code=response.status,
                         retry_after=response.headers.get("Retry-After"),
                         upstream_headers=public_headers(response.headers),
                     )
+                    raise normalize_thread_error(prepared.body, error)
                 if count_tokens:
                     count = data.get("input_tokens")
                     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
@@ -354,6 +366,12 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                         prepared.source.id,
                         cast(dict[str, PydanticJsonValue], data),
                     )
+                    if thread is not None:
+                        await record_message(
+                            prepared.native_binding.resource_scope,
+                            prepared.source.id,
+                            cast(dict[str, PydanticJsonValue], data),
+                        )
                 return SourceResponsesCompletion(
                     data,
                     usage,

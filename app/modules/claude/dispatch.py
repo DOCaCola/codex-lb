@@ -31,6 +31,7 @@ from app.modules.claude.routing import select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL, AccountState, ClaudePlanType
 from app.modules.claude.session import NativeSessionBinding, NativeSessionOwnership
 from app.modules.claude.subscription import subscription_plan
+from app.modules.claude.threads import MessageThread
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 
@@ -81,6 +82,7 @@ class ClaudeDispatchPreparer:
         if endpoint == "count_tokens" and "stream" in logical:
             raise ClaudeError("Claude count_tokens does not support streaming")
         metadata_identity = session_metadata(logical)
+        thread = MessageThread.parse(logical) if not translated and endpoint == "messages" else None
         client_headers = {key.lower(): value for key, value in incoming_headers.items()}
         client_session = client_headers.get("x-claude-code-session-id")
         if metadata_identity is not None and client_session and client_session != metadata_identity["session_id"]:
@@ -114,6 +116,14 @@ class ClaudeDispatchPreparer:
                 if translated
                 else ResourceScope(api_key.id if api_key else "anonymous", model).keys(resource_ids(logical))
             )
+            if thread is not None:
+                scope = ResourceScope(api_key.id if api_key else "anonymous", model)
+                thread_owner = await thread.owner(session, scope)
+                if thread_owner is not None:
+                    if owner_source_id is not None and owner_source_id != thread_owner:
+                        raise ClaudeError("Claude thread continuation cannot change its owning account")
+                    owner_source_id = thread_owner
+                resource_keys += thread.keys(scope)
             requires_owner = bool(resource_keys)
             retained_owner = await native_ownership.owner()
             preferred_owner = retained_owner

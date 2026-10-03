@@ -1,0 +1,5 @@
+- [x] 1. Validate thread operations and enforce scoped message ownership.
+- [x] 2. Persist response message origins before JSON/stream publication.
+- [x] 3. Normalize request-scoped missing-thread errors without account rotation.
+- [x] 4. Test routes and qualify Claude Code replay in isolation.
+- [x] 5. Run relevant tests, lint and strict spec validation.

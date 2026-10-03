@@ -21,6 +21,10 @@ from app.modules.model_sources.forwarding import ModelSourceForwardingError
 RESOURCE_TTL = timedelta(days=30)
 
 
+class ResourceOriginMissing(ClaudeError):
+    """The caller's retained provider state has expired or was never recorded."""
+
+
 def resource_ids(value: JsonValue) -> frozenset[str]:
     """Visit protocol objects only, never opaque user tool arguments/results."""
     found: set[str] = set()
@@ -65,9 +69,9 @@ class ResourceScope:
     client_scope: str
     model: str
 
-    def keys(self, identifiers: frozenset[str]) -> tuple[str, ...]:
+    def keys(self, identifiers: frozenset[str], *, kind: str = "server_tool") -> tuple[str, ...]:
         return tuple(
-            hashlib.sha256(json.dumps([self.client_scope, self.model, "server_tool", identifier]).encode()).hexdigest()
+            hashlib.sha256(json.dumps([self.client_scope, self.model, kind, identifier]).encode()).hexdigest()
             for identifier in sorted(identifiers)
         )
 
@@ -83,7 +87,7 @@ async def resolve_origins(session: AsyncSession, keys: tuple[str, ...]) -> str |
         )
     )
     if len(rows) != len(keys):
-        raise ClaudeError("Native Claude resource origin is unknown or expired; resend portable context")
+        raise ResourceOriginMissing("Native Claude resource origin is unknown or expired; resend portable context")
     owners = {row.source_id for row in rows}
     if len(owners) != 1:
         raise ClaudeError("Native Claude history contains conflicting resource owners")
@@ -112,8 +116,12 @@ async def touch_origins(keys: tuple[str, ...], source_id: str) -> None:
 
 async def record_origins(scope: ResourceScope, source_id: str, value: dict[str, JsonValue]) -> None:
     """Commit before publishing native output; failures must never trigger replay."""
+    await record_keys(scope.keys(resource_ids(value)), source_id)
+
+
+async def record_keys(keys: tuple[str, ...], source_id: str) -> None:
+    """Persist account ownership without storing provider identifiers or contents."""
     try:
-        keys = scope.keys(resource_ids(value))
         if not keys:
             return
         async with get_background_session() as session:
