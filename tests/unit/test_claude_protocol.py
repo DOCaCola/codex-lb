@@ -553,7 +553,8 @@ def test_streamed_malformed_tool_json_fails(fragments):
         ("end_turn", "completed", None),
         ("tool_use", "completed", None),
         ("max_tokens", "incomplete", "max_output_tokens"),
-        ("pause_turn", "incomplete", "pause_turn"),
+        ("pause_turn", "incomplete", "max_output_tokens"),
+        ("model_context_window_exceeded", "incomplete", "max_output_tokens"),
         ("refusal", "incomplete", "content_filter"),
     ],
 )
@@ -602,6 +603,57 @@ def test_streamed_refusal_is_incomplete_and_stop_log_has_counts_only(caplog):
     assert "response_id=resp_m" in line
     assert "stop_reason=refusal status=incomplete blocks=text:1,thinking:1 output_tokens=7" in line
     assert "secret" not in line and "private" not in line and "sig" not in line
+
+
+def _open_tool_stream(stop_reason: str | None) -> tuple[ResponsesProjection, list[dict[str, JsonValue]]]:
+    projected = project(request(tools=NO_ARGUMENT_TOOL), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    tool: dict[str, JsonValue] = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools)), "input": {}}
+    stream: list[dict[str, JsonValue]] = [
+        {"type": "message_start", "message": {"id": "m", "usage": {}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Running"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_start", "index": 1, "content_block": tool},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"a'}},
+    ]
+    if stop_reason is not None:
+        stream.append({"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {"output_tokens": 4}})
+    events = []
+    for event in stream:
+        events.extend(adapter.consume(event))
+    return adapter, events
+
+
+def test_mid_stream_refusal_discards_the_open_tool_call():
+    adapter, events = _open_tool_stream("refusal")
+    events.extend(adapter.consume({"type": "message_stop"}))
+    terminal = events[-1]
+    assert terminal["type"] == "response.incomplete"
+    assert at(terminal, "response", "incomplete_details") == {"reason": "content_filter"}
+    assert at(terminal, "response", "usage", "output_tokens") == 4
+    assert [at(item, "type") for item in array(at(terminal, "response", "output"))] == ["message"]
+    done = [event for event in events if str(event["type"]).endswith(".done")]
+    assert {event.get("output_index") for event in done} == {0}
+    assert not [event for event in events if event["type"] == "response.function_call_arguments.done"]
+
+
+@pytest.mark.parametrize(
+    "stop_reason,message",
+    [
+        ("end_turn", r"unfinished output \(open=tool_use:1, pending_search=0, stop_reason=end_turn\)"),
+        (None, r"unfinished output \(open=tool_use:1, pending_search=0, stop_reason=None\)"),
+        ("surprise", "Unknown Claude stop reason surprise"),
+    ],
+)
+def test_unfinished_non_refusal_stop_fails_with_diagnostics(caplog, stop_reason, message):
+    adapter, _ = _open_tool_stream(stop_reason)
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
+        with pytest.raises(ClaudeError, match=message):
+            adapter.consume({"type": "message_stop"})
+    [line] = [record.getMessage() for record in caplog.records if "claude_message_stop" in record.getMessage()]
+    assert f"stop_reason={stop_reason} status=failed blocks=text:1,tool_use:1" in line
+    assert "open=tool_use:1 pending_search=0" in line
 
 
 def test_empty_end_turn_stop_log_records_no_blocks(caplog):

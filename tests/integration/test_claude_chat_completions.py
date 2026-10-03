@@ -63,18 +63,18 @@ async def test_claude_chat_limit_and_stops_reach_messages(async_client, pool, mo
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_claude_chat_pause_turn_is_error(async_client, pool, monkeypatch, stream):
+async def test_claude_chat_pause_turn_is_truncation(async_client, pool, monkeypatch, stream):
     install_upstream(monkeypatch, stop="pause_turn")
     response = await async_client.post(
         "/v1/chat/completions",
         json={"model": MODEL, "messages": [{"role": "user", "content": "Hello"}], "stream": stream},
     )
+    assert response.status_code == 200, response.text
     if stream:
-        assert '"code":"upstream_response_incomplete"' in response.text
+        assert '"finish_reason":"length"' in response.text
         assert '"finish_reason":"stop"' not in response.text
     else:
-        assert response.status_code == 502
-        assert response.json()["error"]["code"] == "upstream_response_incomplete"
+        assert response.json()["choices"][0]["finish_reason"] == "length"
 
 
 @pytest.mark.parametrize(

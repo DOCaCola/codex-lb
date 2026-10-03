@@ -68,6 +68,7 @@ def install_upstream(
     message_id="msg_fixture",
     start_usage=None,
     delta_usage=None,
+    drop=None,
 ):
     from app.modules.claude import transport
 
@@ -116,6 +117,8 @@ def install_upstream(
         async def chunks(_size):
             for event in events:
                 yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
+            if drop is not None:
+                raise drop
 
         response = SimpleNamespace(
             status=200,
@@ -753,7 +756,18 @@ async def test_pause_turn_not_reported_as_completed(async_client, pool, monkeypa
     response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": False})
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "incomplete"
-    assert response.json()["incomplete_details"]["reason"] == "pause_turn"
+    assert response.json()["incomplete_details"]["reason"] == "max_output_tokens"
+
+
+async def test_transport_drop_names_its_cause(async_client, pool, monkeypatch):
+    import aiohttp
+
+    install_upstream(monkeypatch, truncate=True, drop=aiohttp.ClientPayloadError("connection reset"))
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert events[-1]["type"] == "error"
+    assert events[-1]["error"]["code"] == "model_source_unreachable"
+    assert events[-1]["error"]["message"] == "Claude transport failed before completion: ClientPayloadError"
 
 
 @pytest.mark.parametrize("requested,expected", [(None, 64000), (100000, 100000)])

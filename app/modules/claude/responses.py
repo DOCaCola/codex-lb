@@ -22,9 +22,16 @@ from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
 
 logger = logging.getLogger(__name__)
 _LOGGABLE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,128}")
-# Refusal is a sampling decision, not a finished turn: as content_filter, Codex applies
-# its content-filter guidance and retries instead of recording a silent completion.
-_INCOMPLETE_STOP_REASONS = ("max_tokens", "pause_turn", "refusal")
+# Stops that cut the turn short, mapped to their Responses incomplete reason. Refusal is a
+# sampling decision: as content_filter, Codex applies its content-filter guidance and retries.
+# pause_turn and an exhausted context window leave unfinished output, as truncation does.
+INCOMPLETE_STOP_REASONS = {
+    "max_tokens": "max_output_tokens",
+    "pause_turn": "max_output_tokens",
+    "model_context_window_exceeded": "max_output_tokens",
+    "refusal": "content_filter",
+}
+_STOP_REASONS = frozenset({"end_turn", "stop_sequence", "tool_use", *INCOMPLETE_STOP_REASONS})
 
 
 class Usage(BaseModel):
@@ -111,16 +118,7 @@ class ResponsesProjection:
         return result
 
     def envelope(self, status: str) -> dict[str, JsonValue]:
-        incomplete = None
-        if status == "incomplete":
-            reason = (
-                "max_output_tokens"
-                if self.stop_reason == "max_tokens"
-                else "content_filter"
-                if self.stop_reason == "refusal"
-                else self.stop_reason
-            )
-            incomplete = {"reason": reason}
+        incomplete = {"reason": INCOMPLETE_STOP_REASONS[str(self.stop_reason)]} if status == "incomplete" else None
         return {
             "id": self.response_id,
             "object": "response",
@@ -264,24 +262,7 @@ class ResponsesProjection:
             self.usage = Usage.model_validate({**self.usage.model_dump(), **update})
             return []
         if kind == "message_stop":
-            if self.blocks or self.search_calls or self.stop_reason is None:
-                raise ClaudeError("Claude stopped before closing its content and stop reason")
-            if self.stop_reason not in ("end_turn", "stop_sequence", "tool_use", "max_tokens", "pause_turn", "refusal"):
-                raise ClaudeError("Unknown Claude stop reason")
-            self.stopped = True
-            status = "incomplete" if self.stop_reason in _INCOMPLETE_STOP_REASONS else "completed"
-            logger.info(
-                "claude_message_stop request_id=%s response_id=%s model=%s stop_reason=%s status=%s "
-                "blocks=%s output_tokens=%d",
-                get_request_id(),
-                self.response_id,
-                self.scope.model,
-                self.stop_reason,
-                status,
-                ",".join(f"{kind}:{count}" for kind, count in sorted(self.block_types.items())) or "none",
-                self.usage.output_tokens,
-            )
-            return [self.event(f"response.{status}", response=self.envelope(status))]
+            return [self._stop()]
         index = event.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise ClaudeError("Invalid Claude content index")
@@ -480,6 +461,44 @@ class ResponsesProjection:
             )
         events.append(self.event("response.output_item.done", output_index=index, item=deepcopy(item)))
         return events
+
+    def _stop(self) -> dict[str, JsonValue]:
+        open_types = Counter(str(block.get("type")) for block in self.blocks.values())
+        open_summary = ",".join(f"{kind}:{count}" for kind, count in sorted(open_types.items())) or "none"
+        unfinished = bool(self.blocks or self.search_calls)
+        # Anthropic may decline mid-stream with a block still open; any other unfinished stop is malformed.
+        valid = self.stop_reason in _STOP_REASONS and (not unfinished or self.stop_reason == "refusal")
+        status = "failed" if not valid else "incomplete" if self.stop_reason in INCOMPLETE_STOP_REASONS else "completed"
+        logger.info(
+            "claude_message_stop request_id=%s response_id=%s model=%s stop_reason=%s status=%s "
+            "blocks=%s output_tokens=%d open=%s pending_search=%d",
+            get_request_id(),
+            self.response_id,
+            self.scope.model,
+            self.stop_reason,
+            status,
+            ",".join(f"{kind}:{count}" for kind, count in sorted(self.block_types.items())) or "none",
+            self.usage.output_tokens,
+            open_summary,
+            len(self.search_calls),
+        )
+        if not valid:
+            if self.stop_reason is not None and self.stop_reason not in _STOP_REASONS:
+                raise ClaudeError(f"Unknown Claude stop reason {self.stop_reason}")
+            raise ClaudeError(
+                f"Claude stopped with unfinished output (open={open_summary}, "
+                f"pending_search={len(self.search_calls)}, stop_reason={self.stop_reason})"
+            )
+        # Partial output of a refusal is discarded, never closed: a done event would hand a partial tool
+        # call to the client to run, and a retained one would enter continuation history without a result.
+        for index in [*self.blocks, *(call_index for call_index, _ in self.search_calls.values())]:
+            del self.outputs[index]
+        self.blocks.clear()
+        self.partial_json.clear()
+        self.partial_json_bytes.clear()
+        self.search_calls.clear()
+        self.stopped = True
+        return self.event(f"response.{status}", response=self.envelope(status))
 
     def complete(self, message: dict[str, JsonValue]) -> dict[str, JsonValue]:
         content = message.get("content")

@@ -242,7 +242,9 @@ async def _open_responses(
         except StreamIdleTimeoutError as exc:
             raise _failure("model_source_idle_timeout", "Claude stream exceeded the upstream idle timeout") from exc
         except (aiohttp.ClientError, TimeoutError) as exc:
-            raise _failure("model_source_unreachable", "Claude transport failed before completion") from exc
+            raise _failure(
+                "model_source_unreachable", f"Claude transport failed before completion: {type(exc).__name__}"
+            ) from exc
         finally:
             native_timing.end_timing()
             try:

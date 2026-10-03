@@ -8,6 +8,7 @@ from app.core.usage.logs import calculated_cost_from_log, cost_breakdown_from_lo
 from app.core.usage.pricing import ClaudeUsageTokens, ModelPrice, calculate_claude_cost_breakdown, get_pricing_for_model
 from app.db.models import ModelSource, ModelSourceModel, RequestLog
 from app.modules.api_keys.service import _reserve_cost_budget_microdollars
+from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.native import NativeObserver
 from app.modules.claude.responses import Usage
 from app.modules.model_sources.catalog import source_model_cost_usd
@@ -49,6 +50,39 @@ def test_claude_cache_detail_is_inclusive_and_merges_partial_deltas():
     assert holder.usage.cache_creation_tokens == 30
     assert (holder.usage.cache_creation_5m_tokens, holder.usage.cache_creation_1h_tokens) == (20, 10)
     assert holder.usage.reasoning_tokens is None
+
+
+def _native_stream(stop_reason: str, *, close_block: bool) -> NativeObserver:
+    observer = NativeObserver(SourceUsageHolder())
+    observer.consume({"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 1}}})
+    observer.consume({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
+    if close_block:
+        observer.consume({"type": "content_block_stop", "index": 0})
+    observer.consume({"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {"output_tokens": 2}})
+    return observer
+
+
+@pytest.mark.parametrize(
+    "stop_reason,close_block,terminal",
+    [
+        ("refusal", False, "incomplete"),
+        ("refusal", True, "incomplete"),
+        ("model_context_window_exceeded", True, "incomplete"),
+        ("pause_turn", True, "incomplete"),
+        ("end_turn", True, "completed"),
+    ],
+)
+def test_native_terminal_kind(stop_reason, close_block, terminal):
+    observer = _native_stream(stop_reason, close_block=close_block)
+    observer.consume({"type": "message_stop"})
+    assert observer.holder.terminal_kind == terminal
+    assert observer.holder.successful_terminal_seen
+
+
+def test_native_unfinished_non_refusal_stop_fails():
+    observer = _native_stream("end_turn", close_block=False)
+    with pytest.raises(ClaudeError, match=r"unfinished output \(open_blocks=1, stop_reason=end_turn\)"):
+        observer.consume({"type": "message_stop"})
 
 
 def test_claude_timing_ignores_metadata_and_empty_content():

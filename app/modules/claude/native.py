@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from app.core.types import JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.claude.credentials import ClaudeError
-from app.modules.claude.responses import Usage
+from app.modules.claude.responses import INCOMPLETE_STOP_REASONS, Usage
 from app.modules.model_sources.forwarding import ModelSourceForwardingError, SourceUsage, SourceUsageHolder
 
 
@@ -57,12 +57,14 @@ class NativeObserver:
                 raise ClaudeError("Invalid Claude usage delta")
             self.usage = Usage.model_validate({**self.usage.model_dump(), **update})
         elif kind == "message_stop":
-            if not self.started or self.stop_reason is None or self.open_blocks:
-                raise ClaudeError("Claude ended before a stop reason")
+            # A mid-stream refusal may leave blocks open; Anthropic's stream is forwarded as sent.
+            if not self.started or self.stop_reason is None or (self.open_blocks and self.stop_reason != "refusal"):
+                raise ClaudeError(
+                    f"Claude stopped with unfinished output (open_blocks={len(self.open_blocks)}, "
+                    f"stop_reason={self.stop_reason})"
+                )
             self.stopped = True
-            self.holder.terminal_kind = (
-                "incomplete" if self.stop_reason in ("pause_turn", "max_tokens") else "completed"
-            )
+            self.holder.terminal_kind = "incomplete" if self.stop_reason in INCOMPLETE_STOP_REASONS else "completed"
             self.holder.successful_terminal_seen = True
         elif kind == "error":
             self.stopped = True
