@@ -250,6 +250,18 @@ def is_account_neutral_websocket_error_code(error_code: str | None) -> bool:
     }
 
 
+# RFC 6455 normal closure, going away and service restart: the upstream server
+# ends the socket for its own lifecycle (instance restart or rotation). Such a
+# close describes the serving instance, not the selected account.
+_UPSTREAM_LIFECYCLE_CLOSE_CODES = frozenset({1000, 1001, 1012})
+
+
+def is_upstream_lifecycle_close(message: UpstreamWebSocketMessage) -> bool:
+    """Return whether a received upstream close frame rules out an account-health penalty."""
+
+    return message.kind == "close" and message.close_code in _UPSTREAM_LIFECYCLE_CLOSE_CODES
+
+
 def _is_websocket_liveness_timeout(exc: BaseException) -> bool:
     if isinstance(exc, ConnectionClosedError):
         # websockets emits this locally-sent 1011 when its own ping watchdog

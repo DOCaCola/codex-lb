@@ -31105,6 +31105,42 @@ async def test_http_bridge_clean_close_retry_failure_preserves_pre_recovery_atte
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("close_code", "expect_penalty"),
+    [(1001, False), (1012, False), (1011, True)],
+)
+async def test_http_bridge_penalizes_only_non_lifecycle_upstream_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    close_code: int,
+    expect_penalty: bool,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(key_value=f"bridge-lifecycle-close-{close_code}")
+    session.upstream = cast(
+        UpstreamWebSocket,
+        SimpleNamespace(
+            receive=AsyncMock(return_value=UpstreamWebSocketMessage(kind="close", close_code=close_code)),
+            close=AsyncMock(),
+        ),
+    )
+    failure_calls: list[dict[str, object]] = []
+
+    async def fail_reader(target_session: Any, **kwargs: object) -> bool:
+        failure_calls.append(dict(kwargs))
+        target_session.closed = True
+        return True
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(service, "_fail_http_bridge_reader_and_maybe_retire", fail_reader)
+
+    await service._relay_http_bridge_upstream_messages(session)
+
+    assert len(failure_calls) == 1
+    assert failure_calls[0]["upstream_close_code"] == close_code
+    assert failure_calls[0]["penalize_account"] is expect_penalty
+
+
+@pytest.mark.asyncio
 async def test_http_bridge_reader_exception_captures_attempt_before_lifecycle_wait(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

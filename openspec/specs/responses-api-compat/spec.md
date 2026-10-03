@@ -1163,12 +1163,13 @@ When an upstream websocket closes while one or more streamed response requests
 are pending and have not reached a terminal event, the proxy MUST record a
 transient upstream error for the account before signaling failure for those
 pending requests, except when the close carries a classified process-wide
-network failure or upstream WebSocket liveness timeout, is a clean close
-(`close_code = 1000`) before any `response.*` event, or carries the classified
-per-socket `upstream_keepalive_timeout` transport error. Clean pre-response
-closes, keepalive timeouts, process-wide network failures, and liveness
-timeouts MUST remain account-neutral and use their classified error and bounded
-retry or retry-circuit handling. For other closes, the proxy MUST surface
+network failure or upstream WebSocket liveness timeout, is a received
+server-lifecycle close frame (`close_code` 1000, 1001 or 1012, before or after
+response events), or carries the classified per-socket
+`upstream_keepalive_timeout` transport error. Server-lifecycle closes,
+keepalive timeouts, process-wide network failures, and liveness timeouts MUST
+remain account-neutral and use their classified error and bounded retry or
+retry-circuit handling. For other closes, the proxy MUST surface
 `stream_incomplete` to affected pending requests except when a direct Responses
 WebSocket request has already successfully emitted a finite integer
 `sequence_number`. For that sequenced direct-WebSocket case, the proxy MUST
@@ -1183,6 +1184,7 @@ never mixes numeric response sequences" and its one-shot replay succeeds.
 - **AND** the direct downstream response has not emitted a numeric sequence, or the request uses another transport
 - **WHEN** the websocket closes before a terminal response event is observed
 - **AND** the close does not carry a classified process-wide network failure or upstream WebSocket liveness timeout
+- **AND** the close is not a received server-lifecycle close frame
 - **THEN** the pending request fails with `stream_incomplete`
 - **AND** the account receives a transient upstream failure signal for routing
 
@@ -1194,7 +1196,13 @@ never mixes numeric response sequences" and its one-shot replay succeeds.
 - **THEN** the request is recorded as failed with `stream_incomplete`
 - **AND** no synthetic terminal frame is emitted under the active response id
 - **AND** the downstream WebSocket closes with code 1011
-- **AND** the account receives a transient upstream failure signal for routing
+- **AND** the account receives a transient upstream failure signal for routing unless the close is a received server-lifecycle close frame
+
+#### Scenario: server-lifecycle close remains account neutral
+- **GIVEN** a streamed response request is pending on an upstream websocket, on the direct Responses WebSocket or the HTTP bridge
+- **WHEN** the upstream sends a close frame with code 1000, 1001 or 1012 before the terminal event, before or after response events
+- **THEN** the pending request fails with `stream_incomplete` naming the close code
+- **AND** the account receives no failure-health signal
 
 #### Scenario: websocket liveness timeout remains account neutral
 - **GIVEN** a streamed response request is pending on an upstream websocket

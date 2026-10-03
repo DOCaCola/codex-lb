@@ -55314,6 +55314,52 @@ class _ClosableUpstream:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("close_code", "expect_penalty"),
+    [(1000, False), (1001, False), (1012, False), (1011, True)],
+)
+async def test_transport_end_penalizes_only_non_lifecycle_upstream_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    close_code: int,
+    expect_penalty: bool,
+):
+    """A server-lifecycle close frame (normal, going away, service restart)
+    describes the upstream instance, so the terminal failure leaves account
+    health alone even after response events; other close codes still count."""
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    fail_pending = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "_fail_pending_websocket_requests", fail_pending)
+    monkeypatch.setattr(
+        websocket_mixin,
+        "_pop_replayable_precreated_websocket_request_state",
+        AsyncMock(return_value=None),
+    )
+    account = _make_account("acc_ws_lifecycle_close")
+
+    replayed = await websocket_mixin._process_upstream_websocket_transport_end(
+        service,
+        cast(WebSocket, SimpleNamespace(send_text=AsyncMock())),
+        cast(UpstreamWebSocket, _ClosableUpstream()),
+        message=UpstreamWebSocketMessage(kind="close", close_code=close_code),
+        account=account,
+        account_id_value=account.id,
+        pending_requests=deque([_accepted_lifecycle_request_state()]),
+        pending_lock=anyio.Lock(),
+        client_send_lock=anyio.Lock(),
+        api_key=None,
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        response_create_gate=asyncio.Semaphore(0),
+        downstream_activity=proxy_service._DownstreamWebSocketActivity(),
+    )
+
+    assert replayed is True
+    assert fail_pending.await_args is not None
+    assert fail_pending.await_args.kwargs["error_code"] == "stream_incomplete"
+    assert f"close_code={close_code}" in fail_pending.await_args.kwargs["error_message"]
+    assert fail_pending.await_args.kwargs["penalize_account"] is expect_penalty
+
+
+@pytest.mark.asyncio
 async def test_transport_end_replay_of_an_anchored_accepted_turn_releases_the_owner_it_excludes(
     monkeypatch: pytest.MonkeyPatch,
 ):

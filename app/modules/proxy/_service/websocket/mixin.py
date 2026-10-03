@@ -65,6 +65,7 @@ from app.core.clients.proxy_websocket import (
     UpstreamWebSocketTransportError,
     filter_inbound_websocket_headers,
     is_account_neutral_websocket_error_code,
+    is_upstream_lifecycle_close,
 )
 from app.core.clock import Clock, Scheduler, clock_for, scheduler_for
 from app.core.config.settings import get_settings as replay_settings
@@ -1372,7 +1373,7 @@ async def _process_upstream_websocket_transport_end(
         client_send_lock=client_send_lock,
         response_create_gate=response_create_gate,
         downstream_activity=downstream_activity,
-        penalize_account=not account_neutral,
+        penalize_account=not account_neutral and not is_upstream_lifecycle_close(message),
         suppress_sequenced_downstream_errors=sequenced_downstream_replay_refused,
     )
     # A terminal receive can race the outer session cleanup, especially when

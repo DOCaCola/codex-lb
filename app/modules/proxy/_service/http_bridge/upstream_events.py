@@ -36,6 +36,7 @@ from app.core.clients.proxy_websocket import (
     UpstreamWebSocketMessage,
     UpstreamWebSocketTransportError,
     is_account_neutral_websocket_error_code,
+    is_upstream_lifecycle_close,
 )
 from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler, clock_for, scheduler_for
 from app.core.errors import response_failed_event
@@ -2408,7 +2409,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                         penalize_account=(
                             not account_neutral
                             and not account_neutral_transport_drop
-                            and not (message.kind == "close" and close_classification == "clean")
+                            and not is_upstream_lifecycle_close(message)
                         ),
                         account_neutral_transport_drop=account_neutral_transport_drop,
                         **(
