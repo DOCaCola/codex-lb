@@ -27,11 +27,11 @@ from app.modules.claude.profile import RequestProfile, recognize_native
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.resources import ResourceScope, resolve_origins, resource_ids
-from app.modules.claude.routing import select_account
+from app.modules.claude.routing import ClaudePoolUnavailable, select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL, AccountState, ClaudePlanType
 from app.modules.claude.session import NativeSessionBinding, NativeSessionOwnership
 from app.modules.claude.subscription import subscription_plan
-from app.modules.claude.threads import MessageThread
+from app.modules.claude.threads import MessageThread, ThreadNotFound
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.claude.wire_identity import has_helper_identity, project_session, session_metadata
 
@@ -104,6 +104,7 @@ class ClaudeDispatchPreparer:
         preferred_owner = None
         requires_owner = False
         resource_keys: tuple[str, ...] = ()
+        thread_only = False
         if not translated or endpoint == "messages":
             native_ownership = NativeSessionOwnership(
                 session,
@@ -111,25 +112,24 @@ class ClaudeDispatchPreparer:
                 conversation_id=conversation_id,
                 model=model,
             )
-            resource_keys = (
-                ()
-                if translated
-                else ResourceScope(api_key.id if api_key else "anonymous", model).keys(resource_ids(logical))
-            )
-            if thread is not None:
-                scope = ResourceScope(api_key.id if api_key else "anonymous", model)
-                thread_owner = await thread.owner(session, scope)
-                if thread_owner is not None:
-                    if owner_source_id is not None and owner_source_id != thread_owner:
-                        raise ClaudeError("Claude thread continuation cannot change its owning account")
-                    owner_source_id = thread_owner
-                resource_keys += thread.keys(scope)
-            requires_owner = bool(resource_keys)
+            scope = ResourceScope(api_key.id if api_key else "anonymous", model)
+            server_keys = () if translated else scope.keys(resource_ids(logical))
+            thread_keys = thread.keys(scope) if thread is not None else ()
+            owners: set[str | None] = set()
+            if thread is not None and thread_keys:
+                owners.add(await thread.owner(session, scope))
+            if server_keys:
+                owners.add(await resolve_origins(session, server_keys))
+            if len(owners) > 1:
+                raise ClaudeError("Native Claude history contains conflicting resource owners")
+            requires_owner = bool(owners)
+            if requires_owner:
+                owner_source_id = owners.pop()
+            resource_keys = server_keys + thread_keys
+            thread_only = bool(thread_keys) and not server_keys
             retained_owner = await native_ownership.owner()
             preferred_owner = retained_owner
-            if requires_owner:
-                owner_source_id = await resolve_origins(session, resource_keys)
-            elif retained_owner is None and metadata_identity is not None:
+            if not requires_owner and retained_owner is None and metadata_identity is not None:
                 parent = metadata_identity.get("parent_session_id")
                 if isinstance(parent, str):
                     preferred_owner = await NativeSessionOwnership(
@@ -138,17 +138,27 @@ class ClaudeDispatchPreparer:
                         conversation_id=parent,
                         model=model,
                     ).owner()
-        account = await select_account(
-            session,
-            model,
-            api_key,
-            conversation_id=conversation_id,
-            owner_source_id=owner_source_id,
-            preferred_source_id=preferred_owner,
-            excluded_source_ids=excluded_source_ids,
-            require_streaming=logical.get("stream") is True,
-            reasoning_effort=reasoning_effort,
-        )
+        try:
+            account = await select_account(
+                session,
+                model,
+                api_key,
+                conversation_id=conversation_id,
+                owner_source_id=owner_source_id,
+                preferred_source_id=preferred_owner,
+                excluded_source_ids=excluded_source_ids,
+                require_streaming=logical.get("stream") is True,
+                reasoning_effort=reasoning_effort,
+            )
+        except ClaudePoolUnavailable as exc:
+            # The client still holds the thread's full history, so a replay
+            # moves it losslessly; other account-bound state cannot move.
+            if exc.code != "previous_response_owner_unavailable" or not thread_only:
+                raise
+            logger.info("claude_thread_replay_requested reason=owner_unavailable source_id=%s", owner_source_id)
+            raise ThreadNotFound(
+                "thread_not_found: the account holding this thread is unavailable; resend full history"
+            ) from exc
         if endpoint == "messages":
             limit = logical.get("max_tokens")
             selected_model = next(row for row in account.source.models if row.model == model)

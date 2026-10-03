@@ -9,6 +9,9 @@ client full-history replay after `thread_not_found`.
 - Retain native thread response message ownership in scoped resource provenance.
 - Require the original account for thread continuation, independent of soft
   session affinity; return a replayable missing-thread error for unknown state.
+- When the owning account is unavailable (paused, cooling down, quota-limited
+  or excluded after its refusal), return the same replayable error, unless the
+  request also carries other account-bound server-tool state.
 - Normalize narrowly identified upstream missing-thread 404s without account
   cooldown or cross-account replay.
 - Preserve native body/tool/cache shapes and qualify recovery with Claude Code.

@@ -162,12 +162,67 @@ async def test_expired_thread_and_other_model_are_not_reused(async_client, pool,
     assert len(captured) == 1
 
 
-async def test_paused_thread_owner_is_never_replaced(async_client, pool, monkeypatch):
+async def test_unavailable_thread_owner_requests_full_history_replay(async_client, pool, monkeypatch):
     captured, _ = install_upstream(monkeypatch)
     assert (await async_client.post("/v1/messages", headers=native_headers(), json=payload())).status_code == 200
-    await async_client.patch(f"/api/claude-accounts/{captured[0][0]}", json={"isEnabled": False})
+    owner = captured[0][0]
+    await async_client.patch(f"/api/claude-accounts/{owner}", json={"isEnabled": False})
     response = await async_client.post("/v1/messages", headers=native_headers(), json=payload("continue"))
-    assert response.status_code == 503
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "thread_not_found"
+    assert len(captured) == 1
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=payload())
+    assert response.status_code == 200, response.text
+    assert captured[-1][0] != owner
+
+
+async def test_thread_owner_quota_refusal_requests_replay_instead_of_retry(async_client, pool, monkeypatch):
+    from app.db.models import ClaudeCooldown
+    from app.modules.claude import transport
+    from tests.claude_quota_helpers import overage_headers
+
+    captured, _ = install_upstream(monkeypatch)
+    assert (await async_client.post("/v1/messages", headers=native_headers(), json=payload())).status_code == 200
+    owner = captured[0][0]
+    calls = []
+
+    async def refuse(source, *_args, **_kwargs):
+        calls.append(source.id)
+        raise ModelSourceForwardingError(
+            status_code=429,
+            upstream_status_code=429,
+            payload={"type": "error", "error": {"type": "rate_limit_error", "message": "quota exhausted"}},
+            upstream_headers=overage_headers(mixed=True),
+        )
+
+    monkeypatch.setattr(transport, "_open_source_stream", refuse)
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=payload("continue"))
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "thread_not_found"
+    assert calls == [owner]
+    async with SessionLocal() as session:
+        assert {row.source_id for row in await session.scalars(select(ClaudeCooldown))} == {owner}
+
+
+async def test_thread_with_server_tool_state_keeps_owner_refusal(async_client, pool, monkeypatch):
+    from app.modules.claude.resources import record_keys
+
+    captured, _ = install_upstream(monkeypatch)
+    assert (await async_client.post("/v1/messages", headers=native_headers(), json=payload())).status_code == 200
+    owner = captured[0][0]
+    await record_keys(ResourceScope("anonymous", MODEL).keys(frozenset({"srvtoolu_fixture"})), owner)
+    await async_client.patch(f"/api/claude-accounts/{owner}", json={"isEnabled": False})
+    body = payload("continue")
+    body["messages"] = [
+        {"role": "user", "content": "search"},
+        {
+            "role": "assistant",
+            "content": [{"type": "server_tool_use", "id": "srvtoolu_fixture", "name": "web_search", "input": {}}],
+        },
+        {"role": "user", "content": "continue"},
+    ]
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=body)
+    assert response.status_code == 503, response.text
     assert len(captured) == 1
 
 

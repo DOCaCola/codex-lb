@@ -15,6 +15,14 @@ markers; it SHALL NOT replay history-less continuations on another account.
 - **WHEN** the previous message has no unexpired provenance in the caller's scope
 - **THEN** the gateway returns HTTP 404 with a recognizable thread_not_found marker before upstream dispatch, enabling complete-history replay
 
+#### Scenario: Unavailable thread owner
+- **WHEN** the owning account is paused, cooling down, quota-limited or refused the continuation, and the request carries no other account-bound resources
+- **THEN** the gateway returns the replayable thread_not_found 404 without dispatching to another account, while recording any owner refusal cooldown
+
+#### Scenario: Unavailable owner with server-tool state
+- **WHEN** a thread continuation also references server-tool resources bound to an unavailable owner
+- **THEN** the gateway keeps the existing owner-unavailable refusal
+
 #### Scenario: Upstream state expired
 - **WHEN** a thread continuation receives an explicit missing-thread upstream 404
 - **THEN** the gateway preserves the 404 and publishes the thread_not_found marker without account cooldown or account rotation

@@ -3,3 +3,4 @@
 - [x] 3. Normalize request-scoped missing-thread errors without account rotation.
 - [x] 4. Test routes and qualify Claude Code replay in isolation.
 - [x] 5. Run relevant tests, lint and strict spec validation.
+- [x] 6. Request replay instead of refusing when only thread state binds an unavailable owner.

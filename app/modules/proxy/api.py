@@ -5860,7 +5860,15 @@ async def _dispatch_source_responses_attempt(
         headers = {**rate_limit_headers, **({"Retry-After": retry_after} if retry_after is not None else {})}
         return _logged_error_json_response(request, exc.status_code, exc.payload, headers=headers)
     except ClaudeError as exc:
-        if claude_recovery is not None and claude_recovery.last_error is not None:
+        from app.modules.claude.threads import ThreadNotFound
+
+        # Bound state keeps the owner's original refusal; a thread replay
+        # request is the one outcome the client can act on instead.
+        if (
+            claude_recovery is not None
+            and claude_recovery.last_error is not None
+            and not isinstance(exc, ThreadNotFound)
+        ):
             raise claude_recovery.last_error from exc
         return _logged_error_json_response(
             request,
