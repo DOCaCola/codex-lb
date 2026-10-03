@@ -985,3 +985,79 @@ Claude cards and account-list rows SHALL show a warning badge, in existing badge
 #### Scenario: Extra usage enabled
 - **WHEN** the latest usage data reports extra usage enabled for an account
 - **THEN** its card and list row show an extra-usage badge explaining that requests beyond subscription limits are billed
+
+### Requirement: Native Claude Message Threads continuity
+Native thread continuation SHALL require provenance for the previous message ID
+scoped by API key and model and SHALL dispatch only to its originating account.
+Thread response message ownership SHALL be persisted before the message ID is
+published. The gateway SHALL preserve native history, tool names and cache
+markers; it SHALL NOT replay history-less continuations on another account.
+
+#### Scenario: Continuation after soft affinity expiry
+- **WHEN** a thread continuation references a retained message and session affinity has expired
+- **THEN** the original account serves the request using message provenance
+
+#### Scenario: Missing or foreign thread state
+- **WHEN** the previous message has no unexpired provenance in the caller's scope
+- **THEN** the gateway returns HTTP 404 with a recognizable thread_not_found marker before upstream dispatch, enabling complete-history replay
+
+#### Scenario: Unavailable thread owner
+- **WHEN** the owning account is paused, cooling down, quota-limited or refused the continuation, and the request carries no other account-bound resources
+- **THEN** the gateway returns the replayable thread_not_found 404 without dispatching to another account, while recording any owner refusal cooldown
+
+#### Scenario: Unavailable owner with server-tool state
+- **WHEN** a thread continuation also references server-tool resources bound to an unavailable owner
+- **THEN** the gateway keeps the existing owner-unavailable refusal
+
+#### Scenario: Upstream state expired
+- **WHEN** a thread continuation receives an explicit missing-thread upstream 404
+- **THEN** the gateway preserves the 404 and publishes the thread_not_found marker without account cooldown or account rotation
+
+#### Scenario: Unrelated not found
+- **WHEN** an upstream 404 does not identify missing thread state
+- **THEN** it remains an ordinary upstream error
+
+### Requirement: Projected cache TTL ordering
+For non-native OAuth instruction projection, the gateway SHALL preserve a valid
+caller cache TTL order on the final payload. If relocation places a short
+ephemeral marker before a later 1h marker, it SHALL extend that earlier marker
+to 1h without downgrading the later marker or removing cache metadata.
+Messages and count_tokens SHALL use the same policy. The gateway SHALL NOT
+rewrite native caller cache policy or change TTLs to repair an invalid original
+order, and SHALL record TTL changes as explicit projection transformations.
+
+#### Scenario: Relocated long-lived instructions
+- **WHEN** valid system 1h and user 5m cache controls are reordered by instruction relocation
+- **THEN** the earlier projected short cache control becomes 1h and later short controls remain unchanged
+
+#### Scenario: Native cache policy
+- **WHEN** native Claude Code sends cache controls
+- **THEN** all cache-control metadata remains unchanged
+
+#### Scenario: Invalid original order
+- **WHEN** the caller already supplies a 1h marker after a short marker
+- **THEN** projection leaves the caller's cache-control values unchanged
+
+### Requirement: Claude tool-choice directive forms
+The Claude projection SHALL accept `auto`, `none` and `required` tool-choice
+directives in string or single-field object form with identical semantics,
+retaining tool declarations. It SHALL send `disable_parallel_tool_use` only with
+choices that permit tool use, and SHALL treat only `required` and named-tool
+choices as forced when thinking is enabled. Directive objects with additional
+fields SHALL be rejected. Native OpenAI passthrough SHALL remain unchanged.
+
+#### Scenario: Object-form none
+- **WHEN** a client sends `tool_choice: {"type": "none"}` with declared tools
+- **THEN** Claude receives `{"type": "none"}` with the tools still declared
+
+#### Scenario: None without parallel tool use
+- **WHEN** a client sends `none` with `parallel_tool_calls: false`
+- **THEN** the Claude tool choice carries no parallel-use flag
+
+#### Scenario: Thinking with object-form none
+- **WHEN** a client enables reasoning and sends `tool_choice: {"type": "none"}`
+- **THEN** the request is projected with thinking enabled
+
+#### Scenario: Malformed directive object
+- **WHEN** a directive object carries fields besides `type`
+- **THEN** the request fails with an unsupported tool choice error
