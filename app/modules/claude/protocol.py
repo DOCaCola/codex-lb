@@ -65,6 +65,16 @@ def invalid(message: str, param: str = "input") -> ClientPayloadError:
 
 
 _GRAMMAR_SYNTAXES = frozenset({"lark", "regex"})
+_TOOL_CHOICE_DIRECTIVES = ("auto", "none", "required")
+
+
+def _tool_choice_directive(choice: JsonValue) -> JsonValue:
+    """Collapse object-form directives such as ``{"type": "none"}`` to their string form."""
+    if isinstance(choice, dict) and choice.get("type") in _TOOL_CHOICE_DIRECTIVES:
+        if len(choice) != 1:
+            raise invalid("Unsupported tool choice", "tool_choice")
+        return choice["type"]
+    return choice
 
 
 def _custom_tool_input_schema(tool: dict[str, JsonValue], *, param: str) -> dict[str, JsonValue]:
@@ -398,8 +408,8 @@ def project_responses(
         body["system"] = system
     if declarations:
         body["tools"] = declarations
-    choice = payload.get("tool_choice", "auto")
-    if choice in ("auto", "none", "required"):
+    choice = _tool_choice_directive(payload.get("tool_choice", "auto"))
+    if choice in _TOOL_CHOICE_DIRECTIVES:
         if declarations:
             body["tool_choice"] = {"type": "any" if choice == "required" else choice}
     elif isinstance(choice, dict):
@@ -418,7 +428,8 @@ def project_responses(
         body["tool_choice"] = {"type": "tool", "name": identity.wire_name}
     else:
         raise invalid("Unsupported tool choice", "tool_choice")
-    if payload.get("parallel_tool_calls") is False and declarations:
+    if payload.get("parallel_tool_calls") is False and declarations and choice != "none":
+        # Anthropic's none choice has no parallelism control.
         selected = body["tool_choice"]
         assert isinstance(selected, dict)
         selected["disable_parallel_tool_use"] = True

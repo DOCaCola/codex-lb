@@ -1,0 +1,5 @@
+- [x] 1. Normalize object-form tool-choice directives inside the Claude projection.
+- [x] 2. Omit the parallel-use flag from Anthropic `none`.
+- [x] 3. Treat only `required` and named tools as forced alongside thinking.
+- [x] 4. Cover projection and public `/v1/responses` and `/v1/chat/completions` routes.
+- [x] 5. Validate specs and changed-file lint/types.

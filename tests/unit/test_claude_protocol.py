@@ -69,6 +69,45 @@ def test_reasoning_is_rejected_for_a_model_without_reasoning_capability():
         project_responses(request(reasoning={"effort": "high"}), max_output_tokens=64000, reasoning=None)
 
 
+LOOKUP_TOOL = {"type": "function", "name": "lookup", "parameters": {"type": "object", "properties": {}}}
+
+
+@pytest.mark.parametrize(
+    "choice,sent",
+    [
+        ({"type": "none"}, {"type": "none"}),
+        ({"type": "auto"}, {"type": "auto", "disable_parallel_tool_use": True}),
+        ({"type": "required"}, {"type": "any", "disable_parallel_tool_use": True}),
+        ("none", {"type": "none"}),
+    ],
+)
+def test_tool_choice_directives_keep_declarations_and_scope_parallel_control(choice, sent):
+    body = project(
+        request(tools=[LOOKUP_TOOL], tool_choice=choice, parallel_tool_calls=False), max_output_tokens=64000
+    ).body
+    assert body["tool_choice"] == sent
+    assert len(body["tools"]) == 1
+
+
+@pytest.mark.parametrize("choice", [{"type": "none"}, "none", {"type": "auto"}])
+def test_unforced_tool_choice_directives_combine_with_thinking(choice):
+    body = project(
+        request(tools=[LOOKUP_TOOL], tool_choice=choice, reasoning={"effort": "high"}), max_output_tokens=64000
+    ).body
+    assert body["thinking"] == {"type": "adaptive"}
+
+
+@pytest.mark.parametrize("choice", [{"type": "required"}, {"type": "function", "name": "lookup"}])
+def test_forced_tool_choice_still_rejects_thinking(choice):
+    with pytest.raises(ClientPayloadError, match="forced tool choice"):
+        project(request(tools=[LOOKUP_TOOL], tool_choice=choice, reasoning={"effort": "high"}), max_output_tokens=64000)
+
+
+def test_tool_choice_directive_with_extra_fields_is_rejected():
+    with pytest.raises(ClientPayloadError, match="Unsupported tool choice"):
+        project(request(tools=[LOOKUP_TOOL], tool_choice={"type": "none", "name": "lookup"}), max_output_tokens=64000)
+
+
 def test_structured_output_and_reasoning_share_output_configuration():
     schema = {
         "type": "object",

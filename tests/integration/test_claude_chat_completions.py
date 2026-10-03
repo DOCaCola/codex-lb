@@ -271,6 +271,45 @@ async def test_claude_chat_thinking_display_and_inert_controls(async_client, poo
     assert "reasoning_content" not in response.json()["choices"][0]["message"]
 
 
+@pytest.mark.parametrize(
+    "path,body",
+    [
+        (
+            "/v1/chat/completions",
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "reasoning_effort": "high",
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}},
+                    }
+                ],
+            },
+        ),
+        (
+            "/v1/responses",
+            {
+                "input": "Hello",
+                "reasoning": {"effort": "high"},
+                "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object", "properties": {}}}],
+            },
+        ),
+    ],
+)
+async def test_claude_object_tool_choice_none_reaches_messages(async_client, pool, monkeypatch, path, body):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        path,
+        json={"model": MODEL, **body, "tool_choice": {"type": "none"}, "parallel_tool_calls": False},
+    )
+    assert response.status_code == 200, response.text
+    sent = captured[0][2]
+    assert sent["tool_choice"] == {"type": "none"}
+    assert len(sent["tools"]) == 1
+    assert sent["thinking"]["type"] == "adaptive"
+
+
 async def test_claude_chat_restores_signed_tool_reasoning_for_same_client(async_client, pool, monkeypatch):
     from app.modules.claude.protocol import ToolIdentity
 
