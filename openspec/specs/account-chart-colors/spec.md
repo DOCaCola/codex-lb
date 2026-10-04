@@ -1,7 +1,7 @@
 # account-chart-colors Specification
 
 ## Purpose
-TBD - created by archiving change account-chart-colors. Update Purpose after archive.
+Give every account and model source one stable, optionally user-chosen chart colour that identifies it consistently across dashboard charts, logs and account views in light and dark mode.
 
 ## Requirements
 
