@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from app.core.crypto import TokenEncryptor
-from app.db.models import Account, AccountStatus, RequestLog
+from app.db.models import Account, AccountStatus, ModelSource, RequestLog
 from app.db.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -40,10 +40,13 @@ def _naive_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=None)
 
 
-async def test_reports_api_returns_null_account_bucket(async_client, db_setup):
+async def test_reports_api_attributes_provider_accounts_and_keeps_null_bucket(async_client, db_setup):
     start_at = _naive_utc(datetime(2026, 6, 1, 10, 0, 0, tzinfo=timezone.utc))
     async with SessionLocal() as session:
-        session.add(_make_account("acc_reports", "reports@example.com"))
+        account = _make_account("acc_reports", "reports@example.com")
+        account.alias = "Reports Alpha"
+        session.add(account)
+        session.add(ModelSource(id="src_claude", name="Team Claude", kind="claude", base_url="https://claude.invalid"))
         session.add_all(
             [
                 RequestLog(
@@ -68,6 +71,19 @@ async def test_reports_api_returns_null_account_bucket(async_client, db_setup):
                     cached_input_tokens=0,
                     cost_usd=0.20,
                 ),
+                RequestLog(
+                    account_id=None,
+                    model_source_id="src_claude",
+                    model_source_kind="claude",
+                    request_id="report-request-3",
+                    requested_at=start_at,
+                    model="claude-opus-5-5",
+                    status="success",
+                    input_tokens=5,
+                    output_tokens=2,
+                    cached_input_tokens=0,
+                    cost_usd=0.50,
+                ),
             ]
         )
         await session.commit()
@@ -84,16 +100,16 @@ async def test_reports_api_returns_null_account_bucket(async_client, db_setup):
     payload = _legacy_report(response.json())
     assert payload["daily"] == [
         {
-            "activeAccounts": 1,
+            "activeAccounts": 2,
             "conversations": 0,
-            "costUsd": 0.55,
+            "costUsd": 1.05,
             "cachedInputTokens": 2,
             "date": start_at.date().isoformat(),
             "errorCount": 0,
             "cancelledCount": 0,
-            "requests": 2,
-            "inputTokens": 15,
-            "outputTokens": 5,
+            "requests": 3,
+            "inputTokens": 20,
+            "outputTokens": 7,
             "reasoningTokens": None,
             "medianTtftMs": 0.0,
             "medianTps": 0.0,
@@ -102,14 +118,26 @@ async def test_reports_api_returns_null_account_bucket(async_client, db_setup):
     ]
     assert payload["byAccount"] == [
         {
+            "accountId": None,
+            "modelSourceId": "src_claude",
+            "provider": "claude",
+            "name": "Team Claude",
+            "costUsd": 0.5,
+            "requests": 1,
+        },
+        {
             "accountId": "acc_reports",
-            "alias": None,
+            "modelSourceId": None,
+            "provider": "codex",
+            "name": "Reports Alpha",
             "costUsd": 0.35,
             "requests": 1,
         },
         {
             "accountId": None,
-            "alias": None,
+            "modelSourceId": None,
+            "provider": None,
+            "name": None,
             "costUsd": 0.2,
             "requests": 1,
         },
@@ -515,7 +543,9 @@ async def test_reports_api_includes_preserved_deleted_account_history(async_clie
     assert payload["byAccount"] == [
         {
             "accountId": None,
-            "alias": None,
+            "modelSourceId": None,
+            "provider": None,
+            "name": None,
             "costUsd": 0.42,
             "requests": 1,
         }
@@ -1394,7 +1424,9 @@ async def test_reports_api_excludes_warmup_logs(async_client, db_setup):
     assert payload["byAccount"] == [
         {
             "accountId": "acc_reports_warmup",
-            "alias": None,
+            "modelSourceId": None,
+            "provider": "codex",
+            "name": "reports-warmup@example.com",
             "costUsd": 0.4,
             "requests": 1,
         }
@@ -1466,7 +1498,9 @@ async def test_reports_api_applies_account_and_model_filters(async_client, db_se
     assert payload["byAccount"] == [
         {
             "accountId": "acc_reports_filter_a",
-            "alias": None,
+            "modelSourceId": None,
+            "provider": "codex",
+            "name": "reports-filter-a@example.com",
             "costUsd": 0.8,
             "requests": 1,
         }
@@ -1524,7 +1558,9 @@ async def test_reports_api_includes_unpriced_models_in_model_breakdown(async_cli
     assert payload["byAccount"] == [
         {
             "accountId": "acc_reports_unpriced",
-            "alias": None,
+            "modelSourceId": None,
+            "provider": "codex",
+            "name": "reports-unpriced@example.com",
             "costUsd": 0.8,
             "requests": 2,
         }

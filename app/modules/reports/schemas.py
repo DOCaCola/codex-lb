@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from pydantic import Field
 
+from app.modules.accounts.provider_accounts import AccountProvider
 from app.modules.shared.schemas import DashboardModel
 
 
@@ -41,7 +42,9 @@ class ModelCostEntry(DashboardModel):
 
 class AccountCostEntry(DashboardModel):
     account_id: str | None
-    alias: str | None = None
+    model_source_id: str | None = None
+    provider: AccountProvider | None = None
+    name: str | None = None
     cost_usd: float = 0.0
     requests: int = 0
     priced_requests: int = 0

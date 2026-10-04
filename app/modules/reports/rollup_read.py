@@ -64,6 +64,7 @@ def report_source(
     r = RequestReportHourlyRollup
     folded_dimensions = [
         _decode(r.account_id).label("account_id"),
+        _decode(r.model_source_id).label("model_source_id"),
         _decode(r.api_key_id).label("api_key_id"),
         r.model,
         _decode(r.useragent_group).label("useragent_group"),
@@ -71,6 +72,7 @@ def report_source(
     ]
     raw_dimensions = [
         RequestLog.account_id,
+        RequestLog.model_source_id,
         RequestLog.api_key_id,
         RequestLog.model,
         RequestLog.useragent_group,
@@ -78,7 +80,7 @@ def report_source(
     ]
     # Catalog never calculates measures or groups by conversations.
     folded_columns = (
-        folded_dimensions[2:4]
+        folded_dimensions[3:5]
         if catalog
         else [w.c.report_date, *folded_dimensions, r.first_requested_at, *(getattr(r, n) for n in MEASURES)]
     )
@@ -90,7 +92,7 @@ def report_source(
         )
     )
     raw_columns = (
-        raw_dimensions[2:4]
+        raw_dimensions[3:5]
         if catalog
         else [
             w.c.report_date,

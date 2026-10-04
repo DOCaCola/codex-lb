@@ -93,8 +93,22 @@ class TestUsage7dByAccount:
         until = datetime(2026, 5, 8, 0, 0, 0)
 
         rows = [
-            SimpleNamespace(account_id="acc_1", email="alice@example.com", is_deleted=False, cost_usd=1.5),
-            SimpleNamespace(account_id="acc_2", email="bob@example.com", is_deleted=False, cost_usd=3.2),
+            SimpleNamespace(
+                account_id="acc_1",
+                model_source_id=None,
+                provider="codex",
+                name="alice@example.com",
+                is_deleted=False,
+                cost_usd=1.5,
+            ),
+            SimpleNamespace(
+                account_id="acc_2",
+                model_source_id=None,
+                provider="codex",
+                name="bob@example.com",
+                is_deleted=False,
+                cost_usd=3.2,
+            ),
         ]
 
         session.execute.return_value = SimpleNamespace(all=lambda: rows)
@@ -104,13 +118,17 @@ class TestUsage7dByAccount:
         assert len(result) == 2
         assert result[0] == ApiKeyAccountCost(
             account_id="acc_2",
-            email="bob@example.com",
+            model_source_id=None,
+            provider="codex",
+            name="bob@example.com",
             cost_usd=3.2,
             is_deleted=False,
         )
         assert result[1] == ApiKeyAccountCost(
             account_id="acc_1",
-            email="alice@example.com",
+            model_source_id=None,
+            provider="codex",
+            name="alice@example.com",
             cost_usd=1.5,
             is_deleted=False,
         )
@@ -123,9 +141,20 @@ class TestUsage7dByAccount:
         until = datetime(2026, 5, 8, 0, 0, 0)
 
         rows = [
-            SimpleNamespace(account_id="acc_1", email="alice@example.com", is_deleted=False, cost_usd=1.0),
-            SimpleNamespace(account_id=None, email=None, is_deleted=False, cost_usd=0.5),
-            SimpleNamespace(account_id="acc_del", email=None, is_deleted=True, cost_usd=0.8),
+            SimpleNamespace(
+                account_id="acc_1",
+                model_source_id=None,
+                provider="codex",
+                name="alice@example.com",
+                is_deleted=False,
+                cost_usd=1.0,
+            ),
+            SimpleNamespace(
+                account_id=None, model_source_id=None, provider=None, name=None, is_deleted=False, cost_usd=0.5
+            ),
+            SimpleNamespace(
+                account_id="acc_del", model_source_id=None, provider="codex", name=None, is_deleted=True, cost_usd=0.8
+            ),
         ]
 
         session.execute.return_value = SimpleNamespace(all=lambda: rows)
@@ -138,13 +167,17 @@ class TestUsage7dByAccount:
         assert result[0].is_deleted is False
         assert result[1] == ApiKeyAccountCost(
             account_id=None,
-            email=None,
+            model_source_id=None,
+            provider=None,
+            name=None,
             cost_usd=0.8,
             is_deleted=True,
         )
         assert result[2] == ApiKeyAccountCost(
             account_id=None,
-            email=None,
+            model_source_id=None,
+            provider=None,
+            name=None,
             cost_usd=0.5,
             is_deleted=False,
         )
@@ -157,8 +190,22 @@ class TestUsage7dByAccount:
         until = datetime(2026, 5, 8, 0, 0, 0)
 
         rows = [
-            SimpleNamespace(account_id="acc_1", email="alice@example.com", is_deleted=False, cost_usd=0.0),
-            SimpleNamespace(account_id="acc_2", email="bob@example.com", is_deleted=False, cost_usd=2.0),
+            SimpleNamespace(
+                account_id="acc_1",
+                model_source_id=None,
+                provider="codex",
+                name="alice@example.com",
+                is_deleted=False,
+                cost_usd=0.0,
+            ),
+            SimpleNamespace(
+                account_id="acc_2",
+                model_source_id=None,
+                provider="codex",
+                name="bob@example.com",
+                is_deleted=False,
+                cost_usd=2.0,
+            ),
         ]
 
         session.execute.return_value = SimpleNamespace(all=lambda: rows)
@@ -245,7 +292,9 @@ class TestUsage7d:
                 total_unpriced_requests=0,
                 total_unmetered_requests=0,
                 account_id="acc_1",
-                email="alice@example.com",
+                model_source_id=None,
+                provider="codex",
+                name="alice@example.com",
                 is_deleted=False,
                 cost_usd=1.0,
                 priced_requests=2,
@@ -262,7 +311,9 @@ class TestUsage7d:
                 total_unpriced_requests=0,
                 total_unmetered_requests=0,
                 account_id="acc_del",
-                email=None,
+                model_source_id=None,
+                provider=None,
+                name=None,
                 is_deleted=True,
                 cost_usd=0.8,
                 priced_requests=1,
@@ -283,14 +334,18 @@ class TestUsage7d:
         assert result.account_costs == [
             ApiKeyAccountCost(
                 account_id="acc_1",
-                email="alice@example.com",
+                model_source_id=None,
+                provider="codex",
+                name="alice@example.com",
                 cost_usd=1.0,
                 priced_requests=2,
                 is_deleted=False,
             ),
             ApiKeyAccountCost(
                 account_id=None,
-                email=None,
+                model_source_id=None,
+                provider=None,
+                name=None,
                 cost_usd=0.8,
                 priced_requests=1,
                 is_deleted=True,

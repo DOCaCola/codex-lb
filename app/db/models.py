@@ -349,6 +349,8 @@ class RequestReportHourlyRollup(Base):
 
     bucket_epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     account_id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Provider account of Claude/OpenRouter/other model-source usage (no account_id).
+    model_source_id: Mapped[str] = mapped_column(String, primary_key=True)
     api_key_id: Mapped[str] = mapped_column(String, primary_key=True)
     model: Mapped[str] = mapped_column(String, primary_key=True)
     useragent_group: Mapped[str] = mapped_column(String, primary_key=True)

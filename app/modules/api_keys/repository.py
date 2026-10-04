@@ -34,6 +34,11 @@ from app.db.models import (
     RequestUsageHourlyRollup,
 )
 from app.db.session import sqlite_writer_section
+from app.modules.accounts.provider_accounts import (
+    AccountProvider,
+    provider_account_name_expr,
+    provider_account_provider_expr,
+)
 from app.modules.accounts.usage_rollup import api_key_usage_aggregate_stmt, read_api_key_rollup_state
 from app.modules.accounts.usage_time_rollup import (
     HOURLY_BUCKET_SECONDS,
@@ -125,7 +130,9 @@ class ApiKeyUsageTotals:
 @dataclass(frozen=True, slots=True)
 class ApiKeyAccountCost:
     account_id: str | None
-    email: str | None
+    model_source_id: str | None
+    provider: AccountProvider | None
+    name: str | None
     cost_usd: float
     priced_requests: int = 0
     unpriced_requests: int = 0
@@ -145,6 +152,38 @@ _STALE_USAGE_RESERVATION_RELEASE_BATCH_SIZE = 500
 class ApiKeysRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    @staticmethod
+    def _account_cost_grouping(cols: Any) -> tuple[list[Any], list[Any]]:
+        """Provider-account cost buckets over request-log columns joined to Account and ModelSource.
+
+        Usage of a removed model source keeps its id but no longer resolves, so it
+        joins the deleted bucket like soft-deleted Codex usage.
+        """
+        soft_deleted = cols.deleted_at.is_not(None)
+        is_deleted = or_(soft_deleted, cols.model_source_id.is_not(None) & ModelSource.id.is_(None))
+        cost_columns = request_cost_expressions(cols)
+        columns = [
+            cols.account_id.label("account_id"),
+            cols.model_source_id.label("model_source_id"),
+            provider_account_name_expr().label("name"),
+            provider_account_provider_expr().label("provider"),
+            is_deleted.label("is_deleted"),
+            cost_columns[0].label("cost_usd"),
+            *cost_columns[1:],
+        ]
+        group_by = [
+            cols.account_id,
+            cols.model_source_id,
+            soft_deleted,
+            Account.id,
+            Account.alias,
+            Account.email,
+            ModelSource.id,
+            ModelSource.name,
+            ModelSource.kind,
+        ]
+        return columns, group_by
 
     @staticmethod
     def _build_account_costs(rows: Sequence[object]) -> list[ApiKeyAccountCost]:
@@ -171,7 +210,9 @@ class ApiKeysRepository:
             account_costs.append(
                 ApiKeyAccountCost(
                     account_id=getattr(row, "account_id", None),
-                    email=getattr(row, "email", None),
+                    model_source_id=getattr(row, "model_source_id", None),
+                    provider=getattr(row, "provider", None),
+                    name=getattr(row, "name", None),
                     cost_usd=cost,
                     priced_requests=priced,
                     unpriced_requests=unpriced,
@@ -184,7 +225,9 @@ class ApiKeysRepository:
             account_costs.append(
                 ApiKeyAccountCost(
                     account_id=None,
-                    email=None,
+                    model_source_id=None,
+                    provider=None,
+                    name=None,
                     cost_usd=round(deleted_cost, 6),
                     priced_requests=deleted_priced,
                     unpriced_requests=deleted_unpriced,
@@ -1079,23 +1122,18 @@ class ApiKeysRepository:
         since: datetime,
         until: datetime,
     ) -> list[ApiKeyAccountCost]:
-        deleted_expr = func.coalesce(RequestLog.deleted_at.is_not(None), False)
+        columns, group_by = self._account_cost_grouping(RequestLog)
         stmt = (
-            select(
-                RequestLog.account_id,
-                Account.email,
-                deleted_expr.label("is_deleted"),
-                request_cost_expressions(RequestLog)[0].label("cost_usd"),
-                *request_cost_expressions(RequestLog)[1:],
-            )
+            select(*columns)
             .outerjoin(Account, Account.id == RequestLog.account_id)
+            .outerjoin(ModelSource, ModelSource.id == RequestLog.model_source_id)
             .where(
                 RequestLog.api_key_id == key_id,
                 RequestLog.requested_at >= since,
                 RequestLog.requested_at < until,
                 self._exclude_warmup_clause(),
             )
-            .group_by(RequestLog.account_id, Account.email, deleted_expr)
+            .group_by(*group_by)
         )
         result = await self._session.execute(stmt)
         return self._build_account_costs(result.all())
@@ -1244,6 +1282,7 @@ class ApiKeysRepository:
             select(
                 RequestLog.id.label("id"),
                 RequestLog.account_id.label("account_id"),
+                RequestLog.model_source_id.label("model_source_id"),
                 RequestLog.deleted_at.label("deleted_at"),
                 RequestLog.input_tokens.label("input_tokens"),
                 RequestLog.output_tokens.label("output_tokens"),
@@ -1277,17 +1316,15 @@ class ApiKeysRepository:
             coverage_columns[0].label("total_cost_usd"),
             *coverage_columns[1:],
         ).cte("usage_totals")
-        deleted_expr = func.coalesce(filtered_logs.c.deleted_at.is_not(None), False)
+        grouped_columns, group_by = self._account_cost_grouping(filtered_logs.c)
         usage_grouped = (
-            select(
-                filtered_logs.c.account_id.label("account_id"),
-                Account.email.label("email"),
-                deleted_expr.label("is_deleted"),
-                coverage_columns[0].label("cost_usd"),
-                *coverage_columns[1:],
+            select(*grouped_columns)
+            .select_from(
+                filtered_logs.outerjoin(Account, Account.id == filtered_logs.c.account_id).outerjoin(
+                    ModelSource, ModelSource.id == filtered_logs.c.model_source_id
+                )
             )
-            .select_from(filtered_logs.outerjoin(Account, Account.id == filtered_logs.c.account_id))
-            .group_by(filtered_logs.c.account_id, Account.email, deleted_expr)
+            .group_by(*group_by)
             .cte("usage_grouped")
         )
         stmt = select(
@@ -1300,7 +1337,9 @@ class ApiKeysRepository:
             usage_totals.c.unpriced_requests.label("total_unpriced_requests"),
             usage_totals.c.unmetered_requests.label("total_unmetered_requests"),
             usage_grouped.c.account_id,
-            usage_grouped.c.email,
+            usage_grouped.c.model_source_id,
+            usage_grouped.c.name,
+            usage_grouped.c.provider,
             usage_grouped.c.is_deleted,
             usage_grouped.c.cost_usd,
             usage_grouped.c.priced_requests,

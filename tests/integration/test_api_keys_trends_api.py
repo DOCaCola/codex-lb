@@ -4,8 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
+from app.db.models import Account, AccountStatus, ModelSource, RequestLog
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 
@@ -713,7 +714,9 @@ async def test_usage_7d_sums_only_recent_request_logs(async_client):
         "accountCosts": [
             {
                 "accountId": None,
-                "email": None,
+                "modelSourceId": None,
+                "provider": None,
+                "name": None,
                 "costUsd": 0.53,
                 "pricedRequests": 3,
                 "unpricedRequests": 0,
@@ -771,7 +774,9 @@ async def test_usage_7d_clamps_cached_input_tokens_to_total_input(async_client):
         "accountCosts": [
             {
                 "accountId": None,
-                "email": None,
+                "modelSourceId": None,
+                "provider": None,
+                "name": None,
                 "costUsd": 0.15,
                 "pricedRequests": 2,
                 "unpricedRequests": 0,
@@ -820,7 +825,9 @@ async def test_usage_7d_keeps_unknown_account_usage_separate_from_deleted_accoun
     assert payload["accountCosts"] == [
         {
             "accountId": None,
-            "email": None,
+            "modelSourceId": None,
+            "provider": None,
+            "name": None,
             "costUsd": 0.29,
             "pricedRequests": 1,
             "unpricedRequests": 0,
@@ -829,13 +836,83 @@ async def test_usage_7d_keeps_unknown_account_usage_separate_from_deleted_accoun
         },
         {
             "accountId": None,
-            "email": None,
+            "modelSourceId": None,
+            "provider": None,
+            "name": None,
             "costUsd": 0.11,
             "pricedRequests": 1,
             "unpricedRequests": 0,
             "unmeteredRequests": 0,
             "isDeleted": False,
         },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_usage_7d_attributes_cost_to_provider_accounts_by_name(
+    async_client,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    key_id = await _create_api_key(async_client, name="usage-key-provider-accounts")
+    now = datetime(2026, 5, 20, 12, 0, 0)
+    monkeypatch.setattr("app.modules.api_keys.service.utcnow", lambda: now)
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                Account(
+                    id="acc-provider-codex",
+                    email="alpha@example.com",
+                    alias="Alpha",
+                    plan_type="pro",
+                    access_token_encrypted=encryptor.encrypt("access"),
+                    refresh_token_encrypted=encryptor.encrypt("refresh"),
+                    id_token_encrypted=encryptor.encrypt("id"),
+                    last_refresh=now,
+                    status=AccountStatus.ACTIVE,
+                ),
+                ModelSource(id="src-claude", name="Team Claude", kind="claude", base_url="https://claude.invalid"),
+            ]
+        )
+        await session.commit()
+
+    def log(request_id: str, cost: float, **attribution) -> RequestLog:
+        return RequestLog(
+            api_key_id=key_id,
+            request_id=request_id,
+            requested_at=now - timedelta(hours=2),
+            model="gpt-5.1",
+            status="ok",
+            cost_usd=cost,
+            **attribution,
+        )
+
+    await _insert_request_logs(
+        log("req-codex", 0.4, account_id="acc-provider-codex"),
+        log("req-claude", 0.3, model_source_id="src-claude", model_source_kind="claude"),
+        log("req-removed-source", 0.2, model_source_id="src-removed", model_source_kind="openrouter"),
+        log("req-unknown", 0.1),
+    )
+
+    response = await async_client.get(f"/api/api-keys/{key_id}/usage-7d")
+    assert response.status_code == 200
+
+    entries = [
+        (
+            entry["accountId"],
+            entry["modelSourceId"],
+            entry["provider"],
+            entry["name"],
+            entry["costUsd"],
+            entry["isDeleted"],
+        )
+        for entry in response.json()["accountCosts"]
+    ]
+    assert entries == [
+        ("acc-provider-codex", None, "codex", "Alpha", 0.4, False),
+        (None, "src-claude", "claude", "Team Claude", 0.3, False),
+        (None, None, None, None, 0.2, True),
+        (None, None, None, None, 0.1, False),
     ]
 
 

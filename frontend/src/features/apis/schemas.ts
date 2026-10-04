@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ACCOUNT_PROVIDERS } from "@/components/brand/account-provider";
+
 const ApiKeyTrendPointSchema = z.object({
   t: z.iso.datetime({ offset: true }),
   v: z.number(),
@@ -34,7 +36,9 @@ export type ApiKeysTrendsResponse = z.input<typeof ApiKeysTrendsResponseSchema>;
 
 const ApiKeyAccountCostSchema = z.object({
   accountId: z.string().nullable().default(null),
-  email: z.string().nullable().default(null),
+  modelSourceId: z.string().nullable().default(null),
+  provider: z.enum(ACCOUNT_PROVIDERS).nullable().default(null),
+  name: z.string().nullable().default(null),
   costUsd: z.number().default(0),
   pricedRequests: z.number().int().nonnegative().optional().default(0),
   unpricedRequests: z.number().int().nonnegative().optional().default(0),

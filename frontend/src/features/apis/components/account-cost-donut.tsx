@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Cell, Pie, PieChart, Sector, type PieSectorShapeProps } from "@/components/lazy-recharts";
 
 import { buildDonutPalette } from "@/utils/colors";
+import { ProviderLogo, type AccountProvider } from "@/components/brand/provider-account-name";
 import { formatCurrency } from "@/utils/formatters";
 import { formatCoveredCostShort, type CostCoverage } from "@/features/dashboard/cost-coverage";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -50,8 +51,9 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
 		const items = visibleCosts.map((ac, i) => {
 			const isDeleted = ac.isDeleted;
 			return {
-				id: isDeleted ? "__deleted__" : (ac.accountId ?? `__unknown_${i}__`),
-				label: isDeleted ? t("apis.accountCost.deletedAccount") : (ac.email ?? t("apis.accountCost.unknownAccount")),
+				id: isDeleted ? "__deleted__" : (ac.accountId ?? ac.modelSourceId ?? `__unknown_${i}__`),
+				label: isDeleted ? t("apis.accountCost.deletedAccount") : (ac.name ?? t("apis.accountCost.unknownAccount")),
+				provider: isDeleted ? null : ac.provider,
 				isDeleted,
 				value: ac.costUsd ?? 0,
 				coverage: ac,
@@ -184,11 +186,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
                   data-testid={`account-cost-legend-${i}`}
                 >
                   <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      aria-hidden
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: item.color }}
-                    />
+                    <LegendMarker provider={item.provider} color={item.color} />
                     <span className="truncate font-medium">
                       {item.isDeleted ? (
                         item.label
@@ -210,4 +208,11 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
       </div>
     </div>
   );
+}
+
+function LegendMarker({ provider, color }: { provider: AccountProvider | null; color: string }) {
+  if (provider) {
+    return <ProviderLogo provider={provider} color={color} />;
+  }
+  return <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />;
 }

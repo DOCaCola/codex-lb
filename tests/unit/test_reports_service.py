@@ -200,7 +200,16 @@ async def test_get_reports_serializes_conversation_and_breakdown_request_counts(
         ),
         aggregate_by_model=AsyncMock(return_value=[ModelAggregateRow(model="gpt-5.1", cost_usd=1.2, request_count=2)]),
         aggregate_by_account=AsyncMock(
-            return_value=[AccountAggregateRow(account_id="acc_reports", alias="Reports", cost_usd=1.2, request_count=2)]
+            return_value=[
+                AccountAggregateRow(
+                    account_id="acc_reports",
+                    model_source_id=None,
+                    provider="codex",
+                    name="Reports",
+                    cost_usd=1.2,
+                    request_count=2,
+                )
+            ]
         ),
         aggregate_by_useragent=AsyncMock(
             return_value=[UserAgentAggregateRow(useragent_group="opencode", cost_usd=1.2, request_count=2)]

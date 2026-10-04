@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ACCOUNT_PROVIDERS } from "@/components/brand/account-provider";
+
 const CostCoverageFields = {
   pricedRequests: z.number().int().nonnegative().optional().default(0),
   unpricedRequests: z.number().int().nonnegative().optional().default(0),
@@ -44,7 +46,9 @@ const UseragentCostEntrySchema = z.object({
 const AccountCostEntrySchema = z.object({
   ...CostCoverageFields,
   accountId: z.string().nullable(),
-  alias: z.string().nullable(),
+  modelSourceId: z.string().nullable(),
+  provider: z.enum(ACCOUNT_PROVIDERS).nullable(),
+  name: z.string().nullable(),
   costUsd: z.number(),
   requests: z.number(),
 });

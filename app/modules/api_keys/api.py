@@ -368,7 +368,9 @@ async def get_api_key_usage_7d(
         account_costs=[
             ApiKeyAccountCostResponse(
                 account_id=ac.account_id,
-                email=ac.email,
+                model_source_id=ac.model_source_id,
+                provider=ac.provider,
+                name=ac.name,
                 cost_usd=ac.cost_usd,
                 priced_requests=ac.priced_requests,
                 unpriced_requests=ac.unpriced_requests,

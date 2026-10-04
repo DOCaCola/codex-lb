@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
+from app.modules.accounts.provider_accounts import AccountProvider
 from app.modules.shared.schemas import DashboardModel
 
 
@@ -143,7 +144,9 @@ class ApiKeysTrendsResponse(DashboardModel):
 
 class ApiKeyAccountCostResponse(DashboardModel):
     account_id: str | None = None
-    email: str | None = None
+    model_source_id: str | None = None
+    provider: AccountProvider | None = None
+    name: str | None = None
     cost_usd: float = 0
     priced_requests: int = 0
     unpriced_requests: int = 0

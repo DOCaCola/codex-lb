@@ -28,7 +28,7 @@ from app.modules.reports.filters import _normal_traffic_clause
 logger = logging.getLogger(__name__)
 REPORT_FOLD_SLICE = timedelta(hours=6)
 REPORT_MAX_SLICES = 8
-KEYS = ("bucket_epoch", "account_id", "api_key_id", "model", "useragent_group", "conversation_id")
+KEYS = ("bucket_epoch", "account_id", "model_source_id", "api_key_id", "model", "useragent_group", "conversation_id")
 MEASURES = (
     "request_count",
     "error_count",
@@ -65,6 +65,7 @@ def report_fold_insert(session: AsyncSession, start: datetime, end: datetime):
     dimensions = [
         _requested_at_epoch_bucket_expr(session, 3600),
         _dimension_expr(RequestLog.account_id),
+        _dimension_expr(RequestLog.model_source_id),
         _dimension_expr(RequestLog.api_key_id),
         RequestLog.model,
         _dimension_expr(RequestLog.useragent_group),

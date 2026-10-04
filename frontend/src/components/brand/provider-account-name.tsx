@@ -1,11 +1,29 @@
 import type { ReactNode } from "react";
 
-export type AccountProvider = "codex" | "claude" | "openrouter";
+import type { AccountProvider } from "./account-provider";
 
-export function ProviderLogo({ provider }: { provider: AccountProvider }) {
+export type { AccountProvider };
+
+function providerLogoUrl(provider: AccountProvider): string {
+  return `/images/providers/${provider === "codex" ? "openai" : provider}.svg`;
+}
+
+/** Brand logo; with `color`, the logo shape is painted in that colour (for chart legends). */
+export function ProviderLogo({ provider, color }: { provider: AccountProvider; color?: string }) {
+  if (color) {
+    const mask = `url(${providerLogoUrl(provider)}) center / contain no-repeat`;
+    return (
+      <span
+        aria-hidden="true"
+        className="inline-block size-4 shrink-0"
+        style={{ backgroundColor: color, mask, WebkitMask: mask }}
+        data-provider={provider}
+      />
+    );
+  }
   return (
     <img
-      src={`/images/providers/${provider === "codex" ? "openai" : provider}.svg`}
+      src={providerLogoUrl(provider)}
       alt=""
       aria-hidden="true"
       width={16}

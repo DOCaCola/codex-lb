@@ -187,6 +187,7 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
             .where(
                 RequestReportHourlyRollup.bucket_epoch == epoch // 3600 * 3600,
                 RequestReportHourlyRollup.account_id == to_dimension(log.account_id),
+                RequestReportHourlyRollup.model_source_id == to_dimension(log.model_source_id),
                 RequestReportHourlyRollup.api_key_id == to_dimension(log.api_key_id),
                 RequestReportHourlyRollup.model == log.model,
                 RequestReportHourlyRollup.useragent_group == to_dimension(log.useragent_group),

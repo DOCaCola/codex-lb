@@ -107,8 +107,8 @@ describe("ApiDetail", () => {
 		renderApiDetail({
 			usage7Day: createApiKeyUsage7Day({
 				accountCosts: [
-					{ accountId: null, email: null, costUsd: 0.11, isDeleted: false },
-					{ accountId: null, email: null, costUsd: 0.29, isDeleted: true },
+					{ accountId: null, name: null, costUsd: 0.11, isDeleted: false },
+					{ accountId: null, name: null, costUsd: 0.29, isDeleted: true },
 				],
 			}),
 		});
@@ -124,7 +124,7 @@ describe("ApiDetail", () => {
 				tokens: [{ t: "2026-01-01T00:00:00Z", v: 1200 }],
 			}),
 			usage7Day: createApiKeyUsage7Day({
-				accountCosts: [{ accountId: "acc-1", email: "a@example.com", costUsd: 0.12, isDeleted: false }],
+				accountCosts: [{ accountId: "acc-1", name: "a@example.com", costUsd: 0.12, isDeleted: false }],
 				totalCostUsd: 0.12,
 			}),
 		});
@@ -139,7 +139,7 @@ describe("ApiDetail", () => {
 		renderApiDetail({
 			trends: createApiKeyTrends({ cost: [], tokens: [] }),
 			usage7Day: createApiKeyUsage7Day({
-				accountCosts: [{ accountId: "acc-1", email: "a@example.com", costUsd: 0.12, isDeleted: false }],
+				accountCosts: [{ accountId: "acc-1", name: "a@example.com", costUsd: 0.12, isDeleted: false }],
 				totalCostUsd: 0.12,
 			}),
 		});
@@ -154,7 +154,7 @@ describe("ApiDetail", () => {
 		renderApiDetail({
 			trends: createApiKeyTrends({ cost: [], tokens: [] }),
 			usage7Day: createApiKeyUsage7Day({
-				accountCosts: [{ accountId: "acc-1", email: "a@example.com", costUsd: 0.12, isDeleted: false }],
+				accountCosts: [{ accountId: "acc-1", name: "a@example.com", costUsd: 0.12, isDeleted: false }],
 				totalCostUsd: 0.12,
 			}),
 		});

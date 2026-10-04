@@ -3,13 +3,14 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, case, func, literal, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.usage.logs import CANCELLED_STATUS, NON_ERROR_STATUSES, SUCCESS_STATUS
 from app.core.usage.throughput import request_tps_expr
 from app.db.models import RequestLog
+from app.modules.accounts.provider_accounts import provider_account_key
 from app.modules.accounts.usage_time_rollup import _requested_at_epoch_bucket_expr
 from app.modules.reports.filters import _normal_traffic_clause
 
@@ -20,9 +21,8 @@ def generation_clause() -> ColumnElement[bool]:
     return or_(RequestLog.request_operation.is_(None), RequestLog.request_operation.in_(GENERATION_OPERATIONS))
 
 
-def provider_account_expr() -> ColumnElement[str]:
-    # Source and subscription identifiers occupy different namespaces.
-    return func.coalesce(literal("source:") + RequestLog.model_source_id, literal("account:") + RequestLog.account_id)
+def provider_account_expr() -> ColumnElement[str | None]:
+    return provider_account_key(RequestLog.account_id, RequestLog.model_source_id)
 
 
 @dataclass(frozen=True)

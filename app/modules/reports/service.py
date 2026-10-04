@@ -181,7 +181,9 @@ class ReportsService:
             by_account=[
                 AccountCostEntry(
                     account_id=a.account_id,
-                    alias=a.alias,
+                    model_source_id=a.model_source_id,
+                    provider=a.provider,
+                    name=a.name,
                     cost_usd=round(a.cost_usd, 4),
                     requests=a.request_count,
                     priced_requests=a.priced_requests,

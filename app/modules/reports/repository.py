@@ -9,7 +9,13 @@ from sqlalchemy import and_, case, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.usage.throughput import request_tps_expr
-from app.db.models import Account, RequestLog
+from app.db.models import Account, ModelSource, RequestLog
+from app.modules.accounts.provider_accounts import (
+    AccountProvider,
+    provider_account_key,
+    provider_account_name_expr,
+    provider_account_provider_expr,
+)
 from app.modules.reports.filters import (
     MISSING_USERAGENT_GROUP,
     _normal_traffic_clause,
@@ -83,7 +89,9 @@ class ModelAggregateRow:
 @dataclass(frozen=True)
 class AccountAggregateRow:
     account_id: str | None
-    alias: str | None
+    model_source_id: str | None
+    provider: AccountProvider | None
+    name: str | None
     cost_usd: float
     request_count: int
     priced_requests: int = 0
@@ -252,7 +260,9 @@ class ReportsRepository:
         result = await self._session.execute(
             select(
                 source.c.account_id,
-                Account.alias,
+                source.c.model_source_id,
+                provider_account_provider_expr().label("provider"),
+                provider_account_name_expr().label("name"),
                 func.sum(source.c.cost_usd).label("cost_usd"),
                 func.sum(source.c.request_count).label("request_count"),
                 *(
@@ -261,13 +271,25 @@ class ReportsRepository:
                 ),
             )
             .outerjoin(Account, Account.id == source.c.account_id)
-            .group_by(source.c.account_id, Account.alias)
-            .order_by(func.sum(source.c.cost_usd).desc(), source.c.account_id)
+            .outerjoin(ModelSource, ModelSource.id == source.c.model_source_id)
+            .group_by(
+                source.c.account_id,
+                source.c.model_source_id,
+                Account.id,
+                Account.alias,
+                Account.email,
+                ModelSource.id,
+                ModelSource.name,
+                ModelSource.kind,
+            )
+            .order_by(func.sum(source.c.cost_usd).desc(), source.c.account_id, source.c.model_source_id)
         )
         return [
             AccountAggregateRow(
                 row.account_id,
-                row.alias,
+                row.model_source_id,
+                row.provider,
+                row.name,
                 float(row.cost_usd),
                 int(row.request_count),
                 int(row.priced_requests),
@@ -330,7 +352,8 @@ class ReportsRepository:
         source = report_source(
             self._session, [("active", start_date, end_date)], account_ids, model, useragent_group, api_key_ids
         )
-        return int((await self._session.execute(select(func.count(func.distinct(source.c.account_id))))).scalar_one())
+        identity = provider_account_key(source.c.account_id, source.c.model_source_id)
+        return int((await self._session.execute(select(func.count(func.distinct(identity))))).scalar_one())
 
     async def aggregate_thread_identity(
         self,
@@ -385,7 +408,9 @@ class ReportsRepository:
 def _aggregate_columns(source) -> list:
     return [
         *(func.coalesce(func.sum(getattr(source.c, name)), 0).label(name) for name in MEASURES),
-        func.count(func.distinct(source.c.account_id)).label("active_accounts"),
+        func.count(func.distinct(provider_account_key(source.c.account_id, source.c.model_source_id))).label(
+            "active_accounts"
+        ),
         func.count(func.distinct(source.c.conversation_id)).label("conversation_count"),
     ]
 

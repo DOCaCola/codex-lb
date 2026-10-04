@@ -42,8 +42,8 @@ describe("AccountCostDonut", () => {
 		const usage = createApiKeyUsage7Day({
 			totalCostUsd: 0.75,
 			accountCosts: [
-				{ accountId: "acc-1", email: "a@example.com", costUsd: 0.45, isDeleted: false },
-				{ accountId: "acc-2", email: "b@example.com", costUsd: 0.3, isDeleted: false },
+				{ accountId: "acc-1", name: "a@example.com", costUsd: 0.45, isDeleted: false },
+				{ accountId: "acc-2", name: "b@example.com", costUsd: 0.3, isDeleted: false },
 			],
 		});
 
@@ -63,8 +63,8 @@ describe("AccountCostDonut", () => {
 		const usage = createApiKeyUsage7Day({
 			totalCostUsd: 0.75,
 			accountCosts: [
-				{ accountId: "acc-1", email: "a@example.com", costUsd: 0.45, isDeleted: false },
-				{ accountId: "acc-2", email: "b@example.com", costUsd: 0.3, isDeleted: false },
+				{ accountId: "acc-1", name: "a@example.com", costUsd: 0.45, isDeleted: false },
+				{ accountId: "acc-2", name: "b@example.com", costUsd: 0.3, isDeleted: false },
 			],
 		});
 
@@ -83,7 +83,7 @@ describe("AccountCostDonut", () => {
 			totalCostUsd: 2.8,
 			accountCosts: Array.from({ length: 6 }, (_, index) => ({
 				accountId: `acc-${index}`,
-				email: `user${index}@example.com`,
+				name: `user${index}@example.com`,
 				costUsd: 0.4 + index * 0.05,
 				isDeleted: false,
 			})),
@@ -102,8 +102,8 @@ describe("AccountCostDonut", () => {
 		const usage = createApiKeyUsage7Day({
 			totalCostUsd: 0.75,
 			accountCosts: [
-				{ accountId: "acc-1", email: "a@example.com", costUsd: 0.45, isDeleted: false },
-				{ accountId: "acc-2", email: "b@example.com", costUsd: 0.3, isDeleted: false },
+				{ accountId: "acc-1", name: "a@example.com", costUsd: 0.45, isDeleted: false },
+				{ accountId: "acc-2", name: "b@example.com", costUsd: 0.3, isDeleted: false },
 			],
 		});
 
@@ -120,8 +120,8 @@ describe("AccountCostDonut", () => {
 		const usage = createApiKeyUsage7Day({
 			totalCostUsd: 0.75,
 			accountCosts: [
-				{ accountId: "acc-1", email: "a@example.com", costUsd: 0.45, isDeleted: false },
-				{ accountId: null, email: null, costUsd: 0.3, isDeleted: true },
+				{ accountId: "acc-1", name: "a@example.com", costUsd: 0.45, isDeleted: false },
+				{ accountId: null, name: null, costUsd: 0.3, isDeleted: true },
 			],
 		});
 
@@ -132,6 +132,36 @@ describe("AccountCostDonut", () => {
 		expect(screen.getByText("a@example.com")).toHaveClass("privacy-blur");
 		expect(screen.getByText("Deleted Account")).not.toHaveClass("privacy-blur");
 		act(() => usePrivacyStore.setState({ blurred: false }));
+	});
+
+	it("marks provider accounts with their slice-coloured logo and others with a dot", () => {
+		const usage = createApiKeyUsage7Day({
+			totalCostUsd: 1,
+			accountCosts: [
+				{ accountId: "acc-1", provider: "codex", name: "Andy Alpha", costUsd: 0.4, isDeleted: false },
+				{ modelSourceId: "src-claude", provider: "claude", name: "DOCa Claude", costUsd: 0.3, isDeleted: false },
+				{ accountId: null, name: null, costUsd: 0.2, isDeleted: false },
+				{ accountId: null, provider: "openrouter", name: "Removed", costUsd: 0.1, isDeleted: true },
+			],
+		});
+
+		renderWithProviders(
+			<AccountCostDonut accountCosts={usage.accountCosts} totalCostUsd={usage.totalCostUsd} />,
+		);
+
+		const codexLogo = screen.getByTestId("account-cost-legend-0").querySelector("[data-provider]");
+		expect(screen.getByText("Andy Alpha")).toBeInTheDocument();
+		expect(codexLogo).toHaveAttribute("data-provider", "codex");
+		expect((codexLogo as HTMLElement).style.backgroundColor).not.toBe("");
+		const claudeRow = screen.getByTestId("account-cost-legend-1");
+		expect(claudeRow).toHaveTextContent("DOCa Claude");
+		expect(claudeRow.querySelector("[data-provider]")).toHaveAttribute("data-provider", "claude");
+		for (const index of [2, 3]) {
+			const row = screen.getByTestId(`account-cost-legend-${index}`);
+			expect(row.querySelector("[data-provider]")).toBeNull();
+			expect(row.querySelector(".rounded-full")).not.toBeNull();
+		}
+		expect(screen.getByText("Unknown Account")).toBeInTheDocument();
 	});
 
 	it("scrolls the hovered pie item into view in the legend list", async () => {
@@ -145,7 +175,7 @@ describe("AccountCostDonut", () => {
 			totalCostUsd: 5.6,
 			accountCosts: Array.from({ length: 6 }, (_, index) => ({
 				accountId: `acc-${index}`,
-				email: `user${index}@example.com`,
+				name: `user${index}@example.com`,
 				costUsd: 1 - index * 0.1,
 				isDeleted: false,
 			})),

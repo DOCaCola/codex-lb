@@ -6,11 +6,11 @@ from datetime import date, datetime, timedelta
 import pytest
 from sqlalchemy import delete, func, select, update
 
-from app.db.models import AccountUsageRollupState, RequestLog, RequestReportHourlyRollup
+from app.db.models import AccountUsageRollupState, ModelSource, RequestLog, RequestReportHourlyRollup
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.usage_rollup import lock_fold_state
-from app.modules.accounts.usage_time_rollup import merge_time_rollups_into
+from app.modules.accounts.usage_time_rollup import DIMENSION_SENTINEL, merge_time_rollups_into
 from app.modules.reports.repository import ReportsRepository
 from app.modules.reports.rollup import fold_next_report_slice, run_report_fold_pass
 from app.modules.reports.service import ReportsService
@@ -24,13 +24,16 @@ END = datetime(2026, 3, 22)
 async def _seed() -> None:
     async with SessionLocal() as session:
         session.add_all([_make_account("report-a", "a@example.com"), _make_account("report-b", "b@example.com")])
+        session.add(ModelSource(id="report-src", name="Report Claude", kind="claude", base_url="https://c.invalid"))
         await session.flush()
         for i in range(160):
+            account_id = ("report-a", "report-b", None)[i % 3]
             session.add(
                 RequestLog(
                     requested_at=BASE + timedelta(hours=i * 3, minutes=(i % 4) * 15),
                     request_id=f"report-fold-{i}",
-                    account_id=("report-a", "report-b", None)[i % 3],
+                    account_id=account_id,
+                    model_source_id="report-src" if account_id is None and i % 2 else None,
                     api_key_id=(None, "key", "")[i % 3],
                     model=("m1", "m2")[i % 2],
                     useragent_group=(None, "CLI", "", " ", "\x1fclient")[i % 5],
@@ -82,6 +85,22 @@ async def test_report_fold_preserves_filters_timezone_and_live_tail(db_setup, tz
     # A completed fold is idempotent, including the exact first activity value.
     await _fold(END)
     assert [await _snapshot(tz, **scope) for scope in scopes] == expected
+
+
+async def test_report_refold_attributes_history_folded_without_model_source(db_setup):
+    await _seed()
+    expected, _ = await _snapshot()
+    assert any(entry["provider"] == "claude" and entry["name"] == "Report Claude" for entry in expected["by_account"])
+    await _fold(END)
+    async with SessionLocal() as session:
+        # Pre-migration buckets carry the NULL sentinel; the migration requests a refold.
+        await session.execute(update(RequestReportHourlyRollup).values(model_source_id=DIMENSION_SENTINEL))
+        await session.execute(update(AccountUsageRollupState).values(reports_coverage_repair_from=datetime(1970, 1, 1)))
+        await session.commit()
+    assert (await _snapshot())[0] != expected
+    while await run_report_fold_pass(now=END + timedelta(days=1)):
+        pass
+    assert (await _snapshot())[0] == expected
 
 
 async def test_report_statistics_survive_raw_pruning(db_setup):

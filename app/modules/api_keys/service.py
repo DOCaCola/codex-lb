@@ -28,6 +28,7 @@ from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, ApiKey, ApiKeyLimit, LimitType, LimitWindow, ModelSource, UsageHistory
 from app.db.session import sqlite_writer_section
 from app.db.sqlite_lock_retry import should_retry_after_sqlite_lock
+from app.modules.accounts.provider_accounts import AccountProvider
 from app.modules.api_keys.last_used_coalescer import ApiKeyLastUsedCoalescer, get_api_key_last_used_coalescer
 from app.modules.api_keys.limit_windows import advance_limit_reset, limit_window_delta, next_limit_reset
 from app.modules.api_keys.repository import (
@@ -1385,7 +1386,9 @@ class ApiKeysService:
             account_costs=[
                 ApiKeyAccountCostData(
                     account_id=ac.account_id,
-                    email=ac.email,
+                    model_source_id=ac.model_source_id,
+                    provider=ac.provider,
+                    name=ac.name,
                     cost_usd=ac.cost_usd,
                     priced_requests=ac.priced_requests,
                     unpriced_requests=ac.unpriced_requests,
@@ -1433,7 +1436,9 @@ class ApiKeysTrendsData:
 @dataclass(frozen=True, slots=True)
 class ApiKeyAccountCostData:
     account_id: str | None
-    email: str | None
+    model_source_id: str | None
+    provider: AccountProvider | None
+    name: str | None
     cost_usd: float
     priced_requests: int = 0
     unpriced_requests: int = 0
