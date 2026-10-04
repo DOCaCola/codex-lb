@@ -210,7 +210,7 @@ def test_streamed_envelope_is_private_and_matches_final_and_history():
         tools=tools, tool_choice={"type": "function", "name": "automation_update", "namespace": "codex_app"}
     )
     projected = project(payload, max_output_tokens=8192)
-    wire = next(iter(projected.tools))
+    wire = next(iter(projected.tools.by_wire))
     assert projected.body["tool_choice"] == {"type": "tool", "name": wire}
     adapter = ResponsesProjection(scope(), projected.tools, codec())
     adapter.consume({"type": "message_start", "message": {"id": "wrapped"}})
@@ -278,7 +278,7 @@ def test_bad_stream_never_emits_argument_or_done(raw):
             "index": 0,
             "content_block": {
                 "type": "tool_use",
-                "name": next(iter(projected.tools)),
+                "name": next(iter(projected.tools.by_wire)),
                 "id": "call",
                 "input": {},
             },
@@ -303,7 +303,12 @@ def test_wrapped_stream_without_arguments_fails_envelope_validation():
         {
             "type": "content_block_start",
             "index": 0,
-            "content_block": {"type": "tool_use", "name": next(iter(projected.tools)), "id": "call", "input": {}},
+            "content_block": {
+                "type": "tool_use",
+                "name": next(iter(projected.tools.by_wire)),
+                "id": "call",
+                "input": {},
+            },
         }
     )
     assert (
@@ -328,7 +333,7 @@ def test_complete_message_unwraps_tool_input():
                 {
                     "type": "tool_use",
                     "id": "call",
-                    "name": next(iter(projected.tools)),
+                    "name": next(iter(projected.tools.by_wire)),
                     "input": {"arguments": arguments},
                 }
             ],
@@ -350,7 +355,7 @@ def test_wrapped_argument_buffer_is_bounded(monkeypatch):
             "index": 0,
             "content_block": {
                 "type": "tool_use",
-                "name": next(iter(projected.tools)),
+                "name": next(iter(projected.tools.by_wire)),
                 "id": "call",
                 "input": {},
             },

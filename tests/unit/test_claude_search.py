@@ -9,6 +9,7 @@ from app.modules.claude.capabilities import reasoning_spec
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.responses import ResponsesProjection
+from app.modules.claude.tool_names import ClaudeToolNames
 from tests.claude_json_helpers import at
 from tests.unit.test_claude_protocol import codec, request, scope
 
@@ -103,7 +104,7 @@ def test_unsupported_live_options_fail_explicitly(option):
 
 def test_search_lifecycle_citations_and_authenticated_replay():
     opaque = codec()
-    adapter = ResponsesProjection(scope(), {}, opaque, search_enabled=True)
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), opaque, search_enabled=True)
     response = adapter.complete({"id": "search", "content": search_content(), "stop_reason": "end_turn"})
     assert at(response, "output", 0, "type") == "web_search_call"
     assert at(response, "output", 0, "status") == "completed"
@@ -129,7 +130,7 @@ def test_search_lifecycle_citations_and_authenticated_replay():
 
 
 def test_stream_search_json_and_citation_deltas():
-    adapter = ResponsesProjection(scope(), {}, codec(), search_enabled=True)
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec(), search_enabled=True)
     events = adapter.consume({"type": "message_start", "message": {"id": "search"}})
     for index, original in enumerate(search_content()):
         block = deepcopy(original)
@@ -174,7 +175,7 @@ def test_stream_search_json_and_citation_deltas():
 @pytest.mark.parametrize("changed", ["model", "client_scope", "token"])
 def test_search_state_rejects_changed_scope_or_tampering(changed):
     opaque = codec()
-    response = ResponsesProjection(scope(), {}, opaque, search_enabled=True).complete(
+    response = ResponsesProjection(scope(), ClaudeToolNames(), opaque, search_enabled=True).complete(
         {"id": "search", "content": search_content(), "stop_reason": "end_turn"}
     )
     token = at(response, "output", 1, "encrypted_content")
@@ -208,6 +209,6 @@ def test_search_state_rejects_changed_scope_or_tampering(changed):
 )
 def test_search_failure_never_becomes_success(content):
     with pytest.raises(ClaudeError):
-        ResponsesProjection(scope(), {}, codec(), search_enabled=True).complete(
+        ResponsesProjection(scope(), ClaudeToolNames(), codec(), search_enabled=True).complete(
             {"id": "search", "content": content, "stop_reason": "end_turn"}
         )

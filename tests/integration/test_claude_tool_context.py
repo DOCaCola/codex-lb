@@ -181,7 +181,6 @@ async def test_http_external_task_preserves_text_images_in_established_history(
 @pytest.mark.parametrize("seed", [SEED, *TASKS])
 async def test_http_continuation_restores_real_tool_pair_after_seed(async_client, pool, monkeypatch, path, seed):
     from app.core.config.settings import get_settings
-    from app.modules.claude.protocol import ToolIdentity
     from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
     captured, _ = install_upstream(
@@ -191,7 +190,7 @@ async def test_http_continuation_restores_real_tool_pair_after_seed(async_client
             {
                 "type": "tool_use",
                 "id": "active-call",
-                "name": ToolIdentity("run", None, False).wire_name,
+                "name": "Run",
                 "input": {},
             }
         ],

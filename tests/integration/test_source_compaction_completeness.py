@@ -227,7 +227,6 @@ async def test_websocket_compaction_trigger_reuses_conversation_tool_prefix(asyn
 async def test_claude_compaction_tool_call_fails_without_checkpoint(async_client, pool, monkeypatch, path):
     from starlette.requests import Request
 
-    from app.modules.claude.protocol import ToolIdentity
     from app.modules.model_sources.continuation import SourceContinuation
 
     captured, _ = install_upstream(monkeypatch)
@@ -240,7 +239,7 @@ async def test_claude_compaction_tool_call_fails_without_checkpoint(async_client
     )
     before = await continuation.store.load(continuation.scope, first.json()["id"])
     assert before is not None
-    wire_name = ToolIdentity("inspect", None, False).wire_name
+    wire_name = "Inspect"
     called, _ = install_upstream(
         monkeypatch,
         stop="tool_use",

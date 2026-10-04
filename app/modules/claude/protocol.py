@@ -19,7 +19,8 @@ from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, model_
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
 from app.modules.claude.task_input import is_external_task_input, task_metadata_complete
-from app.modules.claude.tool_schema import ToolArguments, adapt_tool_schema
+from app.modules.claude.tool_names import ClaudeToolNames, ToolIdentity
+from app.modules.claude.tool_schema import adapt_tool_schema
 
 logger = logging.getLogger(__name__)
 
@@ -108,24 +109,9 @@ def _custom_tool_input_schema(tool: dict[str, JsonValue], *, param: str) -> dict
 
 
 @dataclass(frozen=True)
-class ToolIdentity:
-    name: str
-    namespace: str | None
-    custom: bool
-    arguments: ToolArguments | None = None
-    # The client asked the OpenAI backend to encrypt some arguments; Claude returns them as plaintext.
-    encrypted_arguments: bool = False
-
-    @property
-    def wire_name(self) -> str:
-        key = json.dumps([self.namespace, self.name, self.custom], separators=(",", ":"))
-        return "tool_" + hashlib.sha256(key.encode()).hexdigest()[:40]
-
-
-@dataclass(frozen=True)
 class MessagesProjection:
     body: dict[str, JsonValue]
-    tools: dict[str, ToolIdentity]
+    tools: ClaudeToolNames
     search_enabled: bool = False
 
 
@@ -187,7 +173,7 @@ def project_responses(
             raise invalid("Claude instructions must be text", "instructions")
         if instructions:
             system.append({"type": "text", "text": instructions})
-    tools: dict[str, ToolIdentity] = {}
+    tools = ClaudeToolNames()
     declarations: list[JsonValue] = []
 
     def declare(tool: JsonValue, namespace: str | None = None, *, param: str) -> None:
@@ -216,7 +202,7 @@ def project_responses(
         if kind not in ("function", "custom"):
             raise invalid(f"Unsupported Claude tool type: {kind}", "tools")
         identity = ToolIdentity(name, namespace, kind == "custom")
-        if identity.wire_name in tools:
+        if identity in tools:
             raise invalid("Duplicate tool identity", "tools")
         schema: JsonValue = (
             tool.get("parameters") if kind == "function" else _custom_tool_input_schema(tool, param=param)
@@ -231,10 +217,8 @@ def project_responses(
                 param=f"{param}.parameters",
             )
             identity = replace(identity, arguments=arguments, encrypted_arguments=encrypted_arguments)
-        tools[identity.wire_name] = identity
-        declarations.append(
-            {"name": identity.wire_name, "description": tool.get("description", ""), "input_schema": schema}
-        )
+        wire_name = tools.add(identity)
+        declarations.append({"name": wire_name, "description": tool.get("description", ""), "input_schema": schema})
 
     raw_tools = payload.get("tools", [])
     if not isinstance(raw_tools, list):
@@ -321,8 +305,7 @@ def project_responses(
                 raise invalid("Tool calls require a name and call_id")
             if call_id in seen_calls:
                 raise invalid("Duplicate tool call_id")
-            identity = ToolIdentity(name, namespace, kind == "custom_tool_call")
-            identity = tools.setdefault(identity.wire_name, identity)
+            identity = tools.identity(ToolIdentity(name, namespace, kind == "custom_tool_call"))
             if identity.custom:
                 arguments: JsonValue = {"input": item.get("input")}
                 if not isinstance(item.get("input"), str):
@@ -339,7 +322,10 @@ def project_responses(
                     raise invalid("Function arguments must encode an object")
                 if identity.arguments is not None:
                     arguments = identity.arguments.encode(arguments)
-            append("assistant", [{"type": "tool_use", "id": call_id, "name": identity.wire_name, "input": arguments}])
+            append(
+                "assistant",
+                [{"type": "tool_use", "id": call_id, "name": tools.wire_name(identity), "input": arguments}],
+            )
             pending.add(call_id)
             seen_calls.add(call_id)
         elif kind in ("function_call_output", "custom_tool_call_output"):
@@ -446,14 +432,14 @@ def project_responses(
         identity = next(
             (
                 identity
-                for identity in tools.values()
+                for identity in tools.by_wire.values()
                 if identity.name == choice.get("name") and identity.namespace == choice.get("namespace")
             ),
             None,
         )
         if identity is None:
             raise invalid("Unknown tool choice", "tool_choice")
-        body["tool_choice"] = {"type": "tool", "name": identity.wire_name}
+        body["tool_choice"] = {"type": "tool", "name": tools.wire_name(identity)}
     else:
         raise invalid("Unsupported tool choice", "tool_choice")
     if payload.get("parallel_tool_calls") is False and declarations and choice != "none":

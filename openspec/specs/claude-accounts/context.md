@@ -47,7 +47,12 @@ uncached, 40 cache reads and 30 cache writes are logged as 170 total with
 separate 40/30 details, and each category is priced once.
 
 Portable text, images and function/free-form custom tool histories are projected.
-Tool namespaces use deterministic reversible names. Signed thinking stays in
+Client tools are sent under Claude Code-shaped names (OmniRoute's mapping, e.g.
+`terminal` → `Bash`, otherwise PascalCase), with namespaces qualified as
+CLIProxyAPI does, and a request-local table restores the client identity. Opaque
+hashed names were dropped because Claude then called the names the instructions
+mention, and plain snake_case agent tool names are fingerprinted on OAuth
+(OmniRoute PR #2943). Signed thinking stays in
 encrypted account/model/client-bound envelopes, never fabricated
 reasoning summaries. JSON-schema output and model-specific adaptive or budget reasoning use explicit model
 policies; unknown model minors do not inherit capabilities optimistically. Grammar-format

@@ -13,6 +13,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.responses import ResponsesProjection
+from app.modules.claude.tool_names import ClaudeToolNames
 from tests.claude_json_helpers import array, at
 
 pytestmark = pytest.mark.unit
@@ -333,7 +334,7 @@ def test_grammar_custom_tool_documents_its_grammar_on_the_raw_input():
     description = at(schema, "properties", "input", "description")
     assert isinstance(description, str)
     assert description.endswith(f"It must match this lark grammar:\n{APPLY_PATCH_GRAMMAR}")
-    [identity] = projected.tools.values()
+    [identity] = projected.tools.by_wire.values()
     assert (identity.name, identity.namespace, identity.custom) == ("apply_patch", None, True)
 
 
@@ -351,7 +352,7 @@ def test_apply_patch_call_roundtrips_as_custom_tool_call():
     patch = "*** Begin Patch\n*** Add File: a.txt\n+a\n*** End Patch\n"
     payload = request(tools=[apply_patch_tool()])
     projected = project(payload, max_output_tokens=8192)
-    wire = next(iter(projected.tools))
+    wire = next(iter(projected.tools.by_wire))
     response = ResponsesProjection(scope(), projected.tools, codec()).complete(
         {
             "id": "msg1",
@@ -443,7 +444,7 @@ def test_continuation_never_supplies_a_missing_tool_result():
 
 @pytest.mark.parametrize("name", ["unknown_tool", "bad\nprivate-name", "a" * 129, "\ud800"])
 def test_undeclared_tool_is_rejected_with_bounded_content_free_diagnostics(caplog, name):
-    adapter = ResponsesProjection(scope(), {}, codec())
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
     adapter.consume({"type": "message_start", "message": {"id": "msg_fixture", "usage": {}}})
     with pytest.raises(ClaudeError, match="undeclared tool"):
         adapter.consume(
@@ -502,7 +503,7 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
         ]
     )
     projected = project(payload, max_output_tokens=8192)
-    wire = next(iter(projected.tools))
+    wire = next(iter(projected.tools.by_wire))
     opaque = codec()
     adapter = ResponsesProjection(scope(), projected.tools, opaque)
     response = adapter.complete(
@@ -581,7 +582,7 @@ COLLABORATION_TOOLS: list[JsonValue] = [
 
 
 def _wire_names(projected) -> dict[str, str]:
-    return {identity.name: wire for wire, identity in projected.tools.items()}
+    return {identity.name: wire for wire, identity in projected.tools.by_wire.items()}
 
 
 def test_translated_calls_to_encrypted_parameter_tools_declare_plaintext():
@@ -633,7 +634,7 @@ def test_streamed_translated_call_declares_plaintext_on_every_item():
 def _stream_tool_call(tools, *fragments):
     projected = project(request(tools=tools), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())
-    block = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools)), "input": {}}
+    block = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools.by_wire)), "input": {}}
     events = adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
     events += adapter.consume({"type": "content_block_start", "index": 0, "content_block": block})
     for fragment in fragments:
@@ -683,7 +684,7 @@ def test_streamed_malformed_tool_json_fails(fragments):
 )
 @pytest.mark.parametrize("chat_reasoning", [False, True])
 def test_terminal_semantics(stop, status, reason, chat_reasoning):
-    response = ResponsesProjection(scope(), {}, codec(), chat_reasoning=chat_reasoning).complete(
+    response = ResponsesProjection(scope(), ClaudeToolNames(), codec(), chat_reasoning=chat_reasoning).complete(
         {
             "id": "m",
             "content": [{"type": "text", "text": "answer"}],
@@ -707,7 +708,7 @@ def test_terminal_semantics(stop, status, reason, chat_reasoning):
 
 
 def test_streamed_refusal_fails_as_prompt_policy_and_stop_log_has_counts_only(caplog):
-    adapter = ResponsesProjection(scope(), {}, codec())
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
     native_events: list[dict[str, JsonValue]] = [
         {"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 5}}},
         {
@@ -741,7 +742,12 @@ def test_streamed_refusal_fails_as_prompt_policy_and_stop_log_has_counts_only(ca
 def _open_tool_stream(stop_reason: str | None) -> tuple[ResponsesProjection, list[dict[str, JsonValue]]]:
     projected = project(request(tools=NO_ARGUMENT_TOOL), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())
-    tool: dict[str, JsonValue] = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools)), "input": {}}
+    tool: dict[str, JsonValue] = {
+        "type": "tool_use",
+        "id": "call",
+        "name": next(iter(projected.tools.by_wire)),
+        "input": {},
+    }
     stream: list[dict[str, JsonValue]] = [
         {"type": "message_start", "message": {"id": "m", "usage": {}}},
         {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
@@ -774,7 +780,12 @@ def test_mid_stream_refusal_discards_the_open_tool_call():
 def _completed_tool_stream() -> tuple[ResponsesProjection, list[dict[str, JsonValue]]]:
     projected = project(request(tools=NO_ARGUMENT_TOOL), max_output_tokens=8192)
     adapter = ResponsesProjection(scope(), projected.tools, codec())
-    tool: dict[str, JsonValue] = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools)), "input": {}}
+    tool: dict[str, JsonValue] = {
+        "type": "tool_use",
+        "id": "call",
+        "name": next(iter(projected.tools.by_wire)),
+        "input": {},
+    }
     events = []
     stream: list[dict[str, JsonValue]] = [
         {"type": "message_start", "message": {"id": "m", "usage": {}}},
@@ -839,7 +850,7 @@ def test_refusal_discards_held_tool_calls_and_logs_its_category(caplog):
     "details,category", [({"category": "bio"}, "bio"), ({"category": "a b\n"}, "unrecognized"), (None, None)]
 )
 def test_refusal_without_delivered_output_needs_no_history_record(caplog, details, category):
-    adapter = ResponsesProjection(scope(), {}, codec())
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
     delta: dict[str, JsonValue] = {"stop_reason": "refusal", **({"stop_details": details} if details else {})}
     stream: list[dict[str, JsonValue]] = [
         {"type": "message_start", "message": {"id": "m", "usage": {}}},
@@ -875,7 +886,7 @@ def test_unfinished_non_refusal_stop_fails_with_diagnostics(caplog, stop_reason,
 
 def test_empty_end_turn_stop_log_records_no_blocks(caplog):
     with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
-        response = ResponsesProjection(scope(), {}, codec()).complete(
+        response = ResponsesProjection(scope(), ClaudeToolNames(), codec()).complete(
             {"id": "m", "content": [], "stop_reason": "end_turn", "usage": {"output_tokens": 0}}
         )
     assert response["status"] == "completed"
@@ -887,7 +898,7 @@ def test_empty_end_turn_stop_log_records_no_blocks(caplog):
 
 def test_stream_lifecycle_and_signature_deltas():
     opaque = codec()
-    adapter = ResponsesProjection(scope(), {}, opaque)
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), opaque)
     events = []
     native_events: list[dict[str, JsonValue]] = [
         {"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 12}}},
@@ -916,7 +927,7 @@ def test_stream_lifecycle_and_signature_deltas():
 
 
 def test_early_stop_is_not_completed():
-    adapter = ResponsesProjection(scope(), {}, codec())
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
     adapter.consume({"type": "message_start", "message": {"id": "m"}})
     with pytest.raises(ClaudeError):
         adapter.consume({"type": "message_stop"})

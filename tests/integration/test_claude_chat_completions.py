@@ -119,7 +119,6 @@ async def test_claude_chat_rejects_thinking_sampling_conflicts(async_client, poo
 
 
 async def test_claude_chat_tool_followup_reconstructs_portable_history(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     tool = {
         "type": "function",
@@ -135,7 +134,7 @@ async def test_claude_chat_tool_followup_reconstructs_portable_history(async_cli
             {
                 "type": "tool_use",
                 "id": "tool_1",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {"city": "Berlin"},
             }
         ],
@@ -311,7 +310,6 @@ async def test_claude_object_tool_choice_none_reaches_messages(async_client, poo
 
 
 async def test_claude_chat_restores_signed_tool_reasoning_for_same_client(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     key, _ = await _create_limited_key(async_client, pool[0], name="claude-chat-signed-replay")
@@ -328,13 +326,13 @@ async def test_claude_chat_restores_signed_tool_reasoning_for_same_client(async_
             {
                 "type": "tool_use",
                 "id": "tool_signed_1",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {"city": "Berlin"},
             },
             {
                 "type": "tool_use",
                 "id": "tool_signed_2",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {"city": "Paris"},
             },
         ],
@@ -416,7 +414,6 @@ async def test_claude_chat_missing_signed_tool_replay_reconstructs(async_client,
 
 
 async def test_claude_chat_signed_replay_is_bound_to_api_key(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     first_key, _ = await _create_limited_key(async_client, pool[0], name="claude-chat-owner")
@@ -430,7 +427,7 @@ async def test_claude_chat_signed_replay_is_bound_to_api_key(async_client, pool,
             {
                 "type": "tool_use",
                 "id": "key_bound_call",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {},
             },
         ],
@@ -483,7 +480,6 @@ async def test_claude_chat_signed_replay_is_bound_to_api_key(async_client, pool,
 
 
 async def test_claude_chat_later_tool_turn_matches_canonical_visible_history(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     key, _ = await _create_limited_key(async_client, pool[0], name="claude-chat-later-turn")
@@ -500,7 +496,7 @@ async def test_claude_chat_later_tool_turn_matches_canonical_visible_history(asy
                 {
                     "type": "tool_use",
                     "id": f"later_call_{index}",
-                    "name": ToolIdentity("lookup", None, False).wire_name,
+                    "name": "Lookup",
                     "input": {"step": index},
                 },
             ],
@@ -539,7 +535,6 @@ async def test_claude_chat_later_tool_turn_matches_canonical_visible_history(asy
 
 
 async def test_claude_chat_owner_unavailable_reconstructs_on_other_account(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     created = await async_client.post(
@@ -556,7 +551,7 @@ async def test_claude_chat_owner_unavailable_reconstructs_on_other_account(async
             {
                 "type": "tool_use",
                 "id": "owner_call",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {},
             },
         ],
@@ -606,7 +601,6 @@ async def test_claude_chat_owner_unavailable_reconstructs_on_other_account(async
 
 async def test_claude_chat_ambiguous_signed_replay_reconstructs_visible_cycle(async_client, pool, monkeypatch):
     from app.core.config.settings import get_settings
-    from app.modules.claude.protocol import ToolIdentity
     from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 
     await _enable_api_key_auth(async_client)
@@ -621,7 +615,7 @@ async def test_claude_chat_ambiguous_signed_replay_reconstructs_visible_cycle(as
             {
                 "type": "tool_use",
                 "id": "ambiguous_call",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {},
             },
         ],
@@ -680,7 +674,6 @@ async def test_claude_chat_ambiguous_signed_replay_reconstructs_visible_cycle(as
 
 
 async def test_claude_chat_model_switch_reconstructs_without_old_signature(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     key, _ = await _create_limited_key(async_client, pool[0], name="claude-chat-model-switch")
@@ -694,7 +687,7 @@ async def test_claude_chat_model_switch_reconstructs_without_old_signature(async
             {
                 "type": "tool_use",
                 "id": "model_call",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {},
             },
         ],
@@ -777,7 +770,6 @@ async def test_claude_chat_reconstructs_image_tool_result_without_losing_media(a
 
 
 async def test_claude_chat_stream_retains_signed_tool_turn_before_followup(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     key, _ = await _create_limited_key(async_client, pool[0], name="claude-chat-stream-replay")
@@ -791,7 +783,7 @@ async def test_claude_chat_stream_retains_signed_tool_turn_before_followup(async
             {
                 "type": "tool_use",
                 "id": "stream_replay_call",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {},
             },
         ],
@@ -841,7 +833,6 @@ async def test_claude_chat_stream_retains_signed_tool_turn_before_followup(async
 
 
 async def test_claude_chat_truncated_tool_stream_does_not_seed_signed_replay(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     await _enable_api_key_auth(async_client)
     key, _ = await _create_limited_key(async_client, pool[0], name="claude-chat-truncated-replay")
@@ -854,7 +845,7 @@ async def test_claude_chat_truncated_tool_stream_does_not_seed_signed_replay(asy
             {
                 "type": "tool_use",
                 "id": "unfinished_call",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {},
             },
         ],
@@ -1044,7 +1035,6 @@ async def test_claude_chat_stream_exposes_reasoning_delta_without_signature(asyn
 
 
 async def test_claude_chat_stream_emits_function_call_and_usage(async_client, pool, monkeypatch):
-    from app.modules.claude.protocol import ToolIdentity
 
     install_upstream(
         monkeypatch,
@@ -1053,7 +1043,7 @@ async def test_claude_chat_stream_emits_function_call_and_usage(async_client, po
             {
                 "type": "tool_use",
                 "id": "tool_stream_1",
-                "name": ToolIdentity("lookup", None, False).wire_name,
+                "name": "Lookup",
                 "input": {"city": "Berlin"},
             }
         ],

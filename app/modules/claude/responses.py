@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field, JsonValue, model_validator
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
-from app.modules.claude.protocol import ToolIdentity
 from app.modules.claude.search import url_citations
+from app.modules.claude.tool_names import ClaudeToolNames, ToolIdentity
 from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class Usage(BaseModel):
 @dataclass
 class ResponsesProjection:
     scope: OpaqueScope
-    tools: dict[str, ToolIdentity]
+    tools: ClaudeToolNames
     opaque: ClaudeOpaqueState
     search_enabled: bool = False
     chat_reasoning: bool = False
@@ -110,6 +110,8 @@ class ResponsesProjection:
     outputs: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     partial_json: dict[int, str] = field(default_factory=dict)
     partial_json_bytes: dict[int, int] = field(default_factory=dict)
+    # The client tool behind each tool_use block, by content index.
+    called_tools: dict[int, ToolIdentity] = field(default_factory=dict)
     search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
     block_types: Counter[str] = field(default_factory=Counter)
     usage: Usage = field(default_factory=Usage)
@@ -214,7 +216,7 @@ class ResponsesProjection:
             return result
         if kind == "tool_use":
             name = block.get("name")
-            identity = self.tools.get(name) if isinstance(name, str) else None
+            identity = self.tools.resolve(name) if isinstance(name, str) else None
             if identity is None:
                 logger.warning(
                     "claude_undeclared_tool source_id=%s model=%s response_id=%s content_index=%d "
@@ -230,6 +232,7 @@ class ResponsesProjection:
                     else None,
                 )
                 raise ClaudeError("Claude returned an undeclared tool")
+            self.called_tools[index] = identity
             arguments = block.get("input", {})
             if not isinstance(arguments, dict):
                 raise ClaudeError("Claude tool input must be an object")
@@ -367,7 +370,7 @@ class ResponsesProjection:
                 if not piece:
                     # Claude streams argument-less calls as one empty fragment; the block keeps its start input.
                     return []
-                identity = self.tools.get(str(block.get("name")))
+                identity = self.called_tools.get(index)
                 wrapped = identity is not None and identity.arguments is not None
                 if wrapped:
                     size = self.partial_json_bytes.get(index, 0) + len(piece.encode())
@@ -421,7 +424,7 @@ class ResponsesProjection:
             self.partial_json_bytes.pop(index, None)
             try:
                 raw = self.partial_json.pop(index)
-                identity = self.tools.get(str(block.get("name")))
+                identity = self.called_tools.get(index)
                 block["input"] = (
                     identity.arguments.parse(raw)
                     if identity is not None and identity.arguments is not None
@@ -470,7 +473,7 @@ class ResponsesProjection:
                 ]
             )
         elif item["type"] == "function_call":
-            identity = self.tools[str(block["name"])]
+            identity = self.called_tools[index]
             if identity.arguments is not None:
                 events.append(
                     self.event(
