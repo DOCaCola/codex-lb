@@ -722,6 +722,7 @@ async def test_usage_7d_sums_only_recent_request_logs(async_client):
                 "unpricedRequests": 0,
                 "unmeteredRequests": 0,
                 "isDeleted": False,
+                "chartColor": None,
             }
         ],
     }
@@ -782,6 +783,7 @@ async def test_usage_7d_clamps_cached_input_tokens_to_total_input(async_client):
                 "unpricedRequests": 0,
                 "unmeteredRequests": 0,
                 "isDeleted": False,
+                "chartColor": None,
             }
         ],
     }
@@ -833,6 +835,7 @@ async def test_usage_7d_keeps_unknown_account_usage_separate_from_deleted_accoun
             "unpricedRequests": 0,
             "unmeteredRequests": 0,
             "isDeleted": True,
+            "chartColor": None,
         },
         {
             "accountId": None,
@@ -844,6 +847,7 @@ async def test_usage_7d_keeps_unknown_account_usage_separate_from_deleted_accoun
             "unpricedRequests": 0,
             "unmeteredRequests": 0,
             "isDeleted": False,
+            "chartColor": None,
         },
     ]
 
@@ -871,7 +875,13 @@ async def test_usage_7d_attributes_cost_to_provider_accounts_by_name(
                     last_refresh=now,
                     status=AccountStatus.ACTIVE,
                 ),
-                ModelSource(id="src-claude", name="Team Claude", kind="claude", base_url="https://claude.invalid"),
+                ModelSource(
+                    id="src-claude",
+                    name="Team Claude",
+                    kind="claude",
+                    base_url="https://claude.invalid",
+                    chart_color=4,
+                ),
             ]
         )
         await session.commit()
@@ -905,14 +915,15 @@ async def test_usage_7d_attributes_cost_to_provider_accounts_by_name(
             entry["name"],
             entry["costUsd"],
             entry["isDeleted"],
+            entry["chartColor"],
         )
         for entry in response.json()["accountCosts"]
     ]
     assert entries == [
-        ("acc-provider-codex", None, "codex", "Alpha", 0.4, False),
-        (None, "src-claude", "claude", "Team Claude", 0.3, False),
-        (None, None, None, None, 0.2, True),
-        (None, None, None, None, 0.1, False),
+        ("acc-provider-codex", None, "codex", "Alpha", 0.4, False, 0),
+        (None, "src-claude", "claude", "Team Claude", 0.3, False, 4),
+        (None, None, None, None, 0.2, True, None),
+        (None, None, None, None, 0.1, False, None),
     ]
 
 

@@ -3,9 +3,33 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { AccountCards } from "@/features/dashboard/components/account-cards";
+import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
 import { createAccountSummary } from "@/test/mocks/factories";
 
 describe("AccountCards", () => {
+  it("paints each provider logo in its account colour", () => {
+    const openRouter = createOpenRouterAccount();
+    render(
+      <MemoryRouter>
+        <AccountCards
+          accounts={[createAccountSummary({ accountId: "acc-1" }), createAccountSummary({ accountId: "acc-2" })]}
+          openRouterAccounts={[openRouter]}
+          accountColors={{
+            accounts: new Map([["acc-1", "#3b82f6"]]),
+            modelSources: new Map([[openRouter.id, "#ec4899"]]),
+          }}
+          onAction={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    const [first, second] = screen.getAllByTestId("codex-account-card");
+    expect((first.querySelector("[data-provider='codex']") as HTMLElement).style.backgroundColor).toBe("rgb(59, 130, 246)");
+    expect(second.querySelector("img[data-provider='codex']")).not.toBeNull();
+    const openRouterLogo = screen.getByTestId("openrouter-account-card").querySelector("[data-provider='openrouter']") as HTMLElement;
+    expect(openRouterLogo.style.backgroundColor).toBe("rgb(236, 72, 153)");
+  });
+
   it("shows every account card in full without an inner scroll area", () => {
     render(
       <AccountCards

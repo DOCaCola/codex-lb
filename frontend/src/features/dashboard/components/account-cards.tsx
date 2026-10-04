@@ -13,11 +13,13 @@ import type { OpenRouterAccount } from "@/features/openrouter/api";
 import { OpenRouterAccountCard } from "@/features/openrouter/account-display";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeAccountCard } from "@/features/claude/account-display";
+import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 
 export type AccountCardsProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
   claudeAccounts?: ClaudeAccount[];
+  accountColors?: AccountColorHexes;
   readOnly?: boolean;
   onAction?: AccountCardProps["onAction"];
 };
@@ -26,6 +28,7 @@ export function AccountCards({
   accounts,
   openRouterAccounts = [],
   claudeAccounts = [],
+  accountColors = NO_ACCOUNT_COLORS,
   readOnly = false,
   onAction,
 }: AccountCardsProps) {
@@ -55,18 +58,24 @@ export function AccountCards({
       <AccountCard
         key={`codex:${account.accountId}`}
         account={account}
+        color={accountColors.accounts.get(account.accountId)}
         showAccountId={account.isEmailDuplicate === true}
         readOnly={readOnly}
         onAction={onAction}
       />
     )),
     ...claudeAccounts.map((account) => (
-      <ClaudeAccountCard key={`claude:${account.id}`} account={account} />
+      <ClaudeAccountCard
+        key={`claude:${account.id}`}
+        account={account}
+        color={accountColors.modelSources.get(account.id)}
+      />
     )),
     ...openRouterAccounts.map((account) => (
       <OpenRouterAccountCard
         key={`openrouter:${account.id}`}
         account={account}
+        color={accountColors.modelSources.get(account.id)}
       />
     )),
   ];

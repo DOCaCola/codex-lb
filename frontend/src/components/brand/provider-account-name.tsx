@@ -8,7 +8,7 @@ function providerLogoUrl(provider: AccountProvider): string {
   return `/images/providers/${provider === "codex" ? "openai" : provider}.svg`;
 }
 
-/** Brand logo; with `color`, the logo shape is painted in that colour (for chart legends). */
+/** Brand logo; with `color`, the logo shape is painted in the account's chart colour. */
 export function ProviderLogo({ provider, color }: { provider: AccountProvider; color?: string }) {
   if (color) {
     const mask = `url(${providerLogoUrl(provider)}) center / contain no-repeat`;
@@ -34,13 +34,14 @@ export function ProviderLogo({ provider, color }: { provider: AccountProvider; c
   );
 }
 
-export function ProviderAccountName({ provider, children }: {
+export function ProviderAccountName({ provider, color, children }: {
   provider: AccountProvider | null;
+  color?: string;
   children: ReactNode;
 }) {
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 align-middle">
-      {provider ? <ProviderLogo provider={provider} /> : null}
+      {provider ? <ProviderLogo provider={provider} color={color} /> : null}
       <span className="min-w-0 truncate">{children}</span>
     </span>
   );

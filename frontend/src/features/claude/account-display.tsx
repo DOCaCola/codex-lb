@@ -27,10 +27,10 @@ import { normalizeStatus } from "@/utils/account-status";
 
 import { claudeStatus } from "./display-values";
 
-export function ClaudeName({ account }: { account: ClaudeAccount }) {
+export function ClaudeName({ account, color }: { account: ClaudeAccount; color?: string }) {
   const blurred = usePrivacyStore((s) => s.blurred);
   return (
-    <ProviderAccountName provider="claude">
+    <ProviderAccountName provider="claude" color={color}>
       <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
     </ProviderAccountName>
   );
@@ -176,12 +176,12 @@ export function ClaudeListItem({
   );
 }
 
-export function ClaudeAccountCard({ account }: { account: ClaudeAccount }) {
+export function ClaudeAccountCard({ account, color }: { account: ClaudeAccount; color?: string }) {
   const { t } = useTranslation();
   return (
     <AccountCardSurface
       data-testid="claude-account-card"
-      title={<ClaudeName account={account} />}
+      title={<ClaudeName account={account} color={color} />}
       subtitle={<>Claude · <ClaudePlan account={account} /></>}
       status={
         <span className="flex items-center gap-2">

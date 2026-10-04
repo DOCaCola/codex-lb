@@ -17,6 +17,7 @@ import {
 import { SpinnerBlock } from "@/components/ui/spinner";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { useAccountMutations } from "@/features/accounts/hooks/use-accounts";
+import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
@@ -56,7 +57,6 @@ import {
   type OverviewTimeframe,
 } from "@/features/dashboard/schemas";
 import { useDashboardPreferencesStore } from "@/hooks/use-dashboard-preferences";
-import { useThemeStore } from "@/hooks/use-theme";
 import { REQUEST_STATUS_LABELS } from "@/utils/constants";
 import { getErrorMessageOrNull } from "@/utils/errors";
 import {
@@ -85,7 +85,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const isDark = useThemeStore((s) => s.theme === "dark");
+  const accountColors = useAccountColorHexes();
   const showAccountBurnrate = useDashboardPreferencesStore(
     (s) => s.accountBurnrateEnabled,
   );
@@ -292,7 +292,7 @@ export function DashboardPage() {
       overview,
       logPage?.requests ?? [],
       {
-        isDark,
+        accountColors: accountColors.accounts,
         showAccountBurnrate,
       },
       projectionsQuery.data,
@@ -300,7 +300,7 @@ export function DashboardPage() {
   }, [
     overview,
     logPage,
-    isDark,
+    accountColors,
     showAccountBurnrate,
     projectionsQuery.data,
     resolvedLanguage,
@@ -626,6 +626,7 @@ export function DashboardPage() {
                 accounts={overview?.accounts ?? []}
                 openRouterAccounts={openRouterAccounts}
                 claudeAccounts={claudeAccounts}
+                accountColors={accountColors}
                 readOnly={!canWriteAccounts}
                 sort={accountListSort}
                 onSortChange={setAccountListSort}
@@ -636,6 +637,7 @@ export function DashboardPage() {
                 accounts={overview?.accounts ?? []}
                 openRouterAccounts={openRouterAccounts}
                 claudeAccounts={claudeAccounts}
+                accountColors={accountColors}
                 readOnly={!canWriteAccounts}
                 onAction={handleAccountAction}
               />

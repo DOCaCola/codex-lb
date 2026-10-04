@@ -44,6 +44,8 @@ const ApiKeyAccountCostSchema = z.object({
   unpricedRequests: z.number().int().nonnegative().optional().default(0),
   unmeteredRequests: z.number().int().nonnegative().optional().default(0),
   isDeleted: z.boolean().default(false),
+  /** The account's chart palette index; null for deleted or unattributed usage. */
+  chartColor: z.number().int().nullable().default(null),
 });
 
 export const ApiKeyUsage7DayResponseSchema = z.object({

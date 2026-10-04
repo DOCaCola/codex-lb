@@ -15,6 +15,8 @@ export type AccountNameEditorProps = {
   help?: string;
   /** Saving an empty draft sends null (clears the name) instead of being blocked. */
   allowEmpty?: boolean;
+  /** Extra heading controls shown after the rename button while not editing. */
+  accessory?: ReactNode;
   disabled: boolean;
   onSave: (value: string | null) => Promise<unknown>;
 };
@@ -28,6 +30,7 @@ export function AccountNameEditor({
   placeholder,
   help,
   allowEmpty = false,
+  accessory,
   disabled,
   onSave,
 }: AccountNameEditorProps) {
@@ -111,6 +114,7 @@ export function AccountNameEditor({
       >
         <Pencil className="size-3.5" />
       </Button>
+      {accessory}
     </div>
   );
 }

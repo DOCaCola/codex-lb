@@ -21,7 +21,7 @@ export function useOpenRouter() {
   const query = useOpenRouterAccounts();
   const invalidate = async () => {
     await Promise.all(
-      ["openrouter-accounts", "model-sources", "models"].map((key) =>
+      ["openrouter-accounts", "model-sources", "models", "account-colors"].map((key) =>
         client.invalidateQueries({ queryKey: [key] }),
       ),
     );

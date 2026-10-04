@@ -2,6 +2,7 @@ import { Image, KeyRound, Layers, RefreshCw, Trash2 } from "lucide-react";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
+import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { useTranslation } from "react-i18next";
@@ -61,6 +62,7 @@ export function OpenRouterAccountDetail({
           value={account.name}
           labels={{ edit: "Rename account", input: "Account name", save: "Save name", cancel: t("common.cancel") }}
           disabled={readOnly || busy}
+          accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={readOnly || busy} />}
           onSave={(name) => onRename(name ?? account.name)}
         >
           <OpenRouterName account={account} />

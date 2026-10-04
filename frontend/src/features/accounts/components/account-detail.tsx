@@ -5,6 +5,7 @@ import { isEmailLabel } from "@/components/blur-email";
 import { cn } from "@/lib/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountActions } from "@/features/accounts/components/account-actions";
+import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
 import { CodexModelControls } from "./codex-model-controls";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
@@ -246,6 +247,7 @@ function AccountNameField({
       help={t("accounts.detail.aliasHelp")}
       allowEmpty
       disabled={busy || readOnly}
+      accessory={<AccountColorPicker target={{ accountId }} disabled={busy || readOnly} />}
       onSave={(value) => onSetAlias(accountId, value)}
     >
       <ProviderAccountName provider="codex">

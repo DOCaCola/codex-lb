@@ -13,7 +13,7 @@ export function useClaude() {
   const client = useQueryClient();
   const invalidate = async () => {
     await Promise.all(
-      ["claude-accounts", "model-sources", "models"].map((key) =>
+      ["claude-accounts", "model-sources", "models", "account-colors"].map((key) =>
         client.invalidateQueries({ queryKey: [key] }),
       ),
     );

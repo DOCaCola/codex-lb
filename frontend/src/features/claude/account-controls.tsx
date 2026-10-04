@@ -21,6 +21,7 @@ import { ClaudeResetGrants } from "./reset-grants";
 import { ModelSelection } from "./model-selection";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
+import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -89,6 +90,7 @@ export function ClaudeAccountControls({
             cancel: "Cancel",
           }}
           disabled={readOnly || busy}
+          accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={readOnly || busy} />}
           onSave={(name) =>
             run(() =>
               api.update.mutateAsync({

@@ -37,6 +37,8 @@ export type AccountAction =
 
 export type AccountCardProps = {
   account: AccountSummary;
+  /** The account's chart colour, used for its logo. */
+  color?: string;
   showAccountId?: boolean;
   readOnly?: boolean;
   onAction?: (account: AccountSummary, action: AccountAction) => void;
@@ -44,6 +46,7 @@ export type AccountCardProps = {
 
 export function AccountCard({
   account,
+  color,
   showAccountId = false,
   readOnly = false,
   onAction,
@@ -183,7 +186,11 @@ export function AccountCard({
   return (
     <AccountCardSurface
       data-testid="codex-account-card"
-      title={<ProviderAccountName provider="codex">{blurred ? <span className="privacy-blur">{title}</span> : title}</ProviderAccountName>}
+      title={
+        <ProviderAccountName provider="codex" color={color}>
+          {blurred ? <span className="privacy-blur">{title}</span> : title}
+        </ProviderAccountName>
+      }
       subtitle={
         <>
           {planLabel}

@@ -12,6 +12,7 @@ from app.core.auth.dependencies import (
 )
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.dependencies import ApiKeysContext, get_api_keys_context
+from app.modules.account_colors.service import AccountColorService
 from app.modules.api_keys.repository import ApiKeyOwnerDisabledError
 from app.modules.api_keys.schemas import (
     ApiKeyAccountCostResponse,
@@ -356,6 +357,9 @@ async def get_api_key_usage_7d(
     result = await context.service.get_key_usage_7d(key_id)
     if result is None:
         raise DashboardNotFoundError(f"API key not found: {key_id}")
+    colors = await AccountColorService(context.session).colors()
+    account_colors = {entry.account_id: entry.color for entry in colors if entry.account_id}
+    source_colors = {entry.model_source_id: entry.color for entry in colors if entry.model_source_id}
     return ApiKeyUsage7DayResponse(
         key_id=result.key_id,
         total_tokens=result.total_tokens,
@@ -376,6 +380,13 @@ async def get_api_key_usage_7d(
                 unpriced_requests=ac.unpriced_requests,
                 unmetered_requests=ac.unmetered_requests,
                 is_deleted=ac.is_deleted,
+                chart_color=(
+                    account_colors.get(ac.account_id)
+                    if ac.account_id
+                    else source_colors.get(ac.model_source_id)
+                    if ac.model_source_id
+                    else None
+                ),
             )
             for ac in result.account_costs
         ],

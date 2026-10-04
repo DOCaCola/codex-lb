@@ -2,8 +2,8 @@ import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Cell, Pie, PieChart, Sector, type PieSectorShapeProps } from "@/components/lazy-recharts";
 
-import { buildDonutPalette } from "@/utils/colors";
 import { ProviderLogo, type AccountProvider } from "@/components/brand/provider-account-name";
+import { accountColorPalette } from "@/features/accounts/account-colors";
 import { formatCurrency } from "@/utils/formatters";
 import { formatCoveredCostShort, type CostCoverage } from "@/features/dashboard/cost-coverage";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -46,7 +46,10 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
 
 	const { chartData, legendItems } = useMemo(() => {
 		const visibleCosts = accountCosts.filter((ac) => (ac.costUsd ?? 0) > 0 || (ac.unpricedRequests ?? 0) > 0 || (ac.unmeteredRequests ?? 0) > 0);
-		const palette = buildDonutPalette(visibleCosts.length, isDark);
+		const palette = accountColorPalette(isDark);
+		// Unattributed usage takes the first colour no account in this chart shows.
+		const shown = new Set(visibleCosts.map((ac) => ac.chartColor));
+		const unknownColor = palette.find((_, index) => !shown.has(index)) ?? consumedColor;
 
 		const items = visibleCosts.map((ac, i) => {
 			const isDeleted = ac.isDeleted;
@@ -57,7 +60,7 @@ export function AccountCostDonut({ accountCosts, totalCostUsd, totalCoverage }: 
 				isDeleted,
 				value: ac.costUsd ?? 0,
 				coverage: ac,
-				color: isDeleted ? consumedColor : palette[i % palette.length],
+				color: isDeleted ? consumedColor : ac.chartColor === null ? unknownColor : palette[ac.chartColor],
 			};
 		});
 
@@ -214,5 +217,10 @@ function LegendMarker({ provider, color }: { provider: AccountProvider | null; c
   if (provider) {
     return <ProviderLogo provider={provider} color={color} />;
   }
-  return <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />;
+  // Same footprint as a provider logo, so every legend label starts at the same offset.
+  return (
+    <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+      <span className="size-2.5 rounded-full" style={{ backgroundColor: color }} />
+    </span>
+  );
 }

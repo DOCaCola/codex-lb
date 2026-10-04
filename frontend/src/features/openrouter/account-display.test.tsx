@@ -14,6 +14,9 @@ import { OpenRouterAccountDetail } from "./account-detail";
 vi.mock("@/features/accounts/components/provider-account-trends", () => ({
   ProviderAccountTrends: () => <div>Account trends</div>,
 }));
+vi.mock("@/features/accounts/components/account-color-picker", () => ({
+  AccountColorPicker: () => null,
+}));
 
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 

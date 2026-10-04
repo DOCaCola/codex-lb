@@ -31,6 +31,7 @@ import type {
 async function invalidateAccountRelatedQueries(queryClient: ReturnType<typeof useQueryClient>, accountId?: string) {
   const invalidations = [
     queryClient.invalidateQueries({ queryKey: ["accounts", "list"] }),
+    queryClient.invalidateQueries({ queryKey: ["account-colors"] }),
     queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] }),
     queryClient.invalidateQueries({ queryKey: ["dashboard", "projections"] }),
   ];

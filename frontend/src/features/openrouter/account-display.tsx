@@ -23,10 +23,10 @@ import {
   keyAllowance,
 } from "./display-values";
 
-export function OpenRouterName({ account }: { account: OpenRouterAccount }) {
+export function OpenRouterName({ account, color }: { account: OpenRouterAccount; color?: string }) {
   const blurred = usePrivacyStore((s) => s.blurred);
   return (
-    <ProviderAccountName provider="openrouter">
+    <ProviderAccountName provider="openrouter" color={color}>
       <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
     </ProviderAccountName>
   );
@@ -228,8 +228,10 @@ export function OpenRouterListItem({
 
 export function OpenRouterAccountCard({
   account,
+  color,
 }: {
   account: OpenRouterAccount;
+  color?: string;
 }) {
   const { t } = useTranslation();
   const stale = !!(
@@ -240,7 +242,7 @@ export function OpenRouterAccountCard({
   return (
     <AccountCardSurface
       data-testid="openrouter-account-card"
-      title={<OpenRouterName account={account} />}
+      title={<OpenRouterName account={account} color={color} />}
       subtitle={
         <>
           OpenRouter · <OpenRouterTier account={account} />

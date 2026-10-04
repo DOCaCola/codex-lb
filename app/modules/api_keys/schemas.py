@@ -152,6 +152,8 @@ class ApiKeyAccountCostResponse(DashboardModel):
     unpriced_requests: int = 0
     unmetered_requests: int = 0
     is_deleted: bool = False
+    # Effective chart palette index of the account; None for deleted or unattributed usage.
+    chart_color: int | None = None
 
 
 class ApiKeyUsage7DayResponse(DashboardModel):

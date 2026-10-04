@@ -33,6 +33,7 @@ import type { OpenRouterAccount } from "@/features/openrouter/api";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeName, ClaudePlan } from "@/features/claude/account-display";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
+import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import { claudeStatus } from "@/features/claude/display-values";
 import { OpenRouterName, OpenRouterTier } from "@/features/openrouter/account-display";
 import {
@@ -63,6 +64,7 @@ type AccountListProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
   claudeAccounts?: ClaudeAccount[];
+  accountColors?: AccountColorHexes;
   readOnly?: boolean;
   sort?: AccountListSort;
   onSortChange?: (sort: AccountListSort) => void;
@@ -421,6 +423,7 @@ export function AccountList({
   accounts,
   openRouterAccounts = [],
   claudeAccounts = [],
+  accountColors = NO_ACCOUNT_COLORS,
   readOnly = false,
   sort: controlledSort,
   onSortChange,
@@ -578,9 +581,21 @@ export function AccountList({
         </div>
         {sortedAccounts.map((entry, index) => {
           if (entry.kind === "openrouter")
-            return <OpenRouterRow key={entry.id} account={entry.account} />;
+            return (
+              <OpenRouterRow
+                key={entry.id}
+                account={entry.account}
+                color={accountColors.modelSources.get(entry.account.id)}
+              />
+            );
           if (entry.kind === "claude")
-            return <ClaudeRow key={entry.id} account={entry.account} />;
+            return (
+              <ClaudeRow
+                key={entry.id}
+                account={entry.account}
+                color={accountColors.modelSources.get(entry.account.id)}
+              />
+            );
           const account = entry.account;
           const status = normalizeStatus(account.status);
           const title = accountTitle(account);
@@ -631,7 +646,7 @@ export function AccountList({
             >
               <div className="min-w-0">
                 <p className="truncate font-medium leading-tight">
-                  <ProviderAccountName provider="codex">
+                  <ProviderAccountName provider="codex" color={accountColors.accounts.get(account.accountId)}>
                   <span className={blurred ? "privacy-blur" : undefined}>
                     {title}
                   </span>
@@ -780,7 +795,7 @@ export function AccountList({
   );
 }
 
-function ClaudeRow({ account }: { account: ClaudeAccount }) {
+function ClaudeRow({ account, color }: { account: ClaudeAccount; color: string | undefined }) {
   return (
     <div
       data-testid="account-list-row"
@@ -789,7 +804,7 @@ function ClaudeRow({ account }: { account: ClaudeAccount }) {
     >
       <div className="min-w-0">
         <p className="truncate font-medium">
-          <ClaudeName account={account} />
+          <ClaudeName account={account} color={color} />
         </p>
         <p className="text-xs text-muted-foreground">
           {account.state.selections.length} {account.state.selections.length === 1 ? "model" : "models"} selected
@@ -827,7 +842,7 @@ function ClaudeRow({ account }: { account: ClaudeAccount }) {
   );
 }
 
-function OpenRouterRow({ account }: { account: OpenRouterAccount }) {
+function OpenRouterRow({ account, color }: { account: OpenRouterAccount; color: string | undefined }) {
   const state = account.state;
   return (
     <div
@@ -837,7 +852,7 @@ function OpenRouterRow({ account }: { account: OpenRouterAccount }) {
     >
       <div className="min-w-0">
         <p className="truncate font-medium leading-tight">
-          <OpenRouterName account={account} />
+          <OpenRouterName account={account} color={color} />
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           {state.selections.length} models selected

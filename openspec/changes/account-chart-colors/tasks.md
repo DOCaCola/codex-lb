@@ -1,0 +1,6 @@
+- [x] Add nullable `chart_color` to accounts and model sources with a migration.
+- [x] Resolve account colours in one backend service and expose read and update routes.
+- [x] Embed resolved colours in API-key cost entries.
+- [x] Add the account colour popover to Codex, Claude and OpenRouter account details.
+- [x] Use resolved colours for dashboard donuts, account cards, list rows and the API-key cost donut.
+- [x] Cover resolution, routes, permissions, the popover and coloured charts with tests.

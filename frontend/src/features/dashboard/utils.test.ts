@@ -782,7 +782,7 @@ describe("buildDashboardView", () => {
     );
 
     const overview = DashboardOverviewSchema.parse(rawOverview);
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
 
     const pace = view.weeklyCreditPace;
     expect(pace).not.toBeNull();
@@ -809,7 +809,7 @@ describe("buildDashboardView", () => {
     );
 
     const overview = DashboardOverviewSchema.parse(rawOverview);
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
 
     const pace = view.weeklyCreditPace;
     expect(pace).not.toBeNull();
@@ -826,7 +826,7 @@ describe("buildDashboardView", () => {
     const overviewPace = serverWeeklyPace({ runwayStatus: "safe" });
     const overview = { ...createDashboardOverview(), weeklyCreditPace: overviewPace };
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false, {
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: null,
     });
 
@@ -840,7 +840,7 @@ describe("buildDashboardView", () => {
     const staleProjectionsPace = serverWeeklyPace({ runwayStatus: "safe", headroomPercent: 40, headroomCredits: 40_320 });
     const overview = { ...createDashboardOverview(), weeklyCreditPace: overviewPace };
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false, {
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: staleProjectionsPace,
     });
 
@@ -852,7 +852,7 @@ describe("buildDashboardView", () => {
     expect(overview.weeklyCreditPace).toBeUndefined();
     const projectionsPace = serverWeeklyPace({ runwayStatus: "safe", headroomPercent: 40, headroomCredits: 40_320 });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false, {
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: projectionsPace,
     });
 
@@ -865,7 +865,7 @@ describe("buildDashboardView", () => {
     const overview = { ...createDashboardOverview(), weeklyCreditPace: null };
     const projectionsPace = serverWeeklyPace({ runwayStatus: "safe", headroomPercent: 40, headroomCredits: 40_320 });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false, {
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: projectionsPace,
     });
 
@@ -915,7 +915,7 @@ describe("buildDashboardView", () => {
       ],
     });
 
-    const view = buildDashboardView({ ...overview, weeklyCreditPace: serverPace }, createDefaultRequestLogs(), false);
+    const view = buildDashboardView({ ...overview, weeklyCreditPace: serverPace }, createDefaultRequestLogs(), {});
 
     expect(view.weeklyCreditPace).toBe(serverPace);
   });
@@ -944,7 +944,7 @@ describe("buildDashboardView", () => {
     // must still synthesize a pace locally rather than hiding the card.
     expect(buildWeeklyCreditPace(overview.accounts)).not.toBeNull();
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
 
     expect(view.weeklyCreditPace).not.toBeNull();
     expect(view.weeklyCreditPace?.accountCount).toBe(1);
@@ -1011,7 +1011,7 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
 
     expect(view.primaryUsageItems).toHaveLength(2);
     expect(view.primaryUsageItems[0]?.value).toBeCloseTo(75.6);
@@ -1096,7 +1096,7 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
 
     expect(view.primaryUsageItems).toHaveLength(1);
     expect(view.primaryUsageItems[0]?.value).toBeCloseTo(202.5);
@@ -1134,7 +1134,7 @@ describe("buildDashboardView", () => {
       ],
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const burn = view.stats[3];
 
     expect(burn.label).toBe("Account burn projection (5h/7d)");
@@ -1147,7 +1147,6 @@ describe("buildDashboardView", () => {
     const overview = createDashboardOverview();
 
     const view = buildDashboardView(overview, createDefaultRequestLogs(), {
-      isDark: false,
       showAccountBurnrate: false,
     });
 
@@ -1174,7 +1173,7 @@ describe("buildDashboardView", () => {
       ],
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const burn = view.stats[3];
 
     expect(burn.value).toBe("0.0 / 1.0");
@@ -1217,7 +1216,7 @@ describe("buildDashboardView", () => {
         },
       }),
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     const dailyView = buildDashboardView(
@@ -1261,7 +1260,7 @@ describe("buildDashboardView", () => {
         },
       }),
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(weeklyView.stats[2]?.meta).toBe("Avg/day $8.00");
@@ -1303,7 +1302,7 @@ describe("buildDashboardView", () => {
         },
       },
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(view.stats[0]?.comparison).toEqual({ text: "▲ 50%", tone: "positive" });
@@ -1329,7 +1328,7 @@ describe("buildDashboardView", () => {
         },
       },
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(view.stats[2]?.value).toBe("$15.00");
@@ -1348,7 +1347,7 @@ describe("buildDashboardView", () => {
         summary: { ...overview.summary, cost: { currency: "USD", totalUsd: 0, costCoverage: unknown } },
       },
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(view.stats[2]?.value).toBe("Unknown");
@@ -1390,7 +1389,7 @@ describe("buildDashboardView", () => {
         },
       },
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(view.stats[0]?.comparison).toBeUndefined();
@@ -1418,7 +1417,7 @@ describe("buildDashboardView", () => {
         },
       },
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(unavailableView.stats[0]?.comparison).toBeUndefined();
@@ -1442,7 +1441,7 @@ describe("buildDashboardView", () => {
         },
       },
       createDefaultRequestLogs(),
-      false,
+      {},
     );
 
     expect(zeroPreviousView.stats[0]?.comparison).toBeUndefined();
@@ -1475,7 +1474,7 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const viewWithoutBurn = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const viewWithoutBurn = buildDashboardView(overview, createDefaultRequestLogs(), {});
 
     const costIdx = viewWithoutBurn.stats.findIndex((s) => s.label.includes("Est. API Cost"));
     const convIdx = viewWithoutBurn.stats.findIndex((s) => s.label.includes("Conversations"));
@@ -1486,7 +1485,7 @@ describe("buildDashboardView", () => {
     expect(errorIdx).toBeGreaterThan(convIdx);
 
     // With burn-rate enabled, conversation should still be between cost and burn-rate
-    const viewWithBurn = buildDashboardView(overview, createDefaultRequestLogs(), { isDark: false, showAccountBurnrate: true });
+    const viewWithBurn = buildDashboardView(overview, createDefaultRequestLogs(), { showAccountBurnrate: true });
 
     const costIdxB = viewWithBurn.stats.findIndex((s) => s.label.includes("Est. API Cost"));
     const convIdxB = viewWithBurn.stats.findIndex((s) => s.label.includes("Conversations"));
@@ -1523,7 +1522,7 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const convIdx = view.stats.findIndex((s) => s.label.includes("Conversations"));
     expect(convIdx).toBe(-1);
   });
@@ -1552,7 +1551,7 @@ describe("buildDashboardView", () => {
       },
     } as Parameters<typeof buildDashboardView>[0]);
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const convIdx = view.stats.findIndex((s) => s.label.includes("Conversations"));
     expect(convIdx).toBe(-1);
   });
@@ -1582,7 +1581,7 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const convStat = view.stats.find((s) => s.label.includes("Conversations"));
     expect(convStat?.value).toBe("1,200");
     expect(convStat?.meta).toBe("Avg req/conv 0.0");
@@ -1613,7 +1612,7 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const convStat = view.stats.find((s) => s.label.includes("Conversations"));
     expect(convStat?.value).toBe("1,523");
     // Must not use compact format
@@ -1646,7 +1645,7 @@ describe("buildDashboardView", () => {
       },
     } as Parameters<typeof buildDashboardView>[0]);
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const convStat = view.stats.find((s) => s.label.includes("Active Conversations"));
     expect(convStat).toBeDefined();
     expect(convStat?.label).toBe("Active Conversations (7d)");
@@ -1678,7 +1677,7 @@ describe("buildDashboardView", () => {
       },
     } as Parameters<typeof buildDashboardView>[0]);
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(overview, createDefaultRequestLogs(), {});
     const convStat = view.stats.find((s) => s.label.includes("Active Conversations"));
     expect(convStat).toBeDefined();
     expect(convStat?.meta).toBe("Avg req/conv —");

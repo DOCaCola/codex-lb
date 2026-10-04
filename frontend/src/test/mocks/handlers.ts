@@ -409,6 +409,7 @@ function reservedUsernameRefusal(username: string | null | undefined): Response 
 
 type MockState = {
   accountModels: Record<string, { allModels: boolean; selectedModels: string[]; reasoningRestrictions: Record<string, string[]> }>;
+  accountColorPicks: Record<string, number | null>;
   accounts: AccountSummary[];
   requestLogs: RequestLogEntry[];
   conversations: ConversationEntry[];
@@ -504,6 +505,7 @@ type MockState = {
 function createInitialState(): MockState {
   return {
     accountModels: {},
+    accountColorPicks: {},
     accounts: createDefaultAccounts(),
     requestLogs: createDefaultRequestLogs(),
     conversations: createDefaultConversations(),
@@ -719,6 +721,27 @@ function requestLogOptionsFromEntries(
 
 function findAccount(accountId: string): AccountSummary | undefined {
   return state.accounts.find((account) => account.accountId === accountId);
+}
+
+/** Mirrors the backend assignment: picks win, the rest take free palette slots in list order. */
+function mockAccountColors() {
+  const picks = state.accounts.map((account) => state.accountColorPicks[account.accountId] ?? null);
+  const assign = (choices: Array<number | null>) => {
+    const taken = new Set(choices.filter((choice): choice is number => choice !== null));
+    const free = Array.from({ length: 12 }, (_, index) => index).filter((index) => !taken.has(index));
+    let next = 0;
+    return choices.map((choice) => choice ?? free[next++ % free.length]);
+  };
+  const colors = assign(picks);
+  return {
+    colors: state.accounts.map((account, index) => ({
+      accountId: account.accountId,
+      modelSourceId: null,
+      chartColor: picks[index],
+      color: colors[index],
+      automaticColor: assign(picks.map((pick, other) => (other === index ? null : pick)))[index],
+    })),
+  };
 }
 
 function findApiKey(keyId: string): ApiKey | undefined {
@@ -1035,6 +1058,14 @@ export const handlers = [
 
   http.get("/api/accounts", () => {
     return HttpResponse.json({ accounts: state.accounts });
+  }),
+
+  http.get("/api/account-colors", () => HttpResponse.json(mockAccountColors())),
+
+  http.put("/api/account-colors/accounts/:accountId", async ({ params, request }) => {
+    const body = (await request.json()) as { chartColor: number | null };
+    state.accountColorPicks[String(params.accountId)] = body.chartColor;
+    return HttpResponse.json(mockAccountColors());
   }),
 
   http.get("/api/accounts/:accountId/models", ({ params }) => {

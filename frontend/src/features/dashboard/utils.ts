@@ -14,7 +14,6 @@ import type {
   WeeklyCreditPaceStatus,
 } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
-import { buildDonutPalette } from "@/utils/colors";
 import {
   formatCachedTokensMeta,
   formatCompactNumber,
@@ -37,7 +36,8 @@ export type RemainingItem = {
   isEmail: boolean;
   value: number;
   remainingPercent: number | null;
-  color: string;
+  /** The account's chart colour; absent until account colours have loaded. */
+  color?: string;
 };
 
 export type DashboardStat = {
@@ -88,22 +88,10 @@ export type DashboardView = {
 };
 
 type DashboardViewOptions = {
-  isDark?: boolean;
+  /** Chart colour by account ID, for the theme in use. */
+  accountColors?: ReadonlyMap<string, string>;
   showAccountBurnrate?: boolean;
 };
-
-function resolveDashboardViewOptions(optionsOrIsDark: DashboardViewOptions | boolean): Required<DashboardViewOptions> {
-  if (typeof optionsOrIsDark === "boolean") {
-    return {
-      isDark: optionsOrIsDark,
-      showAccountBurnrate: true,
-    };
-  }
-  return {
-    isDark: optionsOrIsDark.isDark ?? false,
-    showAccountBurnrate: optionsOrIsDark.showAccountBurnrate ?? true,
-  };
-}
 
 export function buildDepletionView(depletion: Depletion | null | undefined): SafeLineView | null {
   if (!depletion || depletion.riskLevel === "safe") return null;
@@ -181,12 +169,11 @@ export function buildRemainingItems(
   accounts: AccountSummary[],
   window: UsageWindow | null,
   windowKey: "primary" | "secondary",
-  isDark = false,
+  accountColors: ReadonlyMap<string, string> = new Map(),
 ): RemainingItem[] {
   const usageIndex = buildWindowIndex(window);
-  const palette = buildDonutPalette(accounts.length, isDark);
   return accounts
-    .map((account, index) => {
+    .map((account): RemainingItem | null => {
       if (isMonthlyOnlyAccount(account)) {
         return null;
       }
@@ -206,7 +193,7 @@ export function buildRemainingItems(
         isEmail: labelIsEmail,
         value: remaining,
         remainingPercent: accountRemainingPercent(account, windowKey),
-        color: palette[index % palette.length],
+        color: accountColors.get(account.accountId),
       };
     })
     .filter((item): item is RemainingItem => item !== null);
@@ -735,10 +722,9 @@ export function buildWeeklyCreditPace(
 export function buildDashboardView(
   overview: DashboardOverview,
   requestLogs: RequestLog[],
-  optionsOrIsDark: DashboardViewOptions | boolean = false,
+  { accountColors = new Map(), showAccountBurnrate = true }: DashboardViewOptions = {},
   projections?: DashboardProjections,
 ): DashboardView {
-  const { isDark, showAccountBurnrate } = resolveDashboardViewOptions(optionsOrIsDark);
   const primaryWindow = overview.windows.primary;
   const secondaryWindow = overview.windows.secondary;
   const metrics = overview.summary.metrics;
@@ -858,8 +844,8 @@ export function buildDashboardView(
     trendColor: TREND_COLORS[4],
   });
 
-  const rawPrimaryItems = buildRemainingItems(overview.accounts, primaryWindow, "primary", isDark);
-  const secondaryUsageItems = buildRemainingItems(overview.accounts, secondaryWindow, "secondary", isDark);
+  const rawPrimaryItems = buildRemainingItems(overview.accounts, primaryWindow, "primary", accountColors);
+  const secondaryUsageItems = buildRemainingItems(overview.accounts, secondaryWindow, "secondary", accountColors);
   const primaryUsageItems = secondaryWindow
     ? applySecondaryConstraint(rawPrimaryItems, secondaryUsageItems)
     : rawPrimaryItems;

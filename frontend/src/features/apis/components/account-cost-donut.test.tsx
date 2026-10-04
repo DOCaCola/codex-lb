@@ -5,8 +5,15 @@ import { describe, expect, it, vi } from "vitest";
 import { createApiKeyUsage7Day } from "@/test/mocks/factories";
 import { renderWithProviders } from "@/test/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
+import { accountColorPalette } from "@/features/accounts/account-colors";
 
 import { AccountCostDonut } from "./account-cost-donut";
+
+function cssColor(hex: string): string {
+	const probe = document.createElement("span");
+	probe.style.backgroundColor = hex;
+	return probe.style.backgroundColor;
+}
 
 vi.mock("@/components/lazy-recharts", () => ({
 	Cell: () => null,
@@ -162,6 +169,29 @@ describe("AccountCostDonut", () => {
 			expect(row.querySelector(".rounded-full")).not.toBeNull();
 		}
 		expect(screen.getByText("Unknown Account")).toBeInTheDocument();
+	});
+
+	it("paints accounts in their chart colour and unknown entries in a colour no account here uses", () => {
+		const usage = createApiKeyUsage7Day({
+			totalCostUsd: 1,
+			accountCosts: [
+				{ accountId: "acc-1", provider: "codex", name: "Andy Alpha", costUsd: 0.5, isDeleted: false, chartColor: 7 },
+				{ accountId: "acc-2", provider: "codex", name: "Andy Beta", costUsd: 0.3, isDeleted: false, chartColor: 0 },
+				{ accountId: null, name: null, costUsd: 0.2, isDeleted: false },
+			],
+		});
+
+		renderWithProviders(
+			<AccountCostDonut accountCosts={usage.accountCosts} totalCostUsd={usage.totalCostUsd} />,
+		);
+
+		const palette = accountColorPalette(false);
+		const logo = (index: number) =>
+			screen.getByTestId(`account-cost-legend-${index}`).querySelector("[data-provider]") as HTMLElement;
+		expect(logo(0).style.backgroundColor).toBe(cssColor(palette[7]));
+		expect(logo(1).style.backgroundColor).toBe(cssColor(palette[0]));
+		const unknownDot = screen.getByTestId("account-cost-legend-2").querySelector(".rounded-full") as HTMLElement;
+		expect(unknownDot.style.backgroundColor).toBe(cssColor(palette[1]));
 	});
 
 	it("scrolls the hovered pie item into view in the legend list", async () => {

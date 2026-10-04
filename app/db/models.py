@@ -112,6 +112,8 @@ class Account(Base):
     )
     email: Mapped[str] = mapped_column(String, nullable=False)
     alias: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Palette index picked by the operator; NULL means automatic assignment.
+    chart_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     workspace_id: Mapped[str | None] = mapped_column(String, nullable=True)
     workspace_label: Mapped[str | None] = mapped_column(String, nullable=True)
     seat_type: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -1958,6 +1960,8 @@ class ModelSource(Base):
     )
     timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_concurrency: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Palette index picked by the operator; NULL means automatic assignment.
+    chart_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
