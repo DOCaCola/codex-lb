@@ -227,6 +227,20 @@ describe("Provider identity and readable models", () => {
     if (provider) expect(mark).toHaveAttribute("data-provider", provider);
     else expect(mark).toBeNull();
   });
+
+  it("paints account logos in their account colour", () => {
+    const { container } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
+      accountColors={{ accounts: new Map([["native", "#3b82f6"]]), modelSources: new Map([["claude-source", "#ec4899"]]) }}
+      requests={[
+        createRequestLogEntry({ requestId: "native-request", accountId: "native", modelSourceKind: null, modelSourceId: null }),
+        createRequestLogEntry({ requestId: "claude-request", accountId: null, modelSourceKind: "claude", modelSourceId: "claude-source" }),
+      ]} />);
+    const logos = [...container.querySelectorAll<HTMLElement>("tbody [data-provider]")];
+    expect(logos.map((logo) => [logo.dataset.provider, logo.style.backgroundColor])).toEqual([
+      ["codex", "rgb(59, 130, 246)"],
+      ["claude", "rgb(236, 72, 153)"],
+    ]);
+  });
 });
 
 describe("Claude subscription snapshots", () => {

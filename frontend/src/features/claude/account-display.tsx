@@ -131,12 +131,12 @@ export function ClaudeQuota({
   );
 }
 
-function Heading({ account }: { account: ClaudeAccount }) {
+function Heading({ account, color }: { account: ClaudeAccount; color: string | undefined }) {
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">
-          <ClaudeName account={account} />
+          <ClaudeName account={account} color={color} />
         </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           Claude | <ClaudePlan account={account} /> |{" "}
@@ -156,10 +156,12 @@ function Heading({ account }: { account: ClaudeAccount }) {
 
 export function ClaudeListItem({
   account,
+  color,
   selected,
   onSelect,
 }: {
   account: ClaudeAccount;
+  color?: string;
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
@@ -168,7 +170,7 @@ export function ClaudeListItem({
       selected={selected}
       onClick={() => onSelect(account.id)}
     >
-      <Heading account={account} />
+      <Heading account={account} color={color} />
       <div className="mt-2">
         <ClaudeQuota account={account} />
       </div>

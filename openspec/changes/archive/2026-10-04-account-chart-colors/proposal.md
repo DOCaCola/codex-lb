@@ -13,8 +13,8 @@ reordered. Account logos had no colour link to the charts, and operators could n
 - `GET /api/account-colors` lists resolved colours; `PUT` routes set or clear a Codex account's or model
   source's pick. API-key cost entries embed their account's resolved colour.
 - Account detail headings get a colour button that opens a palette popover with an Automatic option.
-- Dashboard donuts, dashboard account cards and list rows, and the API-key cost donut use the resolved colour;
-  provider logos are painted in it.
+- Dashboard donuts, dashboard account cards and list rows, the request log, the Accounts page list and detail
+  headings, and the API-key cost donut use the resolved colour; provider logos are painted in it.
 
 ## Impact
 Adds a nullable `chart_color` column to `accounts` and `model_sources`. No routing or proxy changes.

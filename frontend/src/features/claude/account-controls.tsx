@@ -22,6 +22,7 @@ import { ModelSelection } from "./model-selection";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
+import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -38,6 +39,7 @@ export function ClaudeAccountControls({
   children: (controls: { onAdd: () => void; detail: ReactNode }) => ReactNode;
 }) {
   const api = useClaude();
+  const accountColors = useAccountColorHexes();
   const dateFormat = useDateDisplayFormatStore(
     (state) => state.dateDisplayFormat,
   );
@@ -100,7 +102,7 @@ export function ClaudeAccountControls({
             )
           }
         >
-          <ClaudeName account={account} />
+          <ClaudeName account={account} color={accountColors.modelSources.get(account.id)} />
         </AccountNameEditor>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Claude | <ClaudePlan account={account} /> |{" "}

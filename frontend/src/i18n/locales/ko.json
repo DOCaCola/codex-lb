@@ -55,7 +55,7 @@
   "accounts.authExport.warning": "이 payload에는 access 및 refresh token 원문이 포함됩니다. 신뢰하는 기기에만 보관하세요.",
   "accounts.color.automatic": "자동 · 현재 {{color}}",
   "accounts.color.button": "차트 색상",
-  "accounts.color.inUse": "{{color}} · 다른 Account에서 사용 중",
+  "accounts.color.inUse": "{{color}} · 다른 Account에서 선택됨",
   "accounts.color.names.amber": "호박색",
   "accounts.color.names.blue": "파랑",
   "accounts.color.names.cyan": "청록",

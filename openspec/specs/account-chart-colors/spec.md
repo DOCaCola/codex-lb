@@ -1,4 +1,9 @@
-## ADDED Requirements
+# account-chart-colors Specification
+
+## Purpose
+TBD - created by archiving change account-chart-colors. Update Purpose after archive.
+
+## Requirements
 
 ### Requirement: Account chart colour resolution
 Every live Codex account and model source SHALL have one resolved chart colour, an index into the twelve-colour
@@ -18,7 +23,8 @@ accounts MUST NOT take part. Each account SHALL also report the colour it would 
 The dashboard SHALL list resolved account colours for users who can read accounts and SHALL let users who can
 write accounts set or clear a Codex account's or model source's colour. Unknown targets MUST be rejected as not
 found. Account detail headings SHALL show the current colour as a button that opens a palette popover with an
-Automatic option and marks colours used by other accounts.
+Automatic option and marks colours explicitly chosen for other accounts; automatically assigned colours MUST NOT be
+marked.
 
 #### Scenario: Choosing a colour
 - **WHEN** a user picks a palette colour in the popover
@@ -29,8 +35,9 @@ Automatic option and marks colours used by other accounts.
 - **THEN** the stored choice is cleared and the account takes its automatic colour
 
 ### Requirement: Consistent account colours in charts
-Dashboard remaining-quota donuts, dashboard account cards and list rows, and the API-key cost donut SHALL use each
-account's resolved colour, and provider logos SHALL be painted in it. API-key cost entries SHALL carry the resolved
+Dashboard remaining-quota donuts, dashboard account cards and list rows, the request log, the Accounts page list and
+detail headings, and the API-key cost donut SHALL use each account's resolved colour, and provider logos SHALL be
+painted in it. API-key cost entries SHALL carry the resolved
 colour so the cost chart does not require account read access. Entries for deleted accounts SHALL remain grey, and
 entries without a known account SHALL use a palette colour not shown in that chart.
 

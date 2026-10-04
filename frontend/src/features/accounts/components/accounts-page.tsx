@@ -35,6 +35,7 @@ import { OpenRouterAccountControls } from "@/features/openrouter/account-control
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
 import { ClaudeAccountControls } from "@/features/claude/account-controls";
 import { useClaudeAccounts } from "@/features/claude/use-claude";
+import { useAccountColorHexes } from "@/features/accounts/account-colors";
 
 const OauthDialog = lazy(() =>
   import("@/features/accounts/components/oauth-dialog").then((m) => ({
@@ -84,6 +85,7 @@ export function AccountsPage() {
       enabled: canReadUpstreamProxy,
     });
   const oauth = useOauth();
+  const accountColors = useAccountColorHexes();
 
   const importDialog = useDialogState();
   const oauthDialog = useDialogState();
@@ -270,6 +272,7 @@ export function AccountsPage() {
                         onOpenRouter={onAdd}
                         claudeAccounts={claudeAccounts}
                         onClaude={onAddClaude}
+                        accountColors={accountColors}
                         selectedAccountId={resolvedSelectedAccountId}
                         onSelect={handleSelectAccount}
                         sortMode={accountSortMode}

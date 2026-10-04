@@ -47,6 +47,7 @@ import {
   type RequestLogColumnWidths,
 } from "@/features/dashboard/request-log-columns";
 import type { AccountSummary, RequestLog } from "@/features/dashboard/schemas";
+import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import type { ModelItem } from "@/features/api-keys/schemas";
 import { ProviderAccountName, type AccountProvider } from "@/components/brand/provider-account-name";
 import { ServiceTierMark } from "@/components/brand/service-tier-mark";
@@ -114,6 +115,7 @@ const REQUEST_KIND_LABELS: Record<string, string> = {
 export type RecentRequestsTableProps = {
   requests: RequestLog[];
   accounts: AccountSummary[];
+  accountColors?: AccountColorHexes;
   models?: readonly Pick<ModelItem, "id" | "name">[];
   total: number;
   limit: number;
@@ -309,6 +311,7 @@ export function RecentRequestsTable({
   models = [],
   requests,
   accounts,
+  accountColors = NO_ACCOUNT_COLORS,
   total,
   limit,
   offset,
@@ -392,6 +395,11 @@ export function RecentRequestsTable({
     if (!request.modelSourceKind && !request.modelSourceId && request.accountId) return "codex";
     return null;
   };
+  const requestAccountColor = (request: RequestLog) => request.modelSourceId
+    ? accountColors.modelSources.get(request.modelSourceId)
+    : request.accountId
+      ? accountColors.accounts.get(request.accountId)
+      : undefined;
 
   if (requests.length === 0) {
     const emptyFromExistingLogs = filtersApplied || total > 0;
@@ -464,7 +472,7 @@ export function RecentRequestsTable({
                     </div>
                   </TableCell> : null}
                   {isColumnVisible("account") ? <TableCell className="truncate align-top text-sm">
-                    <ProviderAccountName provider={requestAccountProvider(request)}>
+                    <ProviderAccountName provider={requestAccountProvider(request)} color={requestAccountColor(request)}>
                     {isEmailLabel && blurred ? (
                       <span className="privacy-blur">{accountLabel}</span>
                     ) : (

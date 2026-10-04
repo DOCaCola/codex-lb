@@ -80,7 +80,7 @@
   "accounts.authExport.warning": "This payload contains raw access and refresh tokens. Store it only on machines you trust.",
   "accounts.color.automatic": "Automatic · currently {{color}}",
   "accounts.color.button": "Chart color",
-  "accounts.color.inUse": "{{color}} · used by another account",
+  "accounts.color.inUse": "{{color}} · chosen for another account",
   "accounts.color.names.amber": "Amber",
   "accounts.color.names.blue": "Blue",
   "accounts.color.names.cyan": "Cyan",

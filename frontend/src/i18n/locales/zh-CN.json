@@ -55,7 +55,7 @@
   "accounts.authExport.warning": "这些 token 可授予账户访问权限，请妥善保密。",
   "accounts.color.automatic": "自动 · 当前为{{color}}",
   "accounts.color.button": "图表颜色",
-  "accounts.color.inUse": "{{color}} · 已被其他账户使用",
+  "accounts.color.inUse": "{{color}} · 已被其他账户选用",
   "accounts.color.names.amber": "琥珀色",
   "accounts.color.names.blue": "蓝色",
   "accounts.color.names.cyan": "青色",

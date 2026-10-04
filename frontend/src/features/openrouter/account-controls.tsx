@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { OpenRouterAccountDetail } from "./account-detail";
+import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -27,6 +28,7 @@ export function OpenRouterAccountControls({
   children: (controls: { onAdd: () => void; detail: ReactNode }) => ReactNode;
 }) {
   const { create, update, refresh, remove } = useOpenRouter();
+  const accountColors = useAccountColorHexes();
   const [editing, setEditing] = useState<OpenRouterAccount | "new" | null>(
     null,
   );
@@ -62,6 +64,7 @@ export function OpenRouterAccountControls({
         detail: account ? (
           <OpenRouterAccountDetail
             account={account}
+            color={accountColors.modelSources.get(account.id)}
             readOnly={readOnly}
             busy={busy}
             error={error?.message}

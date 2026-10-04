@@ -17,6 +17,7 @@ import type { AccountRoutingPolicy } from "@/features/accounts/schemas";
 
 export function OpenRouterAccountDetail({
   account,
+  color,
   readOnly,
   busy,
   error,
@@ -30,6 +31,8 @@ export function OpenRouterAccountDetail({
   onRoutingPolicy,
 }: {
   account: OpenRouterAccount;
+  /** The account's chart colour, used for its logo. */
+  color?: string;
   readOnly: boolean;
   busy: boolean;
   error?: string;
@@ -65,7 +68,7 @@ export function OpenRouterAccountDetail({
           accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={readOnly || busy} />}
           onSave={(name) => onRename(name ?? account.name)}
         >
-          <OpenRouterName account={account} />
+          <OpenRouterName account={account} color={color} />
         </AccountNameEditor>
         <p className="mt-0.5 text-xs text-muted-foreground">
           OpenRouter | <OpenRouterTier account={account} /> | {state.all_models ? "All conversation models" : `${state.selections.length} ${state.selections.length === 1 ? "model" : "models"} selected`}

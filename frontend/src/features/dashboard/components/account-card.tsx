@@ -193,7 +193,7 @@ export function AccountCard({
       }
       subtitle={
         <>
-          {planLabel}
+          Codex · {planLabel}
           {!emailSubtitle ? idSuffix : ""}
         </>
       }

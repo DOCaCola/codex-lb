@@ -175,10 +175,12 @@ export function OpenRouterFreshness({
 
 export function OpenRouterListItem({
   account,
+  color,
   selected,
   onSelect,
 }: {
   account: OpenRouterAccount;
+  color?: string;
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
@@ -194,7 +196,7 @@ export function OpenRouterListItem({
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
-            <OpenRouterName account={account} />
+            <OpenRouterName account={account} color={color} />
           </p>
           <p className="truncate text-xs text-muted-foreground">
             OpenRouter | <OpenRouterTier account={account} /> | {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"}`}

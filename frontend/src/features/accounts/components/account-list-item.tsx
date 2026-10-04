@@ -25,6 +25,8 @@ import {
 
 export type AccountListItemProps = {
   account: AccountSummary;
+  /** The account's chart colour, used for its logo. */
+  color?: string;
   selected: boolean;
   showAccountId?: boolean;
   showResetCreditBadge?: boolean;
@@ -33,6 +35,7 @@ export type AccountListItemProps = {
 
 export function AccountListItem({
   account,
+  color,
   selected,
   showAccountId = false,
   showResetCreditBadge = true,
@@ -106,7 +109,7 @@ export function AccountListItem({
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
-            <ProviderAccountName provider="codex">
+            <ProviderAccountName provider="codex" color={color}>
             {titleIsEmail && blurred ? (
               <span className="privacy-blur">{title}</span>
             ) : (

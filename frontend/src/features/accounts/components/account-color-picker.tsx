@@ -37,7 +37,9 @@ export function AccountColorPicker({ target, disabled }: { target: AccountColorT
 
   const palette = accountColorPalette(isDark);
   const colorName = (index: number) => t(`accounts.color.names.${ACCOUNT_COLOR_KEYS[index]}`);
-  const usedByOthers = new Set(colors.filter((other) => other !== entry).map((other) => other.color));
+  const usedByOthers = new Set(
+    colors.flatMap((other) => (other !== entry && other.chartColor !== null ? [other.chartColor] : [])),
+  );
   const automaticLabel = t("accounts.color.automatic", { color: colorName(entry.automaticColor) });
   const restingLabel = entry.chartColor === null ? automaticLabel : colorName(entry.chartColor);
   const choose = (chartColor: number | null) => {

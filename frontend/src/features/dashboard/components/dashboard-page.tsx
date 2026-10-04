@@ -810,6 +810,7 @@ export function DashboardPage() {
                         requests={view.requestLogs}
                         models={modelsQuery.data}
                         accounts={overview?.accounts ?? []}
+                        accountColors={accountColors}
                         total={logPage.total}
                         visibleColumns={visibleColumns}
                         columnWidths={columnWidths}

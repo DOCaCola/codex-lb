@@ -23,7 +23,7 @@ describe("AccountCard", () => {
     const account = createAccountSummary();
     render(<AccountCard account={account} />);
 
-    expect(screen.getByText("Plus")).toBeInTheDocument();
+    expect(screen.getByText("Codex · Plus")).toBeInTheDocument();
     expect(screen.getByText("5h")).toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
   });
@@ -66,7 +66,7 @@ describe("AccountCard", () => {
 
     render(<AccountCard account={account} />);
 
-    expect(screen.getByText("Free")).toBeInTheDocument();
+    expect(screen.getByText("Codex · Free")).toBeInTheDocument();
     expect(screen.queryByText("5h")).not.toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
   });

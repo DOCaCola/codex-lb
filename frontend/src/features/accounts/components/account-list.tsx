@@ -29,6 +29,7 @@ import { OpenRouterListItem } from "@/features/openrouter/account-display";
 import { openRouterStatus } from "@/features/openrouter/display-values";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeListItem } from "@/features/claude/account-display";
+import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import { claudeStatus } from "@/features/claude/display-values";
 
 const STATUS_FILTER_OPTIONS = [
@@ -47,6 +48,7 @@ export type AccountListProps = {
   onOpenRouter?: () => void;
   claudeAccounts?: ClaudeAccount[];
   onClaude?: () => void;
+  accountColors?: AccountColorHexes;
   selectedAccountId: string | null;
   onSelect: (accountId: string) => void;
   onOpenImport: () => void;
@@ -63,6 +65,7 @@ export function AccountList({
   onOpenRouter,
   claudeAccounts = [],
   onClaude,
+  accountColors = NO_ACCOUNT_COLORS,
   selectedAccountId,
   onSelect,
   onOpenImport,
@@ -285,6 +288,7 @@ export function AccountList({
               <ClaudeListItem
                 key={entry.id}
                 account={entry.account}
+                color={accountColors.modelSources.get(entry.id)}
                 selected={entry.id === selectedAccountId}
                 onSelect={onSelect}
               />
@@ -292,6 +296,7 @@ export function AccountList({
               <OpenRouterListItem
                 key={entry.id}
                 account={entry.account}
+                color={accountColors.modelSources.get(entry.id)}
                 selected={entry.id === selectedAccountId}
                 onSelect={onSelect}
               />
@@ -299,6 +304,7 @@ export function AccountList({
               <AccountListItem
                 key={entry.id}
                 account={entry.account}
+                color={accountColors.accounts.get(entry.account.accountId)}
                 selected={entry.id === selectedAccountId}
                 showAccountId={entry.account.isEmailDuplicate === true}
                 showResetCreditBadge={showResetCreditBadges}

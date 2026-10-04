@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountActions } from "@/features/accounts/components/account-actions";
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
+import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { CodexModelControls } from "./codex-model-controls";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
@@ -90,6 +91,7 @@ export function AccountDetail({
 }: AccountDetailProps) {
   const { t } = useTranslation();
   const { data: trends } = useAccountTrends(account?.accountId ?? null);
+  const accountColors = useAccountColorHexes();
   const blurred = usePrivacyStore((s) => s.blurred);
 
   if (!account) {
@@ -134,6 +136,7 @@ export function AccountDetail({
         <AccountNameField
           key={account.accountId}
           accountId={account.accountId}
+          color={accountColors.accounts.get(account.accountId)}
           alias={account.alias ?? null}
           localLabel={localLabel}
           labelIsEmail={labelIsEmail}
@@ -211,6 +214,7 @@ export function AccountDetail({
 
 type AccountNameFieldProps = {
   accountId: string;
+  color: string | undefined;
   alias: string | null;
   localLabel: string;
   labelIsEmail: boolean;
@@ -223,6 +227,7 @@ type AccountNameFieldProps = {
 
 function AccountNameField({
   accountId,
+  color,
   alias,
   localLabel,
   labelIsEmail,
@@ -250,7 +255,7 @@ function AccountNameField({
       accessory={<AccountColorPicker target={{ accountId }} disabled={busy || readOnly} />}
       onSave={(value) => onSetAlias(accountId, value)}
     >
-      <ProviderAccountName provider="codex">
+      <ProviderAccountName provider="codex" color={color}>
         {labelIsEmail ? <span className={cn(blurred && "privacy-blur")}>{localLabel}</span> : localLabel}
         {idSuffix}
       </ProviderAccountName>
