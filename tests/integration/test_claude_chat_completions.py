@@ -977,17 +977,21 @@ async def test_claude_chat_early_ended_upstream_is_error(async_client, pool, mon
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_claude_chat_refusal_maps_content_filter(async_client, pool, monkeypatch, stream):
+async def test_claude_chat_refusal_is_a_prompt_policy_error(async_client, pool, monkeypatch, stream):
     install_upstream(monkeypatch, stop="refusal")
     response = await async_client.post(
         "/v1/chat/completions",
         json={"model": MODEL, "messages": [{"role": "user", "content": "Hello"}], "stream": stream},
     )
-    assert response.status_code == 200, response.text
     if stream:
-        assert '"finish_reason":"content_filter"' in response.text
+        assert response.status_code == 200, response.text
+        assert '"code":"invalid_prompt"' in response.text
+        assert '"finish_reason"' not in response.text
     else:
-        assert response.json()["choices"][0]["finish_reason"] == "content_filter"
+        assert response.status_code == 400, response.text
+        error = response.json()["error"]
+        assert (error["type"], error["code"]) == ("invalid_request_error", "invalid_prompt")
+        assert "safeguards declined" in error["message"]
 
 
 async def test_claude_chat_stream_exposes_reasoning_delta_without_signature(async_client, pool, monkeypatch):

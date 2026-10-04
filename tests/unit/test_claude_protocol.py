@@ -38,6 +38,90 @@ def test_explicit_output_budget_can_exceed_default_but_not_capability():
         project(request(max_output_tokens=128001), max_output_tokens=128000)
 
 
+def _developer(text):
+    return {"role": "developer", "content": [{"type": "input_text", "text": text}]}
+
+
+def _user(text):
+    return {"role": "user", "content": [{"type": "input_text", "text": text}]}
+
+
+def _assistant(text):
+    return {"role": "assistant", "content": [{"type": "output_text", "text": text}]}
+
+
+def _system_turn(text):
+    return {"role": "system", "content": [{"type": "text", "text": text}]}
+
+
+def _call(call_id):
+    return {"type": "function_call", "call_id": call_id, "name": "shell", "arguments": "{}"}
+
+
+def _output(call_id):
+    return {"type": "function_call_output", "call_id": call_id, "output": "ok"}
+
+
+def test_leading_developer_messages_stay_in_the_system_prompt():
+    body = project(request(instructions="Base", input=[_developer("Rules"), _user("Hi")]), max_output_tokens=64000).body
+    assert body["system"] == [{"type": "text", "text": "Base"}, {"type": "text", "text": "Rules"}]
+    assert [message["role"] for message in body["messages"]] == ["user"]
+
+
+def test_later_developer_messages_keep_their_position_after_the_next_user_turn():
+    history = [_user("Hi"), _assistant("Hello"), _developer("Sandbox changed"), _user("Next")]
+    body = project(request(input=history), max_output_tokens=64000).body
+    assert "system" not in body
+    assert body["messages"][2:] == [
+        {"role": "user", "content": [{"type": "text", "text": "Next"}]},
+        _system_turn("Sandbox changed"),
+    ]
+    # The next request extends the same prefix: the system turn stays ahead of the answer.
+    later = project(request(input=[*history, _assistant("Done"), _user("More")]), max_output_tokens=64000).body
+    assert later["messages"][:4] == body["messages"]
+    assert [message["role"] for message in later["messages"][4:]] == ["assistant", "user"]
+
+
+def test_developer_message_after_a_tool_result_precedes_the_next_assistant_turn():
+    history = [_user("Hi"), _call("c1"), _output("c1"), _developer("Approved"), _call("c2"), _output("c2")]
+    body = project(request(input=history), max_output_tokens=64000).body
+    assert [message["role"] for message in body["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+        "system",
+        "assistant",
+        "user",
+    ]
+    assert body["messages"][3] == _system_turn("Approved")
+
+
+def test_developer_message_between_assistant_items_waits_for_a_user_turn():
+    history = [_user("Hi"), _assistant("Looking"), _developer("Note"), _call("c1"), _output("c1")]
+    body = project(request(input=history), max_output_tokens=64000).body
+    assert [message["role"] for message in body["messages"]] == ["user", "assistant", "user", "system"]
+
+
+def test_developer_message_after_an_assistant_tail_follows_the_continuation():
+    body = project(request(input=[_user("Hi"), _assistant("Partial"), _developer("Note")]), max_output_tokens=64000)
+    assert body.body["messages"][2:] == [
+        {"role": "user", "content": [{"type": "text", "text": "(continue)"}]},
+        _system_turn("Note"),
+    ]
+
+
+def test_models_without_system_turns_close_the_user_turn_with_a_reminder():
+    history = [_user("Hi"), _assistant("Hello"), _developer("Sandbox changed"), _user("Next")]
+    body = project(request(model="anthropic/claude-haiku-4-5-20251001", input=history), max_output_tokens=64000).body
+    assert [message["role"] for message in body["messages"]] == ["user", "assistant", "user"]
+    assert body["messages"][2]["content"] == [
+        {"type": "text", "text": "Next"},
+        {"type": "text", "text": "<system-reminder>"},
+        {"type": "text", "text": "Sandbox changed"},
+        {"type": "text", "text": "</system-reminder>"},
+    ]
+
+
 @pytest.mark.parametrize("reasoning", [None, {"effort": "high"}])
 def test_null_sampling_controls_are_absent(reasoning):
     body = project(
@@ -594,7 +678,7 @@ def test_streamed_malformed_tool_json_fails(fragments):
         ("max_tokens", "incomplete", "max_output_tokens"),
         ("pause_turn", "incomplete", "max_output_tokens"),
         ("model_context_window_exceeded", "incomplete", "max_output_tokens"),
-        ("refusal", "incomplete", "content_filter"),
+        ("refusal", "failed", None),
     ],
 )
 @pytest.mark.parametrize("chat_reasoning", [False, True])
@@ -609,11 +693,20 @@ def test_terminal_semantics(stop, status, reason, chat_reasoning):
     )
     assert response["status"] == status
     assert response["incomplete_details"] == (None if reason is None else {"reason": reason})
+    assert response["error"] == (
+        {
+            "code": "invalid_prompt",
+            "message": "Claude's safeguards declined this request. "
+            "Edit or rephrase your last message, or continue with a different model.",
+        }
+        if stop == "refusal"
+        else None
+    )
     assert at(response, "output", 0, "content", 0, "text") == "answer"
     assert at(response, "usage", "output_tokens") == 3
 
 
-def test_streamed_refusal_is_incomplete_and_stop_log_has_counts_only(caplog):
+def test_streamed_refusal_fails_as_prompt_policy_and_stop_log_has_counts_only(caplog):
     adapter = ResponsesProjection(scope(), {}, codec())
     native_events: list[dict[str, JsonValue]] = [
         {"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 5}}},
@@ -635,12 +728,13 @@ def test_streamed_refusal_is_incomplete_and_stop_log_has_counts_only(caplog):
     with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
         for event in native_events:
             events.extend(adapter.consume(event))
-    assert events[-1]["type"] == "response.incomplete"
-    assert at(events[-1], "response", "incomplete_details") == {"reason": "content_filter"}
+    assert events[-1]["type"] == "response.failed"
+    assert at(events[-1], "response", "error", "code") == "invalid_prompt"
+    assert at(events[-1], "response", "incomplete_details") is None
     assert at(events[-1], "response", "usage", "output_tokens") == 7
     [line] = [record.getMessage() for record in caplog.records if "claude_message_stop" in record.getMessage()]
     assert "response_id=resp_m" in line
-    assert "stop_reason=refusal status=incomplete blocks=text:1,thinking:1 output_tokens=7" in line
+    assert "stop_reason=refusal status=failed blocks=text:1,thinking:1 output_tokens=7" in line
     assert "secret" not in line and "private" not in line and "sig" not in line
 
 
@@ -668,13 +762,97 @@ def test_mid_stream_refusal_discards_the_open_tool_call():
     adapter, events = _open_tool_stream("refusal")
     events.extend(adapter.consume({"type": "message_stop"}))
     terminal = events[-1]
-    assert terminal["type"] == "response.incomplete"
-    assert at(terminal, "response", "incomplete_details") == {"reason": "content_filter"}
+    assert terminal["type"] == "response.failed"
+    assert at(terminal, "response", "error", "code") == "invalid_prompt"
     assert at(terminal, "response", "usage", "output_tokens") == 4
     assert [at(item, "type") for item in array(at(terminal, "response", "output"))] == ["message"]
     done = [event for event in events if str(event["type"]).endswith(".done")]
     assert {event.get("output_index") for event in done} == {0}
     assert not [event for event in events if event["type"] == "response.function_call_arguments.done"]
+
+
+def _completed_tool_stream() -> tuple[ResponsesProjection, list[dict[str, JsonValue]]]:
+    projected = project(request(tools=NO_ARGUMENT_TOOL), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    tool: dict[str, JsonValue] = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools)), "input": {}}
+    events = []
+    stream: list[dict[str, JsonValue]] = [
+        {"type": "message_start", "message": {"id": "m", "usage": {}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Running"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_start", "index": 1, "content_block": tool},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "content_block_start", "index": 2, "content_block": {**tool, "id": "second"}},
+        {"type": "content_block_stop", "index": 2},
+    ]
+    for event in stream:
+        events.extend(adapter.consume(event))
+    return adapter, events
+
+
+def test_completed_tool_calls_are_released_only_with_a_non_refusal_stop():
+    adapter, events = _completed_tool_stream()
+    assert [event["output_index"] for event in events if event["type"] == "response.output_item.done"] == [0]
+    events.extend(adapter.consume({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}}))
+    assert [event["output_index"] for event in events if event["type"] == "response.output_item.done"] == [0]
+    events.extend(adapter.consume({"type": "message_stop"}))
+    assert [event["output_index"] for event in events if event["type"] == "response.output_item.done"] == [0, 1, 2]
+    assert [event["sequence_number"] for event in events] == list(range(len(events)))
+    assert events[-1]["type"] == "response.completed"
+    assert [at(item, "call_id") for item in array(at(events[-1], "response", "output"))[1:]] == ["call", "second"]
+
+
+def test_refusal_discards_held_tool_calls_and_logs_its_category(caplog):
+    adapter, events = _completed_tool_stream()
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
+        events.extend(
+            adapter.consume(
+                {
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "refusal",
+                        "stop_details": {"type": "refusal", "category": "cyber", "explanation": "private prose"},
+                    },
+                    "usage": {"output_tokens": 9},
+                }
+            )
+        )
+        events.extend(adapter.consume({"type": "message_stop"}))
+    assert [event["output_index"] for event in events if event["type"] == "response.output_item.done"] == [0]
+    assert not [event for event in events if event["type"] == "response.function_call_arguments.done"]
+    assert [event["sequence_number"] for event in events] == list(range(len(events)))
+    assert events[-1]["type"] == "response.failed"
+    assert at(events[-1], "response", "error") == {
+        "code": "invalid_prompt",
+        "message": "Claude's safeguards declined this request (cyber). private prose "
+        "Edit or rephrase your last message, or continue with a different model.",
+    }
+    assert [at(item, "type") for item in array(at(events[-1], "response", "output"))] == ["message"]
+    assert adapter.refused_delivered_output
+    [line] = [record.getMessage() for record in caplog.records if "claude_message_stop" in record.getMessage()]
+    assert "refusal_category=cyber withheld=2 delivered_output=True" in line
+    assert "private" not in line
+
+
+@pytest.mark.parametrize(
+    "details,category", [({"category": "bio"}, "bio"), ({"category": "a b\n"}, "unrecognized"), (None, None)]
+)
+def test_refusal_without_delivered_output_needs_no_history_record(caplog, details, category):
+    adapter = ResponsesProjection(scope(), {}, codec())
+    delta: dict[str, JsonValue] = {"stop_reason": "refusal", **({"stop_details": details} if details else {})}
+    stream: list[dict[str, JsonValue]] = [
+        {"type": "message_start", "message": {"id": "m", "usage": {}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "message_delta", "delta": delta, "usage": {}},
+        {"type": "message_stop"},
+    ]
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.responses"):
+        for event in stream:
+            adapter.consume(event)
+    assert not adapter.refused_delivered_output
+    [line] = [record.getMessage() for record in caplog.records if "claude_message_stop" in record.getMessage()]
+    assert f"refusal_category={category} withheld=0 delivered_output=False" in line
 
 
 @pytest.mark.parametrize(
@@ -691,7 +869,7 @@ def test_unfinished_non_refusal_stop_fails_with_diagnostics(caplog, stop_reason,
         with pytest.raises(ClaudeError, match=message):
             adapter.consume({"type": "message_stop"})
     [line] = [record.getMessage() for record in caplog.records if "claude_message_stop" in record.getMessage()]
-    assert f"stop_reason={stop_reason} status=failed blocks=text:1,tool_use:1" in line
+    assert f"stop_reason={stop_reason} status=invalid blocks=text:1,tool_use:1" in line
     assert "open=tool_use:1 pending_search=0" in line
 
 

@@ -242,8 +242,35 @@ def project_responses(
     for index, tool in enumerate(raw_tools):
         declare(tool, param=f"tools[{index}]")
     messages: list[JsonValue] = []
+    # Developer/system messages that follow conversation content keep their position, so a new
+    # instruction extends the cached prefix instead of rewriting it from the first turn. Claude
+    # accepts a system turn only right after a user turn and before an assistant turn or the end,
+    # so each one waits for the next such boundary. Models without mid-conversation system turns
+    # receive it as a reminder closing the preceding user turn.
+    policy = model_policy(str(payload.get("model", "")))
+    system_turns = policy is not None and policy.mid_system
+    pending_system: list[JsonValue] = []
+
+    def place_system() -> None:
+        if not pending_system or not isinstance(messages[-1], dict) or messages[-1].get("role") != "user":
+            return
+        if system_turns:
+            messages.append({"role": "system", "content": list(pending_system)})
+        else:
+            content = messages[-1]["content"]
+            assert isinstance(content, list)
+            content.extend(
+                [
+                    {"type": "text", "text": "<system-reminder>"},
+                    *pending_system,
+                    {"type": "text", "text": "</system-reminder>"},
+                ]
+            )
+        pending_system.clear()
 
     def append(role: str, content: list[JsonValue]) -> None:
+        if role == "assistant":
+            place_system()
         if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == role:
             previous = messages[-1]["content"]
             assert isinstance(previous, list)
@@ -276,7 +303,7 @@ def project_responses(
             role = item.get("role")
             content = _content(item.get("content"))
             if role in ("system", "developer"):
-                system.extend(content)
+                (pending_system if messages else system).extend(content)
             elif role in ("user", "assistant"):
                 if pending and role == "user":
                     raise invalid("Tool results are required before the next user message")
@@ -390,6 +417,7 @@ def project_responses(
         # Preserve the entire turn; never invent results for pending tools.
         append("user", [{"type": "text", "text": "(continue)"}])
         logger.info("claude_continuation_projected request_id=%s reason=assistant_tail", get_request_id())
+    place_system()
     limit = payload.get("max_output_tokens", default_output_tokens(max_output_tokens))
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit > max_output_tokens:
         raise invalid("Requested output limit exceeds the Claude model capability", "max_output_tokens")
@@ -434,7 +462,6 @@ def project_responses(
         assert isinstance(selected, dict)
         selected["disable_parallel_tool_use"] = True
     requested_reasoning = payload.get("reasoning")
-    policy = model_policy(str(payload.get("model", "")))
     thinking = False
     if isinstance(requested_reasoning, dict) and requested_reasoning.get("effort") not in (None, "none"):
         requested_effort = requested_reasoning.get("effort")

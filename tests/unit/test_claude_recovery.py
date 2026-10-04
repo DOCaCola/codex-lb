@@ -41,6 +41,26 @@ def test_recovery_preserves_visible_history_and_original():
     assert recovered["thinking"] == body["thinking"]
 
 
+def test_recovery_protects_the_open_tool_turn_behind_a_system_turn():
+    body = history()
+    body["messages"][2:] = [
+        {"role": "user", "content": "run it"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "plan", "signature": "open"},
+                {"type": "tool_use", "id": "t1", "name": "shell", "input": {}},
+            ],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
+        {"role": "system", "content": [{"type": "text", "text": "Sandbox changed"}]},
+    ]
+    recovered = historical_recovery(body, failure(), readable_history=False)
+    assert recovered is not None
+    assert at(recovered, "messages", 1, "content") == [{"type": "text", "text": "answer"}]
+    assert array(at(recovered, "messages"))[3:] == body["messages"][3:]
+
+
 def test_summarization_recovery_reads_historical_thinking():
     body = history()
     body["messages"][1]["content"].insert(1, {"type": "redacted_thinking", "data": "opaque"})

@@ -230,9 +230,12 @@ def test_streamed_envelope_is_private_and_matches_final_and_history():
             )
             == []
         )
-    events += adapter.consume({"type": "content_block_stop", "index": 0})
+    # The completed call is held until the stop reason shows the turn was not refused.
+    assert adapter.consume({"type": "content_block_stop", "index": 0}) == []
     adapter.consume({"type": "message_delta", "delta": {"stop_reason": "tool_use"}})
-    terminal = adapter.consume({"type": "message_stop"})[0]["response"]
+    *released, final = adapter.consume({"type": "message_stop"})
+    events += released
+    terminal = final["response"]
     delta = next(e["delta"] for e in events if e["type"] == "response.function_call_arguments.delta")
     done = next(e["arguments"] for e in events if e["type"] == "response.function_call_arguments.done")
     item = terminal["output"][0]

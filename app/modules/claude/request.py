@@ -125,8 +125,10 @@ def _project_request(
         raise ClaudeError("Invalid Claude message")
     if endpoint == "messages":
         body["system"] = [{"type": "text", "text": CLI_IDENTITY}]
+    # Conversation-positioned system turns (translated developer messages) need the same beta.
+    system_turns = (MID_SYSTEM_BETA,) if any(message.get("role") == "system" for message in messages) else ()
     if not blocks:
-        return RequestProjection(body, (), ("oauth_identity",) if endpoint == "messages" else ())
+        return RequestProjection(body, system_turns, ("oauth_identity",) if endpoint == "messages" else ())
 
     model = body.get("model")
     if not isinstance(model, str):
@@ -193,4 +195,4 @@ def _project_request(
             ],
         },
     )
-    return RequestProjection(body, (), ("oauth_identity", "user_reminder_instructions"))
+    return RequestProjection(body, system_turns, ("oauth_identity", "user_reminder_instructions"))

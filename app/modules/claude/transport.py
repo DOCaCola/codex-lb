@@ -23,6 +23,7 @@ from app.modules.claude.dispatch import PreparedClaudeRequest
 from app.modules.claude.native import NativeObserver, usage_totals
 from app.modules.claude.observations import record_headers
 from app.modules.claude.recovery import historical_recovery
+from app.modules.claude.refusals import record_refused_response
 from app.modules.claude.resources import record_origins
 from app.modules.claude.responses import ResponsesProjection, Usage
 from app.modules.model_sources.forwarding import (
@@ -237,6 +238,10 @@ async def _open_responses(
                             return
                         continue
                     for converted in projection.consume(safe_event):
+                        if converted["type"] == "response.failed" and projection.refused_delivered_output:
+                            await record_refused_response(
+                                projection.scope.client_scope, projection.response_id, prepared.source.id
+                            )
                         encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
                         observer.feed(encoded)
                         yield encoded

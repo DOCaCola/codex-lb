@@ -218,6 +218,9 @@ class SourceUsageHolder:
     # from the frames it hands to the transport and never mirrored from here.
     content_delivered: bool = False
     terminal_kind: Literal["completed", "incomplete", "failed", "error"] | None = None
+    # The failure terminal's own error, when the source named one.
+    terminal_error_code: str | None = None
+    terminal_error_message: str | None = None
     delta_chars: int = 0
 
 
@@ -1629,6 +1632,11 @@ class SourceStreamUsageParser:
             return
         if kind == "failure_terminal":
             holder.terminal_kind = "error" if event_type == "error" else "failed"
+            error = response.get("error") if is_json_mapping(response) else event.get("error")
+            if is_json_mapping(error):
+                code, message = error.get("code"), error.get("message")
+                holder.terminal_error_code = code if isinstance(code, str) and code else None
+                holder.terminal_error_message = message if isinstance(message, str) and message else None
             return
         holder.first_content_seen = True
         if kind == "success_terminal":

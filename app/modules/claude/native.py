@@ -64,7 +64,9 @@ class NativeObserver:
                     f"stop_reason={self.stop_reason})"
                 )
             self.stopped = True
-            self.holder.terminal_kind = "incomplete" if self.stop_reason in INCOMPLETE_STOP_REASONS else "completed"
+            # Native clients receive Anthropic's stream as sent; a refusal is accounted as a cut-short turn.
+            incomplete = self.stop_reason in INCOMPLETE_STOP_REASONS or self.stop_reason == "refusal"
+            self.holder.terminal_kind = "incomplete" if incomplete else "completed"
             self.holder.successful_terminal_seen = True
         elif kind == "error":
             self.stopped = True

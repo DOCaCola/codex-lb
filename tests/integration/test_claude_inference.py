@@ -212,6 +212,48 @@ async def test_assistant_tail_continuation_is_only_applied_to_translated_routes(
     assert len(closed) == 1
 
 
+@pytest.mark.parametrize("stop", ["refusal", "end_turn"])
+async def test_refused_output_committed_by_the_client_is_not_replayed(async_client, pool, monkeypatch, stop):
+    install_upstream(
+        monkeypatch,
+        stop=stop,
+        message_id=f"msg_{stop}",
+        content=[{"type": "thinking", "thinking": "partial", "signature": "signed"}],
+    )
+    first = await async_client.post(
+        "/backend-api/codex/responses", json={"model": MODEL, "stream": True, "input": "Hello"}
+    )
+    assert first.status_code == 200, first.text
+    events = [
+        json.loads(line[6:]) for line in first.text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"
+    ]
+    [reasoning] = [
+        event["item"]
+        for event in events
+        if event["type"] == "response.output_item.done" and event["item"]["type"] == "reasoning"
+    ]
+    assert events[-1]["type"] == ("response.failed" if stop == "refusal" else "response.completed")
+
+    captured, _ = install_upstream(monkeypatch)
+    follow_up = await async_client.post(
+        "/backend-api/codex/responses",
+        json={
+            "model": MODEL,
+            "stream": True,
+            "input": [{"role": "user", "content": "Hello"}, reasoning, {"role": "user", "content": "Rephrased"}],
+        },
+    )
+    assert follow_up.status_code == 200, follow_up.text
+    messages = captured[0][2]["messages"]
+    texts = [block["text"] for message in messages for block in message["content"] if block["type"] == "text"]
+    assert texts == ["Hello", "Rephrased"]
+    if stop == "refusal":
+        assert all(block["type"] != "thinking" for message in messages for block in message["content"])
+    else:
+        assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+        assert messages[1]["content"][0]["type"] == "thinking"
+
+
 async def test_empty_delta_signed_continuation_does_not_retain_synthetic_user_input(async_client, pool, monkeypatch):
     from tests.integration.model_source_helpers import _enable_api_key_auth
 
@@ -749,6 +791,31 @@ async def test_claude_metadata_only_stream_has_duration_without_fabricated_ttft(
         assert row.latency_ms is not None
         assert row.latency_first_token_ms is None
         assert row.status == ("error" if truncate else "success")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_refusal_is_a_terminal_prompt_policy_failure_logged_with_its_code(
+    async_client, pool, monkeypatch, stream
+):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+    from app.db.session import SessionLocal
+
+    install_upstream(monkeypatch, stop="refusal")
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": stream})
+    if stream:
+        assert response.status_code == 200, response.text
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        assert events[-1]["type"] == "response.failed"
+        assert events[-1]["response"]["error"]["code"] == "invalid_prompt"
+    else:
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "invalid_prompt"
+    async with SessionLocal() as session:
+        row = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).one()
+        assert (row.status, row.error_code) == ("error", "invalid_prompt")
+        assert row.error_message is not None and "safeguards declined" in row.error_message
 
 
 async def test_pause_turn_not_reported_as_completed(async_client, pool, monkeypatch):

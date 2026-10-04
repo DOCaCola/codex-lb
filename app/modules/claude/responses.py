@@ -10,6 +10,7 @@ import time
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import cast
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
@@ -22,16 +23,20 @@ from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
 
 logger = logging.getLogger(__name__)
 _LOGGABLE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,128}")
-# Stops that cut the turn short, mapped to their Responses incomplete reason. Refusal is a
-# sampling decision: as content_filter, Codex applies its content-filter guidance and retries.
-# pause_turn and an exhausted context window leave unfinished output, as truncation does.
+_LOGGABLE_REFUSAL_CATEGORY = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_EXECUTABLE_ITEMS = frozenset({"function_call", "custom_tool_call"})
+# Stops that cut the turn short, mapped to their Responses incomplete reason. pause_turn and an
+# exhausted context window leave unfinished output, as truncation does.
 INCOMPLETE_STOP_REASONS = {
     "max_tokens": "max_output_tokens",
     "pause_turn": "max_output_tokens",
     "model_context_window_exceeded": "max_output_tokens",
-    "refusal": "content_filter",
 }
-_STOP_REASONS = frozenset({"end_turn", "stop_sequence", "tool_use", *INCOMPLETE_STOP_REASONS})
+# A refusal is the safety classifier declining the request, and the same model usually declines it
+# again. It fails as the Responses prompt-policy error, which clients do not retry. Reported as
+# content_filter, a sampling filter, Codex retries the declined request with added guidance.
+REFUSAL_ERROR_CODE = "invalid_prompt"
+_STOP_REASONS = frozenset({"end_turn", "stop_sequence", "tool_use", "refusal", *INCOMPLETE_STOP_REASONS})
 
 
 class Usage(BaseModel):
@@ -109,8 +114,20 @@ class ResponsesProjection:
     block_types: Counter[str] = field(default_factory=Counter)
     usage: Usage = field(default_factory=Usage)
     stop_reason: str | None = None
+    refusal_category: str | None = None
+    refusal_explanation: str | None = None
+    # Events from the first completed tool call onward. Clients run a call on its done event, so a
+    # call is only released once the stop reason shows the turn was not refused.
+    held: list[dict[str, JsonValue]] | None = None
+    # Whether any item reached the client as done; the client commits those items to its history.
+    delivered_output: bool = False
     started: bool = False
     stopped: bool = False
+
+    @property
+    def refused_delivered_output(self) -> bool:
+        """A refusal after items were committed: their history must not be replayed to Claude."""
+        return self.stopped and self.stop_reason == "refusal" and self.delivered_output
 
     def event(self, kind: str, **fields: JsonValue) -> dict[str, JsonValue]:
         result: dict[str, JsonValue] = {"type": kind, "sequence_number": self.sequence, **fields}
@@ -119,6 +136,7 @@ class ResponsesProjection:
 
     def envelope(self, status: str) -> dict[str, JsonValue]:
         incomplete = {"reason": INCOMPLETE_STOP_REASONS[str(self.stop_reason)]} if status == "incomplete" else None
+        error = {"code": REFUSAL_ERROR_CODE, "message": self.refusal_message()} if status == "failed" else None
         return {
             "id": self.response_id,
             "object": "response",
@@ -127,9 +145,18 @@ class ResponsesProjection:
             "status": status,
             "output": list(self.outputs.values()),
             "usage": self.usage.responses(),
-            "error": None,
+            "error": error,
             "incomplete_details": incomplete,
         }
+
+    def refusal_message(self) -> str:
+        # Anthropic's explanation is display text, unstable by design; it is shown, never parsed.
+        category = f" ({self.refusal_category})" if self.refusal_category else ""
+        explanation = f" {self.refusal_explanation}" if self.refusal_explanation else ""
+        return (
+            f"Claude's safeguards declined this request{category}.{explanation} "
+            "Edit or rephrase your last message, or continue with a different model."
+        )
 
     def _item(self, index: int, block: dict[str, JsonValue], *, final: bool) -> dict[str, JsonValue]:
         item_id = f"{self.response_id}_{index}"
@@ -230,6 +257,16 @@ class ResponsesProjection:
         raise ClaudeError("Claude returned an unsupported content block")
 
     def consume(self, event: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
+        events = self._translate(event)
+        if self.stopped:
+            return events
+        if self.held is not None:
+            self.held.extend(events)
+            return []
+        self.delivered_output |= any(item["type"] == "response.output_item.done" for item in events)
+        return events
+
+    def _translate(self, event: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
         kind = event.get("type")
         if self.stopped:
             raise ClaudeError("Claude emitted events after its terminal event")
@@ -256,13 +293,22 @@ class ResponsesProjection:
             if not isinstance(delta, dict) or not isinstance(delta.get("stop_reason"), str):
                 raise ClaudeError("Invalid Claude message_delta")
             self.stop_reason = str(delta["stop_reason"])
+            details = delta.get("stop_details")
+            if isinstance(details, dict):
+                category, explanation = details.get("category"), details.get("explanation")
+                if isinstance(category, str):
+                    self.refusal_category = (
+                        category if _LOGGABLE_REFUSAL_CATEGORY.fullmatch(category) else "unrecognized"
+                    )
+                if isinstance(explanation, str) and explanation.strip():
+                    self.refusal_explanation = explanation.strip()
             update = event.get("usage", {})
             if not isinstance(update, dict):
                 raise ClaudeError("Invalid Claude stream usage")
             self.usage = Usage.model_validate({**self.usage.model_dump(), **update})
             return []
         if kind == "message_stop":
-            return [self._stop()]
+            return self._stop()
         index = event.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise ClaudeError("Invalid Claude content index")
@@ -459,28 +505,42 @@ class ResponsesProjection:
                     ),
                 ]
             )
+        if item["type"] in _EXECUTABLE_ITEMS and self.held is None:
+            self.held = []
         events.append(self.event("response.output_item.done", output_index=index, item=deepcopy(item)))
         return events
 
-    def _stop(self) -> dict[str, JsonValue]:
+    def _stop(self) -> list[dict[str, JsonValue]]:
         open_types = Counter(str(block.get("type")) for block in self.blocks.values())
         open_summary = ",".join(f"{kind}:{count}" for kind, count in sorted(open_types.items())) or "none"
         unfinished = bool(self.blocks or self.search_calls)
         # Anthropic may decline mid-stream with a block still open; any other unfinished stop is malformed.
-        valid = self.stop_reason in _STOP_REASONS and (not unfinished or self.stop_reason == "refusal")
-        status = "failed" if not valid else "incomplete" if self.stop_reason in INCOMPLETE_STOP_REASONS else "completed"
+        refused = self.stop_reason == "refusal"
+        valid = self.stop_reason in _STOP_REASONS and (not unfinished or refused)
+        status = "failed" if refused else "incomplete" if self.stop_reason in INCOMPLETE_STOP_REASONS else "completed"
+        held = self.held or []
+        self.held = None
+        withheld = (
+            {cast(int, event["output_index"]) for event in held if event["type"] == "response.output_item.done"}
+            if refused
+            else set()
+        )
         logger.info(
             "claude_message_stop request_id=%s response_id=%s model=%s stop_reason=%s status=%s "
-            "blocks=%s output_tokens=%d open=%s pending_search=%d",
+            "blocks=%s output_tokens=%d open=%s pending_search=%d refusal_category=%s "
+            "withheld=%d delivered_output=%s",
             get_request_id(),
             self.response_id,
             self.scope.model,
             self.stop_reason,
-            status,
+            status if valid else "invalid",
             ",".join(f"{kind}:{count}" for kind, count in sorted(self.block_types.items())) or "none",
             self.usage.output_tokens,
             open_summary,
             len(self.search_calls),
+            self.refusal_category,
+            len(withheld),
+            self.delivered_output,
         )
         if not valid:
             if self.stop_reason is not None and self.stop_reason not in _STOP_REASONS:
@@ -489,16 +549,21 @@ class ResponsesProjection:
                 f"Claude stopped with unfinished output (open={open_summary}, "
                 f"pending_search={len(self.search_calls)}, stop_reason={self.stop_reason})"
             )
-        # Partial output of a refusal is discarded, never closed: a done event would hand a partial tool
-        # call to the client to run, and a retained one would enter continuation history without a result.
-        for index in [*self.blocks, *(call_index for call_index, _ in self.search_calls.values())]:
+        # Output a refusal cut off or held back is discarded, never closed: a done event would hand a
+        # tool call from a refused turn to the client to run, and commit refused output to its history.
+        # Output the client already committed is omitted from later requests (refusals.py).
+        for index in [*self.blocks, *(call_index for call_index, _ in self.search_calls.values()), *withheld]:
             del self.outputs[index]
         self.blocks.clear()
         self.partial_json.clear()
         self.partial_json_bytes.clear()
         self.search_calls.clear()
         self.stopped = True
-        return self.event(f"response.{status}", response=self.envelope(status))
+        if refused and held:
+            # Held events are the stream's tail; the terminal takes the first discarded sequence number.
+            self.sequence = cast(int, held[0]["sequence_number"])
+            held = []
+        return [*held, self.event(f"response.{status}", response=self.envelope(status))]
 
     def complete(self, message: dict[str, JsonValue]) -> dict[str, JsonValue]:
         content = message.get("content")
@@ -511,10 +576,10 @@ class ResponsesProjection:
         self.consume(
             {
                 "type": "message_delta",
-                "delta": {"stop_reason": message.get("stop_reason")},
+                "delta": {"stop_reason": message.get("stop_reason"), "stop_details": message.get("stop_details")},
                 "usage": message.get("usage", {}),
             }
         )
-        terminal = self.consume({"type": "message_stop"})[0]["response"]
+        terminal = self.consume({"type": "message_stop"})[-1]["response"]
         assert isinstance(terminal, dict)
         return terminal

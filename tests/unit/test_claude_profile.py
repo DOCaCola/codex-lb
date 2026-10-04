@@ -144,6 +144,20 @@ def test_native_body_is_preserved():
     assert project_request(request, profile(native=True), endpoint="messages").body == request
 
 
+def test_positional_system_turns_coexist_with_relocated_instructions():
+    request = logical()
+    request["messages"].append({"role": "system", "content": [{"type": "text", "text": "Sandbox changed"}]})
+    projected = project_request(request, profile(), endpoint="messages")
+    roles = [at(message, "role") for message in array(projected.body["messages"])]
+    assert roles == ["user", "system", "assistant", "user", "system"]
+    assert at(projected.body, "messages", 4) == request["messages"][3]
+    assert projected.feature_betas == (MID_SYSTEM_BETA,)
+    del request["system"]
+    projected = project_request(request, profile(), endpoint="messages")
+    assert array(projected.body["messages"]) == request["messages"]
+    assert projected.feature_betas == (MID_SYSTEM_BETA,)
+
+
 @pytest.mark.parametrize("endpoint", ["messages", "count_tokens"])
 @pytest.mark.parametrize("short", [{"type": "ephemeral"}, {"type": "ephemeral", "ttl": "5m"}])
 def test_projection_repairs_only_relocated_mixed_ttl_order(endpoint, short):

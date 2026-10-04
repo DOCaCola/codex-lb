@@ -1152,7 +1152,8 @@ async def test_source_429_passes_through_with_its_retry_after_and_releases(async
 
 @pytest.mark.asyncio
 async def test_source_failure_terminal_releases_the_limited_key(async_client, source_upstream) -> None:
-    """A source that answers ``response.failed`` without usage produced no answer: release, never estimate."""
+    """A source that answers ``response.failed`` without usage produced no answer: release, never estimate. The
+    row records the source's own failure code and message."""
 
     await _enable_api_key_auth(async_client)
     state = _StubState()
@@ -1185,7 +1186,9 @@ async def test_source_failure_terminal_releases_the_limited_key(async_client, so
     reservations = await _reservations(key_id)
     assert [reservation.status for reservation in reservations] == ["released"]
     rows = await _source_rows(source_id)
-    assert [(row.status, row.error_code) for row in rows] == [("error", "model_source_response_failed")]
+    assert [(row.status, row.error_code, row.error_message) for row in rows] == [
+        ("error", "server_error", "upstream exploded")
+    ]
     assert rows[0].request_id == "resp_dispatch_failed"
     assert get_source_bulkhead().in_flight(source_id) == 0
 
@@ -1194,7 +1197,7 @@ async def test_source_failure_terminal_releases_the_limited_key(async_client, so
 async def test_typeless_error_record_is_a_failure_terminal_for_the_settlement(async_client, source_upstream) -> None:
     """A source that ends with a typeless ``{"error": {...}}`` record (no ``type`` field) produced no answer: the
     public wrapper classifies it as the ``error`` terminal and relays ``response.failed``; the settlement must record
-    ``model_source_response_failed`` (not a truncated stream) and release the limited key."""
+    the source's failure code (not a truncated stream) and release the limited key."""
 
     await _enable_api_key_auth(async_client)
     state = _StubState()
@@ -1217,7 +1220,7 @@ async def test_typeless_error_record_is_a_failure_terminal_for_the_settlement(as
     reservations = await _reservations(key_id)
     assert [reservation.status for reservation in reservations] == ["released"]
     rows = await _source_rows(source_id)
-    assert [(row.status, row.error_code) for row in rows] == [("error", "model_source_response_failed")]
+    assert [(row.status, row.error_code) for row in rows] == [("error", "overloaded")]
     assert rows[0].input_tokens is None and rows[0].output_tokens is None
     assert get_source_bulkhead().in_flight(source_id) == 0
 
@@ -1228,7 +1231,7 @@ async def test_native_client_tearing_down_on_a_typeless_error_record_is_an_error
 ) -> None:
     """Native Codex receives the typeless ``{"error": {...}}`` record verbatim and tears the stream down on it while
     the source still holds the connection: the client received a failure, so the attempt is
-    ``error model_source_response_failed`` and released -- never a ``cancelled`` row settled at the estimate."""
+    an ``error`` row with the source's code and released -- never a ``cancelled`` row settled at the estimate."""
 
     await _enable_api_key_auth(async_client)
     state = _StubState()
@@ -1262,7 +1265,7 @@ async def test_native_client_tearing_down_on_a_typeless_error_record_is_an_error
     reservations = await _reservations(key_id)
     assert [reservation.status for reservation in reservations] == ["released"]
     rows = await _source_rows(source_id)
-    assert [(row.status, row.error_code) for row in rows] == [("error", "model_source_response_failed")]
+    assert [(row.status, row.error_code) for row in rows] == [("error", "overloaded")]
     assert get_source_bulkhead().in_flight(source_id) == 0
 
 

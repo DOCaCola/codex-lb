@@ -47,16 +47,20 @@ def historical_recovery(
         )
 
     protected: set[int] = set()
-    cursor = len(messages) - 1
-    if cursor >= 0 and has(cursor, "assistant", "tool_use"):
-        protected.add(cursor)
-        cursor -= 1
-    while cursor >= 0 and has(cursor, "user", "tool_result"):
-        cursor -= 1
-        if cursor < 0 or not has(cursor, "assistant", "tool_use"):
+    # System turns sit between a user turn and the next assistant turn; they are not part of a tool cycle.
+    turns = [
+        index for index, item in enumerate(messages) if not (isinstance(item, dict) and item.get("role") == "system")
+    ]
+    position = len(turns) - 1
+    if position >= 0 and has(turns[position], "assistant", "tool_use"):
+        protected.add(turns[position])
+        position -= 1
+    while position >= 0 and has(turns[position], "user", "tool_result"):
+        position -= 1
+        if position < 0 or not has(turns[position], "assistant", "tool_use"):
             return None
-        protected.add(cursor)
-        cursor -= 1
+        protected.add(turns[position])
+        position -= 1
 
     output: list[JsonValue] = []
     changed = False

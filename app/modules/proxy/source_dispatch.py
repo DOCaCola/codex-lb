@@ -972,8 +972,11 @@ async def settlement_stream(
                 # stream normally; a limited key must not be charged (not even
                 # at the estimate) for an answer the source never produced.
                 status = "error"
-                error_code = ERROR_MODEL_SOURCE_RESPONSE_FAILED
-                error_message = f"source terminated the stream with response.{holder.terminal_kind}"
+                error_code = holder.terminal_error_code or ERROR_MODEL_SOURCE_RESPONSE_FAILED
+                error_message = (
+                    holder.terminal_error_message
+                    or f"source terminated the stream with response.{holder.terminal_kind}"
+                )
             elif holder.terminal_kind in _SUCCESS_TERMINAL_KINDS and relayed_kind in _FAILURE_TERMINAL_KINDS:
                 # The parser read the source's success terminal, but the public
                 # contract rewrote it into ``response.failed`` (``response`` not
@@ -1008,8 +1011,12 @@ async def settlement_stream(
             holder is not None and holder.terminal_kind in _FAILURE_TERMINAL_KINDS
         ) or relayed_kind in _FAILURE_TERMINAL_KINDS:
             status = "error"
+            failure = holder if holder is not None and holder.terminal_kind in _FAILURE_TERMINAL_KINDS else None
             error_code = ERROR_MODEL_SOURCE_RESPONSE_FAILED
             error_message = "source terminated the stream with a failure terminal"
+            if failure is not None:
+                error_code = failure.terminal_error_code or error_code
+                error_message = failure.terminal_error_message or error_message
         elif relayed_kind in _SUCCESS_TERMINAL_KINDS:
             # Symmetric: the client received the success terminal before
             # leaving (Codex tears the stream down on ``response.completed``

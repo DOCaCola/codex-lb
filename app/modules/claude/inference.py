@@ -18,6 +18,7 @@ from app.modules.claude.chat_replay import ChatHistory, plan_chat_replay
 from app.modules.claude.dispatch import ClaudeDispatchPreparer, PreparedClaudeRequest
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
+from app.modules.claude.refusals import omit_refused_output
 from app.modules.claude.replay import authenticate_replay, project_foreign_replay
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.responses import ResponsesProjection
@@ -59,6 +60,7 @@ async def prepare_responses(
     requested_effort = requested_effort if isinstance(requested_effort, str) else None
     client_scope = api_key.id if api_key else "anonymous"
     opaque = ClaudeOpaqueState(TokenEncryptor())
+    payload = await omit_refused_output(payload, client_scope)
     logical = project_foreign_replay(
         cast(dict[str, PydanticJsonValue], payload), require_complete_history=require_complete_history
     )
@@ -184,7 +186,17 @@ async def collect_response(stream: SourceResponsesStream) -> SourceResponsesComp
                 response = event.get("response")
                 if isinstance(response, dict):
                     terminal = response
-            elif event.get("type") in ("error", "response.failed"):
+            elif event.get("type") == "response.failed":
+                # The adapter fails a response only for a refusal: a prompt-policy client error.
+                response = event.get("response")
+                error = response.get("error") if isinstance(response, dict) else None
+                assert isinstance(error, dict)
+                raise ModelSourceForwardingError(
+                    status_code=400,
+                    payload={"error": {"type": "invalid_request_error", **error}},
+                    upstream_status_code=stream.upstream_status_code,
+                )
+            elif event.get("type") == "error":
                 raise ModelSourceForwardingError(
                     status_code=502, payload=event, upstream_status_code=stream.upstream_status_code
                 )

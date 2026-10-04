@@ -1,0 +1,81 @@
+## ADDED Requirements
+
+### Requirement: Refused translated output is not replayed
+A translated Claude stream SHALL withhold the first completed tool call and every later event of that response until Claude's stop reason arrives. It SHALL release them for a non-refusal stop and discard them on refusal: a refused turn MUST NOT deliver an executable tool call, and discarded items MUST NOT appear in the terminal output. Sequence numbers delivered to the client SHALL remain contiguous. When a refusal follows items the client already received as done, the gateway SHALL persist a hashed record of the refused response, scoped to the client and independent of model, before the terminal event is delivered. Later translated requests from that client SHALL omit every input item that belongs to a recorded refused response, before replay authentication and continuation projection, and SHALL refresh the record's retention while it is used. Only counts SHALL be logged; refused content, its ids and refusal explanations MUST NOT be stored or logged. A recording failure SHALL fail the stream explicitly.
+
+#### Scenario: Tool call before refusal
+- **WHEN** Claude completes a tool call and then stops with refusal
+- **THEN** the client receives no done event for the call, the terminal output omits it, and the response fails with invalid_prompt
+
+#### Scenario: Tool turn completes
+- **WHEN** Claude completes tool calls and stops with tool_use
+- **THEN** the held events are delivered in order before the completed terminal
+
+#### Scenario: Conversation continues after a refusal
+- **WHEN** the user continues a conversation after a refusal whose signed thinking the client had already committed
+- **THEN** Claude receives the conversation and the new message without the refused reasoning and without a synthetic continuation turn
+
+#### Scenario: Refusal before any committed output
+- **WHEN** Claude refuses before any item reached the client as done
+- **THEN** no refused-response record is written
+
+#### Scenario: Completed output is unaffected
+- **WHEN** a response completes or stops for any other reason
+- **THEN** its items are replayed in later requests as before
+
+## MODIFIED Requirements
+
+### Requirement: Codex protocol adaptation
+Claude SHALL support Responses over downstream HTTP and WebSocket while using HTTPS/SSE upstream. Translation MUST preserve portable text, tool/custom-tool/namespace, image, reasoning and cache-usage semantics, or reject unsupported semantics explicitly. A custom tool with a lark or regex grammar format SHALL be projected as a single raw-text input whose description carries the grammar; the client remains responsible for validating that input. Claude catalog models SHALL advertise the freeform patch tool type. Truncation, `model_context_window_exceeded` and pause_turn MUST NOT become completed; they SHALL surface as incomplete with reason max_output_tokens. A refusal stop reason MUST NOT become completed or incomplete; for every translated projection it SHALL fail as `response.failed` with error code `invalid_prompt` and a message naming the refusal category and Claude's explanation, preserving usage, so clients end the turn without retrying. Non-streaming translated Responses and Chat SHALL return HTTP 400 `invalid_request_error` with that error, and streaming Chat SHALL emit it as an error event; refused output SHALL follow the refused-output requirement. A refusal MAY end the stream while content blocks or search calls are still open; that partial output SHALL be discarded: it MUST NOT receive done events and MUST NOT appear in the terminal output or continuation history, so an unfinished tool call is never delivered as executable or replayed without a result. Native passthrough SHALL forward such a refusal unchanged and record it as an incomplete terminal. Any other stop with open content, pending search calls or no stop reason SHALL fail with a message naming the open block types, pending search count and stop reason. Each translated message stop, including a malformed one logged with status `invalid`, SHALL log its stop reason, resulting status, upstream content block type counts, output tokens, a bounded refusal category when Claude supplies one, the withheld item count and whether output was delivered, never content, reasoning, tool input, signatures or refusal explanations. A Claude transport failure SHALL name its exception class. Durable continuation MUST be persisted before terminal delivery and scoped to compatible account/model state; compaction MUST preserve useful context.
+
+#### Scenario: Pause turn
+- **WHEN** Anthropic stops with pause_turn
+- **THEN** the Responses client receives an incomplete result with reason max_output_tokens and no hidden automatic continuation
+
+#### Scenario: Context window exhausted
+- **WHEN** Anthropic stops with model_context_window_exceeded
+- **THEN** the client receives an incomplete result with reason max_output_tokens, never a completed result or an unknown-stop error
+
+#### Scenario: Refusal
+- **WHEN** Anthropic stops with refusal on a translated Responses or Chat request, with or without visible reasoning
+- **THEN** the response fails with error code invalid_prompt, a message naming the refusal category, and the turn's usage, so Codex does not retry it
+
+#### Scenario: Non-streaming refusal
+- **WHEN** Anthropic refuses a non-streaming translated Responses or Chat request
+- **THEN** the client receives HTTP 400 invalid_request_error with code invalid_prompt
+
+#### Scenario: Mid-stream refusal with an open tool call
+- **WHEN** Anthropic stops with refusal while a tool call block is still open
+- **THEN** the client receives no done event for that call, the terminal output omits it, and the response fails with invalid_prompt
+
+#### Scenario: Native mid-stream refusal
+- **WHEN** a native Messages stream stops with refusal while a content block is open
+- **THEN** the stream is forwarded unchanged and settled as an incomplete terminal
+
+#### Scenario: Unfinished non-refusal stop
+- **WHEN** a stream stops with an open block or pending search under any other stop reason, or without a stop reason
+- **THEN** the request fails with a message naming the open block types, pending search count and stop reason, and the stop diagnostic line is logged
+
+#### Scenario: Stop diagnostics
+- **WHEN** a translated Claude message stops
+- **THEN** one log line records the stop reason, status, block type counts, output tokens, refusal category, withheld count and delivered-output flag without any content or refusal explanation
+
+#### Scenario: Transport drop
+- **WHEN** the Claude connection fails before message_stop
+- **THEN** the failure message names the transport exception class
+
+#### Scenario: Grammar-format custom tool
+- **WHEN** a Responses request declares a custom tool with a lark or regex grammar, such as Codex's apply_patch
+- **THEN** Claude receives a tool with one required string input documenting that grammar, and its call returns to the client as a custom_tool_call carrying the raw input
+
+#### Scenario: Patch tool advertisement
+- **WHEN** a Codex client reads the model catalog
+- **THEN** Claude models advertise apply_patch_tool_type freeform so the client registers its patch tool
+
+#### Scenario: Unsupported constrained output
+- **WHEN** a Responses request declares a malformed grammar, an unknown custom tool format or a provider-specific control without a Claude equivalent
+- **THEN** the adapter returns an explicit unsupported-parameter error before dispatch rather than silently ignoring it
+
+#### Scenario: Native resource history outlives provenance retention
+- **WHEN** native resource history is submitted after its thirty-day resource provenance expires
+- **THEN** it fails explicitly and requires portable context rather than guessing its origin from affinity
