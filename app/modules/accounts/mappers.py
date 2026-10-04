@@ -6,7 +6,7 @@ from app.core import usage as usage_core
 from app.core.auth import DEFAULT_EMAIL, DEFAULT_PLAN, extract_id_token_claims, token_expiry_epoch_ms
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.usage.pacing import scheduled_remaining_percent
+from app.core.usage.pacing import scheduled_remaining_series
 from app.core.usage.quota import account_credit_policy, apply_usage_quota
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
@@ -536,7 +536,7 @@ def build_account_usage_trends(
         ):
             secondary_schedule.setdefault(b.account_id, {})[b.bucket_epoch] = (
                 b.reset_at,
-                b.window_minutes,
+                b.window_minutes * 60,
             )
 
     # Generate the full time grid, aligned to bucket boundaries (same as SQL)
@@ -553,10 +553,10 @@ def build_account_usage_trends(
 
         primary_points = _fill_trend_points(time_grid, primary_data) if primary_data else []
         secondary_points = _fill_trend_points(time_grid, secondary_data) if secondary_data else []
-        secondary_scheduled_points = _fill_scheduled_secondary_points(
-            time_grid,
-            secondary_schedule.get(account_id, {}),
-        )
+        secondary_scheduled_points = [
+            UsageTrendPoint(t=datetime.fromtimestamp(epoch, tz=timezone.utc), v=value)
+            for epoch, value in scheduled_remaining_series(time_grid, secondary_schedule.get(account_id, {}))
+        ]
 
         result[account_id] = AccountUsageTrend(
             primary=primary_points,
@@ -626,31 +626,4 @@ def _fill_trend_points(
                 v=round(remaining, 2),
             )
         )
-    return points
-
-
-def _fill_scheduled_secondary_points(
-    time_grid: list[int],
-    schedule_data: dict[int, tuple[int, int]],
-) -> list[UsageTrendPoint]:
-    """Build the ideal weekly remaining line from each sample's own reset deadline."""
-    points: list[UsageTrendPoint] = []
-    current_reset_at: int | None = None
-    current_window_minutes: int | None = None
-
-    for epoch in time_grid:
-        if epoch in schedule_data:
-            current_reset_at, current_window_minutes = schedule_data[epoch]
-
-        if current_reset_at is None or not current_window_minutes:
-            continue
-
-        window_seconds = current_window_minutes * 60
-        points.append(
-            UsageTrendPoint(
-                t=datetime.fromtimestamp(epoch, tz=timezone.utc),
-                v=scheduled_remaining_percent(at=epoch, reset_at=current_reset_at, window_seconds=window_seconds),
-            )
-        )
-
     return points

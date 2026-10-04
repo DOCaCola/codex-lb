@@ -6,7 +6,7 @@ from pydantic import Field
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.usage.pacing import scheduled_remaining_percent
+from app.core.usage.pacing import scheduled_remaining_series
 from app.db.models import ClaudeQuotaHistory, RequestLog
 from app.modules.shared.schemas import DashboardModel
 
@@ -98,13 +98,13 @@ async def read_trends(session: AsyncSession, source_id: str, *, quota: bool) -> 
                 .where(
                     ClaudeQuotaHistory.source_id == source_id,
                     ClaudeQuotaHistory.window == "seven_day",
-                    ClaudeQuotaHistory.observed_at >= since,
-                    ClaudeQuotaHistory.observed_at <= now.replace(tzinfo=None),
+                    column >= since,
+                    column < until,
                 )
                 .order_by(ClaudeQuotaHistory.observed_at)
             )
         )
-        plan = weekly_plan(observations, start=start, end=now.timestamp())
+        plan = weekly_plan(observations, start=start, end=end)
         if plan:
             result.series.append(
                 TrendSeries(key="weekly_plan", label="Weekly plan", points=plan, dashed=True, color_index=1)
@@ -112,34 +112,14 @@ async def read_trends(session: AsyncSession, source_id: str, *, quota: bool) -> 
     return result
 
 
-def weekly_plan(observations: list[ClaudeQuotaHistory], *, start: int, end: float) -> list[TrendPoint]:
-    """A deadline-derived guideline; never inferred quota or an invented reset cycle."""
-    events: list[tuple[float, int | None]] = []
+def weekly_plan(observations: list[ClaudeQuotaHistory], *, start: int, end: int) -> list[TrendPoint]:
+    """The Codex weekly plan line, using each hour's latest recorded reset deadline."""
+    deadlines: dict[int, tuple[int, int]] = {}
     for observation in observations:
-        at = observation.observed_at.replace(tzinfo=UTC).timestamp()
-        reset = round(observation.resets_at.replace(tzinfo=UTC).timestamp()) if observation.resets_at else None
-        if not events or events[-1][1] != reset:
-            events.append((at, reset))
-    if not any(reset is not None and reset >= at for at, reset in events):
-        return []
-    times = {float(hour) for hour in range(start, int(end) + 1, HOUR)} | {end}
-    breaks: set[float] = set()
-    for index, (at, reset) in enumerate(events):
-        times.add(at)
-        if index and events[index - 1][1] is not None:
-            breaks.add(at - 0.001)
-            times.add(at - 0.001)
-        if reset is not None and at <= reset <= end:
-            times.add(float(reset))
-    points: list[TrendPoint] = []
-    current_reset: int | None = None
-    next_event = 0
-    for at in sorted(times):
-        while next_event < len(events) and events[next_event][0] <= at:
-            current_reset = events[next_event][1]
-            next_event += 1
-        value = None
-        if at not in breaks and current_reset is not None and at <= current_reset:
-            value = scheduled_remaining_percent(at=at, reset_at=current_reset, window_seconds=HOURS * HOUR)
-        points.append(TrendPoint(t=datetime.fromtimestamp(at, UTC), v=value))
-    return points
+        if observation.resets_at is not None:
+            hour = int(observation.observed_at.replace(tzinfo=UTC).timestamp()) // HOUR * HOUR
+            deadlines[hour] = (int(observation.resets_at.replace(tzinfo=UTC).timestamp()), HOURS * HOUR)
+    return [
+        TrendPoint(t=datetime.fromtimestamp(epoch, UTC), v=value)
+        for epoch, value in scheduled_remaining_series(range(start, end + HOUR, HOUR), deadlines)
+    ]

@@ -146,7 +146,9 @@ async def test_claude_reset_deadline_persists_with_weekly_plan_api(async_client,
     measured, guideline = series
     assert measured["colorIndex"] == guideline["colorIndex"] == 1
     assert guideline["dashed"] and not measured["dashed"]
-    assert all(42 < p["v"] < 43 for p in guideline["points"] if p["v"] is not None)
+    [point] = guideline["points"]
+    at = datetime.fromisoformat(point["t"].replace("Z", "+00:00"))
+    assert point["v"] == round(100 * (int(reset.timestamp()) - at.timestamp()) / (7 * 24 * 3600), 2)
 
 
 async def test_sampling_preserves_reset_changes_within_interval(async_client, monkeypatch):

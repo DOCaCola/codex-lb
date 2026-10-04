@@ -1,0 +1,3 @@
+- [x] Extract the Codex weekly plan bucket logic into a shared pacing helper.
+- [x] Build the Claude weekly plan from hourly latest recorded deadlines through the shared helper.
+- [x] Cover sub-second deadline jitter, new cycles and unknown deadlines with tests.
