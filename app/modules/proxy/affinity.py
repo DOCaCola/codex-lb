@@ -8,6 +8,7 @@ orchestration class.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -465,7 +466,17 @@ def _thread_codex_session_affinity(
 ) -> _AffinityPolicy | None:
     if not enabled:
         return None
-    identity = _codex_backend_identity(headers, thread_id=thread_id)
+    return _thread_affinity_for_identity(
+        _codex_backend_identity(headers, thread_id=thread_id),
+        max_age_seconds=max_age_seconds,
+    )
+
+
+def _thread_affinity_for_identity(
+    identity: _CodexBackendIdentity,
+    *,
+    max_age_seconds: int,
+) -> _AffinityPolicy | None:
     thread_key = identity.thread_selection_key
     if thread_key is None:
         return None
@@ -559,6 +570,59 @@ def _sticky_key_for_codex_control_request(
     )
     if session_affinity is not None:
         return session_affinity
+    return _AffinityPolicy()
+
+
+def _nonblank_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _codex_search_identity(payload: Mapping[str, object], headers: Mapping[str, str]) -> _CodexBackendIdentity:
+    """Conversation identity of a Codex standalone web search (``alpha/search``).
+
+    The search client sends no ``session-id``/``thread-id`` headers. It carries
+    the identity its Responses turns send as those headers in the
+    ``x-codex-turn-metadata`` JSON instead, and repeats the process session as
+    the body ``id`` (the CLIProxyAPI and sub2api routing seed).
+    """
+
+    metadata: object = None
+    raw_metadata = _normalized_header_value(headers, ("x-codex-turn-metadata",))
+    if raw_metadata is not None:
+        try:
+            metadata = json.loads(raw_metadata)
+        except json.JSONDecodeError:
+            metadata = None
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return _CodexBackendIdentity(
+        process_session=_nonblank_string(metadata.get("session_id")) or _nonblank_string(payload.get("id")),
+        thread_id=_nonblank_string(metadata.get("thread_id")),
+    )
+
+
+def _sticky_key_for_codex_search_request(
+    identity: _CodexBackendIdentity,
+    *,
+    codex_session_affinity: bool,
+    max_age_seconds: int,
+) -> _AffinityPolicy:
+    """Route a search to the account holding its conversation's thread locality."""
+
+    if not codex_session_affinity:
+        return _AffinityPolicy()
+    thread_affinity = _thread_affinity_for_identity(identity, max_age_seconds=max_age_seconds)
+    if thread_affinity is not None:
+        return thread_affinity
+    if identity.process_session is not None:
+        return _AffinityPolicy(
+            key=identity.process_session,
+            kind=StickySessionKind.CODEX_SESSION,
+            codex_session_source="session_header",
+        )
     return _AffinityPolicy()
 
 

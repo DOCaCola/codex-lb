@@ -8,13 +8,14 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 
 import app.modules.proxy.service as proxy_module
+from app.core.clients import proxy as core_proxy
 from app.core.crypto import TokenEncryptor
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import naive_utc_to_epoch, utcnow
-from app.db.models import Account, AccountStatus, StickySessionKind
+from app.db.models import Account, AccountStatus, RequestLog, StickySessionKind
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
@@ -1092,6 +1093,116 @@ async def test_backend_thread_rows_route_sibling_responses_and_compact_independe
         ("responses", "acc_thread_route_a", process_session),
         ("compact", "acc_thread_route_b", process_session),
     ]
+
+
+@pytest.mark.asyncio
+async def test_codex_search_routes_and_logs_by_turn_metadata_thread(
+    async_client,
+    monkeypatch,
+):
+    from app.modules.proxy.sticky_repository import StickySessionsRepository
+
+    await _set_routing_settings(async_client, sticky_threads_enabled=False)
+    account_a_id = await _import_account(async_client, "acc_search_thread_a", "search-thread-a@example.com")
+    account_b_id = await _import_account(async_client, "acc_search_thread_b", "search-thread-b@example.com")
+    process_session = "process-search-shared"
+    root_key = _codex_backend_identity({"session-id": process_session, "thread-id": "search-root"}).thread_selection_key
+    child_key = _codex_backend_identity(
+        {"session-id": process_session, "thread-id": "search-child"}
+    ).thread_selection_key
+    assert root_key is not None
+    assert child_key is not None
+
+    async with SessionLocal() as session:
+        repo = StickySessionsRepository(session)
+        await repo.upsert(root_key, account_a_id, kind=StickySessionKind.PROMPT_CACHE)
+        await repo.upsert(child_key, account_b_id, kind=StickySessionKind.PROMPT_CACHE)
+
+    observed: list[str] = []
+
+    async def fake_codex_control_request(path, *, account_id, **_kwargs):
+        assert path == "alpha/search"
+        observed.append(account_id)
+        return core_proxy.CodexControlResponse(
+            status_code=200,
+            body=b'{"results":[]}',
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_codex_control_request)
+
+    for thread_id in ("search-root", "search-child"):
+        metadata = {"session_id": process_session, "thread_id": thread_id, "turn_id": f"turn-{thread_id}"}
+        response = await async_client.post(
+            "/backend-api/codex/alpha/search",
+            json={"id": process_session, "model": "gpt-6.1-sol", "input": [], "commands": []},
+            headers={
+                "user-agent": "codex_cli_rs/0.159.2",
+                "x-codex-turn-metadata": json.dumps(metadata),
+                "x-request-id": f"req-search-{thread_id}",
+            },
+        )
+        assert response.status_code == 200
+
+    assert observed == ["acc_search_thread_a", "acc_search_thread_b"]
+
+    async with SessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(RequestLog)
+                    .where(RequestLog.request_id.in_(["req-search-search-root", "req-search-search-child"]))
+                    .order_by(RequestLog.request_id.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [(row.account_id, row.conversation_id, row.model, row.client_ip) for row in rows] == [
+        (account_a_id, "search-root", "gpt-6.1-sol", "127.0.0.1"),
+        (account_b_id, "search-child", "gpt-6.1-sol", "127.0.0.1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_search_without_turn_metadata_follows_body_process_session(
+    async_client,
+    monkeypatch,
+):
+    from app.modules.proxy.sticky_repository import StickySessionsRepository
+
+    await _set_routing_settings(async_client, sticky_threads_enabled=False)
+    await _import_account(async_client, "acc_search_session_a", "search-session-a@example.com")
+    account_b_id = await _import_account(async_client, "acc_search_session_b", "search-session-b@example.com")
+    process_session = "process-search-body-only"
+
+    async with SessionLocal() as session:
+        await StickySessionsRepository(session).upsert(
+            _codex_session_selection_key(process_session),
+            account_b_id,
+            kind=StickySessionKind.CODEX_SESSION,
+        )
+
+    observed: list[str] = []
+
+    async def fake_codex_control_request(path, *, account_id, **_kwargs):
+        del path
+        observed.append(account_id)
+        return core_proxy.CodexControlResponse(
+            status_code=200,
+            body=b'{"results":[]}',
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_codex_control_request)
+
+    response = await async_client.post(
+        "/backend-api/codex/alpha/search",
+        json={"id": process_session, "model": "gpt-6.1-sol", "input": []},
+    )
+
+    assert response.status_code == 200
+    assert observed == ["acc_search_session_b"]
 
 
 @pytest.mark.asyncio

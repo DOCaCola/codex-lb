@@ -36,7 +36,12 @@ from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.db.models import Account
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._service.support import _request_log_client_fields, _RequestLogFailureMetadata
-from app.modules.proxy.affinity import _AffinityPolicy, _sticky_key_for_codex_control_request
+from app.modules.proxy.affinity import (
+    _AffinityPolicy,
+    _codex_search_identity,
+    _sticky_key_for_codex_control_request,
+    _sticky_key_for_codex_search_request,
+)
 from app.modules.proxy.helpers import _header_account_id, _normalize_error_code, _parse_openai_error
 from app.modules.proxy.load_balancer import (
     AccountConcurrencyCaps,
@@ -192,6 +197,16 @@ def _prefer_earlier_reset_window(settings: Any) -> ResetPreferenceWindow:
     return cast(Callable[[Any], ResetPreferenceWindow], _service_global("_prefer_earlier_reset_window"))(settings)
 
 
+def _json_object(payload: bytes | None) -> dict[str, object]:
+    if not payload:
+        return {}
+    try:
+        decoded = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def _routing_strategy(settings: Any) -> RoutingStrategy:
     return cast(Callable[[Any], RoutingStrategy], _service_global("_routing_strategy"))(settings)
 
@@ -282,6 +297,7 @@ class _CodexControlMixin:
         success_gate: Callable[[str, CodexControlResponse], Awaitable[bool]] | None = None,
         image_accounting: NativeImageAccounting | None = None,
         privacy_policy: CodexControlRequestPrivacyPolicy = CodexControlRequestPrivacyPolicy.STANDARD,
+        client_ip: str | None = None,
     ) -> CodexControlResponse:
         proxy = cast(_CodexControlServiceProtocol, self)
         filtered = filter_inbound_headers(headers)
@@ -300,10 +316,24 @@ class _CodexControlMixin:
         deadline = start + base_settings.proxy_request_budget_seconds
         settings = await _service_get_settings_cache().get()
         bind_resilience_toggles(settings, startup_settings=base_settings)  # C2-3 resilience toggles
-        affinity = _sticky_key_for_codex_control_request(
-            headers,
-            codex_session_affinity=codex_session_affinity,
-        )
+        log_model = image_accounting.model if image_accounting is not None else None
+        if normalized_path == "alpha/search":
+            search_payload = _json_object(payload)
+            search_identity = _codex_search_identity(search_payload, headers)
+            affinity = _sticky_key_for_codex_search_request(
+                search_identity,
+                codex_session_affinity=codex_session_affinity,
+                max_age_seconds=settings.openai_cache_affinity_max_age_seconds,
+            )
+            conversation_id = search_identity.thread_id or conversation_id
+            search_model = search_payload.get("model")
+            if isinstance(search_model, str) and search_model.strip():
+                log_model = search_model.strip()
+        else:
+            affinity = _sticky_key_for_codex_control_request(
+                headers,
+                codex_session_affinity=codex_session_affinity,
+            )
         selection_model = api_key.enforced_model if api_key is not None else None
         if native_image:
             # Image entitlement is decided by the native endpoint, not the
@@ -653,7 +683,7 @@ class _CodexControlMixin:
                 account_id=None if sensitive_realtime_request else account_id_value,
                 api_key=api_key,
                 request_id=request_id,
-                model=image_accounting.model if image_accounting is not None else None,
+                model=log_model,
                 input_tokens=image_accounting.usage.input_tokens if image_accounting is not None else None,
                 output_tokens=image_accounting.usage.output_tokens if image_accounting is not None else None,
                 cached_input_tokens=image_accounting.usage.cached_input_tokens
@@ -688,4 +718,5 @@ class _CodexControlMixin:
                 useragent=useragent,
                 useragent_group=useragent_group,
                 conversation_id=None if sensitive_realtime_request else conversation_id,
+                client_ip=None if sensitive_realtime_request else client_ip,
             )

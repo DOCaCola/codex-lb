@@ -1042,6 +1042,7 @@ async def _codex_control_proxy(
             api_key=api_key,
             privacy_policy=adapter.privacy_policy,
             success_gate=adapter.success_gate,
+            client_ip=resolve_request_client_host(request),
         )
     except ProxyResponseError as exc:
         if adapter.privacy_policy is CodexControlRequestPrivacyPolicy.PRIVATE_REALTIME:
