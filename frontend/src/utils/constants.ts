@@ -18,6 +18,7 @@ export const DONUT_COLORS_DARK = [
 
 export const REQUEST_STATUS_LABELS: Record<string, string> = {
   ok: "OK",
+  reconnect: "Reconnect",
   cancelled: "Cancelled",
   rate_limit: "Rate limit",
   quota: "Quota",

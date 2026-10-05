@@ -19,6 +19,7 @@ from app.core.usage.logs import (
     CANCELLED_STATUS,
     CLIENT_DISCONNECT_ERROR_CODE,
     NON_ERROR_STATUSES,
+    WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
     RequestLogLike,
     calculated_cost_from_log,
 )
@@ -1336,6 +1337,7 @@ class RequestLogsRepository:
         reasoning_efforts: list[str] | None = None,
         include_success: bool = True,
         include_cancelled: bool = True,
+        include_reconnect: bool = True,
         include_error_other: bool = True,
         error_codes_in: list[str] | None = None,
         error_codes_excluding: list[str] | None = None,
@@ -1360,6 +1362,7 @@ class RequestLogsRepository:
             reasoning_efforts=reasoning_efforts,
             include_success=include_success,
             include_cancelled=include_cancelled,
+            include_reconnect=include_reconnect,
             include_error_other=include_error_other,
             error_codes_in=error_codes_in,
             error_codes_excluding=error_codes_excluding,
@@ -1391,6 +1394,8 @@ class RequestLogsRepository:
             search is None
             and not error_codes_in
             and not error_codes_excluding
+            # Demand rollups fold cancelled rows without their error code.
+            and include_cancelled == include_reconnect
             and not any(value.startswith("source:") for value in account_ids or [])
         ):
             demand_params = _DemandCountParams(
@@ -1425,6 +1430,7 @@ class RequestLogsRepository:
             tuple(reasoning_efforts or ()),
             include_success,
             include_cancelled,
+            include_reconnect,
             include_error_other,
             tuple(sorted(error_codes_in)) if error_codes_in else None,
             tuple(sorted(error_codes_excluding)) if error_codes_excluding else None,
@@ -1765,6 +1771,7 @@ class RequestLogsRepository:
         reasoning_efforts: list[str] | None = None,
         include_success: bool = True,
         include_cancelled: bool = True,
+        include_reconnect: bool = True,
         include_error_other: bool = True,
         error_codes_in: list[str] | None = None,
         error_codes_excluding: list[str] | None = None,
@@ -1817,8 +1824,25 @@ class RequestLogsRepository:
         status_conditions = []
         if include_success:
             status_conditions.append(RequestLog.status == "success")
-        if include_cancelled:
+        if include_cancelled and include_reconnect:
             status_conditions.append(RequestLog.status == CANCELLED_STATUS)
+        elif include_cancelled:
+            status_conditions.append(
+                and_(
+                    RequestLog.status == CANCELLED_STATUS,
+                    or_(
+                        RequestLog.error_code.is_(None),
+                        RequestLog.error_code != WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
+                    ),
+                )
+            )
+        elif include_reconnect:
+            status_conditions.append(
+                and_(
+                    RequestLog.status == CANCELLED_STATUS,
+                    RequestLog.error_code == WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
+                )
+            )
         if error_codes_in:
             status_conditions.append(and_(RequestLog.status == "error", RequestLog.error_code.in_(error_codes_in)))
         if include_error_other:

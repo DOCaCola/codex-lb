@@ -98,6 +98,7 @@ from app.core.resilience.network_recovery import (
 from app.core.resilience.toggles import bind_resilience_toggles
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
+from app.core.usage.logs import CANCELLED_STATUS, WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE
 from app.core.usage.request_operation import refine_responses_operation
 from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.request_id import get_request_id, reset_request_id, set_request_id
@@ -6904,7 +6905,7 @@ class _WebSocketMixin:
                     archive_request_id=request_state.archive_request_id,
                     model=request_state.model or "",
                     latency_ms=latency_ms,
-                    status=status,
+                    status=CANCELLED_STATUS if error_code == WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE else status,
                     error_code=error_code,
                     error_message=error_message,
                     failure_phase=request_state.failure_phase_override,

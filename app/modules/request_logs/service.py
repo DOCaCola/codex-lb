@@ -48,6 +48,7 @@ class RequestLogApiKeyOption:
 class RequestLogStatusFilter:
     include_success: bool
     include_cancelled: bool
+    include_reconnect: bool
     include_error_other: bool
     error_codes_in: list[str] | None
     error_codes_excluding: list[str] | None
@@ -161,6 +162,7 @@ class RequestLogsService:
             reasoning_efforts=reasoning_efforts,
             include_success=status_filter.include_success,
             include_cancelled=status_filter.include_cancelled,
+            include_reconnect=status_filter.include_reconnect,
             include_error_other=status_filter.include_error_other,
             error_codes_in=status_filter.error_codes_in,
             error_codes_excluding=status_filter.error_codes_excluding,
@@ -292,6 +294,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
         return RequestLogStatusFilter(
             include_success=True,
             include_cancelled=True,
+            include_reconnect=True,
             include_error_other=True,
             error_codes_in=None,
             error_codes_excluding=None,
@@ -301,6 +304,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
         return RequestLogStatusFilter(
             include_success=True,
             include_cancelled=True,
+            include_reconnect=True,
             include_error_other=True,
             error_codes_in=None,
             error_codes_excluding=None,
@@ -308,6 +312,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
 
     include_success = "ok" in normalized
     include_cancelled = "cancelled" in normalized
+    include_reconnect = "reconnect" in normalized
     include_rate_limit = "rate_limit" in normalized
     include_quota = "quota" in normalized
     include_error_other = "error" in normalized
@@ -321,6 +326,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
     return RequestLogStatusFilter(
         include_success=include_success,
         include_cancelled=include_cancelled,
+        include_reconnect=include_reconnect,
         include_error_other=include_error_other,
         error_codes_in=sorted(error_codes_in) if error_codes_in else None,
         error_codes_excluding=sorted(RATE_LIMIT_CODES | QUOTA_CODES) if include_error_other else None,
@@ -329,7 +335,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
 
 def _normalize_status_values(values: list[tuple[str, str | None]]) -> list[str]:
     normalized = {normalize_log_status(status, error_code) for status, error_code in values}
-    ordered = ["ok", "cancelled", "rate_limit", "quota", "error"]
+    ordered = ["ok", "reconnect", "cancelled", "rate_limit", "quota", "error"]
     return [status for status in ordered if status in normalized]
 
 

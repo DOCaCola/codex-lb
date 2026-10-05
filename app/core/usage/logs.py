@@ -24,6 +24,10 @@ NON_ERROR_STATUSES: tuple[str, ...] = (SUCCESS_STATUS, CANCELLED_STATUS)
 # error-satellite rollup rows that were folded under the legacy
 # `status != 'success'` filter.
 CLIENT_DISCONNECT_ERROR_CODE = "client_disconnected"
+# Upstream's 60-minute Responses websocket lifetime cap. The client opens a new
+# connection and resends the turn, so the refused attempt is a superseded
+# terminal like a disconnect: stored as cancelled and shown as a reconnect.
+WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE = "websocket_connection_limit_reached"
 
 
 class RequestLogLike(Protocol):

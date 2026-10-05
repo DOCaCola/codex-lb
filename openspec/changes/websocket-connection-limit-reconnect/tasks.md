@@ -1,0 +1,4 @@
+- [x] 1. Record upstream `websocket_connection_limit_reached` WebSocket terminals as `cancelled` request-log rows, and keep other error codes, including `previous_response_not_found`, unchanged.
+- [x] 2. Expose those rows as public status `reconnect`, with separate `reconnect` and `cancelled` filters and options, and keep the demand-rollup count exact when only one of them is selected.
+- [x] 3. Render a localized informational Reconnect badge in the dashboard.
+- [x] 4. Add unit and integration regressions, then run the backend and frontend checks.

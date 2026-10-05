@@ -122,6 +122,49 @@ async def test_request_logs_status_cancelled_filters_cancelled(async_client, db_
     ]
 
 
+async def _seed_reconnect_log() -> None:
+    async with SessionLocal() as session:
+        await RequestLogsRepository(session).add_log(
+            account_id="acc_cancelled_filter",
+            request_id="req_reconnect_filter",
+            model="gpt-5.1",
+            input_tokens=None,
+            output_tokens=None,
+            latency_ms=10,
+            status="cancelled",
+            error_code="websocket_connection_limit_reached",
+            error_message="Responses websocket connection limit reached (60 minutes).",
+            requested_at=utcnow() - timedelta(seconds=30),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("", {"req_reconnect_filter", "req_cancelled_filter", "req_cancelled_error_control"}),
+        ("status=reconnect", {"req_reconnect_filter"}),
+        ("status=cancelled", {"req_cancelled_filter"}),
+        ("status=reconnect&status=cancelled", {"req_reconnect_filter", "req_cancelled_filter"}),
+        ("status=error", {"req_cancelled_error_control"}),
+    ],
+)
+async def test_connection_limit_rows_are_reconnects(async_client, db_setup, query, expected):
+    await _seed_cancelled_and_error_logs()
+    await _seed_reconnect_log()
+
+    response = await async_client.get(f"/api/request-logs?limit=10&{query}")
+    options = await async_client.get("/api/request-logs/options")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {request["requestId"] for request in payload["requests"]} == expected
+    assert payload["total"] == len(expected)
+    statuses = {request["requestId"]: request["status"] for request in payload["requests"]}
+    assert statuses.get("req_reconnect_filter", "reconnect") == "reconnect"
+    assert options.json()["statuses"] == ["reconnect", "cancelled", "error"]
+
+
 @pytest.mark.asyncio
 async def test_request_logs_status_error_excludes_cancelled(async_client, db_setup):
     await _seed_cancelled_and_error_logs()

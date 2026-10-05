@@ -818,6 +818,7 @@
   "dashboard.requestStatus.cancelled": "Cancelled",
   "dashboard.requestStatus.quota": "Quota",
   "dashboard.requestStatus.rate_limit": "Rate limit",
+  "dashboard.requestStatus.reconnect": "Reconnect",
   "dashboard.requestDetails.clientIp": "Client IP",
   "dashboard.requestDetails.copyClientIp": "Copy Client IP",
   "dashboard.requestDetails.copyError": "Copy Error",

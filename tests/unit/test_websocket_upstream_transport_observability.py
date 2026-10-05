@@ -673,3 +673,41 @@ async def test_websocket_terminal_frame_counts_reasoning_replay_rejection(
     assert len(service.request_log_calls) == 1
     assert service.request_log_calls[0]["status"] == "error"
     assert service.request_log_calls[0]["error_code"] == code
+
+
+@pytest.mark.parametrize(
+    "code,expected_status",
+    [("websocket_connection_limit_reached", "cancelled"), ("previous_response_not_found", "error")],
+)
+@pytest.mark.asyncio
+async def test_websocket_connection_limit_frame_is_logged_as_superseded(code: str, expected_status: str) -> None:
+    """The client reconnects and resends the turn, so the refused attempt is neither error nor success."""
+    service = _DummyWebSocketService()
+    payload: dict[str, Any] = {"type": "error", "status": 400, "error": {"type": "invalid_request_error", "code": code}}
+    request_state = _WebSocketRequestState(
+        request_id="ws_limit",
+        request_log_id="resp_limit_log",
+        response_id="resp_limit",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_WEBSOCKET,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+
+    await service._finalize_websocket_request_state(
+        request_state,
+        account=cast(Any, SimpleNamespace(id="acc_limit")),
+        account_id_value="acc_limit",
+        event=parse_sse_event_payload(payload),
+        event_type="error",
+        payload=payload,
+        api_key=None,
+        upstream_control=_WebSocketUpstreamControl(),
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    [log] = service.request_log_calls
+    assert (log["status"], log["error_code"]) == (expected_status, code)
