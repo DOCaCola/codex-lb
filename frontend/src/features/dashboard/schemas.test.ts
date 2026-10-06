@@ -174,7 +174,7 @@ describe("DashboardOverviewSchema", () => {
 describe("RequestLogsResponseSchema", () => {
   it("parses checkpoint handoffs without changing workload or inventing usage", () => {
     const parsed = RequestLogSchema.parse({
-      requestedAt: ISO, accountId: null, requestId: "handoff-test", model: "",
+      id: 1, requestedAt: ISO, accountId: null, requestId: "handoff-test", model: "",
       requestOperation: "checkpoint_handoff", requestKind: "normal", status: "ok",
       errorCode: null, errorMessage: null, tokens: null, cachedInputTokens: null,
       reasoningEffort: null, costUsd: null, latencyMs: null,
@@ -208,6 +208,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 1,
           requestedAt: ISO,
           accountId: "acc-1",
           planType: "plus",
@@ -288,6 +289,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 2,
           requestedAt: ISO,
           accountId: "acc-1",
           requestId: "req-1",
@@ -313,6 +315,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 3,
           requestedAt: ISO,
           accountId: "acc-1",
           planType: "plus",
@@ -345,6 +348,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 4,
           requestedAt: ISO,
           accountId: "acc-live",
           planType: "plus",
@@ -401,6 +405,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 5,
           requestedAt: ISO,
           accountId: "acc-1",
           planType: "plus",
@@ -437,6 +442,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 6,
           requestedAt: ISO,
           accountId: "acc-1",
           planType: "plus",
@@ -471,6 +477,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 7,
           requestedAt: ISO,
           accountId: "acc-1",
           requestId: "req-cid",
@@ -486,6 +493,7 @@ describe("RequestLogsResponseSchema", () => {
           conversationId: "conv_abc123",
         },
         {
+          id: 8,
           requestedAt: ISO,
           accountId: null,
           requestId: "req-no-cid",
@@ -518,6 +526,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 9,
           requestedAt: ISO,
           accountId: "acc-1",
           requestId: "req-cid-null",
@@ -544,6 +553,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 10,
           requestedAt: ISO,
           accountId: "acc-1",
           requestId: "req-no-conv-key",
@@ -569,6 +579,7 @@ describe("RequestLogsResponseSchema", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
+          id: 11,
           requestedAt: ISO,
           accountId: "acc-1",
           planType: "plus",

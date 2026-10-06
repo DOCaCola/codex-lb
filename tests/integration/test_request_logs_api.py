@@ -92,6 +92,8 @@ async def test_request_logs_api_returns_recent(async_client, db_setup):
     assert body["hasMore"] is False
 
     latest = payload[0]
+    assert isinstance(latest["id"], int)
+    assert latest["id"] != payload[1]["id"]
     assert latest["status"] == "rate_limit"
     assert latest["apiKeyId"] == "key_logs_1"
     assert latest["apiKeyName"] == "Debug Key"

@@ -1996,3 +1996,16 @@ async def test_missing_usage_increments_usage_estimated_total_with_source_and_ca
 
     assert counter.calls == [{"source_id": owner.source.id, "cause": "missing_usage"}]
     assert counter.incs == 1
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        ({"type": "overloaded_error", "message": "Overloaded"}, "overloaded_error"),
+        ({"type": "invalid_request_error", "code": "context_length_exceeded"}, "context_length_exceeded"),
+        ({"type": "", "code": ""}, None),
+        ({"message": "no classification"}, None),
+    ],
+)
+def test_error_code_from_payload_prefers_code_then_type(error: dict[str, str], expected: str | None) -> None:
+    assert dispatch_module.error_code_from_payload({"type": "error", "error": error}) == expected

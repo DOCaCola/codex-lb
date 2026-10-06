@@ -7,7 +7,7 @@ import pytest
 from aiohttp.client_reqrep import ConnectionKey
 from sqlalchemy import select
 
-from app.db.models import ClaudeCooldown
+from app.db.models import ClaudeCooldown, RequestLog
 from app.db.session import SessionLocal
 from app.modules.claude import transport
 from app.modules.model_sources.forwarding import ModelSourceForwardingError, unreachable_error
@@ -70,6 +70,8 @@ async def test_http_overload_policy(async_client, pool, monkeypatch, status, kin
         assert response.headers["retry-after"] == hint
     async with SessionLocal() as session:
         assert list(await session.scalars(select(ClaudeCooldown))) == []
+        refused = list(await session.scalars(select(RequestLog).where(RequestLog.status == "error")))
+    assert [log.error_code for log in refused] == [kind] * (sends if repeat or sends == 1 else 1)
 
 
 _KEY = ConnectionKey("api.anthropic.com", 443, True, True, None, None, None)

@@ -34,6 +34,22 @@ it("highlights only rows that just arrived", () => {
   expect(screen.getByTitle("model-old").closest("tr")).not.toHaveClass("request-log-row-arrived");
 });
 
+it("keeps retried rows that share a request ID in server order", () => {
+  const attempt = createRequestLogEntry({ id: 1, requestId: "req_retry", model: "model-attempt" });
+  const retry = createRequestLogEntry({ id: 2, requestId: "req_retry", model: "model-retry" });
+  const { rerender } = render(
+    <RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[retry, attempt]} />,
+  );
+
+  rerender(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[
+    createRequestLogEntry({ id: 3, requestId: "req_new", model: "model-new" }),
+    retry,
+  ]} />);
+
+  const models = screen.getAllByRole("row").slice(1).map((row) => within(row).queryByTitle(/^model-/)?.getAttribute("title"));
+  expect(models).toEqual(["model-new", "model-retry"]);
+});
+
 it("shows operation and workload in the existing model-cell label area", () => {
   render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
     createRequestLogEntry({ requestId: "search", model: "", requestOperation: "web_search", tokens: null, costUsd: null }),
@@ -119,6 +135,7 @@ const PAGINATION_PROPS = {
 };
 
 const LAYOUT_REQUEST = {
+  id: 1,
   requestedAt: ISO,
   accountId: "acc-layout",
   planType: "plus",
@@ -537,6 +554,7 @@ describe("RecentRequestsTable", () => {
          ]}
         requests={[
           {
+            id: 2,
             requestedAt: ISO,
             accountId: "acc-primary",
             planType: "plus",
@@ -640,6 +658,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 3,
             requestedAt: ISO,
             accountId: "acc-cancelled",
             planType: "plus",
@@ -689,6 +708,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 4,
             requestedAt: ISO,
             accountId: "acc-speed",
             planType: "plus",
@@ -809,6 +829,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 5,
             requestedAt: ISO,
             accountId: "acc-reasoning",
             planType: "plus",
@@ -902,6 +923,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 6,
             requestedAt: ISO,
             accountId: null,
             planType: null,
@@ -959,6 +981,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 7,
             requestedAt: ISO,
             accountId: "acc-normal",
             planType: null,
@@ -991,6 +1014,7 @@ describe("RecentRequestsTable", () => {
             latencyMs: 1,
           },
           {
+            id: 8,
             requestedAt: ISO,
             accountId: "acc-warmup",
             planType: null,
@@ -1037,6 +1061,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 9,
             requestedAt: ISO,
             accountId: "acc-legacy",
             planType: null,
@@ -1084,6 +1109,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 10,
             requestedAt: ISO,
             accountId: "acc-legacy",
             planType: null,
@@ -1132,6 +1158,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 11,
             requestedAt: ISO,
             accountId: "acc-cost",
             planType: "plus",
@@ -1189,6 +1216,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 12,
             requestedAt: ISO,
             accountId: "acc-useragent",
             planType: "plus",
@@ -1252,6 +1280,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 13,
             requestedAt: ISO,
             accountId: "acc-no-useragent",
             planType: null,
@@ -1309,6 +1338,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 14,
             requestedAt: ISO,
             accountId: "acc-no-cost",
             planType: null,
@@ -1361,6 +1391,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 15,
             requestedAt: ISO,
             accountId: "acc-partial-cost",
             planType: "plus",
@@ -1418,6 +1449,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 16,
             requestedAt: ISO,
             accountId: "acc-partial-no-total",
             planType: "plus",
@@ -1475,6 +1507,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 17,
             requestedAt: ISO,
             accountId: "acc-useragent",
             planType: "plus",
@@ -1536,6 +1569,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 18,
             requestedAt: ISO,
             accountId: "acc-no-useragent",
             planType: null,
@@ -1593,6 +1627,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 19,
             requestedAt: ISO,
             accountId: "acc-total-only-cost",
             planType: "plus",
@@ -1712,6 +1747,7 @@ describe("RecentRequestsTable", () => {
         onConversationClick={onConversationClick}
         requests={[
           {
+            id: 20,
             requestedAt: ISO,
             accountId: "acc-conv-click",
             planType: "plus",
@@ -1766,6 +1802,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 21,
             requestedAt: ISO,
             accountId: "acc-conv-text",
             planType: "plus",
@@ -1823,6 +1860,7 @@ describe("RecentRequestsTable", () => {
         onConversationClick={vi.fn()}
         requests={[
           {
+            id: 22,
             requestedAt: ISO,
             accountId: "acc-long-cid",
             planType: "plus",
@@ -1875,6 +1913,7 @@ describe("RecentRequestsTable", () => {
         accounts={[]}
         requests={[
           {
+            id: 23,
             requestedAt: ISO,
             accountId: "acc-long-cid-nh",
             planType: "plus",

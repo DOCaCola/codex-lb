@@ -392,10 +392,13 @@ export function createDashboardProjections(
 	});
 }
 
+let nextRequestLogId = 1;
+
 export function createRequestLogEntry(
 	overrides: Partial<RequestLogEntry> = {},
 ): RequestLogEntry {
 	return RequestLogSchema.parse({
+		id: nextRequestLogId++,
 		requestedAt: offsetIso(-1),
 		accountId: "acc_primary",
 		apiKeyId: "key_1",

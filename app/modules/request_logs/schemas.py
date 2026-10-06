@@ -17,6 +17,9 @@ class RequestLogCostBreakdown(DashboardModel):
 
 
 class RequestLogEntry(DashboardModel):
+    # Row identity. ``request_id`` is not unique: a same-request retry (for
+    # example after an upstream overload refusal) records its own row.
+    id: int
     sticky_key_source: str | None = None
     sticky_kind: str | None = None
     sticky_key_hash: str | None = None

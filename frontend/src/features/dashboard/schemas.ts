@@ -213,6 +213,8 @@ const RequestLogCostBreakdownSchema = z.object({
 });
 
 export const RequestLogSchema = z.object({
+  // Row identity; requestId repeats when a request is retried.
+  id: z.number().int(),
   requestedAt: z.iso.datetime({ offset: true }),
   accountId: z.string().nullable(),
   planType: z.string().nullable().optional().default(null),

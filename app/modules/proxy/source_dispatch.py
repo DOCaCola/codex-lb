@@ -259,11 +259,15 @@ def _relayed_event_type(frame: str) -> str | None:
 
 
 def error_code_from_payload(payload: Mapping[str, JsonValue]) -> str | None:
+    """The error's ``code``, else its ``type`` (Anthropic errors carry only a type, e.g. ``overloaded_error``)."""
     error = payload.get("error")
     if not isinstance(error, Mapping):
         return None
-    code = error.get("code")
-    return code if isinstance(code, str) else None
+    for key in ("code", "type"):
+        value = error.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def error_message_from_payload(payload: Mapping[str, JsonValue]) -> str | None:

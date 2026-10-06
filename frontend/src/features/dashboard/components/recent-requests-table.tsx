@@ -1,7 +1,7 @@
 import { Inbox } from "lucide-react";
 import { formatGenerationSpeed, isGatewayMeasuredSpeed } from "@/features/dashboard/generation-speed";
 import { requestOperationLabel, requestTypeLabel } from "@/features/dashboard/request-operation";
-import { useFreshRequestIds } from "@/features/dashboard/hooks/use-fresh-request-ids";
+import { useFreshLogIds } from "@/features/dashboard/hooks/use-fresh-log-ids";
 import {
   useMemo,
   useRef,
@@ -327,7 +327,7 @@ export function RecentRequestsTable({
   onConversationClick,
 }: RecentRequestsTableProps) {
   const { t } = useTranslation();
-  const freshRequestIds = useFreshRequestIds(requests, liveContextKey);
+  const freshLogIds = useFreshLogIds(requests, liveContextKey);
   const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.name])), [models]);
   const requestPlanLabel = (request: RequestLog | null, missing: string): string => {
     if (!request?.planType) return missing;
@@ -463,8 +463,8 @@ export function RecentRequestsTable({
 
               return (
                 <TableRow
-                  key={request.requestId}
-                  className={freshRequestIds.has(request.requestId) ? "request-log-row-arrived" : undefined}
+                  key={request.id}
+                  className={freshLogIds.has(request.id) ? "request-log-row-arrived" : undefined}
                 >
                   {isColumnVisible("time") ? <TableCell className="pl-4 align-top">
                     <div className="leading-tight">
