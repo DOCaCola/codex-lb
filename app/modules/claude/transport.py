@@ -193,6 +193,20 @@ async def _open_responses(
         raise
 
     async def frames() -> AsyncIterator[bytes]:
+        try:
+            async with contextlib.aclosing(translated_frames()) as translated:
+                async for chunk in translated:
+                    yield chunk
+        except ModelSourceForwardingError:
+            # The client keeps output it saw completed; Claude's finished text closes before the error.
+            if projection is not None:
+                for converted in projection.interrupt():
+                    encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                    observer.feed(encoded)
+                    yield encoded
+            raise
+
+    async def translated_frames() -> AsyncGenerator[bytes]:
         async def native_frames() -> AsyncGenerator[str]:
             for frame in startup:
                 yield frame

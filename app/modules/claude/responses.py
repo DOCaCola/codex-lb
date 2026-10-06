@@ -37,6 +37,9 @@ INCOMPLETE_STOP_REASONS = {
 # content_filter, a sampling filter, Codex retries the declined request with added guidance.
 REFUSAL_ERROR_CODE = "invalid_prompt"
 _STOP_REASONS = frozenset({"end_turn", "stop_sequence", "tool_use", "refusal", *INCOMPLETE_STOP_REASONS})
+# The Responses phase of the assistant message still open when Claude stops. A clean end is the
+# turn's answer; a truncated stop leaves the phase unknown, as Codex's protocol allows.
+_TERMINAL_PHASES = {"end_turn": "final_answer", "stop_sequence": "final_answer", "tool_use": "commentary"}
 
 
 class Usage(BaseModel):
@@ -112,6 +115,12 @@ class ResponsesProjection:
     partial_json_bytes: dict[int, int] = field(default_factory=dict)
     # The client tool behind each tool_use block, by content index.
     called_tools: dict[int, ToolIdentity] = field(default_factory=dict)
+    # Consecutive text blocks form one assistant message, one output_text part per block (block
+    # index -> output index, part index). Claude marks no message phase, and Codex keeps only
+    # final_answer messages when forking a thread, so the message's done event waits until the
+    # next block or the stop reason shows whether more work follows (opencodex d2cc3f65e).
+    text_parts: dict[int, tuple[int, int]] = field(default_factory=dict)
+    open_message: int | None = None
     search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
     block_types: Counter[str] = field(default_factory=Counter)
     usage: Usage = field(default_factory=Usage)
@@ -164,11 +173,12 @@ class ResponsesProjection:
         item_id = f"{self.response_id}_{index}"
         kind = block.get("type")
         if kind == "text":
+            # Completed by _close_message once its phase is known.
             return {
                 "id": item_id,
                 "type": "message",
                 "role": "assistant",
-                "status": "completed" if final else "in_progress",
+                "status": "in_progress",
                 "content": [
                     {"type": "output_text", "text": block.get("text", ""), "annotations": url_citations(block)}
                 ],
@@ -269,6 +279,28 @@ class ResponsesProjection:
         self.delivered_output |= any(item["type"] == "response.output_item.done" for item in events)
         return events
 
+    def _close_message(self, phase: str | None) -> list[dict[str, JsonValue]]:
+        index = self.open_message
+        if index is None:
+            return []
+        self.open_message = None
+        message = self.outputs[index]
+        message["status"] = "completed"
+        if phase is not None:
+            message["phase"] = phase
+        return [self.event("response.output_item.done", output_index=index, item=deepcopy(message))]
+
+    def interrupt(self) -> list[dict[str, JsonValue]]:
+        """Close the finished message of a stream ending without a stop reason; its phase stays unknown.
+
+        Output held behind an executable call is never delivered, so nothing is closed while holding.
+        """
+        if self.held is not None:
+            return []
+        events = self._close_message(None)
+        self.delivered_output |= bool(events)
+        return events
+
     def _translate(self, event: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
         kind = event.get("type")
         if self.stopped:
@@ -276,8 +308,9 @@ class ResponsesProjection:
         if kind == "ping":
             return []
         if kind == "error":
+            closing = self.interrupt()
             self.stopped = True
-            return [self.event("error", error=event.get("error"))]
+            return [*closing, self.event("error", error=event.get("error"))]
         if kind == "message_start":
             message = event.get("message")
             if self.started or not isinstance(message, dict) or not isinstance(message.get("id"), str):
@@ -317,25 +350,44 @@ class ResponsesProjection:
             raise ClaudeError("Invalid Claude content index")
         if kind == "content_block_start":
             block = event.get("content_block")
-            if not isinstance(block, dict) or index in self.outputs or index != len(self.outputs):
+            if not isinstance(block, dict) or index != self.block_types.total():
                 raise ClaudeError("Invalid Claude content_block_start")
             self.block_types[str(block.get("type"))] += 1
             self.blocks[index] = deepcopy(block)
+            part: JsonValue = {"type": "output_text", "text": "", "annotations": []}
+            if block.get("type") == "text" and self.open_message is not None:
+                message = self.outputs[self.open_message]
+                content = message["content"]
+                assert isinstance(content, list)
+                self.text_parts[index] = (self.open_message, len(content))
+                content.append(deepcopy(part))
+                return [
+                    self.event(
+                        "response.content_part.added",
+                        item_id=message["id"],
+                        output_index=self.open_message,
+                        content_index=len(content) - 1,
+                        part=part,
+                    )
+                ]
             item = self._item(index, block, final=False)
             self.outputs[index] = item
-            events = [self.event("response.output_item.added", output_index=index, item=deepcopy(item))]
+            # Any other valid block after the message proves more work follows in this turn.
+            events = self._close_message("commentary")
+            events.append(self.event("response.output_item.added", output_index=index, item=deepcopy(item)))
             if block.get("type") == "server_tool_use":
                 events.append(
                     self.event("response.web_search_call.in_progress", item_id=item["id"], output_index=index)
                 )
             if block.get("type") == "text":
+                self.text_parts[index] = (index, 0)
                 events.append(
                     self.event(
                         "response.content_part.added",
                         item_id=item["id"],
                         output_index=index,
                         content_index=0,
-                        part={"type": "output_text", "text": "", "annotations": []},
+                        part=part,
                     )
                 )
             return events
@@ -353,12 +405,13 @@ class ResponsesProjection:
                     raise ClaudeError("Invalid Claude citations")
                 citations.append(delta.get("citation"))
                 annotation = url_citations(block)[-1]
+                message_index, part_index = self.text_parts[index]
                 return [
                     self.event(
                         "response.output_text.annotation.added",
-                        item_id=self.outputs[index]["id"],
-                        output_index=index,
-                        content_index=0,
+                        item_id=self.outputs[message_index]["id"],
+                        output_index=message_index,
+                        content_index=part_index,
                         annotation_index=len(citations) - 1,
                         annotation=annotation,
                     )
@@ -398,12 +451,13 @@ class ResponsesProjection:
                 raise ClaudeError("Claude delta does not match its content block")
             block[field_name] = str(block.get(field_name, "")) + str(delta[field_name])
             if field_name == "text":
+                message_index, part_index = self.text_parts[index]
                 return [
                     self.event(
                         "response.output_text.delta",
-                        item_id=self.outputs[index]["id"],
-                        output_index=index,
-                        content_index=0,
+                        item_id=self.outputs[message_index]["id"],
+                        output_index=message_index,
+                        content_index=part_index,
                         delta=delta[field_name],
                     )
                 ]
@@ -432,6 +486,31 @@ class ResponsesProjection:
                 )
             except ValueError as exc:
                 raise ClaudeError("Claude returned invalid tool JSON") from exc
+        if block.get("type") == "text":
+            self.blocks.pop(index)
+            message_index, part_index = self.text_parts.pop(index)
+            message = self.outputs[message_index]
+            part = {"type": "output_text", "text": block.get("text", ""), "annotations": url_citations(block)}
+            content = message["content"]
+            assert isinstance(content, list)
+            content[part_index] = part
+            self.open_message = message_index
+            return [
+                self.event(
+                    "response.output_text.done",
+                    item_id=message["id"],
+                    output_index=message_index,
+                    content_index=part_index,
+                    text=part["text"],
+                ),
+                self.event(
+                    "response.content_part.done",
+                    item_id=message["id"],
+                    output_index=message_index,
+                    content_index=part_index,
+                    part=deepcopy(part),
+                ),
+            ]
         item = self._item(index, self.blocks.pop(index), final=True)
         self.outputs[index] = item
         events = []
@@ -456,23 +535,7 @@ class ResponsesProjection:
                     self.event("response.output_item.done", output_index=call_index, item=deepcopy(search_item)),
                 ]
             )
-        if item["type"] == "message":
-            part = {"type": "output_text", "text": block.get("text", ""), "annotations": url_citations(block)}
-            events.extend(
-                [
-                    self.event(
-                        "response.output_text.done",
-                        item_id=item["id"],
-                        output_index=index,
-                        content_index=0,
-                        text=part["text"],
-                    ),
-                    self.event(
-                        "response.content_part.done", item_id=item["id"], output_index=index, content_index=0, part=part
-                    ),
-                ]
-            )
-        elif item["type"] == "function_call":
+        if item["type"] == "function_call":
             identity = self.called_tools[index]
             if identity.arguments is not None:
                 events.append(
@@ -521,6 +584,7 @@ class ResponsesProjection:
         refused = self.stop_reason == "refusal"
         valid = self.stop_reason in _STOP_REASONS and (not unfinished or refused)
         status = "failed" if refused else "incomplete" if self.stop_reason in INCOMPLETE_STOP_REASONS else "completed"
+        holding = self.held is not None
         held = self.held or []
         self.held = None
         withheld = (
@@ -554,10 +618,23 @@ class ResponsesProjection:
             )
         # Output a refusal cut off or held back is discarded, never closed: a done event would hand a
         # tool call from a refused turn to the client to run, and commit refused output to its history.
-        # Output the client already committed is omitted from later requests (refusals.py).
-        for index in [*self.blocks, *(call_index for call_index, _ in self.search_calls.values()), *withheld]:
+        # Output the client already committed is omitted from later requests (refusals.py). A message
+        # finished before any held call is closed, as it was before its phase became deferrable.
+        if refused:
+            closing = [] if holding else self._close_message(None)
+            self.delivered_output |= bool(closing)
+        else:
+            closing = self._close_message(_TERMINAL_PHASES.get(str(self.stop_reason)))
+        discarded = {self.text_parts[index][0] if index in self.text_parts else index for index in self.blocks}
+        discarded.update(call_index for call_index, _ in self.search_calls.values())
+        discarded.update(withheld)
+        if self.open_message is not None:
+            discarded.add(self.open_message)
+        self.open_message = None
+        for index in discarded:
             del self.outputs[index]
         self.blocks.clear()
+        self.text_parts.clear()
         self.partial_json.clear()
         self.partial_json_bytes.clear()
         self.search_calls.clear()
@@ -566,7 +643,7 @@ class ResponsesProjection:
             # Held events are the stream's tail; the terminal takes the first discarded sequence number.
             self.sequence = cast(int, held[0]["sequence_number"])
             held = []
-        return [*held, self.event(f"response.{status}", response=self.envelope(status))]
+        return [*held, *closing, self.event(f"response.{status}", response=self.envelope(status))]
 
     def complete(self, message: dict[str, JsonValue]) -> dict[str, JsonValue]:
         content = message.get("content")

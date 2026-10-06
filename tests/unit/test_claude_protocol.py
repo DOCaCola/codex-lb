@@ -707,6 +707,90 @@ def test_terminal_semantics(stop, status, reason, chat_reasoning):
     assert at(response, "usage", "output_tokens") == 3
 
 
+@pytest.mark.parametrize(
+    "stop,phase",
+    [
+        ("end_turn", "final_answer"),
+        ("stop_sequence", "final_answer"),
+        ("tool_use", "commentary"),
+        ("max_tokens", None),
+        ("pause_turn", None),
+        ("model_context_window_exceeded", None),
+        ("refusal", None),
+    ],
+)
+def test_message_phase_follows_the_stop_reason(stop, phase):
+    response = ResponsesProjection(scope(), ClaudeToolNames(), codec()).complete(
+        {"id": "m", "content": [{"type": "text", "text": "answer"}], "stop_reason": stop, "usage": {}}
+    )
+    message = at(response, "output", 0)
+    assert isinstance(message, dict)
+    assert message.get("phase") == phase
+    assert message["status"] == "completed"
+
+
+def _stream(adapter, blocks, stop):
+    events = adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    for index, (block, deltas) in enumerate(blocks):
+        events += adapter.consume({"type": "content_block_start", "index": index, "content_block": block})
+        for delta in deltas:
+            events += adapter.consume({"type": "content_block_delta", "index": index, "delta": delta})
+        events += adapter.consume({"type": "content_block_stop", "index": index})
+    if stop is not None:
+        events += adapter.consume({"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {}})
+        events += adapter.consume({"type": "message_stop"})
+    return events
+
+
+def _text(value):
+    return {"type": "text", "text": ""}, [{"type": "text_delta", "text": value}]
+
+
+def test_text_before_a_tool_call_is_commentary_closed_before_the_call_opens():
+    projected = project(request(tools=NO_ARGUMENT_TOOL), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    call = {"type": "tool_use", "id": "call", "name": next(iter(projected.tools.by_wire)), "input": {}}
+    events = _stream(adapter, [_text("Checking"), (call, [])], "tool_use")
+    items = [
+        (event["type"], at(event, "item", "type"), at(event, "item").get("phase"))  # type: ignore[union-attr]
+        for event in events
+        if event["type"] in ("response.output_item.added", "response.output_item.done")
+    ]
+    assert items == [
+        ("response.output_item.added", "message", None),
+        ("response.output_item.done", "message", "commentary"),
+        ("response.output_item.added", "function_call", None),
+        ("response.output_item.done", "function_call", None),
+    ]
+    assert at(events[-1], "response", "output", 0, "phase") == "commentary"
+
+
+def test_consecutive_text_blocks_form_one_message_with_one_part_each():
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
+    events = _stream(adapter, [_text("First"), _text("Second")], "end_turn")
+    deltas = [
+        (event["output_index"], event["content_index"], event["delta"])
+        for event in events
+        if event["type"] == "response.output_text.delta"
+    ]
+    assert deltas == [(0, 0, "First"), (0, 1, "Second")]
+    done = [event for event in events if event["type"] == "response.output_item.done"]
+    assert len(done) == 1
+    output = at(events[-1], "response", "output")
+    assert isinstance(output, list) and len(output) == 1
+    assert [part["text"] for part in output[0]["content"]] == ["First", "Second"]  # type: ignore[index]
+    assert output[0]["phase"] == "final_answer"  # type: ignore[index]
+
+
+def test_upstream_error_closes_finished_text_without_a_phase_first():
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
+    events = _stream(adapter, [_text("Progress")], None)
+    events += adapter.consume({"type": "error", "error": {"type": "api_error", "message": "boom"}})
+    assert [event["type"] for event in events[-2:]] == ["response.output_item.done", "error"]
+    assert "phase" not in at(events[-2], "item")  # type: ignore[operator]
+    assert adapter.interrupt() == []
+
+
 def test_streamed_refusal_fails_as_prompt_policy_and_stop_log_has_counts_only(caplog):
     adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
     native_events: list[dict[str, JsonValue]] = [
