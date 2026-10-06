@@ -211,7 +211,7 @@ class ToolNames:
                                     del self.fragments[key]
         return payload
 
-    async def restore_stream(self, body: AsyncGenerator[bytes, None]) -> AsyncIterator[bytes]:
+    async def restore_stream(self, body: AsyncGenerator[bytes, None]) -> AsyncGenerator[bytes, None]:
         if not self.rewrites_output:
             async with aclosing(body):
                 async for chunk in body:
@@ -219,24 +219,28 @@ class ToolNames:
             return
         # Transport owns deadlines and cleanup; framing must not spawn read tasks.
         async with aclosing(body):
-            async with aclosing(_frames(body)) as events:
+            async with aclosing(sse_frames(body)) as events:
                 async for event in events:
                     payload = parse_sse_data_json(event)
                     if payload is None:
                         yield event.encode()
                         continue
                     original = json.dumps(payload, ensure_ascii=False)
-                    restored = json.dumps(self.restore(payload), ensure_ascii=False)
-                    if original == restored:
+                    restored = self.restore(payload)
+                    if original == json.dumps(restored, ensure_ascii=False):
                         yield event.encode()
                         continue
-                    # Preserve SSE id/retry/event/comments; replace only data.
-                    lines = re.split(r"\r\n|\r|\n", event)
-                    metadata = [line for line in lines if line and not line.startswith("data:") and line != "data"]
-                    yield ("\n".join([*metadata, "data: " + restored]) + "\n\n").encode()
+                    yield replace_sse_data(event, restored)
 
 
-async def _frames(body: AsyncIterator[bytes]) -> AsyncGenerator[str, None]:
+def replace_sse_data(event: str, payload: JsonValue) -> bytes:
+    """The event re-encoded with ``payload`` as its data; SSE id/retry/event/comment lines are kept."""
+    lines = re.split(r"\r\n|\r|\n", event)
+    metadata = [line for line in lines if line and not line.startswith("data:") and line != "data"]
+    return ("\n".join([*metadata, "data: " + json.dumps(payload, ensure_ascii=False)]) + "\n\n").encode()
+
+
+async def sse_frames(body: AsyncIterator[bytes]) -> AsyncGenerator[str, None]:
     buffer = bytearray()
     scanned = 0
     swallow_lf = False

@@ -28,6 +28,7 @@ from app.core.utils.shared_future import (
 from app.core.utils.shared_future import _await_task_deferring_cancellation
 from app.core.utils.sse import extract_sse_data
 from app.db.models import ModelSource
+from app.modules.openrouter.phase import assign_phases, project_phases
 from app.modules.openrouter.timing import has_generated_content
 from app.modules.openrouter.tool_names import ToolNames
 
@@ -471,8 +472,11 @@ async def forward_responses(
                 data = await _response_json(response)
                 if data is None:
                     raise _invalid_upstream_response_error(source, response.status)
+                payload = tool_names.restore(data)
+                if source.kind == "openrouter":
+                    assign_phases(payload)
                 return SourceResponsesCompletion(
-                    payload=tool_names.restore(data),
+                    payload=payload,
                     usage=_usage_from_responses_payload(data),
                     timings=(
                         SourceTimings(None, round((REAL_CLOCK.monotonic() - started_at) * 1000))
@@ -610,8 +614,12 @@ async def stream_responses(
         scheduler=scheduler,
         clock=clock,
     )
+    if tool_names.rewrites_output:
+        body = tool_names.restore_stream(body)
+    if source.kind == "openrouter":
+        body = project_phases(body)
     return SourceResponsesStream(
-        body=tool_names.restore_stream(body) if tool_names.rewrites_output else body,
+        body=body,
         usage_holder=usage_holder,
         upstream_status_code=response.status,
         transport=transport,

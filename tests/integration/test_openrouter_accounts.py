@@ -719,6 +719,108 @@ async def test_websocket_source_tool_continuation(async_client, provider, path, 
             assert all(log.latency_first_token_ms is not None and log.latency_ms is not None for log in logs)
 
 
+async def test_websocket_source_messages_carry_phase_into_client_and_replayed_history(async_client, provider):
+    requests = []
+    plan = {
+        "type": "message",
+        "id": "msg_plan",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Plan"}],
+    }
+    answer = {
+        "type": "message",
+        "id": "msg_answer",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Done"}],
+    }
+    reasoning = {"type": "reasoning", "id": "rs_think", "summary": []}
+
+    async def upstream(request):
+        requests.append(await request.json())
+        output = [plan, reasoning, answer]
+        frames = []
+        for index, item in enumerate(output):
+            frames.append({"type": "response.output_item.added", "output_index": index, "item": item})
+            frames.append({"type": "response.output_item.done", "output_index": index, "item": item})
+        frames.append(
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": f"resp_phase_{len(requests)}",
+                    "object": "response",
+                    "status": "completed",
+                    "output": output,
+                    "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "cost": 0.001},
+                },
+            }
+        )
+        text = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+        return web.Response(text=text, content_type="text/event-stream")
+
+    async with stub_source_upstreams() as start:
+        url = await start(upstream)
+        created = await async_client.post("/api/openrouter-accounts", json={"name": "Phase", "apiKey": "secret-test"})
+        account_id = created.json()["id"]
+        await async_client.patch(
+            f"/api/openrouter-accounts/{account_id}", json={"selections": [{"model": "vendor/test"}]}
+        )
+        async with SessionLocal() as session:
+            source = await session.get(ModelSource, account_id)
+            assert source is not None
+            source.base_url = url
+            await session.commit()
+
+        incoming = asyncio.Queue()
+        outgoing = asyncio.Queue()
+        scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "scheme": "ws",
+            "path": "/backend-api/codex/responses",
+            "raw_path": b"/backend-api/codex/responses",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"user-agent", b"codex_cli_rs/0.154.0"), (b"session_id", b"test-openrouter-phase")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "subprotocols": [],
+        }
+        task = asyncio.create_task(async_client._transport.app(scope, incoming.get, outgoing.put))
+        try:
+            await incoming.put({"type": "websocket.connect"})
+            accepted = await asyncio.wait_for(outgoing.get(), 5)
+            assert accepted["type"] == "websocket.accept", accepted
+            for turn in range(2):
+                payload = {"type": "response.create", "model": "openrouter/vendor/test", "input": "Hello"}
+                if turn:
+                    payload.update(previous_response_id="resp_phase_1", input="Again")
+                await incoming.put({"type": "websocket.receive", "text": json.dumps(payload)})
+                done_phases = {}
+                while True:
+                    message = await asyncio.wait_for(outgoing.get(), 10)
+                    assert message["type"] == "websocket.send", message
+                    event = json.loads(message["text"])
+                    assert event["type"] not in ("error", "response.failed"), event
+                    if event["type"] == "response.output_item.done":
+                        done_phases[event["item"]["id"]] = event["item"].get("phase")
+                    if event["type"] == "response.completed":
+                        completed = {item["id"]: item.get("phase") for item in event["response"]["output"]}
+                        break
+                expected = {"msg_plan": "commentary", "rs_think": None, "msg_answer": "final_answer"}
+                assert done_phases == expected
+                assert completed == expected
+            replayed = [item.get("phase") for item in requests[1]["input"] if item.get("type") == "message"]
+            assert replayed == ["commentary", "final_answer"]
+        finally:
+            await incoming.put({"type": "websocket.disconnect", "code": 1000})
+            try:
+                await asyncio.wait_for(task, 5)
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.parametrize(
     "path",
     [
