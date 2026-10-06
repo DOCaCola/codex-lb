@@ -1501,6 +1501,57 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
     assert len(captured) == 1
 
 
+async def test_completed_search_switches_model_as_readable_history(async_client, pool, monkeypatch):
+    from tests.unit.test_claude_search import search_content
+
+    captured, _ = install_upstream(monkeypatch, content=search_content())
+    headers = {"session_id": "search-switch"}
+    first = await async_client.post(
+        "/v1/responses",
+        headers=headers,
+        json={"model": MODEL, "input": "Search", "stream": False, "tools": [{"type": "web_search"}]},
+    )
+    assert first.status_code == 200, first.text
+    second = await async_client.post(
+        "/v1/responses",
+        headers=headers,
+        json={
+            "model": "anthropic/claude-sonnet-5",
+            "input": [*first.json()["output"], {"role": "user", "content": "Continue"}],
+            "stream": False,
+            # The mock answers every turn with a search.
+            "tools": [{"type": "web_search"}],
+        },
+    )
+    assert second.status_code == 200, second.text
+    sent = json.dumps(captured[1][2]["messages"])
+    assert "Web search: test\\nSources:\\n- Example \\u2014 https://example.com" in sent
+    assert "server_tool_use" not in sent
+    assert "upstream-owned-opaque-data" not in sent
+
+
+async def test_openai_search_history_reaches_claude_as_readable_history(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch)
+    history = [
+        {"role": "user", "content": "Weather?"},
+        {
+            "type": "web_search_call",
+            "id": "ws_native",
+            "status": "completed",
+            "action": {"type": "search", "query": "weather"},
+        },
+        {"type": "reasoning", "id": "rs_native", "summary": [], "encrypted_content": "openai-opaque"},
+        {"role": "assistant", "content": "Sunny"},
+        {"role": "user", "content": "Continue"},
+    ]
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": history, "stream": False})
+    assert response.status_code == 200, response.text
+    sent = json.dumps(captured[0][2]["messages"])
+    assert "Web search: weather" in sent
+    assert "ws_native" not in sent
+    assert "openai-opaque" not in sent
+
+
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
 @pytest.mark.parametrize("search", [None, False, True])
 @pytest.mark.parametrize("failover", [False, 429, 401, 529, "capacity", "overage", "mixed"])

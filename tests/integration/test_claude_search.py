@@ -34,7 +34,7 @@ async def test_cached_search_allows_normal_route(async_client, pool, monkeypatch
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_live_search_route_replay_and_unavailable_owner(async_client, pool, monkeypatch, stream):
+async def test_live_search_route_replay_and_completed_search_moves(async_client, pool, monkeypatch, stream):
     captured, _ = install_upstream(monkeypatch, content=search_content())
     payload = {"model": MODEL, "input": "Search", "stream": stream, "tools": [{"type": "web_search"}]}
     response = await async_client.post("/v1/responses", json=payload)
@@ -58,6 +58,11 @@ async def test_live_search_route_replay_and_unavailable_owner(async_client, pool
     blocks = [block for message in captured[1][2]["messages"] for block in message["content"]]
     assert search_content()[0] in blocks and search_content()[1] in blocks
     await async_client.patch(f"/api/claude-accounts/{owner}", json={"isEnabled": False})
-    denied = await async_client.post("/v1/responses", json=payload)
-    assert denied.status_code != 200
-    assert len(captured) == 2
+    moved = await async_client.post("/v1/responses", json=payload)
+    assert moved.status_code == 200, moved.text
+    assert len(captured) == 3
+    assert captured[2][0] != owner
+    sent = json.dumps(captured[2][2]["messages"])
+    assert "Web search: test" in sent
+    assert "server_tool_use" not in sent
+    assert "upstream-owned-opaque-data" not in sent

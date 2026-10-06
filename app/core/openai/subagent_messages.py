@@ -106,7 +106,10 @@ def restore_native_collaboration(value: JsonValue) -> JsonValue | None:
 
 
 def agent_message_as_user_message(item: Mapping[str, JsonValue], *, index: int) -> dict[str, JsonValue]:
-    """Lower a Codex ``agent_message`` to a standard user message."""
+    """Lower a Codex ``agent_message`` to a standard user message.
+
+    Codex renders its inter-agent header (recipient, sender, payload) inside the content.
+    """
     content = item.get("content")
     if not is_json_list(content):
         raise ClientPayloadError("Agent message content must be an array", param=f"input[{index}].content")
@@ -119,9 +122,7 @@ def agent_message_as_user_message(item: Mapping[str, JsonValue], *, index: int) 
             param=f"input[{index}]",
             code="nonportable_agent_message",
         )
-    # Codex's header for agent messages (``InterAgentCommunication``).
-    header: JsonValue = {"type": "input_text", "text": f"Task name: {recipient}\nSender: {author}\nPayload:\n"}
-    return {"type": "message", "role": "user", "content": [header, *content]}
+    return {"type": "message", "role": "user", "content": list(content)}
 
 
 def lower_agent_messages(payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:

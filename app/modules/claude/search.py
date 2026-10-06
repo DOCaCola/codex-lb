@@ -66,6 +66,67 @@ def search_replay(block: dict[str, JsonValue]) -> tuple[str, list[JsonValue]]:
     return item_id, deepcopy(blocks)
 
 
+def assistant_history_message(text: str) -> dict[str, JsonValue]:
+    """Readable history where provider state cannot travel."""
+    return {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+
+
+def _search_text(action: str, sources: list[tuple[str | None, str]]) -> str:
+    lines = [action]
+    if sources:
+        lines.append("Sources:")
+        lines.extend(f"- {title} — {url}" if title else f"- {url}" for title, url in sources)
+    return "\n".join(lines)
+
+
+def claude_search_text(blocks: list[JsonValue]) -> str:
+    """Readable query and results of validated Claude search blocks; no encrypted content."""
+    call, result = blocks
+    assert isinstance(call, dict) and isinstance(result, dict)
+    arguments = call.get("input")
+    query = arguments.get("query") if isinstance(arguments, dict) else None
+    content = result["content"]
+    assert isinstance(content, list)
+    sources = [
+        (title if isinstance(title := entry.get("title"), str) and title else None, url)
+        for entry in content
+        if isinstance(entry, dict)
+        and entry.get("type") == "web_search_result"
+        and isinstance(url := entry.get("url"), str)
+    ]
+    return _search_text(f"Web search: {query}" if isinstance(query, str) and query else "Web search", sources)
+
+
+def openai_search_text(item: dict[str, JsonValue]) -> str:
+    """Readable form of a Responses `web_search_call` action as Codex serializes it."""
+    action = item.get("action")
+    action = action if isinstance(action, dict) else {}
+    kind = action.get("type")
+    url = value if isinstance(value := action.get("url"), str) and value else None
+    pattern = value if isinstance(value := action.get("pattern"), str) and value else None
+    if kind == "open_page":
+        line = f"Opened page: {url}" if url else "Opened page"
+    elif kind == "find_in_page":
+        line = "Found in page" + (f" {url}" if url else "") + (f": {pattern}" if pattern else "")
+    else:
+        query, queries = action.get("query"), action.get("queries")
+        terms = (
+            [query]
+            if isinstance(query, str) and query
+            else [term for term in queries if isinstance(term, str) and term]
+            if isinstance(queries, list)
+            else []
+        )
+        line = f"Web search: {'; '.join(terms)}" if terms else "Web search"
+    raw_sources = action.get("sources")
+    sources = [
+        (title if isinstance(title := source.get("title"), str) and title else None, source_url)
+        for source in (raw_sources if isinstance(raw_sources, list) else [])
+        if isinstance(source, dict) and isinstance(source_url := source.get("url"), str)
+    ]
+    return _search_text(line, sources)
+
+
 def url_citations(block: dict[str, JsonValue]) -> list[JsonValue]:
     annotations: list[JsonValue] = []
     text = str(block.get("text", ""))

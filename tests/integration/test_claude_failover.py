@@ -325,7 +325,6 @@ async def test_bound_history_preserves_original_refusal(async_client, pool, monk
     body = {"model": MODEL, "input": first.json()["output"], "stream": True}
     if search:
         body["tools"] = [{"type": "web_search"}]
-        body["input"].append({"role": "user", "content": "continue"})
     result = await async_client.post("/v1/responses", headers=headers, json=body)
     assert result.status_code == status, result.text
     assert result.headers["retry-after"] == "123"

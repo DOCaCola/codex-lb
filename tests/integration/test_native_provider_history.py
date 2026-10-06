@@ -22,15 +22,30 @@ from tests.unit.test_proxy_utils import _repo_factory, _RequestLogsRecorder
 pytestmark = pytest.mark.integration
 
 HEADERS = {"session_id": "native-provider-history"}
+SEARCH_CALL_ID = "resp_msg_011CfZMoJxcBo6bvenx5qRj2_1"
+SEARCH_TEXT = "Web search: test\nSources:\n- Example — https://example.com"
 
 
 def history(kind="thinking", *, client_scope="anonymous"):
+    from tests.unit.test_claude_search import search_content
+
     opaque = ClaudeOpaqueState(TokenEncryptor())
-    token = opaque.encode(
-        OpaqueScope("claude-source", "anthropic/claude-opus-5-5", client_scope),
-        {"type": kind, "thinking": "Preserved Opus context", "signature": "signed"},
-    )
+    block = {
+        "thinking": {"type": "thinking", "thinking": "Preserved Opus context", "signature": "signed"},
+        "redacted_thinking": {"type": "redacted_thinking", "data": "opaque"},
+        "web_search": {"type": "web_search", "item_id": SEARCH_CALL_ID, "blocks": search_content()[:2]},
+    }[kind]
+    token = opaque.encode(OpaqueScope("claude-source", "anthropic/claude-opus-5-5", client_scope), block)
+    search = [
+        {
+            "type": "web_search_call",
+            "id": SEARCH_CALL_ID,
+            "status": "completed",
+            "action": {"type": "search", "query": "test"},
+        }
+    ]
     return [
+        *(search if kind == "web_search" else []),
         {"type": "reasoning", "id": "resp_msg_011CfZMoJxcBo6bvenx5qRj2_0", "summary": [], "encrypted_content": token},
         {"type": "function_call", "id": "resp_msg_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "call_1", "output": "retained result"},
@@ -38,16 +53,26 @@ def history(kind="thinking", *, client_scope="anonymous"):
     ]
 
 
-def assert_native(items):
-    assert items[0] == {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Preserved Opus context"}]}
-    assert items[1]["call_id"] == items[2]["call_id"] == "call_1"
-    assert items[2]["output"] == "retained result"
+def assert_native(items, kind="thinking"):
+    head = {
+        "thinking": [{"type": "reasoning", "summary": [{"type": "summary_text", "text": "Preserved Opus context"}]}],
+        "redacted_thinking": [],
+        "web_search": [
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": SEARCH_TEXT}]}
+        ],
+    }[kind]
+    assert items[: len(head)] == head
+    items = items[len(head) :]
+    assert items[0]["call_id"] == items[1]["call_id"] == "call_1"
+    assert items[1]["output"] == "retained result"
     assert "claude-v1." not in str(items)
     assert "resp_msg" not in str(items)
+    assert "upstream-owned-opaque-data" not in str(items)
 
 
+@pytest.mark.parametrize("kind", ["thinking", "redacted_thinking", "web_search"])
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses", "/v1/responses/compact"])
-async def test_public_native_http_and_compaction_project_claude_history(async_client, monkeypatch, path):
+async def test_public_native_http_and_compaction_project_claude_history(async_client, monkeypatch, path, kind):
     await _import_synthetic_account(async_client)
     captured = []
 
@@ -61,7 +86,8 @@ async def test_public_native_http_and_compaction_project_claude_history(async_cl
 
     monkeypatch.setattr(proxy_service, "core_stream_responses", stream)
     monkeypatch.setattr(proxy_service, "core_compact_responses", compact)
-    original = history()
+    original = history(kind)
+    untouched = deepcopy(original)
     response = await async_client.post(
         path,
         headers=HEADERS,
@@ -69,24 +95,8 @@ async def test_public_native_http_and_compaction_project_claude_history(async_cl
     )
     assert response.status_code == 200
     assert len(captured) == 1
-    assert_native(captured[0])
-    assert original[0]["encrypted_content"].startswith("claude-v1.")
-
-
-@pytest.mark.parametrize("kind", ["redacted_thinking", "web_search"])
-async def test_public_native_nonportable_history_never_dispatches(async_client, monkeypatch, kind):
-    await _import_synthetic_account(async_client)
-    sent = AsyncMock()
-    monkeypatch.setattr(proxy_service, "core_compact_responses", sent)
-    response = await async_client.post(
-        "/v1/responses/compact",
-        headers=HEADERS,
-        json={"model": "gpt-6.1-sol", "input": history(kind)},
-    )
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "nonportable_provider_history"
-    assert response.json()["error"]["param"] == "input[0]"
-    sent.assert_not_awaited()
+    assert_native(captured[0], kind)
+    assert original == untouched
 
 
 async def prepare_websocket(service, payload):
@@ -148,7 +158,7 @@ def test_http_bridge_request_preparation_projects_native_history():
 
 
 @pytest.mark.parametrize("kind", ["thinking", "redacted_thinking", "web_search", "wrong_client"])
-def test_public_keyed_websocket_native_switch_preserves_or_rejects_history(app_instance, monkeypatch, kind):
+def test_public_keyed_websocket_native_switch_projects_or_rejects_history(app_instance, monkeypatch, kind):
     captured = []
     auth_scopes = []
     authenticate = ClaudeOpaqueState.authenticate
@@ -187,18 +197,16 @@ def test_public_keyed_websocket_native_switch_preserves_or_rejects_history(app_i
             websocket.send_json({"type": "response.create", "model": "gpt-6.1-sol", "input": original})
             event = websocket.receive_json()
             assert auth_scopes[-1] == {"client_scope": api_key_id}, auth_scopes
-            if kind == "thinking":
+            if kind == "wrong_client":
+                assert event["type"] == "error", event
+                assert event["error"]["code"] == "invalid_provider_history"
+                assert event["error"]["param"] == "input[0]"
+            else:
                 assert event["type"] == "response.created", event
                 assert websocket.receive_json()["type"] == "response.completed"
-            else:
-                assert event["type"] == "error", event
-                assert event["error"]["code"] == (
-                    "invalid_provider_history" if kind == "wrong_client" else "nonportable_provider_history"
-                )
-                assert event["error"]["param"] == "input[0]"
         assert client.portal.call(app_instance.state.proxy_service.drain_persistence_tasks, 5.0)
-    if kind == "thinking":
-        assert len(captured) == 1
-        assert_native(captured[0]["input"])
-    else:
+    if kind == "wrong_client":
         assert captured == []
+    else:
+        assert len(captured) == 1
+        assert_native(captured[0]["input"], kind)

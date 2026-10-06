@@ -11,6 +11,7 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX, append_reasoning_summary
 from app.core.types import JsonValue as NativeJsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
+from app.modules.claude.search import assistant_history_message, claude_search_text, openai_search_text, search_replay
 from app.modules.claude.task_input import is_external_task_input
 from app.modules.model_sources.compaction import source_compaction_history
 
@@ -135,20 +136,19 @@ def project_native_replay(
     *,
     client_scope: str,
 ) -> list[NativeJsonValue]:
-    """Extract portable thinking, never relabel opaque Claude state as OpenAI."""
-    projected: list[NativeJsonValue] = []
-    converted = 0
+    """Translate Claude state for OpenAI; never relabel opaque Claude state as OpenAI."""
+    envelopes: dict[int, SignedBlock] = {}
+    # Search call item ID -> (envelope index, readable projection).
+    searches: dict[str, tuple[int, str]] = {}
     for index, item in enumerate(items):
         token = item.get("encrypted_content") if isinstance(item, dict) else None
         if not isinstance(token, str) or not token.startswith(CLAUDE_REASONING_PREFIX):
-            projected.append(item)
             continue
         param = f"input[{index}]"
         try:
             envelope = opaque.authenticate(token, client_scope=client_scope)
         except ClientPayloadError as exc:
             raise ClientPayloadError(str(exc), param=param, code="invalid_provider_history") from exc
-        kind = envelope.block["type"]
         assert isinstance(item, dict)
         if item.get("type") != "reasoning":
             raise ClientPayloadError(
@@ -156,13 +156,31 @@ def project_native_replay(
                 param=param,
                 code="invalid_provider_history",
             )
-        if kind != "thinking":
-            raise ClientPayloadError(
-                "Claude redacted thinking or hosted search state cannot be replayed to OpenAI; "
-                "continue with its original Claude model or provide portable context.",
-                param=param,
-                code="nonportable_provider_history",
-            )
+        if envelope.block["type"] == "web_search":
+            item_id, blocks = search_replay(envelope.block)
+            searches[item_id] = (index, claude_search_text(blocks))
+        envelopes[index] = envelope
+    projected: list[NativeJsonValue] = []
+    converted = omitted = searched = 0
+    for index, item in enumerate(items):
+        envelope = envelopes.get(index)
+        if envelope is None:
+            call_id = item.get("id") if isinstance(item, dict) and item.get("type") == "web_search_call" else None
+            if isinstance(call_id, str) and call_id in searches:
+                projected.append(assistant_history_message(searches.pop(call_id)[1]))
+                searched += 1
+            else:
+                projected.append(item)
+            continue
+        kind = envelope.block["type"]
+        # Redacted thinking has no readable content; search state travels as its call's projection.
+        if kind == "redacted_thinking":
+            omitted += 1
+            continue
+        if kind == "web_search":
+            continue
+        assert isinstance(item, dict)
+        param = f"input[{index}]"
         text = envelope.block.get("thinking")
         if not isinstance(text, str):
             raise ClientPayloadError("Invalid Claude thinking text", param=param, code="invalid_provider_history")
@@ -174,8 +192,19 @@ def project_native_replay(
             append_reasoning_summary(result, text)
         projected.append(result)
         converted += 1
-    if converted:
-        logger.info("claude_native_history_projection converted=%d", converted)
+    if searches:
+        raise ClientPayloadError(
+            "Claude search state has no matching search item",
+            param=f"input[{min(position for position, _ in searches.values())}]",
+            code="invalid_provider_history",
+        )
+    if converted or omitted or searched:
+        logger.info(
+            "claude_native_history_projection converted=%d redacted_omitted=%d search_projected=%d",
+            converted,
+            omitted,
+            searched,
+        )
     return projected
 
 
@@ -195,31 +224,61 @@ class ClaudeReplay:
     readable_history: bool
 
     def project(self, payload: dict[str, JsonValue], *, source_id: str, model: str) -> dict[str, JsonValue]:
+        items = payload.get("input")
+        if not isinstance(items, list):
+            return payload
         replaced: dict[int, JsonValue | None] = {}
+        converted = omitted = searched = 0
+        # Claude search calls replayed natively, and projections of those that cannot be.
+        native_searches: set[str] = set()
+        foreign_searches: dict[str, str] = {}
         for block in self.blocks:
             envelope = block.envelope
+            search = envelope.block["type"] == "web_search"
             if (envelope.source_id, envelope.model) == (source_id, model):
+                if search:
+                    native_searches.add(search_replay(envelope.block)[0])
                 continue
             if block.strict:
                 raise ClientPayloadError(
                     "Active Claude reasoning or search requires its original account/model", param="input"
                 )
+            if search:
+                item_id, blocks = search_replay(envelope.block)
+                foreign_searches[item_id] = claude_search_text(blocks)
+                replaced[block.index] = None
+                continue
             text = envelope.block.get("thinking") if envelope.block["type"] == "thinking" else None
             assert text is None or isinstance(text, str)
-            replaced[block.index] = (
-                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
-                if self.readable_history and text
-                else None
+            if self.readable_history and text:
+                replaced[block.index] = assistant_history_message(text)
+                converted += 1
+            else:
+                replaced[block.index] = None
+                omitted += 1
+        for index, item in enumerate(items):
+            if not isinstance(item, dict) or item.get("type") != "web_search_call":
+                continue
+            call_id = item.get("id")
+            if isinstance(call_id, str) and call_id in native_searches:
+                continue
+            # Calls without a Claude envelope come from another provider (OpenAI hosted search).
+            text = (
+                foreign_searches.pop(call_id)
+                if isinstance(call_id, str) and call_id in foreign_searches
+                else openai_search_text(item)
             )
+            replaced[index] = assistant_history_message(text)
+            searched += 1
+        if foreign_searches:
+            raise ClientPayloadError("Claude search state has no matching search item", param="input")
         if not replaced:
             return payload
-        items = payload["input"]
-        assert isinstance(items, list)
-        converted = sum(item is not None for item in replaced.values())
         logger.info(
-            "claude_reasoning_projection reason=route_changed converted=%d omitted=%d",
+            "claude_reasoning_projection converted=%d omitted=%d search_projected=%d",
             converted,
-            len(replaced) - converted,
+            omitted,
+            searched,
         )
         projected: list[JsonValue] = []
         for index, item in enumerate(items):
@@ -255,7 +314,7 @@ def authenticate_replay(
             envelope = opaque.authenticate(token, client_scope=client_scope)
         except ClientPayloadError as exc:
             raise ClientPayloadError(str(exc), param=f"input[{index}]", code="invalid_provider_history") from exc
-        strict = envelope.block.get("type") == "web_search" or index >= active_start
+        strict = index >= active_start
         if strict:
             if envelope.model != model:
                 raise ClientPayloadError("Active Claude reasoning or search requires its original model", param="input")

@@ -34,6 +34,27 @@ def compact(payload):
 
 
 READABLE = {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "private"}]}
+SEARCH_TEXT = {
+    "type": "message",
+    "role": "assistant",
+    "content": [{"type": "output_text", "text": "Web search: test\nSources:\n- Example — https://example.com"}],
+}
+SEARCH_CALL = {
+    "type": "web_search_call",
+    "id": "resp_search_0",
+    "status": "completed",
+    "action": {"type": "search", "query": "test"},
+}
+
+
+def search_history(opaque, *, completed=True):
+    from tests.unit.test_claude_search import search_content
+
+    token = opaque.encode(scope(), {"type": "web_search", "item_id": "resp_search_0", "blocks": search_content()[:2]})
+    items = [SEARCH_CALL, {"type": "reasoning", "encrypted_content": token}, {"role": "assistant", "content": "answer"}]
+    if completed:
+        items.append({"role": "user", "content": "next"})
+    return {"input": items}
 
 
 @pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
@@ -53,16 +74,57 @@ def test_completed_history_is_soft_and_projection_is_immutable(kind):
     assert payload == original
 
 
-@pytest.mark.parametrize("kind,completed", [("thinking", False), ("web_search", True)])
-def test_strict_history_cannot_move(kind, completed):
+@pytest.mark.parametrize("kind", ["thinking", "web_search"])
+def test_active_history_cannot_move(kind):
     opaque = codec()
-    payload = history(opaque, kind=kind, completed=completed)
+    payload = search_history(opaque, completed=False) if kind == "web_search" else history(opaque, completed=False)
     replay = read(payload, opaque)
     assert replay.owner_source_id == "source-a"
     with pytest.raises(ClientPayloadError):
         replay.project(payload, source_id="source-b", model=scope().model)
     with pytest.raises(ClientPayloadError):
         read(payload, opaque, model="other")
+
+
+@pytest.mark.parametrize("compaction", [False, True])
+def test_completed_search_moves_as_readable_text(caplog, compaction):
+    opaque = codec()
+    payload = search_history(opaque)
+    if compaction:
+        payload = compact(payload)
+    original = deepcopy(payload)
+    replay = read(payload, opaque, require_complete_history=compaction)
+    assert replay.owner_source_id is None
+    assert replay.preferred_source_id == "source-a"
+    assert replay.project(payload, source_id="source-a", model=scope().model) == payload
+    with caplog.at_level("INFO"):
+        moved = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    assert moved == [SEARCH_TEXT, *payload["input"][2:]]
+    assert "converted=0 omitted=0 search_projected=1" in caplog.text
+    switched = read(payload, opaque, model="other", require_complete_history=compaction)
+    assert switched.project(payload, source_id="source-a", model="other")["input"] == moved
+    assert payload == original
+
+
+@pytest.mark.parametrize("completed", [True, False])
+def test_foreign_search_becomes_readable_text_in_any_turn(completed):
+    native = {**SEARCH_CALL, "id": "ws_native"}
+    payload = {"input": [{"role": "user", "content": "look it up"}, native, {"role": "assistant", "content": "answer"}]}
+    if completed:
+        payload["input"].append({"role": "user", "content": "next"})
+    original = deepcopy(payload)
+    projected = read(payload, codec()).project(payload, source_id="source-a", model=scope().model)["input"]
+    text = {**SEARCH_TEXT, "content": [{"type": "output_text", "text": "Web search: test"}]}
+    assert projected == [payload["input"][0], text, *payload["input"][2:]]
+    assert payload == original
+
+
+def test_moved_search_state_without_its_call_fails():
+    opaque = codec()
+    payload = search_history(opaque)
+    del payload["input"][0]
+    with pytest.raises(ClientPayloadError, match="no matching search item"):
+        read(payload, opaque).project(payload, source_id="source-b", model=scope().model)
 
 
 def test_tool_output_does_not_complete_thinking():
@@ -146,13 +208,11 @@ def test_compaction_reads_conflicting_completed_owners():
     assert projected[:2] == [READABLE, payload["input"][1]]
 
 
-@pytest.mark.parametrize("kind", ["thinking", "web_search"])
-def test_compaction_keeps_active_and_search_state_strict(kind):
+def test_compaction_keeps_active_state_strict():
     opaque = codec()
-    payload = history(opaque, kind=kind, completed=kind == "web_search")
-    if kind == "thinking":
-        payload["input"][1] = {"type": "function_call", "name": "read", "call_id": "call", "arguments": "{}"}
-        payload["input"].append({"type": "function_call_output", "call_id": "call", "output": "ok"})
+    payload = history(opaque, completed=False)
+    payload["input"][1] = {"type": "function_call", "name": "read", "call_id": "call", "arguments": "{}"}
+    payload["input"].append({"type": "function_call_output", "call_id": "call", "output": "ok"})
     payload = compact(payload)
     replay = read(payload, opaque, require_complete_history=True)
     assert replay.owner_source_id == "source-a"
@@ -184,14 +244,24 @@ def test_unrecognized_task_does_not_complete_thinking(overrides):
         read(payload, opaque, model="other")
 
 
-def test_external_task_does_not_relax_search_ownership():
+def test_external_task_completes_search_without_moving_its_state():
     opaque = codec()
-    payload = history(opaque, kind="web_search", completed=False)
+    payload = search_history(opaque, completed=False)
     payload["input"].append(TASK_INPUT)
     replay = read(payload, opaque)
-    assert replay.owner_source_id == "source-a"
+    assert replay.owner_source_id is None
+    moved = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    assert moved == [SEARCH_TEXT, *payload["input"][2:]]
+    assert "upstream-owned-opaque-data" not in str(moved)
+
+
+def test_tool_output_does_not_complete_search():
+    opaque = codec()
+    payload = search_history(opaque, completed=False)
+    payload["input"].append({"type": "function_call_output", "call_id": "call", "output": "ok"})
+    assert read(payload, opaque).owner_source_id == "source-a"
     with pytest.raises(ClientPayloadError):
-        replay.project(payload, source_id="source-b", model=scope().model)
+        read(payload, opaque).project(payload, source_id="source-b", model=scope().model)
 
 
 def test_external_task_does_not_skip_signed_history_authentication():

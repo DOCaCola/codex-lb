@@ -51,6 +51,8 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         # The Claude adapter projects Codex's grammar-format apply_patch tool,
         # and Codex registers that tool only for catalogs advertising it.
         raw["apply_patch_tool_type"] = "freeform"
+        # Message-based subagents: reports travel as portable plaintext agent messages.
+        raw["multi_agent_version"] = "v2"
     raw.setdefault("visibility", "list")
     raw.setdefault("shell_type", "shell_command")
     raw.setdefault("max_context_window", context_window)

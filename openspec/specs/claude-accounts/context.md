@@ -147,8 +147,10 @@ Search lifecycle and URL citations are projected into Responses. Exact upstream
 server call/result blocks travel in authenticated `reasoning.encrypted_content`
 alongside the public `web_search_call`; clients must retain both. The carrier
 uses the existing account/model/client binding and durable replay
-store. Missing or altered state, incompatible scope and unavailable owners fail
-explicitly; no encrypted result is fabricated from citations. Search errors or
+store. Missing or altered state and incompatible scope fail explicitly; no
+encrypted result is fabricated from citations. Active-turn search keeps its owner
+and model; completed search moving to another provider, model or account becomes
+readable text (see "Cross-route history projection"). Search errors or
 unfinished server calls cannot be reported as successful completion.
 
 Translated requests stamp one-hour ephemeral cache boundaries (with beta
@@ -596,7 +598,7 @@ logical items remain retained, so later replay repeats neither labels nor roles.
 
 Canonical tasks count as new user turns for completed-thinking replay policy.
 All opaque blocks are still authenticated, active tool cycles cannot be
-interrupted, and server search/resource history remains owner/model-bound.
+interrupted, and active server search/resource history remains owner/model-bound.
 Logs add identifier presence/type and task-metadata completeness only; they do
 not expose metadata values, content or credentials. HTTP/WS and retained genuine
 tool-continuation mocks exercise this behavior; live acceptance is unverified.
@@ -615,9 +617,37 @@ For example, a Claude thinking item with an empty summary becomes native
 `{type: reasoning, summary: [{type: summary_text, text: ...}]}` rather than an
 empty placeholder. This is portable context, not native signed OpenAI thinking.
 
-Redacted thinking and hosted search state are not portable native state. They
-fail explicitly with `nonportable_provider_history` at the affected input index;
-users can continue on the originating Claude model or supply portable context.
+## Cross-route history projection
+
+Codex multi-agent v2 forks children with the parent's full history, so a child
+on another provider replays state it cannot read. Unrepresentable provider state
+is translated rather than rejected:
+
+- Redacted thinking has no readable content and is omitted toward OpenAI, as it
+  already is toward another Claude model.
+- Hosted search toward another provider, and completed Claude search toward
+  another Claude model or account, becomes one assistant `output_text` message at
+  the call's position: `Web search: <query>` (or `Opened page: <url>`,
+  `Found in page <url>: <pattern>`), then `Sources:` with `- <title> — <url>`
+  lines. Claude results supply title/URL; OpenAI results use `action.sources`
+  when the client kept it, otherwise the query alone.
+- Active-turn Claude search between Claude routes keeps its owner and model.
+  A search envelope without its matching `web_search_call` is invalid history.
+
+The rendering is deterministic, so the moved prefix stays cacheable, and retained
+history keeps the originals, so returning to the original route replays natively.
+Logs count `redacted_omitted`/`search_projected`, never content.
+
+References (inspected 2026-10-06): CLIProxyAPI `a2976eb` drops redacted thinking
+toward foreign upstreams and folds a Claude search pair into a structured
+`web_search_call` with a minted `ws_<srvtoolu>` ID; opencodex `beba8b7` drops
+`redacted_thinking`, strips signatures and keeps search text plus URL/title
+sources (an opt-in `enforce` mode refuses lossy translation); Sub2API drops
+redacted thinking and carries search only through the answer text. We use text
+instead of a structured call because the native boundary never fabricates
+foreign identities, a Claude call has no `ws_` ID, and acceptance of ID-less
+`web_search_call` input cannot be established without live probes; assistant
+text is accepted by both providers and carries the content the references keep.
 No fake signatures, search calls or server-resource ownership are created.
 Malformed/cross-client/cross-conversation envelopes fail before dispatch. Native
 opaque reasoning stays encrypted and is not decoded or re-encrypted by the proxy.

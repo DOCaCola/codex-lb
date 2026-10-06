@@ -37,7 +37,11 @@ UPSTREAM_CALL: Any = {
     "call_id": "call_1",
     "arguments": '{"target":"/root","message":"done"}',
 }
-HEADER: Any = {"type": "input_text", "text": "Task name: /root\nSender: /root/worker\nPayload:\n"}
+# Codex renders this header inside agent message content.
+HEADER: Any = {
+    "type": "input_text",
+    "text": "Message Type: progress\nTask name: /root\nSender: /root/worker\nPayload:\n",
+}
 
 
 def agent_message(*parts: Any) -> Any:
@@ -118,8 +122,10 @@ def test_websocket_restoration_rewrites_text_and_payload(parsed):
     assert payload["item"] == UPSTREAM_CALL
 
 
-def test_plaintext_agent_message_becomes_user_message_with_codex_header():
-    payload: Any = {"input": [{"role": "user", "content": "go"}, agent_message({"type": "input_text", "text": "done"})]}
+def test_plaintext_agent_message_keeps_codex_header_once():
+    payload: Any = {
+        "input": [{"role": "user", "content": "go"}, agent_message(HEADER, {"type": "input_text", "text": "done"})]
+    }
     lowered: Any = lower_agent_messages(payload)
 
     assert lowered["input"][1] == {
@@ -148,7 +154,7 @@ def test_claude_parent_receives_child_report_after_tool_cycle():
                 {"role": "user", "content": "delegate"},
                 {"type": "function_call", "name": "wait", "call_id": "call", "arguments": "{}"},
                 {"type": "function_call_output", "call_id": "call", "output": "woken"},
-                agent_message({"type": "input_text", "text": "progress"}),
+                agent_message(HEADER, {"type": "input_text", "text": "progress"}),
             ],
             "tools": [{"type": "function", "name": "wait", "parameters": {"type": "object"}}],
         }
@@ -170,7 +176,7 @@ def test_model_source_receives_lowered_agent_message():
         {
             "model": "source",
             "instructions": "",
-            "input": [{"role": "user", "content": "go"}, agent_message({"type": "input_text", "text": "done"})],
+            "input": [{"role": "user", "content": "go"}, agent_message(HEADER, {"type": "input_text", "text": "done"})],
         }
     )
     source = ModelSource(

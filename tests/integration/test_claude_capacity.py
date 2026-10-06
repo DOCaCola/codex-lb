@@ -95,8 +95,6 @@ async def test_owned_history_cannot_escape_capacity(async_client, pool, monkeypa
     assert first.status_code == 200, first.text
     slot = bulkhead.try_acquire(captured[0][0], 1)
     body["input"] = first.json()["output"]
-    if search:
-        body["input"].append({"role": "user", "content": "continue"})
     result = await async_client.post("/v1/responses", headers=headers, json=body)
     assert result.status_code == 503, result.text
     assert result.json()["error"]["code"] == "model_source_busy"

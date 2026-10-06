@@ -74,22 +74,85 @@ def test_tampered_envelope_is_not_stripped_or_forwarded():
         convert(items, opaque)
 
 
+def search_state(opaque, item_id="resp_search_0"):
+    from tests.unit.test_claude_search import search_content
+
+    return reasoning(opaque, {"type": "web_search", "item_id": item_id, "blocks": search_content()[:2]})
+
+
+def test_redacted_thinking_is_omitted_without_discarding_retained_history(caplog):
+    opaque = codec()
+    items = [reasoning(opaque), reasoning(opaque, {"type": "redacted_thinking", "data": "opaque"})]
+    original = deepcopy(items)
+    with caplog.at_level("INFO"):
+        projected = convert(items, opaque)
+    assert projected == [
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Recovered Claude context"}]}
+    ]
+    assert items == original
+    assert "converted=1 redacted_omitted=1 search_projected=0" in caplog.text
+
+
+def test_hosted_search_becomes_readable_text_in_place_of_its_call():
+    opaque = codec()
+    items = [
+        {
+            "type": "web_search_call",
+            "id": "resp_search_0",
+            "status": "completed",
+            "action": {"type": "search", "query": "test"},
+        },
+        search_state(opaque),
+        {"type": "message", "role": "assistant", "content": "An answer"},
+    ]
+    original = deepcopy(items)
+    projected = convert(items, opaque)
+    assert projected == [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Web search: test\nSources:\n- Example — https://example.com"}],
+        },
+        items[2],
+    ]
+    assert "upstream-owned-opaque-data" not in str(projected)
+    assert items == original
+    ensure_native_provider_history({"input": projected})
+
+
+def test_search_state_without_its_call_fails():
+    opaque = codec()
+    with pytest.raises(ClientPayloadError) as raised:
+        convert([reasoning(opaque), search_state(opaque)], opaque)
+    assert raised.value.code == "invalid_provider_history"
+    assert raised.value.param == "input[1]"
+
+
 @pytest.mark.parametrize(
-    "block",
+    ("action", "text"),
     [
-        {"type": "redacted_thinking", "data": "opaque"},
-        {"type": "web_search", "item_id": "resp_search", "blocks": []},
+        ({"type": "search", "query": "weather"}, "Web search: weather"),
+        ({"type": "search", "queries": ["a", "b"]}, "Web search: a; b"),
+        (
+            {"type": "search", "query": "weather", "sources": [{"type": "url", "url": "https://w.example"}]},
+            "Web search: weather\nSources:\n- https://w.example",
+        ),
+        ({"type": "open_page", "url": "https://w.example"}, "Opened page: https://w.example"),
+        (
+            {"type": "find_in_page", "url": "https://w.example", "pattern": "rain"},
+            "Found in page https://w.example: rain",
+        ),
+        ({"type": "other"}, "Web search"),
+        (None, "Web search"),
     ],
 )
-def test_nonportable_state_fails_explicitly_without_discarding_it(block):
-    opaque = codec()
-    items = [reasoning(opaque), reasoning(opaque, block)]
-    original = deepcopy(items)
-    with pytest.raises(ClientPayloadError) as raised:
-        convert(items, opaque)
-    assert raised.value.code == "nonportable_provider_history"
-    assert raised.value.param == "input[1]"
-    assert items == original
+def test_openai_search_text(action, text):
+    from app.modules.claude.search import openai_search_text
+
+    item: dict[str, JsonValue] = {"type": "web_search_call", "id": "ws_1"}
+    if action is not None:
+        item["action"] = action
+    assert openai_search_text(item) == text
 
 
 def test_native_sanitation_preserves_all_distinct_plaintext_and_native_encryption():
