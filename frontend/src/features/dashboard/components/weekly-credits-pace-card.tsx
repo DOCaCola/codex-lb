@@ -277,7 +277,7 @@ function RunwayWeeklyCreditsPaceCard({
 
   return (
     <section className="@container/weekly-pace rounded-xl border bg-card p-5" aria-label={t("dashboard.weeklyPace.title")}>
-      <div className="mb-4 flex justify-between gap-3">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
