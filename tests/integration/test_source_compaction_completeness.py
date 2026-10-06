@@ -390,19 +390,20 @@ async def test_compaction_preserves_signed_history_on_any_route(async_client, po
             "previous_response_id": first.json()["id"],
         },
     )
-    if state == "search_paused":
-        assert response.status_code == 503, response.text
-        assert not later
-        assert "output" not in response.json()
-        return
     assert response.status_code == 200, response.text
     assert len(later) == (2 if state == "signature_rejected" else 1)
     # A model switch has no replayable signature, so routing may pick any account.
-    expected = {"paused": set(pool) - {owner}, "model_switch": set(pool)}.get(state, {owner})
+    moved = set(pool) - {owner}
+    expected = {"paused": moved, "search_paused": moved, "model_switch": set(pool)}.get(state, {owner})
     assert len({request[0] for request in later}) == 1
     assert {request[0] for request in later} <= expected
     sent = [[block for message in request[2]["messages"] for block in message["content"]] for request in later]
-    if search:
+    if state == "search_paused":
+        # A completed search toward another account is readable history, never its owner's opaque state.
+        assert not any(block.get("type") in ("server_tool_use", "web_search_tool_result") for block in sent[0])
+        assert "upstream-owned-opaque-data" not in json.dumps(sent[0])
+        assert any("Web search: test" in str(block.get("text", "")) for block in sent[0])
+    elif search:
         assert any(block.get("type") == "web_search_tool_result" for block in sent[0])
     elif state == "available":
         assert signed in sent[0]
