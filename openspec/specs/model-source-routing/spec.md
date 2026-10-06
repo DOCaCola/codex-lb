@@ -452,11 +452,11 @@ Responses output forwarded from any model source SHALL mark each `function_call`
 - **THEN** the forwarded call carries `encrypted_function_args: []`
 
 ### Requirement: Inter-agent messages are source user messages
-Model-source Responses forwarding SHALL send plaintext `agent_message` items as user messages: Codex's agent-message header naming the recipient and sender, followed by the original content. An `agent_message` with an `encrypted_content` part SHALL fail with `nonportable_agent_message`.
+Model-source Responses forwarding SHALL send plaintext `agent_message` items as user messages carrying the item's content unchanged. Codex's agent-message header naming the recipient and sender is part of that content; the proxy MUST NOT add another. An `agent_message` with an `encrypted_content` part SHALL fail with `nonportable_agent_message`.
 
 #### Scenario: Child reports to a source-served parent
 - **WHEN** a request to a model source contains a plaintext `agent_message`
-- **THEN** the source receives a user message with the sender header and that text
+- **THEN** the source receives a user message with that content, including Codex's header, exactly once
 
 ### Requirement: Provider-attributed source errors
 Gateway-generated error messages for a model-source request SHALL name the provider that serves it: "Claude" for Claude accounts, "OpenRouter" for OpenRouter accounts and "OpenAI-compatible model source" for generic sources. Error codes, statuses and upstream-provided messages SHALL remain unchanged.
