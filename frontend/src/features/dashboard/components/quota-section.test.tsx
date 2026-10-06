@@ -13,7 +13,6 @@ const view: DashboardView = {
   secondaryUsageItems: [],
   primaryTotal: 0,
   secondaryTotal: 0,
-  requestLogs: [],
   safeLinePrimary: null,
   safeLineSecondary: null,
   weeklyCreditPace: null,

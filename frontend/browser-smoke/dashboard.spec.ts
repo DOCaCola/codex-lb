@@ -125,6 +125,11 @@ for (const width of [320, 390, 1440]) {
         await expect(mark).toHaveCSS("width", "16px");
         await expect(mark).toHaveCSS("filter", theme === "dark" ? "invert(1)" : "none");
       }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`provider-dashboard-${theme}-${width}.png`), fullPage: true });
+      await page.getByRole("radio", { name: "View accounts as list" }).click();
+      await expect(page.getByTestId("dashboard-account-list").locator("img[data-provider]")).toHaveCount(3);
+      await page.goto("/logs");
       const table = page.getByRole("table").first();
       const nativeLabel = table.getByTitle("gpt-6-astra", { exact: true });
       await expect(nativeLabel).toHaveText("GPT 6 Astra medium");
@@ -134,9 +139,7 @@ for (const width of [320, 390, 1440]) {
       await expect(table.getByTitle("anthropic/claude-haiku-4-5-20251001", { exact: true })).toHaveText("Claude Haiku 4.5 high");
       await expect(table.locator("tbody img[data-provider]")).toHaveCount(3);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-      await page.screenshot({ path: testInfo.outputPath(`provider-dashboard-${theme}-${width}.png`), fullPage: true });
-      await page.getByRole("radio", { name: "View accounts as list" }).click();
-      await expect(page.getByTestId("dashboard-account-list").locator("img[data-provider]")).toHaveCount(3);
+      await page.screenshot({ path: testInfo.outputPath(`provider-logs-${theme}-${width}.png`), fullPage: true });
       for (const [provider, id, name] of [
         ["codex", native.accountId, native.displayName],
         ["claude", claude.id, claude.name],
@@ -246,7 +249,7 @@ for (const width of [390, 1440]) {
       ];
       await route.fulfill({ contentType: "application/json", body: JSON.stringify(createRequestLogsResponse(requests, requests.length, false)) });
     });
-    await page.goto("/dashboard");
+    await page.goto("/logs");
     const table = page.getByRole("table").first();
     await expect(table.getByText("Web search", { exact: true })).toBeVisible();
     await expect(table.getByText("Warmup", { exact: true })).toBeVisible();
@@ -489,8 +492,6 @@ test("dashboard usage donuts stay within supported viewports", async ({ page }) 
   // h3 now that a null backend pace falls back to the local projection.
   const usageHeadings = page.getByRole("heading", { level: 3 }).filter({ hasText: /Credits$/ });
   await expect(usageHeadings).toHaveCount(2);
-  const requestTable = page.getByRole("table").first();
-  await expect(requestTable).toBeVisible();
 
   for (const viewportCase of viewportCases) {
     await resizeViewportAndSettle(page, viewportCase.size);
@@ -524,6 +525,41 @@ test("dashboard usage donuts stay within supported viewports", async ({ page }) 
     const summaryRight = await page
       .getByTestId("dashboard-account-summary-line")
       .evaluate((element) => element.getBoundingClientRect().right);
+
+    expect(documentMetrics.scrollWidth).toBeLessThanOrEqual(documentMetrics.clientWidth);
+    expect(summaryRight).toBeLessThanOrEqual(documentMetrics.clientWidth);
+    for (const metrics of usageMetrics) {
+      expect(metrics.gridColumns).toBe(viewportCase.donutColumns);
+      for (const bounds of [metrics.card, metrics.row, metrics.chart, metrics.legend]) {
+        expect(bounds.left).toBeGreaterThanOrEqual(0);
+        expect(bounds.right).toBeLessThanOrEqual(documentMetrics.clientWidth);
+      }
+    }
+  }
+});
+
+test("request log table scrolls locally within supported viewports", async ({ page }) => {
+  const viewports = [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 1440, height: 900 },
+  ] as const;
+
+  await installMobileContainmentFixtures(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize(viewports[0]);
+  await page.goto("/logs", { waitUntil: "networkidle" });
+
+  const requestTable = page.getByRole("table").first();
+  await expect(requestTable).toBeVisible();
+
+  for (const viewport of viewports) {
+    await resizeViewportAndSettle(page, viewport);
+
+    const documentMetrics = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
     const tableMetrics = await requestTable.evaluate((table) => {
       const scroller = table.closest('[data-slot="table-container"]');
       if (!scroller) {
@@ -540,14 +576,6 @@ test("dashboard usage donuts stay within supported viewports", async ({ page }) 
     });
 
     expect(documentMetrics.scrollWidth).toBeLessThanOrEqual(documentMetrics.clientWidth);
-    expect(summaryRight).toBeLessThanOrEqual(documentMetrics.clientWidth);
-    for (const metrics of usageMetrics) {
-      expect(metrics.gridColumns).toBe(viewportCase.donutColumns);
-      for (const bounds of [metrics.card, metrics.row, metrics.chart, metrics.legend]) {
-        expect(bounds.left).toBeGreaterThanOrEqual(0);
-        expect(bounds.right).toBeLessThanOrEqual(documentMetrics.clientWidth);
-      }
-    }
     expect(tableMetrics.overflowX).toBe("auto");
     expect(tableMetrics.tableScrollWidth).toBeGreaterThan(tableMetrics.scrollerClientWidth);
     expect(tableMetrics.scrollerLeft).toBeGreaterThanOrEqual(0);
@@ -564,10 +592,10 @@ test("desktop route navigation resets new pages without overriding query, histor
     .evaluate((heading) => heading.getBoundingClientRect().top);
   expect(settingsHeadingTop).toBeLessThan(0);
 
-  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
-  const dashboardHeading = page.getByRole("heading", { name: "Dashboard", exact: true });
-  await expect(dashboardHeading).toBeInViewport();
+  await page.getByRole("link", { name: "Logs", exact: true }).click();
+  await expect(page).toHaveURL(/\/logs$/);
+  const logsHeading = page.getByRole("heading", { name: "Logs", exact: true });
+  await expect(logsHeading).toBeInViewport();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 
   await page.evaluate(() => {
@@ -575,17 +603,16 @@ test("desktop route navigation resets new pages without overriding query, histor
     window.scrollTo({ top: 700, behavior: "instant" });
   });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(700);
-  await page.getByRole("button", { name: "Request Logs", exact: true }).click();
-  const conversationsItem = page.getByRole("menuitemradio", { name: "Conversations", exact: true });
-  await expect(conversationsItem).toBeVisible();
   const queryScrollTop = await page.evaluate(() => window.scrollY);
   expect(queryScrollTop).toBeGreaterThan(0);
-  await conversationsItem.click();
-  await expect(page).toHaveURL(/\/dashboard\?view=conversations$/);
+  // The view toggle sits above the scrolled position; a dispatched click keeps
+  // Playwright from scrolling it into view before the query change.
+  await page.getByRole("button", { name: "Conversations", exact: true }).dispatchEvent("click");
+  await expect(page).toHaveURL(/\/logs\?view=conversations$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(queryScrollTop);
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/logs$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(queryScrollTop);
 
   await page.goBack();

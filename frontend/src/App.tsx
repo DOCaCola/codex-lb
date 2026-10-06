@@ -23,9 +23,12 @@ import { TelemetryConsentDialog } from "@/features/settings/components/telemetry
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 
 // Route-level code splitting: only the visited page's chunk loads, instead
-// of one entry bundle carrying all six pages' code.
+// of one entry bundle carrying every page's code.
 const DashboardPage = lazy(() =>
   import("@/features/dashboard/components/dashboard-page").then((m) => ({ default: m.DashboardPage })),
+);
+const LogsPage = lazy(() =>
+  import("@/features/logs/components/logs-page").then((m) => ({ default: m.LogsPage })),
 );
 const ReportsPage = lazy(() =>
   import("@/features/reports/components/reports-page").then((m) => ({ default: m.ReportsPage })),
@@ -117,6 +120,7 @@ export default function App() {
             <Route path="/login" element={<Navigate to={signedInLoginDestination()} replace />} />
             <Route element={<RouteGuard />}>
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/logs" element={<LogsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/accounts" element={<AccountsPage />} />
               <Route path="/automations" element={<AutomationsPage />} />

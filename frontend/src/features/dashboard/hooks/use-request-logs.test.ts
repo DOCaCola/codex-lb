@@ -47,7 +47,7 @@ function LocationSpy({
 
 function createWrapper(
   queryClient: QueryClient,
-  initialEntry = "/dashboard",
+  initialEntry = "/logs",
   onLocationChange?: (search: string) => void,
   onNavigateReady?: (navigate: NavigateFunction) => void,
 ) {
@@ -90,7 +90,7 @@ describe("useRequestLogs", () => {
       const queryClient = createTestQueryClient();
       const wrapper = createWrapper(
         queryClient,
-        "/dashboard?timeframe=24h&search=quota&accountId=acc_primary&apiKeyId=key_1&modelOption=gpt-5.1:::high&status=ok&limit=10&offset=20",
+        "/logs?timeframe=24h&search=quota&accountId=acc_primary&apiKeyId=key_1&modelOption=gpt-5.1:::high&status=ok&limit=10&offset=20",
       );
       const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
@@ -128,7 +128,7 @@ describe("useRequestLogs", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?overviewTimeframe=30d&search=rate&timeframe=24h&accountId=acc_primary&apiKeyId=key_1&modelOption=gpt-5.1:::high&status=rate_limit&limit=10&offset=20",
+      "/logs?overviewTimeframe=30d&search=rate&timeframe=24h&accountId=acc_primary&apiKeyId=key_1&modelOption=gpt-5.1:::high&status=rate_limit&limit=10&offset=20",
     );
 
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
@@ -162,7 +162,7 @@ describe("useRequestLogs", () => {
     let locationSearch = "";
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?overviewTimeframe=30d&limit=25&offset=0",
+      "/logs?overviewTimeframe=30d&limit=25&offset=0",
       (search) => {
         locationSearch = search;
       },
@@ -197,7 +197,7 @@ describe("useRequestLogs", () => {
     );
 
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?search=missing");
+    const wrapper = createWrapper(queryClient, "/logs?search=missing");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -237,7 +237,7 @@ describe("useRequestLogs", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?search=missing",
+      "/logs?search=missing",
       undefined,
       (routerNavigate) => {
         navigate = routerNavigate;
@@ -249,7 +249,7 @@ describe("useRequestLogs", () => {
     await waitFor(() => expect(navigate).toBeDefined());
 
     act(() => {
-      navigate?.("/dashboard");
+      navigate?.("/logs");
     });
 
     await waitFor(() => expect(result.current.filters.search).toBe(""));
@@ -263,7 +263,7 @@ describe("useRequestLogs", () => {
 
   it("supports pagination updates with total/hasMore response", async () => {
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?limit=1&offset=0");
+    const wrapper = createWrapper(queryClient, "/logs?limit=1&offset=0");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -314,7 +314,7 @@ describe("useRequestLogs", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?timeframe=24h&accountId=acc_primary&apiKeyId=key_1&modelOption=gpt-5.1:::high&status=ok",
+      "/logs?timeframe=24h&accountId=acc_primary&apiKeyId=key_1&modelOption=gpt-5.1:::high&status=ok",
     );
 
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
@@ -350,7 +350,7 @@ describe("useRequestLogs", () => {
     );
 
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?status=ok&status=stale_status");
+    const wrapper = createWrapper(queryClient, "/logs?status=ok&status=stale_status");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -386,7 +386,7 @@ describe("useRequestLogs", () => {
     );
 
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?apiKeyId=key_1");
+    const wrapper = createWrapper(queryClient, "/logs?apiKeyId=key_1");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -418,7 +418,7 @@ describe("useRequestLogs", () => {
     );
 
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?conversationId=conv_abc123&limit=25&offset=0");
+    const wrapper = createWrapper(queryClient, "/logs?conversationId=conv_abc123&limit=25&offset=0");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -441,7 +441,7 @@ describe("useRequestLogs", () => {
     );
 
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?limit=25&offset=0");
+    const wrapper = createWrapper(queryClient, "/logs?limit=25&offset=0");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -451,7 +451,7 @@ describe("useRequestLogs", () => {
 
   it("resets offset when conversationId is set", async () => {
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?limit=25&offset=10");
+    const wrapper = createWrapper(queryClient, "/logs?limit=25&offset=10");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -469,7 +469,7 @@ describe("useRequestLogs", () => {
 
   it("resets offset when conversationId is cleared", async () => {
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?conversationId=conv_abc123&limit=25&offset=5");
+    const wrapper = createWrapper(queryClient, "/logs?conversationId=conv_abc123&limit=25&offset=5");
     const { result } = renderHook(() => useRequestLogs(), { wrapper });
 
     await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
@@ -490,7 +490,7 @@ describe("useRequestLogs", () => {
     let locationSearch = "";
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?overviewTimeframe=30d&limit=25&offset=0",
+      "/logs?overviewTimeframe=30d&limit=25&offset=0",
       (search) => {
         locationSearch = search;
       },
@@ -521,7 +521,7 @@ describe("useRequestLogs", () => {
     let locationSearch = "";
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?limit=25&offset=0",
+      "/logs?limit=25&offset=0",
       (search) => {
         locationSearch = search;
       },

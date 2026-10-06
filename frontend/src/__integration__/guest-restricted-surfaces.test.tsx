@@ -158,14 +158,14 @@ describe("guest restricted surfaces integration", () => {
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
-  it("drops a URL-carried API-key filter and hides its control on /dashboard", async () => {
+  it("drops a URL-carried API-key filter and hides its control on /logs", async () => {
     useGuestSession();
     const urls = spyRequestUrls();
-    window.history.pushState({}, "", "/dashboard?apiKeyId=key_1&status=success");
+    window.history.pushState({}, "", "/logs?apiKeyId=key_1&status=success");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Request Logs" })).toBeInTheDocument();
+    expect(await screen.findByTestId("logs-section")).toBeInTheDocument();
     await waitFor(() => {
       const logUrls = requestLogUrls(urls);
       expect(logUrls.some((url) => url.pathname === "/api/request-logs")).toBe(true);
@@ -186,11 +186,11 @@ describe("guest restricted surfaces integration", () => {
 
   it("honours a URL-carried API-key filter and shows its control for writers (regression)", async () => {
     const urls = spyRequestUrls();
-    window.history.pushState({}, "", "/dashboard?apiKeyId=key_1");
+    window.history.pushState({}, "", "/logs?apiKeyId=key_1");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Request Logs" })).toBeInTheDocument();
+    expect(await screen.findByTestId("logs-section")).toBeInTheDocument();
     await waitFor(() => {
       const logUrls = requestLogUrls(urls);
       expect(logUrls.some((url) => url.pathname === "/api/request-logs")).toBe(true);

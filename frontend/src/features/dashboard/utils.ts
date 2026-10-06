@@ -9,7 +9,6 @@ import type {
   DashboardProjections,
   DashboardTopConsumers,
   Depletion,
-  RequestLog,
   ServerWeeklyCreditPace,
   TrendPoint,
   UsageWindow,
@@ -141,7 +140,6 @@ export type DashboardView = {
   primaryTotal: number;
   /** Sum of visible secondary remaining items shown in the donut center label. */
   secondaryTotal: number;
-  requestLogs: RequestLog[];
   safeLinePrimary: SafeLineView | null;
   safeLineSecondary: SafeLineView | null;
   weeklyCreditPace: WeeklyCreditPace | null;
@@ -784,7 +782,6 @@ export function buildWeeklyCreditPace(
 
 export function buildDashboardView(
   overview: DashboardOverview,
-  requestLogs: RequestLog[],
   { accountColors = new Map(), showAccountBurnrate = true }: DashboardViewOptions = {},
   projections?: DashboardProjections,
 ): DashboardView {
@@ -919,7 +916,6 @@ export function buildDashboardView(
     secondaryUsageItems,
     primaryTotal: sumRemaining(primaryUsageItems),
     secondaryTotal: sumRemaining(secondaryUsageItems),
-    requestLogs,
     safeLinePrimary: buildDepletionView(projections?.depletionPrimary ?? overview.depletionPrimary),
     safeLineSecondary: buildDepletionView(projections?.depletionSecondary ?? overview.depletionSecondary),
     // A present overview pace is the freshest verdict and always wins.

@@ -142,9 +142,9 @@ describe("route recovery flow integration", () => {
     expect(screen.queryByTestId("route-load-error")).not.toBeInTheDocument();
   });
 
-  it("preserves dashboard search input across healthy same-path URL updates", async () => {
+  it("preserves request-log search input across healthy same-path URL updates", async () => {
     const user = userEvent.setup({ delay: null });
-    window.history.pushState({}, "", "/dashboard");
+    window.history.pushState({}, "", "/logs");
 
     renderWithProviders(<App />);
     const search = await screen.findByRole("textbox");

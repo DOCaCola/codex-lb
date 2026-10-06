@@ -25,7 +25,7 @@ max_lines = 60
 # that coupling is intentional.
 path = "frontend/src/components/layout/nav-items.ts"
 array = "CORE_NAV_ITEMS"
-max_items = 5
+max_items = 6
 
 [settings_fields]
 # Ratchet on len(Settings.model_fields) (issue #1340, PRINCIPLES.md P2).

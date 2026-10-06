@@ -22,7 +22,7 @@ function createTestQueryClient(): QueryClient {
 
 describe("ConversationsView", () => {
   it("renders the list without a conversation filter", async () => {
-    window.history.pushState({}, "", "/dashboard?view=conversations");
+    window.history.pushState({}, "", "/logs?view=conversations");
     renderWithProviders(<ConversationsView accounts={[]} />);
 
     expect(await screen.findByText("conv_abc")).toBeInTheDocument();
@@ -31,7 +31,7 @@ describe("ConversationsView", () => {
   });
 
   it("renders the established empty state", async () => {
-    window.history.pushState({}, "", "/dashboard?view=conversations&conversationSearch=missing");
+    window.history.pushState({}, "", "/logs?view=conversations&conversationSearch=missing");
     renderWithProviders(<ConversationsView />);
 
     expect(await screen.findByText("No conversations yet")).toBeInTheDocument();
@@ -71,7 +71,7 @@ describe("ConversationsView", () => {
         { client: queryClient },
         createElement(
           MemoryRouter,
-          { initialEntries: ["/dashboard?view=conversations&conversationTimeframe=7d"] },
+          { initialEntries: ["/logs?view=conversations&conversationTimeframe=7d"] },
           children,
         ),
       );

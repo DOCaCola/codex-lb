@@ -59,7 +59,7 @@ for (const theme of ["light", "dark"] as const) {
     ];
     await page.route("**/health/ready", route => fulfill(route, { status: "ok" }));
     await page.route("**/api/request-logs?*", route => fulfill(route, createRequestLogsResponse(requests, 3, false)));
-    await page.goto(`${BASE_URL}/dashboard`);
+    await page.goto(`${BASE_URL}/logs`);
     const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: /^TPS/ }) });
     const rows = table.locator("tbody tr");
     await expect(rows).toHaveCount(3);
@@ -908,21 +908,21 @@ test("dashboard — dark", async ({ page }) => {
   await capture(page, { file: "dashboard-dark.jpg", theme: "dark", route: "/dashboard" });
 });
 
-test("dashboard conversations — desktop", async ({ page }) => {
+test("logs conversations — desktop", async ({ page }) => {
   await capture(page, {
     file: "dashboard-conversations.jpg",
     theme: "light",
-    route: "/dashboard?view=conversations",
+    route: "/logs?view=conversations",
     waitFor: '[data-slot="table"]',
   });
 });
 
-test("dashboard conversations — narrow", async ({ page }) => {
+test("logs conversations — narrow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await capture(page, {
     file: "dashboard-conversations-narrow.jpg",
     theme: "light",
-    route: "/dashboard?view=conversations",
+    route: "/logs?view=conversations",
     waitFor: '[data-slot="table"]',
   });
 });
@@ -957,7 +957,7 @@ test("provider observability details and cache activity", async ({ page }, testI
   }));
   for (const theme of ["light", "dark"] as const) {
     await applyTheme(page, theme);
-    await page.goto(`${BASE_URL}/dashboard?view=conversations`);
+    await page.goto(`${BASE_URL}/logs?view=conversations`);
     await page.getByRole("button", { name: /view details/i }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText("45.6 tok/s").first()).toBeVisible();
@@ -976,11 +976,11 @@ test("provider observability details and cache activity", async ({ page }, testI
   expect(errors).toEqual([]);
 });
 
-test("dashboard conversation details dialog", async ({ page }) => {
+test("logs conversation details dialog", async ({ page }) => {
   await capture(page, {
     file: "dashboard-conversation-details.jpg",
     theme: "light",
-    route: "/dashboard?view=conversations",
+    route: "/logs?view=conversations",
     waitFor: '[data-slot="table"]',
     beforeScreenshot: async (currentPage) => {
       await currentPage.getByRole("button", { name: /view details/i }).click();
@@ -1178,7 +1178,7 @@ for (const width of [1440, 390]) {
       detailsFetches += 1;
       return fulfill(route, createConversationDetails({ conversationId: "conv_abc" }));
     });
-    await page.goto(`${BASE_URL}/dashboard`);
+    await page.goto(`${BASE_URL}/logs`);
     await page.getByRole("button", { name: "View Details", exact: true }).click();
     const requestDialog = page.getByRole("dialog");
     const action = requestDialog.getByRole("button", { name: "View details for conversation conv_abc" });
@@ -1211,7 +1211,7 @@ test("provider request attribution", async ({ page }) => {
   const request = { ...requestLogs[0], accountId: null, modelSourceId: "src-demo", modelSourceKind: "openrouter", modelSourceName: "OpenRouter personal", model: "openrouter/qwen/qwen3.8-27b:free", status: "error", errorCode: "429", errorMessage: "Provider returned error" };
   await page.route("**/api/request-logs?*", route => fulfill(route, createRequestLogsResponse([request], 1, false)));
   await page.route("**/api/request-logs/options*", route => fulfill(route, { ...filterOptions, accountIds: ["source:src-demo"], accountLabels: { "source:src-demo": "OpenRouter personal" } }));
-  await page.goto(`${BASE_URL}/`);
+  await page.goto(`${BASE_URL}/logs`);
   await expect(page.getByRole("cell", { name: "OpenRouter personal", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "View Details" }).click();
   await expect(page.getByRole("dialog").getByText("OpenRouter personal", { exact: true })).toBeVisible();

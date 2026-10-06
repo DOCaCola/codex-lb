@@ -31,7 +31,7 @@ function LocationSpy({ onChange }: { onChange?: (search: string) => void }) {
 
 function createWrapper(
   queryClient: QueryClient,
-  initialEntry = "/dashboard",
+  initialEntry = "/logs",
   onLocationChange?: (search: string) => void,
 ) {
   return function Wrapper({ children }: PropsWithChildren) {
@@ -53,7 +53,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationSearch=opencode&conversationLimit=10&conversationOffset=20&conversationTimeframe=30d",
+      "/logs?view=conversations&conversationSearch=opencode&conversationLimit=10&conversationOffset=20&conversationTimeframe=30d",
     );
 
     const { result } = renderHook(() => useConversations({ enabled: true }), {
@@ -85,7 +85,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?search=requestlog&limit=5&offset=9&conversationSearch=convonly",
+      "/logs?search=requestlog&limit=5&offset=9&conversationSearch=convonly",
     );
 
     const { result } = renderHook(() => useConversations({ enabled: true }), {
@@ -103,7 +103,7 @@ describe("useConversations", () => {
     let locationSearch = "";
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?overviewTimeframe=30d&search=requestlog&limit=5",
+      "/logs?overviewTimeframe=30d&search=requestlog&limit=5",
       (search) => {
         locationSearch = search;
       },
@@ -133,7 +133,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationSearch=old&conversationLimit=25&conversationOffset=30",
+      "/logs?view=conversations&conversationSearch=old&conversationLimit=25&conversationOffset=30",
     );
     const { result } = renderHook(() => useConversations({ enabled: true }), {
       wrapper,
@@ -157,7 +157,7 @@ describe("useConversations", () => {
     let locationSearch = "";
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationOffset=10&offset=40",
+      "/logs?view=conversations&conversationOffset=10&offset=40",
       (search) => {
         locationSearch = search;
       },
@@ -182,7 +182,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationLimit=1&conversationOffset=0",
+      "/logs?view=conversations&conversationLimit=1&conversationOffset=0",
     );
     const { result } = renderHook(() => useConversations({ enabled: true }), {
       wrapper,
@@ -211,7 +211,7 @@ describe("useConversations", () => {
     );
 
     const queryClient = createTestQueryClient();
-    const wrapper = createWrapper(queryClient, "/dashboard?view=conversations");
+    const wrapper = createWrapper(queryClient, "/logs?view=conversations");
     renderHook(() => useConversations({ enabled: false }), { wrapper });
 
     // Give any potential query a moment to fire
@@ -231,7 +231,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationSearch=hello",
+      "/logs?view=conversations&conversationSearch=hello",
     );
     const { result } = renderHook(() => useConversations({ enabled: true }), {
       wrapper,
@@ -253,7 +253,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationTimeframe=30d",
+      "/logs?view=conversations&conversationTimeframe=30d",
     );
     const { result } = renderHook(() => useConversations({ enabled: true }), {
       wrapper,
@@ -277,7 +277,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationTimeframe=7d",
+      "/logs?view=conversations&conversationTimeframe=7d",
     );
     const { result } = renderHook(() => useConversations({ enabled: true }), {
       wrapper,
@@ -307,7 +307,7 @@ describe("useConversations", () => {
     const queryClient = createTestQueryClient();
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationTimeframe=7d",
+      "/logs?view=conversations&conversationTimeframe=7d",
     );
     const { result } = renderHook(() => useConversations({ enabled: true }), {
       wrapper,
@@ -343,7 +343,7 @@ describe("useConversations", () => {
       const queryClient = createTestQueryClient();
       const wrapper = createWrapper(
         queryClient,
-        "/dashboard?view=conversations&conversationTimeframe=7d",
+        "/logs?view=conversations&conversationTimeframe=7d",
       );
       const { result } = renderHook(() => useConversations({ enabled: true }), {
         wrapper,
@@ -363,7 +363,7 @@ describe("useConversations", () => {
     let locationSearch = "";
     const wrapper = createWrapper(
       queryClient,
-      "/dashboard?view=conversations&conversationOffset=30",
+      "/logs?view=conversations&conversationOffset=30",
       (search) => {
         locationSearch = search;
       },

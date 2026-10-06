@@ -8,6 +8,7 @@ export type NavItem = { to: string; labelKey: string; requires: Permission };
 // Budgeted by .github/simplicity-budgets.toml: add metadata here, never items.
 export const CORE_NAV_ITEMS = [
   { to: "/dashboard", labelKey: "nav.dashboard", requires: "dashboard:read" },
+  { to: "/logs", labelKey: "nav.logs", requires: "dashboard:read" },
   { to: "/reports", labelKey: "nav.reports", requires: "dashboard:read" },
   { to: "/accounts", labelKey: "nav.accounts", requires: "accounts:read" },
   { to: "/apis", labelKey: "nav.apis", requires: "dashboard:read" },
