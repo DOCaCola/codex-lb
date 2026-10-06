@@ -238,7 +238,7 @@ The dashboard request logs view SHALL allow operators to filter rows by one or m
 
 ### Requirement: Dashboard weekly credits pace
 
-The dashboard SHALL show weekly quota runway when account weekly capacity credits, remaining credits, reset time, and window length are available. The card MUST present, in priority order: fleet headroom (percent and credits), depletion ETA at the recent burn rate, the next reset relief (arrival time and credits returned), a survives-to-relief verdict, and per-API-key burn attribution for the trailing two hours. The runway calculation MUST use credit totals rather than averaging per-account percentages, because weekly ChatGPT quota credits are not the same unit as raw request tokens. The dashboard MUST render the card immediately from the `weeklyCreditPace` object in `GET /api/dashboard/overview` without waiting for any other request, and MAY refine it when the projections payload arrives; it MAY fall back to a local calculation only for older responses that do not include that field. Card status MUST derive from the relief verdict (`safe`, `tight`, `runs_dry`) rather than from deviation against a linear schedule. Linear-schedule pace fields SHALL remain populated in the response for one release for wire compatibility. The dashboard projections payload SHALL expose smoothed weekly pace gap fields for display while preserving instantaneous live usage fields.
+The dashboard SHALL show weekly quota runway when account weekly capacity credits, remaining credits, reset time, and window length are available. The card MUST present, in priority order: fleet headroom (percent and amount), depletion ETA at the recent burn rate, the next reset relief (arrival time and amount returned), and a survives-to-relief verdict. The response SHALL state its unit: `credits` for Codex and `pro_units` for Claude, and the card SHALL label amounts with that unit. The runway calculation MUST use capacity totals rather than averaging per-account percentages. The dashboard MUST render the card immediately from the overview payload without waiting for any other request, and MAY refine it when the projections payload arrives. Card status MUST derive from the relief verdict (`safe`, `tight`, `runs_dry`) rather than from deviation against a linear schedule. The dashboard projections payload SHALL expose smoothed weekly pace gap fields for display while preserving instantaneous live usage fields.
 
 #### Scenario: Weekly credits pace uses account reset deadlines
 
@@ -271,7 +271,7 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 - **WHEN** recent weekly usage samples are available for the current weekly reset/window segment
 - **THEN** the response includes `smoothedDeltaPercent`, `smoothedScheduleGapCredits`, and `paceGapSmoothingMinutes`
 - **AND** `actualUsedPercent` remains the live current value
-- **AND** the Weekly credits pace card displays the smoothed gap while keeping `actualUsedPercent` as the live current value
+- **AND** the Weekly pace card displays the smoothed gap while keeping `actualUsedPercent` as the live current value
 
 #### Scenario: Weekly pace smoothing resets with quota window
 
@@ -321,8 +321,8 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 #### Scenario: Per-key attribution names the burn source
 
 - **WHEN** request logs exist in the trailing two hours
-- **THEN** the response lists the top API keys by requests and by billable tokens with request count, billable tokens, and dominant model
-- **AND** the card renders them so an operator can identify the consumer without leaving the dashboard
+- **THEN** the weekly pace response no longer carries per-key attribution
+- **AND** the adjacent Top consumers card for the same provider names the top API keys so an operator can identify the consumer without leaving the dashboard
 
 #### Scenario: Saturated fleet labels demand as a floor
 
@@ -333,7 +333,7 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 
 - **WHEN** trailing seven-day fleet demand in quota-weeks exceeds current fleet weekly capacity
 - **AND** the runway verdict is `runs_dry` or at least one account is saturated
-- **THEN** the response recommends additional Pro accounts computed from the weekly demand surplus
+- **THEN** the response recommends additional Pro accounts (Codex) or Pro-equivalents (Claude) computed from the weekly demand surplus
 - **AND** the recommendation does not change materially from hour to hour under steady traffic
 
 #### Scenario: Throttle guidance precedes purchase guidance
@@ -349,12 +349,11 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 
 ### Requirement: Weekly consumer estimated API costs
 
-Weekly pace top-consumer rows SHALL display compact USD estimated API costs for
-the same trailing two-hour window as their usage. Costs SHALL use recorded
-request costs across all models and existing coverage rules, never a quota-credit
-conversion. Unknown, free and incomplete costs SHALL remain distinct, with
-incomplete details in tooltips. Rankings, runway calculations and privacy rules
-SHALL remain unchanged.
+The dashboard SHALL show a standalone Top consumers card listing the top API keys by requests and by billable tokens over the trailing two hours, with request count, billable tokens, dominant model and compact USD estimated API cost. The overview and projections payloads SHALL provide the lists per provider (`topConsumers.codex` from native Codex requests and `topConsumers.claude` from Claude requests), and the card SHALL show the list of the selected quota provider. Costs SHALL use recorded request costs across all models and existing coverage rules, never a quota-credit conversion. Unknown, free and incomplete costs SHALL remain distinct, with incomplete details in tooltips. Runway calculations and privacy rules SHALL remain unchanged.
+
+#### Scenario: Provider-scoped consumers
+- **WHEN** an API key sent only Claude requests in the trailing two hours
+- **THEN** it appears in the Claude list and not in the Codex list
 
 #### Scenario: Multiple models and partial coverage
 - **WHEN** a consumer has two priced requests costing $1 and $2 and one unpriced request within the attribution window
@@ -495,13 +494,13 @@ data is available.
 
 ### Requirement: Dashboard usage donuts present credits as stacked remaining and capacity
 
-The dashboard's primary and secondary usage donuts MUST present remaining credits and capacity as two stacked values separated by a horizontal divider: the remaining count above (bold, `data-testid="donut-center-remaining"`) and the capacity count below (muted, `data-testid="donut-center-capacity"`). Both values MUST use locale-aware thousands separators (e.g. `7,331` and `7,560`). Compact-format abbreviation (e.g. `7.33k`) MUST NOT be used in the donut center for these panels.
+The dashboard's primary and secondary usage donuts MUST present remaining amount and capacity as two stacked values separated by a horizontal divider: the remaining count above (bold, `data-testid="donut-center-remaining"`) and the capacity count below (muted, `data-testid="donut-center-capacity"`). Codex values MUST use locale-aware thousands separators (e.g. `7,331` and `7,560`); Claude Pro-unit values MAY show one decimal. Compact-format abbreviation (e.g. `7.33k`) MUST NOT be used in the donut center for these panels.
 
-The primary donut title MUST read `5-Hour Credits`. The secondary donut title MUST read `Weekly Credits`.
+For Codex the primary donut title MUST read `5-Hour Credits` and the secondary `Weekly Credits`. For Claude they MUST read `5-Hour Quota` and `Weekly Quota`, with a `Pro units` centre caption.
 
 #### Scenario: Dashboard donut shows stacked remaining and capacity
 
-- **WHEN** the dashboard renders a usage donut with `remaining=7331` and `total=7560`
+- **WHEN** the dashboard renders a Codex usage donut with `remaining=7331` and `total=7560`
 - **THEN** the donut title reads `5-Hour Credits` or `Weekly Credits`
 - **AND** the center renders `7,331` in the remaining element and `7,560` in the capacity element
 - **AND** a divider separates the two values
@@ -4389,3 +4388,24 @@ The dashboard request log SHALL give each row that first appears through a refre
 #### Scenario: Later pages do not highlight
 - **WHEN** the operator views a page after the first and a refresh shifts new entries onto it
 - **THEN** no row is highlighted
+
+### Requirement: Dashboard quota provider toggle
+The dashboard SHALL group the 5-hour ring, weekly ring, weekly pace and Top consumers cards in a Quota section with a Codex | Claude toggle. The toggle SHALL switch all four cards together, persist with the dashboard preferences, and be hidden when no Claude account exists. The cards SHALL lay out in four columns on wide screens, two on medium and one on narrow screens.
+
+#### Scenario: No Claude accounts
+- **WHEN** no Claude account is configured
+- **THEN** the toggle is not shown and the cards show Codex
+
+### Requirement: Claude quota pooled in Pro units
+Claude quota rings and pace SHALL pool accounts in Pro units weighted by plan: Pro 1, Max 5× 5, Max 20× 20, for both windows. Accounts with any other or unknown plan, or without a current observation for the window, SHALL be excluded and listed by name with the reason beneath the rings. The weights SHALL NOT affect routing.
+
+#### Scenario: Mixed plans
+- **WHEN** a Pro account is 50% used and a Max 5× account is 20% used in the weekly window
+- **THEN** the weekly ring shows 4.5 of 6 Pro units remaining
+
+### Requirement: Dashboard activity below accounts
+The global activity statistics (requests, tokens, estimated API cost, conversations, account burn, error rate) SHALL appear below the Accounts section under an Activity heading, independent of the quota provider toggle.
+
+#### Scenario: Toggle does not filter activity
+- **WHEN** the quota toggle is switched to Claude
+- **THEN** the activity statistics remain fleet-wide
