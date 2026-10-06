@@ -74,6 +74,9 @@ class DepletionResponse(DashboardModel):
 WeeklyCreditPaceStatus = Literal["behind", "on_track", "ahead", "danger"]
 WeeklyCreditPaceConfidence = Literal["high", "medium", "low"]
 WeeklyCreditRunwayStatus = Literal["safe", "tight", "runs_dry"]
+# Capacity unit of every *_credits pace field: Codex quota credits, or Claude
+# Pro units (plan-weighted subscription windows; Pro 1, Max 5x 5, Max 20x 20).
+WeeklyCreditPaceUnit = Literal["credits", "pro_units"]
 
 
 class WeeklyCreditResetEvent(DashboardModel):
@@ -92,6 +95,7 @@ class WeeklyCreditApiKeyAttribution(DashboardModel):
 
 
 class WeeklyCreditPaceResponse(DashboardModel):
+    unit: WeeklyCreditPaceUnit
     total_full_credits: float
     total_actual_remaining_credits: float
     total_expected_remaining_credits: float
@@ -124,13 +128,19 @@ class WeeklyCreditPaceResponse(DashboardModel):
     reset_events: list[WeeklyCreditResetEvent] = Field(default_factory=list)
     runway_status: WeeklyCreditRunwayStatus
     saturated_account_count: int
-    top_api_keys: list[WeeklyCreditApiKeyAttribution] = Field(default_factory=list)
     add_pro_accounts: int | None = None
     status: WeeklyCreditPaceStatus
     account_count: int
     stale_account_count: int = 0
     inactive_account_count: int = 0
     confidence: WeeklyCreditPaceConfidence = "low"
+
+
+class DashboardTopConsumers(DashboardModel):
+    """Trailing two-hour API-key attribution, split by the provider that served the requests."""
+
+    codex: list[WeeklyCreditApiKeyAttribution] = Field(default_factory=list)
+    claude: list[WeeklyCreditApiKeyAttribution] = Field(default_factory=list)
 
 
 class DashboardOverviewResponse(DashboardModel):
@@ -143,9 +153,13 @@ class DashboardOverviewResponse(DashboardModel):
     depletion_primary: DepletionResponse | None = None
     depletion_secondary: DepletionResponse | None = None
     weekly_credit_pace: WeeklyCreditPaceResponse | None = None
+    claude_weekly_pace: WeeklyCreditPaceResponse | None = None
+    top_consumers: DashboardTopConsumers
 
 
 class DashboardProjectionsResponse(DashboardModel):
     depletion_primary: DepletionResponse | None = None
     depletion_secondary: DepletionResponse | None = None
     weekly_credit_pace: WeeklyCreditPaceResponse | None = None
+    claude_weekly_pace: WeeklyCreditPaceResponse | None = None
+    top_consumers: DashboardTopConsumers

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { DashboardOverviewSchema } from "@/features/dashboard/schemas";
 import type { AccountSummary, Depletion } from "@/features/dashboard/schemas";
+import { createClaudeAccount, createClaudeQuotaWindow } from "@/features/claude/test-fixtures";
 import {
   applySecondaryConstraint,
+  buildClaudeQuotaRing,
   buildDashboardView,
   buildDepletionView,
   buildRemainingItems,
@@ -693,6 +695,7 @@ describe("buildWeeklyCreditPace", () => {
 describe("buildDashboardView", () => {
   function serverWeeklyPace(overrides: Partial<WeeklyCreditPace> = {}): WeeklyCreditPace {
     return {
+      unit: "credits",
       totalFullCredits: 100_800,
       totalActualRemainingCredits: 42_336,
       totalExpectedRemainingCredits: 60_480,
@@ -728,6 +731,7 @@ describe("buildDashboardView", () => {
     // Raw camelCase wire shape, deliberately untyped: it must survive
     // DashboardOverviewSchema.parse, not be injected after parsing.
     const rawWirePace = {
+      unit: "credits",
       totalFullCredits: 100_800,
       totalActualRemainingCredits: 8_064,
       totalExpectedRemainingCredits: 60_480,
@@ -759,7 +763,15 @@ describe("buildDashboardView", () => {
       nextReliefCredits: 50_400,
       resetEvents: [{ at: "2026-01-08T14:00:00+00:00", creditsReturned: 50_400 }],
       saturatedAccountCount: 1,
-      topApiKeys: [
+      addProAccounts: 2,
+      status: "on_track",
+      accountCount: 2,
+      staleAccountCount: 0,
+      inactiveAccountCount: 0,
+      confidence: "high",
+    };
+    const topConsumers = {
+      codex: [
         {
           apiKeyId: "key_hermes_prod",
           name: "hermes-prod",
@@ -770,15 +782,10 @@ describe("buildDashboardView", () => {
           costCoverage: { knownCostUsd: 12.5, pricedRequests: 12_400, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
         },
       ],
-      addProAccounts: 2,
-      status: "on_track",
-      accountCount: 2,
-      staleAccountCount: 0,
-      inactiveAccountCount: 0,
-      confidence: "high",
+      claude: [],
     };
     const rawOverview: unknown = JSON.parse(
-      JSON.stringify({ ...createDashboardOverview(), weeklyCreditPace: rawWirePace }),
+      JSON.stringify({ ...createDashboardOverview(), weeklyCreditPace: rawWirePace, topConsumers }),
     );
 
     const overview = DashboardOverviewSchema.parse(rawOverview);
@@ -795,10 +802,10 @@ describe("buildDashboardView", () => {
     expect(pace?.nextReliefCredits).toBe(50_400);
     expect(pace?.resetEvents).toEqual([{ at: "2026-01-08T14:00:00+00:00", creditsReturned: 50_400 }]);
     expect(pace?.saturatedAccountCount).toBe(1);
-    expect(pace?.topApiKeys).toEqual(rawWirePace.topApiKeys);
     expect(pace?.addProAccounts).toBe(2);
     expect(pace?.status).toBe("on_track");
     expect(pace?.scheduleGapCredits).toBe(52_416);
+    expect(view.topConsumers).toEqual(topConsumers);
   });
 
   it("parses an old-backend overview payload without runway fields and keeps the legacy shape", () => {
@@ -819,7 +826,6 @@ describe("buildDashboardView", () => {
     expect(pace?.headroomPercent).toBeUndefined();
     expect(pace?.headroomCredits).toBeUndefined();
     expect(pace?.resetEvents).toBeUndefined();
-    expect(pace?.topApiKeys).toBeUndefined();
   });
 
   it("keeps the overview weekly pace when the projections refinement is null", () => {
@@ -828,6 +834,8 @@ describe("buildDashboardView", () => {
 
     const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(overviewPace);
@@ -842,6 +850,8 @@ describe("buildDashboardView", () => {
 
     const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: staleProjectionsPace,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(overviewPace);
@@ -854,6 +864,8 @@ describe("buildDashboardView", () => {
 
     const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: projectionsPace,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(projectionsPace);
@@ -867,6 +879,8 @@ describe("buildDashboardView", () => {
 
     const view = buildDashboardView(overview, createDefaultRequestLogs(), {}, {
       weeklyCreditPace: projectionsPace,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(projectionsPace);
@@ -874,6 +888,7 @@ describe("buildDashboardView", () => {
 
   it("prefers backend weekly credit pace when the overview provides it", () => {
     const serverPace: WeeklyCreditPace = {
+      unit: "credits",
       totalFullCredits: 50_400,
       totalActualRemainingCredits: 38_304,
       totalExpectedRemainingCredits: 41_904,
@@ -1681,5 +1696,59 @@ describe("buildDashboardView", () => {
     const convStat = view.stats.find((s) => s.label.includes("Active Conversations"));
     expect(convStat).toBeDefined();
     expect(convStat?.meta).toBe("Avg req/conv —");
+  });
+});
+
+describe("buildClaudeQuotaRing", () => {
+  function accountWithWindow(
+    id: string,
+    quotaWeight: number | null,
+    window: Parameters<typeof createClaudeQuotaWindow>[0],
+  ) {
+    return createClaudeAccount({
+      id,
+      name: id,
+      quotaWeight,
+      quota: { observedAt: null, models: [], windows: [createClaudeQuotaWindow(window)] },
+    });
+  }
+
+  it("pools remaining quota in Pro units weighted by plan", () => {
+    const ring = buildClaudeQuotaRing(
+      [
+        accountWithWindow("pro", 1, { name: "seven_day", utilization: 50 }),
+        accountWithWindow("max5", 5, { name: "seven_day", utilization: 20 }),
+      ],
+      "seven_day",
+      new Map([["max5", "#123456"]]),
+    );
+
+    expect(ring.total).toBe(6);
+    expect(ring.remaining).toBeCloseTo(4.5);
+    expect(ring.items.map((item) => [item.accountId, item.value, item.remainingPercent, item.color])).toEqual([
+      ["pro", 0.5, 50, undefined],
+      ["max5", 4, 80, "#123456"],
+    ]);
+    expect(ring.planUnknown).toEqual([]);
+    expect(ring.quotaUnknown).toEqual([]);
+  });
+
+  it("excludes accounts without a plan weight or a fresh window observation", () => {
+    const ring = buildClaudeQuotaRing(
+      [
+        accountWithWindow("pro", 1, { name: "five_hour", utilization: 10 }),
+        accountWithWindow("unknown-plan", null, { name: "five_hour", utilization: 10 }),
+        accountWithWindow("stale", 5, { name: "five_hour", utilization: 10, freshness: "stale" }),
+        accountWithWindow("no-utilization", 5, { name: "five_hour", utilization: null }),
+        accountWithWindow("weekly-only", 20, { name: "seven_day", utilization: 10 }),
+      ],
+      "five_hour",
+    );
+
+    expect(ring.total).toBe(1);
+    expect(ring.remaining).toBeCloseTo(0.9);
+    expect(ring.items.map((item) => item.accountId)).toEqual(["pro"]);
+    expect(ring.planUnknown).toEqual(["unknown-plan"]);
+    expect(ring.quotaUnknown).toEqual(["stale", "no-utilization", "weekly-only"]);
   });
 });

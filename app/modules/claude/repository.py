@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudeQuotaHistory
 from app.modules.claude.credentials import ClaudeError
-from app.modules.claude.schemas import AccountState, UsageSnapshot
+from app.modules.claude.schemas import AccountState, QuotaProvenance, UsageSnapshot
 from app.modules.model_sources.repository import ModelSourcesRepository
 
 
@@ -57,7 +57,13 @@ class ClaudeRepository:
         raise ClaudeError("Claude account changed concurrently; retry the update")
 
     async def record_quota(
-        self, source_id: str, usage: UsageSnapshot, observed_at: datetime, *, sample_seconds: int = 0
+        self,
+        source_id: str,
+        usage: UsageSnapshot,
+        observed_at: datetime,
+        *,
+        provenance: QuotaProvenance,
+        sample_seconds: int = 0,
     ) -> None:
         observed_at = observed_at.astimezone(UTC).replace(tzinfo=None)
         for name, window in (
@@ -70,10 +76,15 @@ class ClaudeRepository:
                 reset = window.resets_at.astimezone(UTC).replace(tzinfo=None) if window.resets_at else None
                 if sample_seconds:
                     # Only an unchanged reading is redundant: a value that moved
-                    # within the interval (e.g. 99% to 100%) is new evidence.
+                    # within the interval (e.g. 99% to 100%) is new evidence. The
+                    # streams quantize differently, so compare within one stream.
                     last = await self.session.scalar(
                         select(ClaudeQuotaHistory)
-                        .where(ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == name)
+                        .where(
+                            ClaudeQuotaHistory.source_id == source_id,
+                            ClaudeQuotaHistory.window == name,
+                            ClaudeQuotaHistory.provenance == provenance,
+                        )
                         .order_by(ClaudeQuotaHistory.observed_at.desc())
                         .limit(1)
                     )
@@ -95,6 +106,7 @@ class ClaudeRepository:
                         window=name,
                         used_percent=window.utilization,
                         resets_at=reset,
+                        provenance=provenance,
                     )
                 )
         await self.session.execute(

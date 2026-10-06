@@ -49,7 +49,6 @@ def test_weekly_credit_pace_timing_treats_naive_reset_as_utc():
     try:
         fixed_now = datetime(2026, 5, 18, 12, 0, 0)
         reset_at = fixed_now + timedelta(days=4)
-        now_ms = naive_utc_to_epoch(fixed_now) * 1000.0
         timing = _weekly_timing(
             AccountSummary(
                 account_id="acc_tz",
@@ -62,7 +61,6 @@ def test_weekly_credit_pace_timing_treats_naive_reset_as_utc():
                 capacity_credits_secondary=50_400.0,
                 remaining_credits_secondary=40_320.0,
             ),
-            now_ms,
         )
     finally:
         if original_tz is None:
@@ -155,7 +153,7 @@ async def test_dashboard_overview_combines_data(async_client, db_setup):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["/api/dashboard/overview", "/api/dashboard/projections"])
-async def test_dashboard_overview_carries_weekly_runway_fields_and_attribution(
+async def test_dashboard_overview_carries_weekly_runway_fields_and_top_consumers(
     async_client,
     db_setup,
     monkeypatch: pytest.MonkeyPatch,
@@ -206,8 +204,12 @@ async def test_dashboard_overview_carries_weekly_runway_fields_and_attribution(
     response = await async_client.get(endpoint)
 
     assert response.status_code == 200
-    pace = response.json()["weeklyCreditPace"]
+    payload = response.json()
+    pace = payload["weeklyCreditPace"]
     assert pace is not None
+    assert pace["unit"] == "credits"
+    assert "topApiKeys" not in pace
+    assert payload["claudeWeeklyPace"] is None
     assert pace["headroomPercent"] == pytest.approx(5.0)
     assert pace["headroomCredits"] == pytest.approx(2_520.0)
     assert pace["burnRateRecentCreditsPerHour"] == pytest.approx(4_473.3727810651)
@@ -219,7 +221,8 @@ async def test_dashboard_overview_carries_weekly_runway_fields_and_attribution(
     assert pace["saturatedAccountCount"] == 0
     assert pace["addProAccounts"] is None
     assert len(pace["resetEvents"]) == 1
-    assert pace["topApiKeys"] == [
+    assert payload["topConsumers"]["claude"] == []
+    assert payload["topConsumers"]["codex"] == [
         {
             "apiKeyId": "key-runway",
             "name": "Runway key",

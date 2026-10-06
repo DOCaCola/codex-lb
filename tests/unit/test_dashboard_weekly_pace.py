@@ -418,6 +418,7 @@ async def test_weekly_pace_attribution_merges_rankings_and_dedupes_unnamed_key(d
         rows = await DashboardRepository(session).top_api_key_attribution_since(
             NOW - timedelta(hours=2),
             now=NOW,
+            provider="codex",
         )
 
     assert [row.name for row in rows] == ["Alpha", "(unnamed)", "(unnamed)"]
@@ -537,7 +538,11 @@ async def test_weekly_attribution_costs_share_usage_window_and_coverage_rules(db
                 )
             )
         await session.commit()
-        rows = await DashboardRepository(session).top_api_key_attribution_since(NOW - timedelta(hours=2), now=NOW)
+        repository = DashboardRepository(session)
+        rows = await repository.top_api_key_attribution_since(NOW - timedelta(hours=2), now=NOW, provider="codex")
+        claude_rows = await repository.top_api_key_attribution_since(
+            NOW - timedelta(hours=2), now=NOW, provider="claude"
+        )
     by_key = {row.api_key_id: row for row in rows}
     partial = by_key["partial"]
     assert partial.requests == 6
@@ -551,8 +556,11 @@ async def test_weekly_attribution_costs_share_usage_window_and_coverage_rules(db
     assert by_key["free"].cost_coverage.known_cost_usd == 0
     assert by_key["free"].cost_coverage.priced_requests == 1
     assert by_key["free"].cost_coverage.complete
-    assert by_key["legacy-claude"].cost_coverage.priced_requests == 0
-    assert by_key["legacy-claude"].cost_coverage.unpriced_requests == 1
+    # Each provider's list attributes only the traffic its quota pool served.
+    assert "legacy-claude" not in by_key
+    assert [row.api_key_id for row in claude_rows] == ["legacy-claude"]
+    assert claude_rows[0].cost_coverage.priced_requests == 0
+    assert claude_rows[0].cost_coverage.unpriced_requests == 1
 
 
 def _assert_close(actual: object, expected: object, path: str = "") -> None:

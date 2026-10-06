@@ -37,6 +37,15 @@ export type DonutChartProps = {
    *   the absolute credit counts without abbreviation (#371).
    */
   centerLayout?: "remaining" | "credits";
+  /** Caption above the "credits" center values; defaults to "Credits". */
+  centerCaption?: string;
+  /**
+   * Formats every amount the chart shows (center, legend, caption). Defaults
+   * to whole numbers in the center and compact numbers elsewhere.
+   */
+  formatValue?: (value: number) => string;
+  /** Muted note under the chart, e.g. accounts left out of the pool. */
+  note?: string;
 };
 
 function SafeLineTick({
@@ -108,8 +117,21 @@ function formatUsedPercent(percent: number): string {
   return `${percent.toLocaleString("en-US", { maximumFractionDigits })}%`;
 }
 
-export function DonutChart({ items, total, centerValue, title, subtitle, safeLine, centerLayout = "remaining" }: DonutChartProps) {
+export function DonutChart({
+  items,
+  total,
+  centerValue,
+  title,
+  subtitle,
+  safeLine,
+  centerLayout = "remaining",
+  centerCaption,
+  formatValue,
+  note,
+}: DonutChartProps) {
   const { t } = useTranslation();
+  const formatCenter = formatValue ?? formatNumber;
+  const formatAmount = formatValue ?? formatCompactNumber;
   const isDark = useThemeStore((s) => s.theme === "dark");
   const blurred = usePrivacyStore((s) => s.blurred);
   const reducedMotion = useReducedMotion();
@@ -173,14 +195,15 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
   };
 
   return (
-    <div className="min-w-0 rounded-xl border bg-card p-5">
+    <div className="@container/donut min-w-0 rounded-xl border bg-card p-5">
       <div className="mb-5">
         <h3 className="text-sm font-semibold">{title}</h3>
         {subtitle ? <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p> : null}
       </div>
 
-      <div className="flex min-w-0 items-center gap-6">
-        <div className="flex shrink-0 flex-col items-center gap-2">
+      {/* Narrow cards (e.g. one column of the four-column quota grid) stack the legend under the ring. */}
+      <div className="flex min-w-0 flex-col gap-4 @min-[20rem]/donut:flex-row @min-[20rem]/donut:items-center @min-[20rem]/donut:gap-6">
+        <div className="flex shrink-0 flex-col items-center gap-2 self-center">
           <div className="relative h-[152px] w-[152px] overflow-visible">
             <PieChart width={CHART_SIZE} height={CHART_SIZE} margin={{ top: CHART_MARGIN, right: CHART_MARGIN, bottom: CHART_MARGIN, left: CHART_MARGIN }}>
              <Pie
@@ -227,26 +250,28 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
           <div className="absolute inset-[22px] flex items-center justify-center rounded-full text-center pointer-events-none">
              <div>
                {centerLayout === "credits" ? (
-                 <>
-                   <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("components.donut.credits")}</p>
+               <>
+                   <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                     {centerCaption ?? t("components.donut.credits")}
+                   </p>
                    <p
                      className="text-sm font-semibold tabular-nums leading-tight"
                      data-testid="donut-center-remaining"
                    >
-                     {formatNumber(displayTotal)}
+                     {formatCenter(displayTotal)}
                    </p>
                    <div className="-mx-1 my-0.5 border-t border-current opacity-20" />
                    <p
                      className="text-xs tabular-nums text-muted-foreground leading-tight"
                      data-testid="donut-center-capacity"
                    >
-                     {formatNumber(safeCapacity)}
+                     {formatCenter(safeCapacity)}
                    </p>
                  </>
                ) : (
                  <>
                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("components.donut.remaining")}</p>
-                   <p className="text-base font-semibold tabular-nums">{formatCompactNumber(displayTotal)}</p>
+                   <p className="text-base font-semibold tabular-nums">{formatAmount(displayTotal)}</p>
                  </>
                )}
             </div>
@@ -254,7 +279,7 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
           </div>
           <p className="text-[11px] tabular-nums text-muted-foreground" data-testid="donut-caption">
             {t("components.donut.caption", {
-              total: formatCompactNumber(safeCapacity),
+              total: formatAmount(safeCapacity),
               used: formatUsedPercent(usedPercent),
             })}
           </p>
@@ -298,7 +323,7 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
                 </span>
               </div>
               <span className="tabular-nums text-muted-foreground">
-                {formatCompactNumber(item.value)}
+                {formatAmount(item.value)}
               </span>
             </button>
             );
@@ -326,11 +351,16 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
               <span className="truncate font-medium">{t("components.donut.used")}</span>
             </div>
             <span className="tabular-nums text-muted-foreground" data-testid="donut-used-value">
-              {formatCompactNumber(consumed)}
+              {formatAmount(consumed)}
             </span>
           </button>
         </div>
       </div>
+      {note ? (
+        <p className="mt-3 text-[11px] text-muted-foreground" data-testid="donut-note">
+          {note}
+        </p>
+      ) : null}
     </div>
   );
 }

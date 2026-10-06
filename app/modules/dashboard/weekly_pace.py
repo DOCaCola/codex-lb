@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import ceil, isfinite
-from typing import Literal
+from typing import Literal, Protocol
 
 from app.core.usage import PLAN_CAPACITY_CREDITS_SECONDARY
 from app.core.usage.depletion import EWMAState, ewma_update
@@ -12,9 +12,9 @@ from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import AccountSummary
 from app.modules.dashboard.schemas import (
-    WeeklyCreditApiKeyAttribution,
     WeeklyCreditPaceResponse,
     WeeklyCreditPaceStatus,
+    WeeklyCreditPaceUnit,
     WeeklyCreditResetEvent,
     WeeklyCreditRunwayStatus,
 )
@@ -40,6 +40,34 @@ PACE_ELIGIBLE_ACCOUNT_STATUSES = frozenset(
 )
 
 
+class PaceSample(Protocol):
+    """One weekly-window usage observation; ``reset_at`` identifies the window instance."""
+
+    @property
+    def recorded_at(self) -> datetime: ...
+
+    @property
+    def used_percent(self) -> float: ...
+
+    @property
+    def reset_at(self) -> int | None: ...
+
+    @property
+    def window_minutes(self) -> int | None: ...
+
+
+@dataclass(frozen=True)
+class PaceAccountInput:
+    """A fresh, eligible weekly window expressed in the pool's capacity unit."""
+
+    account_id: str
+    full_units: float
+    remaining_units: float
+    reset_at_ms: float
+    window_ms: float
+    history: Sequence[PaceSample]
+
+
 @dataclass
 class _PaceAccount:
     account_id: str
@@ -48,6 +76,7 @@ class _PaceAccount:
     reset_at_ms: float
     window_ms: float
     forecast_burn_rate_credits_per_hour: float | None
+    history: Sequence[PaceSample]
 
 
 @dataclass
@@ -72,20 +101,14 @@ def build_weekly_credit_pace(
     secondary_history: dict[str, list[UsageHistory]],
     now: datetime,
     usage_refresh_interval_seconds: int,
-    top_api_keys: list[WeeklyCreditApiKeyAttribution] | None = None,
     trailing_demand_used_percent_by_account: Mapping[str, float] | None = None,
     working_days: set[int] | None = None,
     smoothing_window_minutes: int = 30,
 ) -> WeeklyCreditPaceResponse | None:
-    """Build server-side weekly quota pace from active, fresh weekly usage rows.
+    """Codex weekly credit pace from active, fresh weekly usage rows.
 
-    The dashboard card needs two separate signals:
-    - current schedule gap: actual remaining vs. linear expected remaining now
-    - forecast shortfall: whether recent burn will deplete the pool before resets
-
-    Computing this in the backend keeps status/freshness filters aligned with the
-    routing pool and lets the forecast use usage_history instead of a full-window
-    cumulative average.
+    Status and freshness filters stay aligned with the routing pool; the shared
+    pace core turns the eligible windows into runway, relief and forecasts.
     """
 
     now_ms = naive_utc_to_epoch(now) * 1000.0
@@ -95,19 +118,12 @@ def build_weekly_credit_pace(
     accounts_by_id = {account.id: account for account in accounts}
     freshness_cutoff = now - timedelta(seconds=_freshness_seconds(usage_refresh_interval_seconds))
 
-    pace_accounts: list[_PaceAccount] = []
+    inputs: list[PaceAccountInput] = []
     stale_account_count = 0
     inactive_account_count = 0
-    rate_sample_count = 0
-    total_full_credits = 0.0
-    total_actual_remaining_credits = 0.0
-    total_smoothed_remaining_credits = 0.0
-    total_expected_remaining_credits = 0.0
-    scheduled_burn_rate_credits_per_hour = 0.0
-    forecast_burn_rate_credits_per_hour = 0.0
 
     for summary in account_summaries:
-        timing = _weekly_timing(summary, now_ms)
+        timing = _weekly_timing(summary)
         if timing is None:
             continue
 
@@ -122,7 +138,74 @@ def build_weekly_credit_pace(
             stale_account_count += 1
             continue
 
-        full_credits, actual_remaining_credits, effective_reset_at_ms, window_ms = timing
+        full_credits, actual_remaining_credits, reset_at_ms, window_ms = timing
+        inputs.append(
+            PaceAccountInput(
+                account_id=summary.account_id,
+                full_units=full_credits,
+                remaining_units=actual_remaining_credits,
+                reset_at_ms=reset_at_ms,
+                window_ms=window_ms,
+                history=rows,
+            )
+        )
+
+    return build_weekly_pace(
+        accounts=inputs,
+        now=now,
+        unit="credits",
+        pro_account_units=PRO_WEEKLY_CAPACITY_CREDITS,
+        stale_account_count=stale_account_count,
+        inactive_account_count=inactive_account_count,
+        trailing_demand_used_percent_by_account=trailing_demand_used_percent_by_account,
+        working_days=working_days,
+        smoothing_window_minutes=smoothing_window_minutes,
+    )
+
+
+def build_weekly_pace(
+    *,
+    accounts: Sequence[PaceAccountInput],
+    now: datetime,
+    unit: WeeklyCreditPaceUnit,
+    pro_account_units: float,
+    stale_account_count: int,
+    inactive_account_count: int,
+    trailing_demand_used_percent_by_account: Mapping[str, float] | None,
+    working_days: set[int] | None,
+    smoothing_window_minutes: int,
+) -> WeeklyCreditPaceResponse | None:
+    """Provider-neutral weekly pace over eligible windows sharing one capacity unit.
+
+    The dashboard card needs two separate signals:
+    - current schedule gap: actual remaining vs. linear expected remaining now
+    - forecast shortfall: whether recent burn will deplete the pool before resets
+
+    ``pro_account_units`` is one Pro account's weekly capacity in ``unit``; it
+    scales the add-capacity recommendation. History must be sorted by
+    ``recorded_at`` so the forecast uses the recent slope instead of a
+    full-window cumulative average.
+    """
+
+    now_ms = naive_utc_to_epoch(now) * 1000.0
+    if not _is_finite_positive(now_ms):
+        return None
+
+    pace_accounts: list[_PaceAccount] = []
+    rate_sample_count = 0
+    total_full_credits = 0.0
+    total_actual_remaining_credits = 0.0
+    total_smoothed_remaining_credits = 0.0
+    total_expected_remaining_credits = 0.0
+    scheduled_burn_rate_credits_per_hour = 0.0
+    forecast_burn_rate_credits_per_hour = 0.0
+
+    for account_input in accounts:
+        full_credits = account_input.full_units
+        actual_remaining_credits = _clamp(account_input.remaining_units, 0.0, full_credits)
+        window_ms = account_input.window_ms
+        effective_reset_at_ms = _advance_reset_at(account_input.reset_at_ms, window_ms, now_ms)
+        rows = account_input.history
         used_schedule_fraction = _used_schedule_fraction(
             reset_at_ms=effective_reset_at_ms,
             window_ms=window_ms,
@@ -154,12 +237,13 @@ def build_weekly_credit_pace(
 
         pace_accounts.append(
             _PaceAccount(
-                account_id=summary.account_id,
+                account_id=account_input.account_id,
                 full_credits=full_credits,
                 remaining_credits=actual_remaining_credits,
                 reset_at_ms=effective_reset_at_ms,
                 window_ms=window_ms,
                 forecast_burn_rate_credits_per_hour=account_rate,
+                history=rows,
             )
         )
 
@@ -196,18 +280,12 @@ def build_weekly_credit_pace(
         else None
     )
     reduce_by_percent = 100.0 - throttle_to_percent if throttle_to_percent is not None else None
-    pro_equivalent = (
-        projected_shortfall_credits / PRO_WEEKLY_CAPACITY_CREDITS if projected_shortfall_credits > 0 else None
-    )
+    pro_equivalent = projected_shortfall_credits / pro_account_units if projected_shortfall_credits > 0 else None
     pro_accounts = ceil(pro_equivalent) if pro_equivalent is not None else None
 
     headroom_credits = total_actual_remaining_credits
     headroom_percent = 100.0 * headroom_credits / total_full_credits
-    recent_burn_rate = _fleet_recent_burn_rate_credits_per_hour(
-        pace_accounts,
-        secondary_history,
-        now,
-    )
+    recent_burn_rate = _fleet_recent_burn_rate_credits_per_hour(pace_accounts, now)
     depletion_eta_hours = (
         headroom_credits / recent_burn_rate if recent_burn_rate is not None and recent_burn_rate > 0 else None
     )
@@ -226,13 +304,14 @@ def build_weekly_credit_pace(
             / 100.0
             for account in pace_accounts
         )
-        demand_quota_weeks = trailing_demand_credits / PRO_WEEKLY_CAPACITY_CREDITS
-        fleet_capacity_quota_weeks = total_full_credits / PRO_WEEKLY_CAPACITY_CREDITS
+        demand_quota_weeks = trailing_demand_credits / pro_account_units
+        fleet_capacity_quota_weeks = total_full_credits / pro_account_units
         demand_surplus_accounts = demand_quota_weeks - fleet_capacity_quota_weeks
         if demand_surplus_accounts > 0 and (runway_status == "runs_dry" or saturated_account_count > 0):
             add_pro_accounts = ceil(demand_surplus_accounts)
 
     return WeeklyCreditPaceResponse(
+        unit=unit,
         total_full_credits=total_full_credits,
         total_actual_remaining_credits=total_actual_remaining_credits,
         total_expected_remaining_credits=total_expected_remaining_credits,
@@ -264,7 +343,6 @@ def build_weekly_credit_pace(
         reset_events=_reset_events(pace_accounts, now_ms),
         runway_status=runway_status,
         saturated_account_count=saturated_account_count,
-        top_api_keys=top_api_keys or [],
         add_pro_accounts=add_pro_accounts,
         status=_legacy_status(runway_status),
         account_count=len(pace_accounts),
@@ -276,7 +354,6 @@ def build_weekly_credit_pace(
 
 def _fleet_recent_burn_rate_credits_per_hour(
     accounts: list[_PaceAccount],
-    secondary_history: dict[str, list[UsageHistory]],
     now: datetime,
 ) -> float | None:
     window_start = now - FLEET_BURN_WINDOW
@@ -284,10 +361,7 @@ def _fleet_recent_burn_rate_credits_per_hour(
     considered_recorded_at: list[datetime] = []
 
     for account in accounts:
-        rows = sorted(
-            (row for row in secondary_history.get(account.account_id, []) if window_start <= row.recorded_at <= now),
-            key=lambda row: row.recorded_at,
-        )
+        rows = [row for row in account.history if window_start <= row.recorded_at <= now]
         if len(rows) < 2:
             continue
 
@@ -350,7 +424,7 @@ def _used_percent(account: _PaceAccount) -> float:
     return 100.0 * (account.full_credits - account.remaining_credits) / account.full_credits
 
 
-def _weekly_timing(summary: AccountSummary, now_ms: float) -> tuple[float, float, float, float] | None:
+def _weekly_timing(summary: AccountSummary) -> tuple[float, float, float, float] | None:
     raw_full_credits = summary.capacity_credits_secondary
     raw_remaining_credits = summary.remaining_credits_secondary
     reset_at = summary.reset_at_secondary
@@ -373,18 +447,11 @@ def _weekly_timing(summary: AccountSummary, now_ms: float) -> tuple[float, float
     window_ms = window_minutes * 60_000.0
     if not _is_finite_positive(reset_at_ms) or not _is_finite_positive(window_ms):
         return None
-
-    effective_reset_at_ms = _advance_reset_at(reset_at_ms, window_ms, now_ms)
-    return (
-        full_credits,
-        _clamp(remaining_credits, 0.0, full_credits),
-        effective_reset_at_ms,
-        window_ms,
-    )
+    return full_credits, remaining_credits, reset_at_ms, window_ms
 
 
 def _recent_burn_rate_credits_per_hour(
-    rows: list[UsageHistory],
+    rows: Sequence[PaceSample],
     full_credits: float,
     now: datetime,
 ) -> float | None:
@@ -408,7 +475,7 @@ def _recent_burn_rate_credits_per_hour(
 
 def _smoothed_remaining_credits(
     *,
-    rows: list[UsageHistory],
+    rows: Sequence[PaceSample],
     full_credits: float,
     current_remaining_credits: float,
     now: datetime,

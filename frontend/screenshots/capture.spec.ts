@@ -18,7 +18,9 @@ import {
   unauthenticatedSession,
 } from "./fixtures";
 import { createOpenRouterAccount } from "../src/features/openrouter/test-fixtures";
+import { createClaudeAccount, createClaudeQuotaWindow } from "../src/features/claude/test-fixtures";
 import type { ClaudeAccount } from "../src/features/claude/api";
+import type { WeeklyCreditPace } from "../src/features/dashboard/schemas";
 import {
   createAccountSummary,
   createConversationDetails,
@@ -259,6 +261,183 @@ test("dashboard provider cards share sizing and anatomy", async ({
             animations: "disabled",
             style: "header, footer { visibility: hidden !important; }",
           });
+      }
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
+test("dashboard quota section switches between Codex and Claude", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const hour = 3_600_000;
+  const codexPace: WeeklyCreditPace = {
+    unit: "credits",
+    totalFullCredits: 201_600,
+    totalActualRemainingCredits: 96_800,
+    totalExpectedRemainingCredits: 115_200,
+    actualUsedPercent: 52,
+    scheduledUsedPercent: 43,
+    deltaPercent: 9,
+    scheduleGapCredits: 18_400,
+    overPlanCredits: 18_400,
+    projectedShortfallCredits: 0,
+    pauseForBreakEvenHours: null,
+    paceMultiplier: null,
+    throttleToPercent: 82,
+    reduceByPercent: null,
+    proAccountEquivalentToCoverOverPlan: null,
+    proAccountsToCoverOverPlan: null,
+    projectedDepletionHours: 80,
+    projectedMinimumRemainingCredits: 0,
+    forecastBurnRateCreditsPerHour: 1_210,
+    scheduledBurnRateCreditsPerHour: 1_200,
+    status: "behind",
+    accountCount: 4,
+    staleAccountCount: 0,
+    inactiveAccountCount: 0,
+    confidence: "high",
+    runwayStatus: "tight",
+    headroomPercent: 48,
+    headroomCredits: 96_800,
+    burnRateRecentCreditsPerHour: 1_210,
+    depletionEtaHours: 80,
+    nextReliefInHours: 31,
+    nextReliefCredits: 50_400,
+    resetEvents: [
+      { at: new Date(Date.now() + 31 * hour).toISOString(), creditsReturned: 50_400 },
+      { at: new Date(Date.now() + 74 * hour).toISOString(), creditsReturned: 100_800 },
+    ],
+    saturatedAccountCount: 0,
+    addProAccounts: null,
+  };
+  const claudePace: WeeklyCreditPace = {
+    ...codexPace,
+    unit: "pro_units",
+    totalFullCredits: 11,
+    totalActualRemainingCredits: 3.9,
+    totalExpectedRemainingCredits: 5.5,
+    scheduleGapCredits: 1.6,
+    overPlanCredits: 1.6,
+    projectedShortfallCredits: 1.3,
+    status: "danger",
+    accountCount: 3,
+    runwayStatus: "runs_dry",
+    headroomPercent: 35,
+    headroomCredits: 3.9,
+    burnRateRecentCreditsPerHour: 0.08,
+    depletionEtaHours: 49,
+    projectedDepletionHours: 49,
+    forecastBurnRateCreditsPerHour: 0.08,
+    scheduledBurnRateCreditsPerHour: 0.065,
+    nextReliefInHours: 62,
+    nextReliefCredits: 5,
+    resetEvents: [{ at: new Date(Date.now() + 62 * hour).toISOString(), creditsReturned: 5 }],
+    throttleToPercent: null,
+    addProAccounts: 2,
+  };
+  const consumer = (name: string, requests: number, billableTokens: number, dominantModel: string, cost: number) => ({
+    apiKeyId: `key_${name}`,
+    name,
+    requests,
+    billableTokens,
+    cachedTokens: Math.round(billableTokens * 0.6),
+    dominantModel,
+    costCoverage: { knownCostUsd: cost, pricedRequests: requests, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
+  });
+  const claudeAccounts = [
+    createClaudeAccount({
+      id: "claude-pro",
+      name: "DOCa Claude Pro",
+      quota: {
+        observedAt: null,
+        models: [],
+        windows: [
+          createClaudeQuotaWindow({ name: "five_hour", utilization: 50 }),
+          createClaudeQuotaWindow({ name: "seven_day", utilization: 72 }),
+        ],
+      },
+    }),
+    createClaudeAccount({
+      id: "claude-max",
+      name: "DOCa Claude",
+      planType: "max_5x",
+      quotaWeight: 5,
+      quota: {
+        observedAt: null,
+        models: [],
+        windows: [
+          createClaudeQuotaWindow({ name: "five_hour", utilization: 20 }),
+          createClaudeQuotaWindow({ name: "seven_day", utilization: 61 }),
+        ],
+      },
+    }),
+    createClaudeAccount({
+      id: "claude-stale",
+      name: "Claude Team",
+      planType: "max_5x",
+      quotaWeight: 5,
+      quota: {
+        observedAt: null,
+        models: [],
+        windows: [
+          createClaudeQuotaWindow({ name: "five_hour", utilization: 10, freshness: "stale" }),
+          createClaudeQuotaWindow({ name: "seven_day", utilization: 66 }),
+        ],
+      },
+    }),
+  ];
+  await interceptApi(page);
+  await page.route("**/health/ready", (route) => fulfill(route, { status: "ok" }));
+  await page.route("**/api/dashboard/overview**", (route) =>
+    fulfill(route, {
+      ...overview,
+      weeklyCreditPace: codexPace,
+      claudeWeeklyPace: claudePace,
+      topConsumers: {
+        codex: [
+          consumer("hermes-prod", 12_400, 9_800_000, "gpt-6.1-sol", 412.4),
+          consumer("docacola-mac", 3_100, 4_200_000, "gpt-6-astra", 188.9),
+          consumer("optec", 900, 1_100_000, "gpt-6.1-sol", 41.2),
+        ],
+        claude: [
+          consumer("docacola-mac", 1_850, 6_300_000, "claude-opus-5-5", 96.7),
+          consumer("hermes-prod", 240, 610_000, "claude-haiku-4-5", 1.9),
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/claude-accounts", (route) => fulfill(route, { accounts: claudeAccounts }));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const theme of ["light", "dark"] as const) {
+    await applyTheme(page, theme);
+    await page.goto(BASE_URL);
+    const section = page.getByTestId("quota-section");
+    const toggle = section.getByRole("group", { name: "Quota provider" });
+    await toggle.getByRole("button", { name: "Codex" }).click();
+    await expect(section).toHaveAttribute("data-provider", "codex");
+    const activity = page.getByRole("heading", { name: "Activity" });
+    const accountsGrid = page.getByTestId("dashboard-account-cards");
+    expect((await activity.boundingBox())!.y).toBeGreaterThan((await accountsGrid.boundingBox())!.y);
+    for (const provider of ["codex", "claude"] as const) {
+      await toggle.getByRole("button", { name: provider === "codex" ? "Codex" : "Claude" }).click();
+      await expect(section).toHaveAttribute("data-provider", provider);
+      await expect(section.getByText(provider === "codex" ? "5-Hour Credits" : "5-Hour Quota")).toBeVisible();
+      for (const [width, columns] of [[1440, 4], [900, 2], [390, 1]] as const) {
+        await page.setViewportSize({ width, height: 1000 });
+        const grid = section.locator(".grid").first();
+        const layout = await grid.evaluate((element) => ({
+          columns: getComputedStyle(element).gridTemplateColumns.split(" ").length,
+          overflow: Array.from(element.querySelectorAll<HTMLElement>("*")).some(
+            (child) => child.getBoundingClientRect().right > element.getBoundingClientRect().right + 1,
+          ),
+        }));
+        expect(layout).toEqual({ columns, overflow: false });
+        await page.waitForTimeout(SETTLE_MS);
+        await section.screenshot({
+          path: testInfo.outputPath(`quota-${provider}-${theme}-${width}.png`),
+          animations: "disabled",
+        });
       }
     }
   }

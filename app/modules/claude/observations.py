@@ -87,7 +87,7 @@ async def record_headers(
                         and window.freshness == "fresh"
                     }
                 )
-                await repository.record_quota(source_id, usage, now, sample_seconds=60)
+                await repository.record_quota(source_id, usage, now, provenance="inference_header", sample_seconds=60)
                 await session.commit()
     except Exception:
         # No credentials, header values, SQL, or exception bodies in diagnostics.

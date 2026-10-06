@@ -4,6 +4,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from sqlalchemy import case, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,11 +15,15 @@ from app.db.models import (
     Account,
     AccountLimitWarmup,
     ApiKey,
+    ClaudeAccount,
+    ClaudeQuotaHistory,
     DashboardSettings,
     RequestLog,
     UsageHistory,
 )
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.claude.repository import ClaudeRepository
+from app.modules.claude.schemas import CLAUDE_KIND, QuotaProvenance
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
@@ -40,6 +45,10 @@ _TRAILING_DEMAND_MAX_ENTRIES = 16
 # (window span in whole seconds, sorted account -> window pairs)
 _TrailingDemandKey = tuple[int, tuple[tuple[str, NormalizedUsageWindow], ...]]
 _trailing_demand_cache: dict[_TrailingDemandKey, tuple[dict[str, float], float]] = {}
+
+# Quota pool whose traffic a top-consumer list attributes: native Codex
+# requests carry no model source, Claude requests carry the Claude source kind.
+QuotaProvider = Literal["codex", "claude"]
 
 
 def _clear_trailing_demand_cache() -> None:
@@ -84,9 +93,34 @@ class DashboardRepository:
         self._additional_usage_repo = AdditionalUsageRepository(session)
         self._limit_warmup_repo = LimitWarmupRepository(session)
         self._settings_repo = SettingsRepository(session)
+        self._claude_repo = ClaudeRepository(session)
 
     async def list_accounts(self) -> list[Account]:
         return await self._accounts_repo.list_accounts()
+
+    async def list_claude_accounts(self) -> list[ClaudeAccount]:
+        return await self._claude_repo.list_accounts()
+
+    async def claude_quota_history_since(
+        self,
+        window: str,
+        since: datetime,
+        *,
+        provenance: QuotaProvenance,
+    ) -> dict[str, list[ClaudeQuotaHistory]]:
+        rows = await self._session.scalars(
+            select(ClaudeQuotaHistory)
+            .where(
+                ClaudeQuotaHistory.window == window,
+                ClaudeQuotaHistory.provenance == provenance,
+                ClaudeQuotaHistory.observed_at >= since,
+            )
+            .order_by(ClaudeQuotaHistory.source_id, ClaudeQuotaHistory.observed_at)
+        )
+        history: dict[str, list[ClaudeQuotaHistory]] = {}
+        for row in rows:
+            history.setdefault(row.source_id, []).append(row)
+        return history
 
     async def latest_usage_by_account(self, window: str) -> dict[str, UsageHistory]:
         return await self._usage_repo.latest_by_account(window=window)
@@ -184,11 +218,17 @@ class DashboardRepository:
         since: datetime,
         *,
         now: datetime,
+        provider: QuotaProvider,
         per_metric_limit: int = 3,
     ) -> list[ApiKeyAttributionRow]:
         key_name = func.coalesce(func.nullif(ApiKey.name, ""), "(unnamed)")
         billable_tokens = func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(
             RequestLog.output_tokens, RequestLog.reasoning_tokens, 0
+        )
+        provider_clause = (
+            RequestLog.model_source_kind.is_(None)
+            if provider == "codex"
+            else RequestLog.model_source_kind == CLAUDE_KIND
         )
         grouped_models = (
             select(
@@ -206,6 +246,7 @@ class DashboardRepository:
                 RequestLog.requested_at >= since,
                 RequestLog.requested_at <= now,
                 RequestLog.deleted_at.is_(None),
+                provider_clause,
                 # Warmup probes are internal traffic and must not surface as
                 # top consumers, matching the request-log usage queries.
                 RequestLogsRepository._exclude_warmup_clause(),

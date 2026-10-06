@@ -32,6 +32,8 @@ describe("DashboardOverviewSchema", () => {
   it("parses overview payload without request_logs", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -92,6 +94,8 @@ describe("DashboardOverviewSchema", () => {
   it("drops legacy request_logs field from parse result", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -133,6 +137,8 @@ describe("DashboardOverviewSchema", () => {
   it("accepts overview payloads without comparison block for backward compatibility", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -814,6 +820,8 @@ describe("DashboardOverviewSchema with additional quotas", () => {
   it("parses with additionalQuotas array", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -880,6 +888,8 @@ describe("DashboardOverviewSchema with additional quotas", () => {
   it("defaults additionalQuotas to empty array for backward compatibility", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,

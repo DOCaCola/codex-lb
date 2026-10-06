@@ -12,6 +12,7 @@ describe("UsageDonuts", () => {
   it("renders primary and secondary donut panels with legends", async () => {
     render(
       <UsageDonuts
+        provider="codex"
         primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
         secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
         primaryTotal={200}
@@ -28,6 +29,7 @@ describe("UsageDonuts", () => {
   it("handles empty data gracefully", async () => {
     render(
       <UsageDonuts
+        provider="codex"
         primaryItems={[]}
         secondaryItems={[]}
         primaryTotal={0}
@@ -45,6 +47,7 @@ describe("UsageDonuts", () => {
   it("renders safe line only for the primary donut", async () => {
     render(
       <UsageDonuts
+        provider="codex"
         primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
         secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
         primaryTotal={200}
@@ -59,6 +62,7 @@ describe("UsageDonuts", () => {
   it("renders safe line on both donuts when both have depletion", async () => {
     render(
       <UsageDonuts
+        provider="codex"
         primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
         secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
         primaryTotal={200}
@@ -74,6 +78,7 @@ describe("UsageDonuts", () => {
   it("renders safe line only on secondary donut for weekly-only plans", async () => {
     render(
       <UsageDonuts
+        provider="codex"
         primaryItems={[]}
         secondaryItems={[item({ accountId: "acc-1", label: "weekly@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
         primaryTotal={0}
@@ -93,6 +98,7 @@ describe("UsageDonuts", () => {
     // stacked rows: remaining on top, capacity below a divider.
     render(
       <UsageDonuts
+        provider="codex"
         primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
         secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 7331, remainingPercent: 97, color: "#d9a441" })]}
         primaryTotal={225}

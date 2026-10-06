@@ -51,7 +51,7 @@ from app.modules.claude.schemas import (
     SubscriptionMetadata,
     UsageSnapshot,
 )
-from app.modules.claude.subscription import subscription_plan
+from app.modules.claude.subscription import quota_weight, subscription_plan
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.service import ModelSourceNotFoundError
 
@@ -392,7 +392,9 @@ class ClaudeService:
                         and window.freshness == "fresh"
                     }
                 )
-                await self.repository.record_quota(source_id, sample, completed_at, sample_seconds=60)
+                await self.repository.record_quota(
+                    source_id, sample, completed_at, provenance="usage_api", sample_seconds=60
+                )
         await self.repository.session.commit()
 
     async def _save(self, row: ClaudeAccount, state: AccountState, *, project: bool) -> None:
@@ -427,8 +429,10 @@ class ClaudeService:
         state = AccountState.model_validate_json(row.state_json)
         if row.refresh_intent and row.refresh_started_at and row.refresh_started_at < utcnow() - timedelta(minutes=1):
             status = "uncertain"
+        plan = subscription_plan(state.subscription)
         return ClaudeAccountResponse(
-            plan_type=subscription_plan(state.subscription),
+            plan_type=plan,
+            quota_weight=quota_weight(plan),
             routing_policy=AccountRoutingPolicy(row.routing_policy),
             max_concurrency=row.source.max_concurrency,
             id=row.source_id,

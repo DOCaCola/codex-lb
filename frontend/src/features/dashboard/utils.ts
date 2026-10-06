@@ -1,11 +1,13 @@
 import { Activity, AlertTriangle, Coins, DollarSign, Flame, MessageSquare, type LucideIcon } from "lucide-react";
 
 import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import type { ClaudeAccount } from "@/features/claude/api";
 import i18n from "@/i18n";
 import type {
   AccountSummary,
   DashboardOverview,
   DashboardProjections,
+  DashboardTopConsumers,
   Depletion,
   RequestLog,
   ServerWeeklyCreditPace,
@@ -68,10 +70,68 @@ export interface SafeLineView {
 export type WeeklyCreditPace = ServerWeeklyCreditPace;
 export type {
   WeeklyCreditApiKeyAttribution,
+  WeeklyCreditPaceUnit,
   WeeklyCreditPaceStatus,
   WeeklyCreditResetEvent,
   WeeklyCreditRunwayStatus,
 } from "@/features/dashboard/schemas";
+
+export type QuotaProvider = "codex" | "claude";
+
+const proUnitsFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const smallProUnitsFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+/** Pro units are fractional: one decimal, two below one unit so hourly burn stays legible. */
+export function formatProUnits(value: number): string {
+  return (Math.abs(value) < 1 ? smallProUnitsFormatter : proUnitsFormatter).format(value);
+}
+
+export type ClaudeQuotaWindow = "five_hour" | "seven_day";
+
+export type ClaudeQuotaRing = {
+  items: RemainingItem[];
+  /** Pooled capacity in Pro units. */
+  total: number;
+  remaining: number;
+  /** Names of accounts whose plan has no Pro-unit weight. */
+  planUnknown: string[];
+  /** Names of weighted accounts without a fresh observation of this window. */
+  quotaUnknown: string[];
+};
+
+export function buildClaudeQuotaRing(
+  accounts: ClaudeAccount[],
+  windowName: ClaudeQuotaWindow,
+  accountColors: ReadonlyMap<string, string> = new Map(),
+): ClaudeQuotaRing {
+  const items: RemainingItem[] = [];
+  const planUnknown: string[] = [];
+  const quotaUnknown: string[] = [];
+  let total = 0;
+  for (const account of accounts) {
+    if (account.quotaWeight == null) {
+      planUnknown.push(account.name);
+      continue;
+    }
+    const window = account.quota.windows.find((entry) => entry.name === windowName);
+    if (!window || window.utilization == null || window.freshness !== "fresh") {
+      quotaUnknown.push(account.name);
+      continue;
+    }
+    const remainingPercent = clampPercent(100 - window.utilization);
+    total += account.quotaWeight;
+    items.push({
+      accountId: account.id,
+      label: account.name,
+      labelSuffix: "",
+      isEmail: false,
+      value: (account.quotaWeight * remainingPercent) / 100,
+      remainingPercent,
+      color: accountColors.get(account.id),
+    });
+  }
+  return { items, total, remaining: sumRemaining(items), planUnknown, quotaUnknown };
+}
 
 export type DashboardView = {
   stats: DashboardStat[];
@@ -85,6 +145,8 @@ export type DashboardView = {
   safeLinePrimary: SafeLineView | null;
   safeLineSecondary: SafeLineView | null;
   weeklyCreditPace: WeeklyCreditPace | null;
+  claudeWeeklyPace: WeeklyCreditPace | null;
+  topConsumers: DashboardTopConsumers;
 };
 
 type DashboardViewOptions = {
@@ -689,6 +751,7 @@ export function buildWeeklyCreditPace(
     projectedShortfallCredits > 0 ? Math.ceil(projectedShortfallCredits / PRO_WEEKLY_CAPACITY_CREDITS) : null;
 
   return {
+    unit: "credits",
     totalFullCredits,
     totalActualRemainingCredits,
     totalExpectedRemainingCredits,
@@ -868,5 +931,7 @@ export function buildDashboardView(
     // to the local projection instead of hiding the card entirely.
     weeklyCreditPace:
       overview.weeklyCreditPace ?? projections?.weeklyCreditPace ?? buildWeeklyCreditPace(overview.accounts),
+    claudeWeeklyPace: overview.claudeWeeklyPace ?? projections?.claudeWeeklyPace ?? null,
+    topConsumers: overview.topConsumers,
   };
 }

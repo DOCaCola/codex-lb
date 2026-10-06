@@ -133,8 +133,10 @@ const WeeklyCreditApiKeyAttributionSchema = z.object({
 
 const WeeklyCreditPaceStatusSchema = z.enum(["behind", "on_track", "ahead", "danger"]);
 const WeeklyCreditRunwayStatusSchema = z.enum(["safe", "tight", "runs_dry"]);
+const WeeklyCreditPaceUnitSchema = z.enum(["credits", "pro_units"]);
 
 const WeeklyCreditPaceSchema = z.object({
+  unit: WeeklyCreditPaceUnitSchema,
   totalFullCredits: z.number(),
   totalActualRemainingCredits: z.number(),
   totalExpectedRemainingCredits: z.number(),
@@ -167,13 +169,17 @@ const WeeklyCreditPaceSchema = z.object({
   resetEvents: z.array(WeeklyCreditResetEventSchema).optional(),
   runwayStatus: WeeklyCreditRunwayStatusSchema.optional(),
   saturatedAccountCount: z.number().int().nonnegative().optional(),
-  topApiKeys: z.array(WeeklyCreditApiKeyAttributionSchema).optional(),
   addProAccounts: z.number().int().nullable().optional(),
   status: WeeklyCreditPaceStatusSchema,
   accountCount: z.number().int().nonnegative(),
   staleAccountCount: z.number().int().nonnegative(),
   inactiveAccountCount: z.number().int().nonnegative(),
   confidence: z.enum(["high", "medium", "low"]),
+});
+
+const DashboardTopConsumersSchema = z.object({
+  codex: z.array(WeeklyCreditApiKeyAttributionSchema),
+  claude: z.array(WeeklyCreditApiKeyAttributionSchema),
 });
 
 export const DashboardOverviewSchema = z.object({
@@ -196,12 +202,16 @@ export const DashboardOverviewSchema = z.object({
   depletionPrimary: DepletionSchema.nullable().optional(),
   depletionSecondary: DepletionSchema.nullable().optional(),
   weeklyCreditPace: WeeklyCreditPaceSchema.nullable().optional(),
+  claudeWeeklyPace: WeeklyCreditPaceSchema.nullable(),
+  topConsumers: DashboardTopConsumersSchema,
 });
 
 export const DashboardProjectionsSchema = z.object({
   depletionPrimary: DepletionSchema.nullable().optional(),
   depletionSecondary: DepletionSchema.nullable().optional(),
   weeklyCreditPace: WeeklyCreditPaceSchema.nullable().optional(),
+  claudeWeeklyPace: WeeklyCreditPaceSchema.nullable(),
+  topConsumers: DashboardTopConsumersSchema,
 });
 
 const RequestLogCostBreakdownSchema = z.object({
@@ -343,6 +353,8 @@ export type WeeklyCreditResetEvent = z.infer<typeof WeeklyCreditResetEventSchema
 export type WeeklyCreditApiKeyAttribution = z.infer<typeof WeeklyCreditApiKeyAttributionSchema>;
 export type WeeklyCreditPaceStatus = z.infer<typeof WeeklyCreditPaceStatusSchema>;
 export type WeeklyCreditRunwayStatus = z.infer<typeof WeeklyCreditRunwayStatusSchema>;
+export type WeeklyCreditPaceUnit = z.infer<typeof WeeklyCreditPaceUnitSchema>;
+export type DashboardTopConsumers = z.infer<typeof DashboardTopConsumersSchema>;
 
 export const DashboardViewSchema = z.enum(["request-logs", "conversations"]);
 export type DashboardView = z.infer<typeof DashboardViewSchema>;

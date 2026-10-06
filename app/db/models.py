@@ -2063,6 +2063,8 @@ class ClaudeQuotaHistory(Base):
     window: Mapped[str] = mapped_column(String, primary_key=True)
     used_percent: Mapped[float] = mapped_column(Float, nullable=False)
     resets_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # "usage_api" or "inference_header"; NULL for samples recorded before provenance was kept.
+    provenance: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ClaudeResourceOrigin(Base):

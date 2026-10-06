@@ -362,6 +362,8 @@ export function createDashboardOverview(
 			projectedExhaustionAt: null,
 			secondsUntilExhaustion: null,
 		},
+		claudeWeeklyPace: null,
+		topConsumers: { codex: [], claude: [] },
 		...overrides,
 	};
 	return DashboardOverviewSchema.parse(response);
@@ -388,6 +390,8 @@ export function createDashboardProjections(
 			secondsUntilExhaustion: null,
 		},
 		weeklyCreditPace: null,
+		claudeWeeklyPace: null,
+		topConsumers: { codex: [], claude: [] },
 		...overrides,
 	});
 }

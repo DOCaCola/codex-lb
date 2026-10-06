@@ -1,17 +1,31 @@
 import { Gauge } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import type { WeeklyCreditPace, WeeklyCreditRunwayStatus } from "@/features/dashboard/utils";
-import { formatCoveredCost, formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
+import {
+  formatProUnits,
+  type WeeklyCreditPace,
+  type WeeklyCreditPaceUnit,
+  type WeeklyCreditRunwayStatus,
+} from "@/features/dashboard/utils";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
-import { formatCompactNumber, formatDateTimeInline, formatModelLabel } from "@/utils/formatters";
+import { formatCompactNumber, formatDateTimeInline } from "@/utils/formatters";
 
 const PRO_WEEKLY_CAPACITY_CREDITS = 50_400;
+
+type Translate = ReturnType<typeof useTranslation>["t"];
 
 export type WeeklyCreditsPaceCardProps = {
   pace: WeeklyCreditPace | null;
 };
+
+function formatUnitValue(value: number, unit: WeeklyCreditPaceUnit): string {
+  return unit === "credits" ? formatCompactNumber(value) : formatProUnits(value);
+}
+
+function formatUnitAmount(value: number, unit: WeeklyCreditPaceUnit, t: Translate): string {
+  return t(`dashboard.weeklyPace.amount.${unit}`, { value: formatUnitValue(value, unit) });
+}
 
 function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
@@ -230,6 +244,7 @@ function RunwayWeeklyCreditsPaceCard({
 }) {
   const { t } = useTranslation();
   const dateDisplayFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
+  const unit = pace.unit;
 
   const burnRate = pace.burnRateRecentCreditsPerHour ?? null;
   const etaHours = pace.depletionEtaHours != null && Number.isFinite(pace.depletionEtaHours) ? pace.depletionEtaHours : null;
@@ -249,7 +264,6 @@ function RunwayWeeklyCreditsPaceCard({
     (epochMs) => formatDateTimeInline(new Date(epochMs).toISOString(), dateDisplayFormat),
   );
 
-  const topApiKeys = pace.topApiKeys ?? [];
   const throttleToPercent = runsDry && pace.throttleToPercent != null ? pace.throttleToPercent : null;
   const addProAccounts = pace.addProAccounts != null && pace.addProAccounts > 0 ? pace.addProAccounts : null;
   const showRecommendations = throttleToPercent != null || addProAccounts != null;
@@ -257,14 +271,19 @@ function RunwayWeeklyCreditsPaceCard({
   const burnRateLine =
     burnRate != null && burnRate > 0
       ? t(saturated ? "dashboard.weeklyPace.atBurnRateFloor" : "dashboard.weeklyPace.atBurnRate", {
-          credits: formatCompactNumber(burnRate),
+          credits: formatUnitValue(burnRate, unit),
         })
       : null;
 
   return (
     <section className="@container/weekly-pace rounded-xl border bg-card p-5" aria-label={t("dashboard.weeklyPace.title")}>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
+      <div className="mb-4 flex justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(unit === "credits" ? "dashboard.weeklyPace.subtitleCodex" : "dashboard.weeklyPace.subtitleClaude")}
+          </p>
+        </div>
         <span
           data-testid="weekly-runway-verdict"
           className={cn(
@@ -283,7 +302,7 @@ function RunwayWeeklyCreditsPaceCard({
               {formatHeadroomPercent(headroomPercent)}
             </p>
             <p className="text-xs tabular-nums text-muted-foreground">
-              {t("dashboard.weeklyPace.heroCreditsLeft", { credits: formatCompactNumber(Math.max(0, headroomCredits)) })}
+              {t("dashboard.weeklyPace.heroLeft", { amount: formatUnitAmount(Math.max(0, headroomCredits), unit, t) })}
             </p>
           </div>
           <p className="mt-1 text-xs tabular-nums text-muted-foreground">
@@ -320,7 +339,7 @@ function RunwayWeeklyCreditsPaceCard({
             <p className="tabular-nums text-muted-foreground">
               {t("dashboard.weeklyPace.reliefLine", {
                 duration: formatDurationHours(reliefHours, t),
-                credits: formatCompactNumber(Math.max(0, reliefCredits ?? 0)),
+                amount: formatUnitAmount(Math.max(0, reliefCredits ?? 0), unit, t),
               })}
             </p>
           ) : null}
@@ -339,7 +358,7 @@ function RunwayWeeklyCreditsPaceCard({
                 key={`reset-${index}`}
                 data-testid="runway-reset-tick"
                 title={t("dashboard.weeklyPace.resetTickTooltip", {
-                  credits: formatCompactNumber(tick.creditsReturned),
+                  amount: formatUnitAmount(tick.creditsReturned, unit, t),
                   time: tick.atLabel,
                 })}
                 className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-foreground/50"
@@ -364,50 +383,6 @@ function RunwayWeeklyCreditsPaceCard({
           </div>
         </div>
 
-        {topApiKeys.length > 0 ? (
-          <div data-testid="runway-attribution">
-            <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-[11px] font-medium text-muted-foreground">
-              <p className="uppercase tracking-wider">{t("dashboard.weeklyPace.attributionTitle")}</p>
-              <p title={t("dashboard.weeklyPace.attributionCostDescription")}>
-                {t("dashboard.weeklyPace.attributionCost")}
-              </p>
-            </div>
-            <ul className="mt-1.5 space-y-1">
-              {topApiKeys.map((apiKey, index) => (
-                <li
-                  // Prefer the stable wire id; older backends omit it, and key
-                  // names are not unique, so name+index disambiguates then.
-                  key={apiKey.apiKeyId ?? `${apiKey.name}-${index}`}
-                  // Respond to the card's width, not the viewport: the runway
-                  // occupies a narrow column even on a large dashboard.
-                  className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-muted-foreground @min-[20rem]/weekly-pace:grid @min-[20rem]/weekly-pace:grid-cols-[minmax(0,1fr)_auto_auto_auto]"
-                >
-                  <span className="w-full min-w-0 @min-[20rem]/weekly-pace:w-auto">
-                    <span className="block truncate">{apiKey.name}</span>
-                    <span className="block truncate text-[10px] text-foreground/70">
-                      {formatModelLabel(apiKey.dominantModel, null)}
-                    </span>
-                  </span>
-                  <span className="tabular-nums @min-[20rem]/weekly-pace:text-right">
-                    {t("dashboard.weeklyPace.attributionRequests", { value: formatCompactNumber(apiKey.requests) })}
-                  </span>
-                  <span className="tabular-nums @min-[20rem]/weekly-pace:text-right">
-                    {t("dashboard.weeklyPace.attributionTokens", { value: formatCompactNumber(apiKey.billableTokens) })}
-                  </span>
-                  <span
-                    className="ml-auto max-w-full break-words text-right tabular-nums text-foreground/70"
-                    title={t("dashboard.weeklyPace.attributionCostTooltip", {
-                      cost: formatCoveredCost(apiKey.costCoverage.knownCostUsd, apiKey.costCoverage),
-                    })}
-                  >
-                    {formatCoveredCostShort(apiKey.costCoverage.knownCostUsd, apiKey.costCoverage)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
         {showRecommendations ? (
           <div className="rounded-lg border bg-background/60 px-3 py-2 text-xs" data-testid="runway-recommendations">
             <p className="font-medium">{t("dashboard.weeklyPace.recommendations.title")}</p>
@@ -430,7 +405,12 @@ function RunwayWeeklyCreditsPaceCard({
                     {t("dashboard.weeklyPace.recommendations.addCapacity")}
                   </span>
                   <span className="min-w-0 text-right tabular-nums">
-                    {t("dashboard.weeklyPace.recommendations.addProAccounts", { count: addProAccounts })}
+                    {t(
+                      unit === "credits"
+                        ? "dashboard.weeklyPace.recommendations.addProAccounts"
+                        : "dashboard.weeklyPace.recommendations.addProEquivalents",
+                      { count: addProAccounts },
+                    )}
                   </span>
                 </div>
               ) : null}

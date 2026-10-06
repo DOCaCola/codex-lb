@@ -7,20 +7,22 @@ from app.core.crypto import TokenEncryptor
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
-from app.db.models import UsageHistory
+from app.db.models import DashboardSettings, UsageHistory
 from app.modules.accounts.mappers import build_account_summaries
 from app.modules.dashboard.builders import (
     build_dashboard_overview_summary,
     build_overview_timeframe,
     resolve_overview_timeframe,
 )
-from app.modules.dashboard.repository import DashboardRepository
+from app.modules.dashboard.claude_pace import build_claude_weekly_pace
+from app.modules.dashboard.repository import DashboardRepository, QuotaProvider
 from app.modules.dashboard.schemas import (
     DashboardMetricsComparison,
     DashboardMetricsComparisonPrevious,
     DashboardOverviewResponse,
     DashboardOverviewTimeframeKey,
     DashboardProjectionsResponse,
+    DashboardTopConsumers,
     DashboardUsageWindows,
     DepletionResponse,
     WeeklyCreditApiKeyAttribution,
@@ -215,7 +217,8 @@ class DashboardService:
             working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
             smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
         )
-        await _attach_top_api_keys(self._repo, weekly_credit_pace, now)
+        claude_weekly_pace = await _claude_weekly_pace(self._repo, now, dashboard_settings)
+        top_consumers = await _top_consumers(self._repo, now)
 
         additional_ts = await self._repo.latest_additional_recorded_at()
         return DashboardOverviewResponse(
@@ -226,6 +229,8 @@ class DashboardService:
             windows=windows,
             trends=trends,
             weekly_credit_pace=weekly_credit_pace,
+            claude_weekly_pace=claude_weekly_pace,
+            top_consumers=top_consumers,
         )
 
     async def get_projections(self) -> DashboardProjectionsResponse:
@@ -266,23 +271,47 @@ class DashboardService:
             working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
             smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
         )
-        await _attach_top_api_keys(self._repo, weekly_credit_pace, now)
         return DashboardProjectionsResponse(
             depletion_primary=pri_depletion,
             depletion_secondary=sec_depletion,
             weekly_credit_pace=weekly_credit_pace,
+            claude_weekly_pace=await _claude_weekly_pace(self._repo, now, dashboard_settings),
+            top_consumers=await _top_consumers(self._repo, now),
         )
 
 
-async def _attach_top_api_keys(
+async def _claude_weekly_pace(
     repo: DashboardRepository,
-    weekly_credit_pace: WeeklyCreditPaceResponse | None,
     now: datetime,
-) -> None:
-    if weekly_credit_pace is None:
-        return
-    rows = await repo.top_api_key_attribution_since(now - timedelta(hours=2), now=now)
-    weekly_credit_pace.top_api_keys = [
+    dashboard_settings: DashboardSettings,
+) -> WeeklyCreditPaceResponse | None:
+    # The usage-API poll is the regular, consistently quantized stream; header
+    # observations interleave one point apart and would read as burn.
+    return build_claude_weekly_pace(
+        accounts=await repo.list_claude_accounts(),
+        seven_day_history=await repo.claude_quota_history_since(
+            "seven_day", now - DEMAND_WINDOW, provenance="usage_api"
+        ),
+        now=now,
+        working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
+        smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
+    )
+
+
+async def _top_consumers(repo: DashboardRepository, now: datetime) -> DashboardTopConsumers:
+    return DashboardTopConsumers(
+        codex=await _provider_top_consumers(repo, now, "codex"),
+        claude=await _provider_top_consumers(repo, now, "claude"),
+    )
+
+
+async def _provider_top_consumers(
+    repo: DashboardRepository,
+    now: datetime,
+    provider: QuotaProvider,
+) -> list[WeeklyCreditApiKeyAttribution]:
+    rows = await repo.top_api_key_attribution_since(now - timedelta(hours=2), now=now, provider=provider)
+    return [
         WeeklyCreditApiKeyAttribution(
             api_key_id=row.api_key_id,
             name=row.name,

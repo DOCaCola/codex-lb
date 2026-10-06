@@ -144,12 +144,8 @@ vi.mock("@/features/dashboard/components/stats-grid", () => ({
   StatsGrid: () => <div data-testid="stats-grid" />,
 }));
 
-vi.mock("@/features/dashboard/components/usage-donuts", () => ({
-  UsageDonuts: () => <div data-testid="usage-donuts" />,
-}));
-
-vi.mock("@/features/dashboard/components/weekly-credits-pace-card", () => ({
-  WeeklyCreditsPaceCard: () => <div data-testid="weekly-credits-pace-card" />,
+vi.mock("@/features/dashboard/components/quota-section", () => ({
+  QuotaSection: () => <div data-testid="quota-section" />,
 }));
 
 const useAccountMutationsMock = vi.mocked(useAccountMutations);
@@ -281,6 +277,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,
@@ -700,6 +698,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,
@@ -766,6 +766,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,
@@ -866,6 +868,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,
@@ -936,6 +940,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,
@@ -996,6 +1002,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,
@@ -1056,6 +1064,8 @@ describe("DashboardPage", () => {
     buildDashboardViewMock.mockReturnValue({
       stats: [],
       weeklyCreditPace: null,
+      claudeWeeklyPace: null,
+      topConsumers: { codex: [], claude: [] },
       primaryUsageItems: [],
       secondaryUsageItems: [],
       primaryTotal: 0,

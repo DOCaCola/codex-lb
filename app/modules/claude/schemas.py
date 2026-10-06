@@ -239,11 +239,12 @@ class AccountState(BaseModel):
 
 
 WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]
+QuotaProvenance = Literal["usage_api", "inference_header"]
 
 
 class WindowStatus(DashboardModel):
     observed_at: datetime | None = None
-    provenance: Literal["usage_api", "inference_header"] = "usage_api"
+    provenance: QuotaProvenance = "usage_api"
     name: WindowName
     utilization: float | None
     resets_at: datetime | None
@@ -282,6 +283,8 @@ class ClaudeUpdate(DashboardModel):
 
 class ClaudeAccountResponse(DashboardModel):
     plan_type: ClaudePlanType
+    # Pro units per window (Pro 1, Max 5x 5, Max 20x 20); null when the plan has no stated multiplier.
+    quota_weight: int | None
     routing_policy: AccountRoutingPolicy
     max_concurrency: int | None
     id: str

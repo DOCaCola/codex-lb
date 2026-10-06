@@ -9,7 +9,7 @@ from app.db.session import SessionLocal
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.schemas import QuotaWindow, UsageSnapshot
+from app.modules.claude.schemas import QuotaProvenance, QuotaWindow, UsageSnapshot
 from tests.integration.test_claude_accounts import import_body, install_profile_stub
 from tests.integration.test_openrouter_accounts import provider  # noqa: F401
 
@@ -90,12 +90,12 @@ async def test_claude_history_is_transactional_and_pruned_on_refresh(async_clien
     usage = UsageSnapshot(five_hour=QuotaWindow(utilization=60))
     async with SessionLocal() as session:
         repository = ClaudeRepository(session)
-        await repository.record_quota(source, usage, datetime.now(UTC) - timedelta(days=31))
+        await repository.record_quota(source, usage, datetime.now(UTC) - timedelta(days=31), provenance="usage_api")
         await session.commit()
-        await repository.record_quota(source, usage, datetime.now(UTC))
+        await repository.record_quota(source, usage, datetime.now(UTC), provenance="usage_api")
         await session.rollback()
         assert await session.scalar(select(func.count()).select_from(ClaudeQuotaHistory)) == 1
-        await repository.record_quota(source, usage, datetime.now(UTC))
+        await repository.record_quota(source, usage, datetime.now(UTC), provenance="usage_api")
         await session.commit()
         rows = list(await session.scalars(select(ClaudeQuotaHistory)))
         assert len(rows) == 1 and rows[0].observed_at > datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
@@ -163,6 +163,7 @@ async def test_sampling_preserves_reset_changes_within_interval(async_client, mo
                 source,
                 UsageSnapshot(seven_day=QuotaWindow(utilization=20, resets_at=deadline)),
                 at + timedelta(seconds=seconds),
+                provenance="usage_api",
                 sample_seconds=60,
             )
             await session.flush()
@@ -195,6 +196,7 @@ async def test_sampling_preserves_utilization_changes_within_interval(async_clie
                 source,
                 UsageSnapshot(five_hour=QuotaWindow(utilization=used, resets_at=reset)),
                 at + timedelta(seconds=seconds),
+                provenance="usage_api",
                 sample_seconds=60,
             )
             await session.flush()
@@ -207,6 +209,50 @@ async def test_sampling_preserves_utilization_changes_within_interval(async_clie
             )
         )
         assert [(row.observed_at.second, row.used_percent) for row in rows] == [(18, 99), (45, 100)]
+
+
+async def test_quota_streams_keep_provenance_and_sample_independently(async_client, monkeypatch):
+    from app.modules.dashboard.repository import DashboardRepository
+
+    install_profile_stub(monkeypatch)
+    source = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    at = datetime(2026, 10, 6, 7, 0, tzinfo=UTC)
+    reset = datetime(2026, 10, 10, 22, tzinfo=UTC)
+    async with SessionLocal() as session:
+        repository = ClaudeRepository(session)
+        # Polls read one point above header observations; within each stream the
+        # repeated value is redundant, across streams it is not.
+        observations: list[tuple[int, int, QuotaProvenance]] = [
+            (0, 41, "usage_api"),
+            (10, 40, "inference_header"),
+            (20, 41, "usage_api"),
+            (30, 40, "inference_header"),
+        ]
+        for seconds, used, provenance in observations:
+            await repository.record_quota(
+                source,
+                UsageSnapshot(seven_day=QuotaWindow(utilization=used, resets_at=reset)),
+                at + timedelta(seconds=seconds),
+                provenance=provenance,
+                sample_seconds=60,
+            )
+            await session.flush()
+        await session.commit()
+        rows = list(
+            await session.scalars(
+                select(ClaudeQuotaHistory)
+                .where(ClaudeQuotaHistory.source_id == source)
+                .order_by(ClaudeQuotaHistory.observed_at)
+            )
+        )
+        assert [(row.observed_at.second, row.provenance) for row in rows] == [
+            (0, "usage_api"),
+            (10, "inference_header"),
+        ]
+        history = await DashboardRepository(session).claude_quota_history_since(
+            "seven_day", at.replace(tzinfo=None) - timedelta(hours=1), provenance="usage_api"
+        )
+        assert [row.used_percent for row in history[source]] == [41]
 
 
 def test_deadline_migration_preserves_legacy_rows(tmp_path):

@@ -70,6 +70,8 @@ describe("useDashboard", () => {
             secondary: null,
           },
           trends: { requests: [], tokens: [], cost: [], errorRate: [] },
+          claudeWeeklyPace: null,
+          topConsumers: { codex: [], claude: [] },
         });
       }),
     );

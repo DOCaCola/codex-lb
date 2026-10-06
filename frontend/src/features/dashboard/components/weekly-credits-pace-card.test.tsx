@@ -5,6 +5,7 @@ import { WeeklyCreditsPaceCard } from "@/features/dashboard/components/weekly-cr
 import type { WeeklyCreditPace } from "@/features/dashboard/utils";
 
 const BASE_PACE: WeeklyCreditPace = {
+  unit: "credits",
   totalFullCredits: 1_000_000,
   totalActualRemainingCredits: 500_000,
   totalExpectedRemainingCredits: 860_000,
@@ -38,7 +39,7 @@ describe("WeeklyCreditsPaceCard", () => {
   it("renders weekly pace percentages and separates schedule gap from forecast shortfall", () => {
     render(<WeeklyCreditsPaceCard pace={BASE_PACE} />);
 
-    expect(screen.getByText("Weekly credits pace")).toBeInTheDocument();
+    expect(screen.getByText("Weekly pace")).toBeInTheDocument();
     expect(screen.queryByText("2 accounts with weekly timing")).not.toBeInTheDocument();
     expect(screen.getByText("Used now")).toBeInTheDocument();
     expect(screen.getByText("Scheduled by now")).toBeInTheDocument();
@@ -205,7 +206,6 @@ const RUNWAY_PACE: WeeklyCreditPace = {
     { at: new Date(Date.now() + 50 * 3_600_000).toISOString(), creditsReturned: 50_400 },
   ],
   saturatedAccountCount: 0,
-  topApiKeys: [],
   addProAccounts: null,
 };
 
@@ -215,6 +215,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
 
     const verdict = screen.getByTestId("weekly-runway-verdict");
     expect(verdict).toHaveTextContent("Safe");
+    expect(screen.getByText("Codex · credits")).toBeInTheDocument();
     expect(screen.getByText("42%")).toBeInTheDocument();
     expect(screen.getByText("420K credits left")).toBeInTheDocument();
     expect(screen.getByText("runs out in ~2d 22h")).toBeInTheDocument();
@@ -223,6 +224,30 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getByTestId("runway-eta-marker")).toBeInTheDocument();
     expect(screen.getAllByTestId("runway-reset-tick")).toHaveLength(2);
     expect(screen.getByText("now")).toBeInTheDocument();
+  });
+
+  it("labels Claude amounts in Pro units and recommends Pro-equivalents", () => {
+    render(
+      <WeeklyCreditsPaceCard
+        pace={{
+          ...RUNWAY_PACE,
+          unit: "pro_units",
+          runwayStatus: "runs_dry",
+          headroomCredits: 4.5,
+          burnRateRecentCreditsPerHour: 0.125,
+          nextReliefCredits: 5,
+          resetEvents: [{ at: new Date(Date.now() + 26 * 3_600_000).toISOString(), creditsReturned: 5 }],
+          throttleToPercent: null,
+          addProAccounts: 3,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Claude · Pro units")).toBeInTheDocument();
+    expect(screen.getByText("4.5 Pro units left")).toBeInTheDocument();
+    expect(screen.getByText("at ~0.13/h")).toBeInTheDocument();
+    expect(screen.getByTestId("runway-reset-tick").getAttribute("title")).toMatch(/^\+5 Pro units at /);
+    expect(screen.getByTestId("runway-recommendations")).toHaveTextContent("Add 3 Pro-equivalents (Max 5× = 5)");
   });
 
   it("renders a neutral verdict badge without warning emphasis when safe", () => {
@@ -302,76 +327,6 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     const recommendations = screen.getByTestId("runway-recommendations");
     expect(recommendations.textContent).not.toContain("Throttle");
     expect(recommendations.textContent).toContain("Add 1 Pro account");
-  });
-
-  it("renders the per-key attribution list when present", () => {
-    render(
-      <WeeklyCreditsPaceCard
-        pace={{
-          ...RUNWAY_PACE,
-          topApiKeys: [
-            {
-              apiKeyId: "key_hermes_prod",
-              name: "hermes-prod",
-              requests: 12_400,
-              billableTokens: 9_800_000,
-              cachedTokens: 4_000_000,
-              dominantModel: "gpt-5.2-codex",
-              costCoverage: { knownCostUsd: 44_248.05, pricedRequests: 12_399, unpricedRequests: 1, unmeteredRequests: 0, coverageUnknown: false },
-            },
-            {
-              apiKeyId: "key_batch_eval",
-              name: "batch-eval",
-              requests: 800,
-              billableTokens: 14_200_000,
-              cachedTokens: 0,
-              dominantModel: "gpt-5.2",
-              costCoverage: { knownCostUsd: 0, pricedRequests: 800, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
-            },
-          ],
-        }}
-      />,
-    );
-
-    expect(screen.getByTestId("runway-attribution")).toBeInTheDocument();
-    expect(screen.getByText("hermes-prod")).toBeInTheDocument();
-    expect(screen.getByText("12.4K req")).toBeInTheDocument();
-    expect(screen.getByText("9.8M tok")).toBeInTheDocument();
-    expect(screen.getByText("gpt-5.2-codex")).toBeInTheDocument();
-    expect(screen.getByText("batch-eval")).toBeInTheDocument();
-    expect(screen.getByText("Est. API Cost")).toBeInTheDocument();
-    const cost = screen.getByText("$44,248.05");
-    expect(cost).toHaveAttribute("title", "Est. API Cost · last 2h: $44,248.05 known · incomplete (12399 priced, 1 unpriced)");
-    expect(cost.textContent).not.toContain("known");
-    expect(cost.textContent).not.toContain("≥");
-    expect(screen.getByText("$0.00")).toBeInTheDocument();
-  });
-
-  it("hides the attribution list when no keys are reported", () => {
-    render(<WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, topApiKeys: [] }} />);
-
-    expect(screen.queryByTestId("runway-attribution")).not.toBeInTheDocument();
-  });
-
-  it("renders attribution rows with colliding key names", () => {
-    render(
-      <WeeklyCreditsPaceCard
-        pace={{
-          ...RUNWAY_PACE,
-          topApiKeys: [
-            { name: "(unnamed)", requests: 500, billableTokens: 1_000_000, cachedTokens: 0, dominantModel: "gpt-5.2",
-              costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 500, unmeteredRequests: 0, coverageUnknown: false } },
-            { name: "(unnamed)", requests: 300, billableTokens: 2_000_000, cachedTokens: 0, dominantModel: "gpt-5.2-codex",
-              costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 300, unmeteredRequests: 0, coverageUnknown: false } },
-          ],
-        }}
-      />,
-    );
-
-    expect(screen.getAllByText("(unnamed)")).toHaveLength(2);
-    expect(screen.getByText("500 req")).toBeInTheDocument();
-    expect(screen.getByText("300 req")).toBeInTheDocument();
-    expect(screen.getAllByText("Unknown")).toHaveLength(2);
   });
 
   it("stretches the timeline horizon so reset events past 48h are not dropped", () => {

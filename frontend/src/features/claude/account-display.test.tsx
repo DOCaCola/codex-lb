@@ -24,6 +24,7 @@ import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
 
 const account: ClaudeAccount = {
   planType: "pro",
+  quotaWeight: 1,
   maxConcurrency: null,
   routingPolicy: "normal",
   id: "claude-test",

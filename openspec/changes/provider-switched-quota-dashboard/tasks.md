@@ -1,0 +1,5 @@
+- [x] 1. Extract a provider-neutral weekly runway core; keep the Codex adapter behaviour and add a `unit` field.
+- [x] 2. Persist Claude quota observation provenance with per-provenance deduplication; migrate the column.
+- [x] 3. Build the Claude weekly pace in Pro units from usage-API observations and plan weights; expose `claudeWeeklyPace`, `quotaWeight` and per-provider `topConsumers`.
+- [x] 4. Build the dashboard Quota section with the provider toggle, Claude rings, unit-aware pace card and standalone Top consumers card; move activity stats below accounts.
+- [x] 5. Update backend and frontend tests; run lint, type and test checks.
