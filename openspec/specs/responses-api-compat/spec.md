@@ -5607,8 +5607,19 @@ the upstream `POST /codex/alpha/search` path. Successful downstream responses
 MUST preserve the upstream status and body and MUST include only response
 headers allowed by the existing Codex control-response policy. Final non-2xx
 responses MUST preserve their status while using the existing Codex control
-OpenAI error-envelope normalization. The proxy MUST NOT parse, normalize, or
-invent a local schema for successful search requests or responses.
+OpenAI error-envelope normalization. The proxy MUST NOT normalize, rewrite, or
+invent a local schema for search requests or responses.
+
+The proxy SHALL derive search identity from the `x-codex-turn-metadata` JSON
+header: its `session_id` is the process session and its `thread_id` the logical
+thread. When metadata carries no session, the body `id` SHALL be the process
+session. With session affinity enabled, a search carrying a thread MUST use the
+same thread-locality key, kind and lifetime as the conversation's Responses
+turns sent with the equivalent `session-id` and `thread-id` headers; a search
+with only a process session MUST use process-session affinity. The request log
+MUST record the metadata `thread_id` as conversation, the body `model` as model
+when present, and the client IP. Reading these fields MUST NOT alter the
+forwarded body.
 
 #### Scenario: authenticated standalone search reaches the upstream Codex path
 
@@ -5638,6 +5649,21 @@ invent a local schema for successful search requests or responses.
 - **WHEN** a client sends a non-POST request to
   `/backend-api/codex/alpha/search`
 - **THEN** the request does not enter the upstream search forwarding path
+
+#### Scenario: search follows its conversation's thread account
+
+- **GIVEN** two threads of one Codex process session hold thread locality on
+  different accounts
+- **WHEN** each thread issues a standalone search whose turn metadata names it
+- **THEN** each search is sent with its own thread's account
+- **AND** its request log records the thread as conversation, the body model and
+  the client IP
+
+#### Scenario: search without turn metadata follows its process session
+
+- **GIVEN** a process session holds session affinity on an account
+- **WHEN** a standalone search carries no turn metadata and that session as body `id`
+- **THEN** the search is sent with that account
 
 ### Requirement: Pre-acceptance account-model rejections fail over safely
 
@@ -11259,3 +11285,73 @@ When an oversized `response.create` frame is sent over upstream HTTP, the proxy 
 - **WHEN** it is sent over upstream HTTP
 - **THEN** the changed members are encoded from their shaped values
 - **AND** the body equals the body a full re-serialization would produce
+
+### Requirement: Codex compaction is destination-aware
+
+When a valid terminal `compaction_trigger` targets a subscription-backed model,
+the proxy SHALL preserve the existing native compact flow and synthetic SSE
+lifecycle. Immediately before serializing any native subscription-backed
+Responses request, the proxy MUST replace every non-empty plaintext `content`
+array on a top-level `reasoning` input item with an empty array and MUST remove
+that item's output-only `status` field. This requirement MUST cover direct HTTP,
+direct WebSocket, HTTP-session bridge, and prepared replay request bodies.
+Source-routed Responses requests MUST NOT receive this native-boundary
+sanitation.
+
+Immediately before any native or source-routed Responses request with
+`store: false` is sent, the proxy MUST remove `id` from every top-level input
+item unless that item is an `item_reference` or carries non-empty opaque `encrypted_content`. It MUST
+preserve opaque-state IDs, `call_id`, and all other item fields. Requests whose
+effective `store` value is true or omitted MUST retain their item IDs.
+
+When the terminal trigger targets an eligible OpenAI-compatible model source,
+the proxy SHALL run synthetic source compaction and SHALL return the same
+single-item compact SSE lifecycle required by Codex. The completed item MUST
+contain a codex-lb-owned `clb1:` compaction envelope. The proxy MUST NOT return
+a successful compaction lifecycle for an incomplete, truncated, malformed, or
+empty source summary. A completed top-level response MUST NOT override a
+truncation finish reason, non-empty `incomplete_details`, or an incomplete
+message item.
+
+Before any later upstream request, the proxy SHALL lower a valid `clb1:` replay
+item into explicit summary context and SHALL NOT forward the proxy-owned
+envelope as native encrypted state. A malformed `clb1:` item MUST produce an
+actionable history-unavailable error.
+
+#### Scenario: Foreign plaintext reasoning is accepted by native Responses
+
+- **GIVEN** request input contains a top-level reasoning item with non-empty
+  plaintext `content` and an output-only `status`
+- **WHEN** an ordinary, compact, WebSocket, HTTP-session bridge, or prepared
+  replay request is sent to a native subscription backend
+- **THEN** its wire `content` is an empty array and `status` is absent
+- **AND** ordinary source Responses replay remains unchanged
+
+#### Scenario: Temporary item IDs are not resolved by stateless upstreams
+
+- **GIVEN** ordinary or compact input contains `rs_tmp_*`, message, or tool item
+  IDs and retains a tool `call_id`
+- **WHEN** the effective request uses `store: false`
+- **THEN** each lookup-only top-level item `id` is absent on the wire
+- **AND** the tool `call_id` is preserved
+- **AND** an authoritative compaction ID paired with encrypted content remains
+
+#### Scenario: Source compaction emits one proxy-owned item
+
+- **GIVEN** a valid terminal compaction trigger for a source-owned model
+- **WHEN** the source completes a non-empty summary
+- **THEN** the proxy emits exactly one terminal `compaction` item
+- **AND** its `encrypted_content` starts with `clb1:`
+
+#### Scenario: Proxy-owned history is lowered on replay
+
+- **GIVEN** later input contains a valid `clb1:` compaction item
+- **WHEN** codex-lb builds any upstream request
+- **THEN** the upstream receives explicit summary text instead of the envelope
+
+#### Scenario: Partial or truncated source summary is not installed
+
+- **WHEN** the summarization response is incomplete, truncated, malformed, or
+  empty
+- **THEN** the proxy returns an error
+- **AND** it does not emit a completed compaction item

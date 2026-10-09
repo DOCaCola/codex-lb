@@ -350,6 +350,13 @@ When `GET /api/request-logs/options` is requested without user-supplied filters,
 - **THEN** those values MUST NOT be returned
 - **AND** a value shared by visible and invisible rows MUST be returned exactly once when a visible row qualifies
 
+#### Scenario: Provider-source facet probes a live-row index
+
+- **GIVEN** PostgreSQL request logs whose provider sources appear in live and soft-deleted rows
+- **WHEN** the options endpoint is called without filters
+- **THEN** the provider-source facet MUST be skip-scanned through `idx_logs_model_source_live`, a partial index on `model_source_id` restricted to `deleted_at IS NULL`
+- **AND** no probe MUST walk the soft-deleted rows
+
 #### Scenario: Filtered requests keep bounded DISTINCT semantics
 
 - **WHEN** the options endpoint receives user filters such as time bounds, account, API-key, model, or reasoning-effort constraints

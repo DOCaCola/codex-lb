@@ -4146,10 +4146,10 @@ The Accounts page account settings SHALL show a Credits setting for Codex accoun
 
 ### Requirement: Dashboard request log highlights live arrivals
 
-The dashboard request log SHALL give each row that first appears through a refresh of an unchanged query context (filters, search, timeframe, conversation, page size and page) on the first page a tinted background that fades to the normal row background over a few seconds. Arrival SHALL be determined by request identity, so a request that completes after newer requests started is highlighted wherever it is placed. The initial load, any query-context change and placeholder data shown while a new context loads SHALL establish a new baseline without highlighting. Later pages SHALL NOT highlight rows. Refreshes that only change other dashboard data SHALL NOT interrupt a fade in progress.
+The dashboard request log SHALL give each row that first appears through a refresh of an unchanged query context (filters, search, timeframe, conversation, page size and page) on the first page a tinted background that fades to the normal row background over a few seconds. Arrival SHALL be determined by log-row identity, so a request that completes after newer requests started is highlighted wherever it is placed, and separate rows sharing a request ID (such as a refused attempt and its retry) are tracked and rendered independently in server order. The initial load, any query-context change and placeholder data shown while a new context loads SHALL establish a new baseline without highlighting. Later pages SHALL NOT highlight rows. Refreshes that only change other dashboard data SHALL NOT interrupt a fade in progress.
 
 #### Scenario: Refresh adds a request
-- **WHEN** the first page refreshes and contains a request ID that was not on the previous page of the same context
+- **WHEN** the first page refreshes and contains a log row that was not on the previous page of the same context
 - **THEN** that row starts with a tinted background that fades to the normal background
 - **AND** rows that were already shown are not highlighted
 
@@ -4160,6 +4160,10 @@ The dashboard request log SHALL give each row that first appears through a refre
 #### Scenario: Later pages do not highlight
 - **WHEN** the operator views a page after the first and a refresh shifts new entries onto it
 - **THEN** no row is highlighted
+
+#### Scenario: Retried rows share a request ID
+- **WHEN** two log rows share a request ID and a refresh prepends a newer row and drops an older one
+- **THEN** the table shows exactly the returned rows in server order with no leftover rows
 
 ### Requirement: Dashboard quota provider toggle
 The dashboard SHALL group the 5-hour ring, weekly ring, weekly pace and Top consumers cards in a Quota section with a Codex | Claude toggle. The toggle SHALL switch all four cards together, persist with the dashboard preferences, and be hidden when no Claude account exists. The cards SHALL lay out in four columns on wide screens, two on medium and one on narrow screens.
