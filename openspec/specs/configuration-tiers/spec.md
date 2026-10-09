@@ -2,7 +2,9 @@
 
 ## Purpose
 Defines where every codex-lb setting lives and how its value is resolved. Each setting belongs to exactly one tier — T0 bootstrap, T1 instance topology, T2 secret, T3 behaviour tunable, T4 incident debug — chosen by whether the value may legitimately differ between two replicas. The dashboard is the primary configuration surface: T3 values resolve as code default, then environment, then a non-NULL dashboard value; the environment is a fallback, never a seed copied into the dashboard row and never an override of a persisted dashboard value. This capability also fixes the single resolver and snapshot-consumer rule, the settings API provenance shape, the tier registry (`SETTING_TIERS` / `MIGRATING`), the settings-field budget, confinement of `os.environ` reads to the settings module, T0/T1-only operator documentation, and the one-release retirement path for environment names, together with the `make lint` checks that enforce them.
+
 ## Requirements
+
 ### Requirement: Every setting declares a tier
 
 `app/core/config/tiers.py` SHALL map every `Settings` field name to exactly one tier in `T0` (bootstrap), `T1` (instance topology), `T2` (secret), `T3` (behaviour tunable or feature flag), `T4` (incident debug). A T3 field that has no `dashboard_settings` column of the same name MUST either be mapped in `DASHBOARD_HOMES` to its existing database home as `table.column` or be listed in `MIGRATING` with its target dashboard home or `backlog`. `scripts/check_settings_tiers.py`, run by `make lint`, SHALL fail when a field has no tier, when a tier value is unknown, when a T3 field has none of a same-name `dashboard_settings` column, a `DASHBOARD_HOMES` mapping or a `MIGRATING` entry, or when a `DASHBOARD_HOMES` target is not of the form `table.column` or names a column that does not exist in the database metadata. A tier, `DASHBOARD_HOMES` or `MIGRATING` entry for a field that no longer exists, a `MIGRATING` or `DASHBOARD_HOMES` entry whose field already has a same-name dashboard column or is no longer T3, or a `MIGRATING` entry for a field that `DASHBOARD_HOMES` already maps, SHALL be reported as a warning and SHALL NOT fail the check; a redundant `DASHBOARD_HOMES` entry is classified before its target is validated, so its target may be malformed or name a dropped column without failing the check.
@@ -86,7 +88,7 @@ Every configurable value SHALL belong to exactly one tier, chosen with the discr
 |------|------|-------|-------------------|--------------------------|----------|
 | T0 | Bootstrap | environment only | yes | no (must be identical) | data directory, database URL, encryption key file, listen port, migration policy, dashboard bootstrap token |
 | T1 | Instance topology | environment only | yes | yes (legitimately) | bridge instance id / ring / advertise URL, OAuth callback host, trusted-proxy CIDRs and headers, leader election on/off, worker and pool sizes |
-| T2 | Secret | encrypted database column (dashboard) with an optional environment seed | no | no | upstream proxy credentials, telemetry tokens |
+| T2 | Secret | encrypted database column (dashboard) with an optional environment seed | no | no | upstream proxy credentials |
 | T3 | Behaviour tunable | `dashboard_settings` (or another database configuration table) | no | no | routing strategy, caps, timeouts, retries, circuit breakers, retention, feature toggles, image and model policy |
 | T4 | Incident debug | environment permitted; dashboard toggle recommended | no | yes | trace channels |
 
@@ -118,7 +120,7 @@ The tier is decided in order: a value that is needed before the database is reac
 
 ### Requirement: Precedence is code default, then environment, then dashboard
 
-For every T3 setting the effective value MUST be resolved as: the dashboard value when it is non-NULL; otherwise the environment value when the setting has an environment fallback and the variable is set; otherwise the code default. An environment value MUST NOT override a non-NULL dashboard value, and no code path MAY invert this order (environment-wins kill switches, environment values that gate whether a dashboard value is honoured, sentinel dashboard values that defer to the environment, or `max()`/`min()` merges of environment and dashboard values are all prohibited). A field whose dashboard home is declared in `DASHBOARD_HOMES` follows the same order: the persisted value in the target column wins, the environment variable applies only while that column holds no decision (the `telemetry` specification mandates exactly this for `CODEX_LB_TELEMETRY_ENABLED` and `dashboard_settings.telemetry_consent`). Where another capability specification currently mandates an inversion (the `rate-limit-reset-credits` polling toggle that gates `auto_redeem_reset_credits_before_expiry`), that specification MUST be amended to this precedence in the same change that removes the inversion from code; until then the inversion is a tracked defect, not an exception to this requirement.
+For every T3 setting the effective value MUST be resolved as: the dashboard value when it is non-NULL; otherwise the environment value when the setting has an environment fallback and the variable is set; otherwise the code default. An environment value MUST NOT override a non-NULL dashboard value, and no code path MAY invert this order (environment-wins kill switches, environment values that gate whether a dashboard value is honoured, sentinel dashboard values that defer to the environment, or `max()`/`min()` merges of environment and dashboard values are all prohibited). A field whose dashboard home is declared in `DASHBOARD_HOMES` follows the same order: the persisted value in the target column wins, the environment variable applies only while that column holds no decision. Where another capability specification currently mandates an inversion (the `rate-limit-reset-credits` polling toggle that gates `auto_redeem_reset_credits_before_expiry`), that specification MUST be amended to this precedence in the same change that removes the inversion from code; until then the inversion is a tracked defect, not an exception to this requirement.
 
 #### Scenario: Dashboard value wins over environment
 
@@ -140,9 +142,9 @@ For every T3 setting the effective value MUST be resolved as: the dashboard valu
 
 #### Scenario: Environment fallback ends when a decision is persisted
 
-- **GIVEN** `CODEX_LB_TELEMETRY_ENABLED=false` and no telemetry decision saved in the dashboard
-- **WHEN** the operator enables telemetry in the dashboard
-- **THEN** the persisted decision is the effective value and the environment variable no longer applies while it stays set
+- **GIVEN** a T3 setting whose environment variable is set and whose dashboard value is NULL
+- **WHEN** the operator saves a value for it in the dashboard
+- **THEN** the persisted value is the effective value and the environment variable no longer applies while it stays set
 
 ### Requirement: Environment values are fallbacks, never seeds
 
@@ -264,9 +266,9 @@ Every `Settings` field declared T3 MUST have a `dashboard_settings` column of th
 
 #### Scenario: Home under a different column name is declared explicitly
 
-- **GIVEN** the T3 field `telemetry_enabled`, whose persisted value is `dashboard_settings.telemetry_consent`
+- **GIVEN** the T3 field `model_context_window_overrides`, whose persisted value is `model_context_window_overrides.context_window`
 - **WHEN** the registry is checked
-- **THEN** `DASHBOARD_HOMES` maps `telemetry_enabled` to `dashboard_settings.telemetry_consent`, the field is not listed in `MIGRATING`, and `make lint` passes; a mapping to a column that does not exist fails the check
+- **THEN** `DASHBOARD_HOMES` maps `model_context_window_overrides` to `model_context_window_overrides.context_window`, the field is not listed in `MIGRATING`, and `make lint` passes; a mapping to a column that does not exist fails the check
 
 ### Requirement: Process environment is read only in the settings module
 
@@ -324,4 +326,3 @@ When a T3 setting gains a database home, its environment field SHALL be removed 
 - **GIVEN** a `Settings` field that no module under `app/` reads
 - **WHEN** the field is discovered
 - **THEN** it is deleted in that change without a deprecation release
-

@@ -6,88 +6,6 @@ Define dashboard surface contracts so settings, account management, and operatio
 
 ## Requirements
 
-### Requirement: Settings page
-
-The Settings page SHALL include sections for: routing settings (sticky threads,
-reset priority, prompt-cache affinity TTL, weekly pace controls, limit warm-up
-controls, and Fast Mode prohibition), password management
-(setup/change/remove), TOTP management (setup/disable), API key auth toggle,
-API key management (table, create, edit, delete, regenerate), and
-sticky-session administration. API key create/edit controls that expose
-reasoning effort choices MUST include upstream-supported extended efforts such
-as `max` and `ultra`.
-
-Advanced sections — routing settings, upstream proxy administration, model
-sources, firewall, quota phase planner, and sticky-session administration —
-SHALL render inside an Advanced settings group that is collapsed by default.
-Expanding the group SHALL take exactly one interaction, after which every
-previously mandated section SHALL be reachable and fully functional. While the
-group is collapsed, its sections SHALL NOT mount, and the sections that
-self-fetch on mount — model sources, firewall, quota phase planner, and
-sticky-session administration — SHALL NOT issue their data requests; those
-requests fire when the group is expanded. The upstream-proxy administration
-and accounts queries remain page-level requests issued when the Settings page
-loads; their data feeds the advanced Routing and Upstream Proxy sections once
-the group is expanded. Core sections (appearance, import, guest access,
-password management, session, TOTP, and API key management) SHALL remain
-visible without expanding the group.
-
-#### Scenario: Advanced settings collapsed by default
-
-- **WHEN** a user opens the Settings page
-- **THEN** appearance, import, and API key management sections are visible
-- **AND** the advanced sections (routing, upstream proxy, model sources, firewall, quota planner, sticky sessions) are not mounted
-- **AND** the self-fetching sections (model sources, firewall, quota planner, sticky sessions) have not issued their data requests
-- **AND** the page-level upstream-proxy admin and accounts queries are still issued on Settings load, feeding the Routing and Upstream Proxy sections once expanded
-
-#### Scenario: One interaction expands every advanced section
-
-- **WHEN** a user activates the Advanced settings group trigger
-- **THEN** the routing, upstream proxy, model sources, firewall, quota planner, and sticky-session sections mount and become fully functional
-
-#### Scenario: API key dialog offers extended reasoning efforts
-
-- **WHEN** an operator opens the API key create or edit dialog
-- **THEN** the enforced reasoning control offers `Max` and `Ultra` in addition to existing reasoning efforts
-
-#### Scenario: Save weekly pace gap smoothing window
-
-- **GIVEN** the Advanced settings group is expanded
-- **WHEN** a user selects a weekly pace gap smoothing window from the routing settings section
-- **THEN** the app calls `PUT /api/settings` with `weeklyPaceSmoothingMinutes`
-- **AND** the saved settings response reflects the selected value
-
-#### Scenario: Save prompt-cache affinity TTL
-
-- **GIVEN** the Advanced settings group is expanded
-- **WHEN** a user updates the prompt-cache affinity TTL from the routing settings section
-- **THEN** the app calls `PUT /api/settings` with the updated TTL and reflects the saved value
-
-#### Scenario: Save staggered idle warm-up setting
-
-- **GIVEN** the Advanced settings group is expanded
-- **WHEN** a user toggles staggered idle limit warm-up from the routing settings section
-- **THEN** the app calls `PUT /api/settings` with the updated value and reflects the saved value
-
-#### Scenario: Save Fast Mode prohibition
-
-- **GIVEN** the Advanced settings group is expanded
-- **WHEN** a user enables or disables the Fast Mode prohibition control in the routing settings section
-- **THEN** the app calls `PUT /api/settings` with `prohibitFastMode`
-- **AND** reflects the saved value
-
-#### Scenario: View sticky-session mappings
-
-- **GIVEN** the Advanced settings group is expanded
-- **WHEN** a user opens the sticky-session section on the Settings page
-- **THEN** the app fetches sticky-session entries and displays each mapping's kind, account, timestamps, and stale/expiry state
-
-#### Scenario: Purge stale prompt-cache mappings
-
-- **GIVEN** the Advanced settings group is expanded
-- **WHEN** a user requests a stale purge from the sticky-session section
-- **THEN** the app calls the sticky-session purge API and refreshes the list afterward
-
 ### Requirement: Accounts page
 
 The Accounts page SHALL display a two-column layout: left panel with searchable account list, import button, and add account button; right panel with selected account details including usage, token info, and actions (pause/resume/delete/re-authenticate). The Accounts page SHALL also let operators view and update whether an account is authorized for upstream cybersecurity work without losing existing account actions such as pause, resume, re-authenticate, export, and delete.
@@ -1924,16 +1842,6 @@ compact remaining-time label.
 - **THEN** the row shows the earliest reset-credit expiry in local time
 - **AND** the row shows a compact remaining-time label for that expiry
 
-### Requirement: Automations page is available from top-level navigation
-
-The SPA MUST expose an `Automations` top-level navigation item that routes to `/automations`.
-
-#### Scenario: Open Automations page from header
-
-- **WHEN** a signed-in user selects `Automations` in the header navigation
-- **THEN** the SPA navigates to `/automations`
-- **AND** the app requests the automation job list from `/api/automations`
-
 ### Requirement: Automations page supports job lifecycle actions
 
 The `Automations` page MUST let operators create, edit, enable/disable, delete, and run jobs, including selecting accounts and model.
@@ -2515,46 +2423,6 @@ Account summary payloads SHALL present the primary (short) quota window as absen
 
 - **WHEN** an account's primary sample has an unexpired `reset_at`
 - **THEN** the summary displays its used/remaining percentages, reset, and duration unchanged
-
-### Requirement: Header navigation progressive disclosure
-
-The application header SHALL render core destinations — Dashboard, Logs, Reports,
-Accounts, APIs, and Settings — as top-level navigation items, in that order. Non-core
-destinations (currently Automations) SHALL NOT render as top-level items: on
-desktop they SHALL be reachable through an Advanced menu that opens in one
-interaction, and in the mobile navigation menu they SHALL be grouped under an
-Advanced label. Direct routes to non-core destinations (e.g. `/automations`)
-SHALL continue to resolve, and the legacy `/firewall` route SHALL continue to
-redirect to `/settings`. A new page-level navigation destination SHALL default
-to the Advanced menu unless a spec explicitly designates it as core.
-
-#### Scenario: Advanced menu reveals Automations
-
-- **WHEN** a user opens the Advanced menu in the header
-- **THEN** an Automations item is revealed
-- **AND** activating it navigates to `/automations`
-
-#### Scenario: Automations is not a top-level item
-
-- **WHEN** a user views the header navigation
-- **THEN** Dashboard, Logs, Reports, Accounts, APIs, and Settings render as top-level links
-- **AND** Automations does not render as a top-level link
-
-#### Scenario: Advanced trigger reflects the active route
-
-- **WHEN** the current route is an advanced destination such as `/automations`
-- **THEN** the Advanced menu trigger renders in the active state
-- **AND** on core routes it renders in the inactive state
-
-#### Scenario: Deep links to advanced destinations keep working
-
-- **WHEN** a user opens `/automations` directly
-- **THEN** the Automations page renders
-
-#### Scenario: Legacy firewall route redirects
-
-- **WHEN** a user opens `/firewall`
-- **THEN** the app redirects to `/settings`
 
 ### Requirement: Logs page hides the Conversations view without conversation access
 
@@ -3676,27 +3544,6 @@ the chart MAY still fill missing days with zeros.
 - **WHEN** the chart renders
 - **THEN** missing days in that range are still filled with zero values
 
-### Requirement: Legacy firewall route expands Advanced and targets the firewall section
-
-The `/firewall` route SHALL redirect to `/settings?advanced=1#firewall`.
-Opening Settings with `advanced=1` or hash `#firewall` SHALL expand the
-Advanced settings group on first render so the firewall section mounts.
-The firewall section SHALL expose `id="firewall"`. Opening `/settings`
-without that query or hash SHALL keep Advanced collapsed by default.
-
-#### Scenario: Legacy /firewall deeplink shows the firewall section
-
-- **WHEN** an operator opens `/firewall`
-- **THEN** the SPA navigates to `/settings?advanced=1#firewall`
-- **AND** the Advanced settings group is expanded
-- **AND** the firewall section heading is visible without a further expand click
-
-#### Scenario: Plain Settings stays collapsed
-
-- **WHEN** an operator opens `/settings` without `advanced=1` and without `#firewall`
-- **THEN** the Advanced settings group remains collapsed
-- **AND** the firewall section is not mounted
-
 ### Requirement: Sticky-threads copy distinguishes soft routing from hard continuation affinity
 
 The routing settings SHALL describe `Sticky threads` as a soft preference and
@@ -4004,80 +3851,6 @@ above it.
 - **THEN** the settings form sections remain rendered
 - **AND** the settings error message is rendered above them
 - **AND** the loading skeleton is not rendered
-
-### Requirement: Dashboard route transitions preserve intentional scroll behavior
-
-The dashboard SPA MUST reset the window to the top when a client-side `PUSH` or `REPLACE` navigation changes the final destination pathname and the destination has no hash. A compatibility route that immediately replaces itself with a hashed destination MUST be treated as part of that hash-target navigation rather than as an independent destination. The same rule MUST apply to desktop and mobile top-level navigation. The SPA MUST NOT perform that reset for browser-history `POP` navigation, same-path query changes, or destinations with a hash.
-
-#### Scenario: Desktop top-level navigation opens the destination at the top
-
-- **GIVEN** a desktop user has scrolled a dashboard page below its heading
-- **WHEN** the user activates a top-level link to a different pathname without a hash
-- **THEN** the destination opens with `window.scrollY` equal to `0`
-- **AND** the destination heading is visible in the viewport
-
-#### Scenario: Mobile top-level navigation opens the destination at the top
-
-- **GIVEN** a mobile user has scrolled a dashboard page below its heading
-- **WHEN** the user opens the header menu and activates a top-level link to a different pathname without a hash
-- **THEN** the destination opens with `window.scrollY` equal to `0`
-- **AND** the destination heading is visible in the viewport
-
-#### Scenario: Browser history keeps its restoration position
-
-- **GIVEN** the browser has a stored scroll position for an earlier pathname
-- **WHEN** the user returns through back or forward history navigation
-- **THEN** the route shell does not reset the window scroll position
-
-#### Scenario: Query-only navigation keeps the current position
-
-- **GIVEN** the user is viewing a dashboard pathname at a nonzero scroll position
-- **WHEN** an in-app filter or view change updates only that pathname's query string
-- **THEN** the route shell does not reset the window scroll position
-
-#### Scenario: Settings and Firewall hashes retain target scrolling
-
-- **WHEN** navigation targets `/settings?advanced=1#firewall` directly or through the `/firewall` or `/firewall/` compatibility redirect
-- **THEN** the route shell does not reset the window to the top
-- **AND** the existing Settings hash behavior brings the Firewall target into view
-
-### Requirement: Affected Settings dialogs restore invoker focus
-
-The Settings `View collected data` telemetry preview and `Set password` setup dialogs SHALL retain the exact button that invoked them. When either dialog is dismissed with Escape or its explicit Close/Cancel action, the dialog SHALL restore focus to that connected invoking button without changing the Settings page scroll position. After restoration, `document.body` MUST NOT be the active element.
-
-Focus restoration MUST preserve the telemetry preview's on-demand fetch and conditional mounting behavior and the password setup flow's authentication request, session refresh, toast, form reset, and conditional mounting behavior. Password change, remove, verify, and TOTP dialogs are outside this requirement.
-
-#### Scenario: Telemetry preview closes with Escape
-
-- **GIVEN** an operator opened `View collected data` from its Settings button
-- **WHEN** the operator presses Escape
-- **THEN** the preview dialog closes
-- **AND** focus returns to that exact `View collected data` button without scrolling Settings
-- **AND** `document.body` is not active
-
-#### Scenario: Telemetry preview closes explicitly
-
-- **GIVEN** an operator opened `View collected data` from its Settings button
-- **WHEN** the operator activates the dialog's Close action
-- **THEN** the preview dialog closes
-- **AND** focus returns to that exact `View collected data` button without scrolling Settings
-- **AND** `document.body` is not active
-
-#### Scenario: Password setup closes with Escape
-
-- **GIVEN** an operator opened password setup from the `Set password` button
-- **WHEN** the operator presses Escape
-- **THEN** the setup dialog closes without submitting password setup
-- **AND** focus returns to that exact `Set password` button without scrolling Settings
-- **AND** `document.body` is not active
-
-#### Scenario: Password setup closes explicitly
-
-- **GIVEN** an operator opened password setup from the `Set password` button
-- **WHEN** the operator activates Cancel
-- **THEN** the setup dialog closes without submitting password setup
-- **AND** focus returns to that exact `Set password` button without scrolling Settings
-- **AND** `document.body` is not active
 
 ### Requirement: API key create dialog remains usable in compact viewports
 
@@ -4433,3 +4206,246 @@ Conversations, absent for Request Logs). The dashboard SHALL NOT render or query
 - **WHEN** a user opens `/dashboard`
 - **THEN** no request-log or conversation request is issued
 - **AND** the dashboard stat boxes follow the overview timeframe
+
+### Requirement: Settings is organised into section routes
+
+The Settings page SHALL include sections for: routing settings (sticky threads,
+reset priority, prompt-cache affinity TTL, weekly pace controls, limit warm-up
+controls, and Fast Mode prohibition), password management
+(setup/change/remove), TOTP management (setup/disable), API key auth toggle,
+API key management (table, create, edit, delete, regenerate), and
+sticky-session administration. API key create/edit controls that expose
+reasoning effort choices MUST include upstream-supported extended efforts such
+as `max` and `ultra`.
+
+Settings SHALL be a layout with a side menu and one child route per section
+under `/settings/<section>`. The menu SHALL list the sections in three labelled
+groups, in this order: Workspace — General (`general`), Accounts (`accounts`),
+Access (`access`), Organisation (`organisation`); Traffic — Routing
+(`routing`), Models (`models`), Upstream (`upstream`); Operations — Automations
+(`automations`), Data (`data`), Notifications (`notifications`). Each section
+SHALL render these cards, in order:
+
+- General: appearance.
+- Accounts: import, reset credits, background jobs.
+- Access: the Access card (guest access, password, session, TOTP and the People
+  tab), API key management, firewall.
+- Organisation: company sign-in, reverse-proxy sign-in, sign-in rules, password
+  sign-in policy, automatic account management.
+- Routing: routing settings, quota phase planner, sticky-session
+  administration, cross-account cache isolation probe.
+- Models: model catalogue.
+- Upstream: upstream proxy administration, resilience, session bridge, upstream
+  timeouts.
+- Automations: the pause control, automation jobs, recent runs.
+- Data: data retention, conversation archive.
+- Notifications: quota reset webhook.
+
+Every card SHALL keep its existing permission rule. The Organisation section
+SHALL be listed and routable only for sessions holding `security:write`; every
+other section SHALL be listed for every session that can open Settings. Opening
+`/settings` SHALL navigate to `/settings/general`, opening a section the session
+cannot use SHALL navigate to `/settings/general`, and an unknown section SHALL
+render the not-found surface. A section's cards SHALL mount, and their data
+requests SHALL fire, only while that section is open. The page heading,
+subtitle and the read-only, trusted-header and disabled-auth notices SHALL
+render above the menu on every section. On narrow viewports the menu SHALL
+render as one horizontally scrollable row without group labels, scrolled so
+the open section's entry is visible.
+
+#### Scenario: Settings opens on General
+
+- **WHEN** a user opens `/settings`
+- **THEN** the SPA navigates to `/settings/general`
+- **AND** the side menu marks General as current and the appearance card is visible
+
+#### Scenario: Sections fetch only when opened
+
+- **WHEN** a user opens `/settings/general`
+- **THEN** the model catalogue, firewall, quota planner and sticky-session data requests have not been issued
+- **AND** opening `/settings/routing` issues the quota planner and sticky-session requests
+
+#### Scenario: Organisation is hidden without security write
+
+- **GIVEN** a session without `security:write`
+- **WHEN** the user views the Settings side menu
+- **THEN** Organisation is not listed
+- **AND** opening `/settings/organisation` navigates to `/settings/general`
+
+#### Scenario: Unknown section
+
+- **WHEN** a user opens `/settings/advanced`
+- **THEN** the not-found surface renders
+
+#### Scenario: Phone menu shows the open section
+
+- **GIVEN** a narrow viewport
+- **WHEN** a user opens `/settings/upstream`
+- **THEN** the Upstream entry is within the visible part of the menu row
+- **AND** opening `/settings/access#firewall` still scrolls the page to the firewall card
+
+#### Scenario: API key dialog offers extended reasoning efforts
+
+- **WHEN** an operator opens the API key create or edit dialog
+- **THEN** the enforced reasoning control offers `Max` and `Ultra` in addition to existing reasoning efforts
+
+#### Scenario: Save weekly pace gap smoothing window
+
+- **GIVEN** the Routing section is open
+- **WHEN** a user selects a weekly pace gap smoothing window from the routing settings card
+- **THEN** the app calls `PUT /api/settings` with `weeklyPaceSmoothingMinutes`
+- **AND** the saved settings response reflects the selected value
+
+#### Scenario: Save prompt-cache affinity TTL
+
+- **GIVEN** the Routing section is open
+- **WHEN** a user updates the prompt-cache affinity TTL from the routing settings card
+- **THEN** the app calls `PUT /api/settings` with the updated TTL and reflects the saved value
+
+#### Scenario: Save staggered idle warm-up setting
+
+- **GIVEN** the Routing section is open
+- **WHEN** a user toggles staggered idle limit warm-up from the routing settings card
+- **THEN** the app calls `PUT /api/settings` with the updated value and reflects the saved value
+
+#### Scenario: Save Fast Mode prohibition
+
+- **GIVEN** the Routing section is open
+- **WHEN** a user enables or disables the Fast Mode prohibition control in the routing settings card
+- **THEN** the app calls `PUT /api/settings` with `prohibitFastMode`
+- **AND** reflects the saved value
+
+#### Scenario: View sticky-session mappings
+
+- **GIVEN** the Routing section is open
+- **WHEN** a user views the sticky-session card
+- **THEN** the app fetches sticky-session entries and displays each mapping's kind, account, timestamps, and stale/expiry state
+
+#### Scenario: Purge stale prompt-cache mappings
+
+- **GIVEN** the Routing section is open
+- **WHEN** a user requests a stale purge from the sticky-session card
+- **THEN** the app calls the sticky-session purge API and refreshes the list afterward
+
+### Requirement: Header renders only core destinations
+
+The application header SHALL render exactly the core destinations — Dashboard,
+Logs, Reports, Accounts, APIs, and Settings — as top-level navigation items, in
+that order, on desktop and in the mobile navigation menu. The header SHALL NOT
+render an Advanced menu or any other secondary destination group. A new
+destination SHALL be placed as a Settings section or inside an existing page
+unless a spec explicitly designates it as core.
+
+#### Scenario: Header shows only core destinations
+
+- **WHEN** a user views the header navigation
+- **THEN** Dashboard, Logs, Reports, Accounts, APIs, and Settings render as top-level links
+- **AND** no Advanced menu trigger renders
+
+#### Scenario: Retired routes are not found
+
+- **WHEN** a user opens `/automations` or `/firewall`
+- **THEN** the not-found surface renders
+
+#### Scenario: Settings stays active on its sections
+
+- **WHEN** the current route is `/settings/routing`
+- **THEN** the Settings navigation item renders in the active state
+
+### Requirement: Route transitions preserve intentional scroll behavior
+
+The dashboard SPA MUST reset the window to the top when a client-side `PUSH` or `REPLACE` navigation changes the final destination pathname and the destination has no hash. The same rule MUST apply to desktop and mobile top-level navigation and to the Settings side menu. The SPA MUST NOT perform that reset for browser-history `POP` navigation, same-path query changes, or destinations with a hash.
+
+#### Scenario: Desktop top-level navigation opens the destination at the top
+
+- **GIVEN** a desktop user has scrolled a dashboard page below its heading
+- **WHEN** the user activates a top-level link to a different pathname without a hash
+- **THEN** the destination opens with `window.scrollY` equal to `0`
+- **AND** the destination heading is visible in the viewport
+
+#### Scenario: Mobile top-level navigation opens the destination at the top
+
+- **GIVEN** a mobile user has scrolled a dashboard page below its heading
+- **WHEN** the user opens the header menu and activates a top-level link to a different pathname without a hash
+- **THEN** the destination opens with `window.scrollY` equal to `0`
+- **AND** the destination heading is visible in the viewport
+
+#### Scenario: Browser history keeps its restoration position
+
+- **GIVEN** the browser has a stored scroll position for an earlier pathname
+- **WHEN** the user returns through back or forward history navigation
+- **THEN** the route shell does not reset the window scroll position
+
+#### Scenario: Query-only navigation keeps the current position
+
+- **GIVEN** the user is viewing a dashboard pathname at a nonzero scroll position
+- **WHEN** an in-app filter or view change updates only that pathname's query string
+- **THEN** the route shell does not reset the window scroll position
+
+#### Scenario: Settings card hashes retain target scrolling
+
+- **WHEN** navigation targets `/settings/organisation#organisation-login-policy`
+- **THEN** the route shell does not reset the window to the top
+- **AND** the section brings the login-policy card into view once its data has loaded
+
+### Requirement: Automations is a Settings section
+
+The SPA MUST render the automations surface at `/settings/automations`: first the
+"Pause all automations" control, then the jobs table with its create, edit,
+enable/disable, delete and run actions, then recent runs. Opening the section
+SHALL request the automation job list from `/api/automations`.
+
+#### Scenario: Open Automations from Settings
+
+- **WHEN** a signed-in user selects Automations in the Settings side menu
+- **THEN** the SPA navigates to `/settings/automations`
+- **AND** the app requests the automation job list from `/api/automations`
+
+### Requirement: Settings deep links address a section and a card
+
+Links into Settings SHALL use the section route plus an optional card hash. The
+Access section SHALL select the People tab for `#people` and the person's own
+sign-in controls for `#my-sign-in` and `#totp`, and SHALL scroll to the TOTP
+card for `#totp`. The Organisation section SHALL scroll to the company sign-in
+card for `#oidc`, the login-policy card for `#organisation-login-policy` and the
+automatic account management card for `#organisation-automatic-accounts`, each
+after the section's provider, rule and role queries have loaded, and SHALL open
+the refused sign-ins sheet for `#organisation-refused`. The header account menu
+SHALL link "My two-factor" to `/settings/access#my-sign-in` and "Invite teammate"
+to `/settings/access#people`; the `step_up_unavailable` toast action SHALL open
+`/settings/access#my-sign-in`; the People tab's sign-in requirements link SHALL
+switch to the My sign-in tab. A completed company sign-in test or
+re-authentication SHALL return to `/settings/organisation#oidc`.
+
+#### Scenario: Account menu opens the People tab
+
+- **GIVEN** a session holding `users:manage` on a team install
+- **WHEN** the user selects "Invite teammate" in the account menu
+- **THEN** the SPA opens `/settings/access#people` with the People tab selected
+
+#### Scenario: OIDC return lands on the company sign-in card
+
+- **WHEN** the browser returns to `/settings/organisation#oidc`
+- **THEN** the Organisation section renders and scrolls to the company sign-in card after its queries load
+
+### Requirement: Password setup dialog restores invoker focus
+
+The Settings `Set password` setup dialog SHALL retain the exact button that invoked it. When the dialog is dismissed with Escape or its explicit Cancel action, the dialog SHALL restore focus to that connected invoking button without changing the Settings page scroll position. After restoration, `document.body` MUST NOT be the active element.
+
+Focus restoration MUST preserve the password setup flow's authentication request, session refresh, toast, form reset, and conditional mounting behavior. Password change, remove, verify, and TOTP dialogs are outside this requirement.
+
+#### Scenario: Password setup closes with Escape
+
+- **GIVEN** an operator opened password setup from the `Set password` button
+- **WHEN** the operator presses Escape
+- **THEN** the setup dialog closes without submitting password setup
+- **AND** focus returns to that exact `Set password` button without scrolling Settings
+- **AND** `document.body` is not active
+
+#### Scenario: Password setup closes explicitly
+
+- **GIVEN** an operator opened password setup from the `Set password` button
+- **WHEN** the operator activates Cancel
+- **THEN** the setup dialog closes without submitting password setup
+- **AND** focus returns to that exact `Set password` button without scrolling Settings
+- **AND** `document.body` is not active

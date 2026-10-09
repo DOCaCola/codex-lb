@@ -2,7 +2,9 @@
 
 ## Purpose
 Governs operator-defined automation jobs that send scheduled ping traffic from selected accounts and models for readiness checks and warm-up. It defines the dashboard API for managing jobs, daily schedules with timezone and weekday semantics, safe execution in multi-replica deployments, account failover within a run, and queryable run history. Automation traffic must never alter durable user continuity such as sticky sessions.
+
 ## Requirements
+
 ### Requirement: Automation jobs are manageable via dashboard APIs
 
 The system MUST provide dashboard APIs to create, list, update, enable/disable, delete, and manually trigger automation jobs. A job MUST include name, enabled state, schedule type, schedule time, timezone, schedule days, model, and account targeting.
@@ -287,7 +289,7 @@ Automation ping execution MUST avoid creating or mutating durable sticky-thread/
 
 ### Requirement: Automation scheduling can be paused from the dashboard
 
-The dashboard setting `automations_scheduler_enabled` (a nullable `dashboard_settings` column; NULL inherits the deprecated `CODEX_LB_AUTOMATIONS_SCHEDULER_ENABLED` environment variable, then the default `true`) SHALL decide whether automations run. It SHALL be exposed with provenance on `GET`/`PUT /api/settings` and offered both in Settings → Advanced → Background jobs and as a "pause all automations" control on the Automations page. The scheduler loop SHALL always start; each tick SHALL read the effective value from the dashboard-settings snapshot at the start of the tick and, while it is `false`, SHALL dispatch nothing — neither scheduled cycles nor pending manual runs — so a change applies on the next tick on every replica without a restart. While paused, `POST /api/automations/{id}/run-now` SHALL be refused with a `409` conflict error whose code is `automations_paused` and SHALL create no run. The scheduler MUST NOT read the database inside its lock to obtain the value: the snapshot is taken once per tick before the leader-gated body and passed into it. A failure of that read MUST NOT terminate the loop; the tick is logged and the next one retries.
+The dashboard setting `automations_scheduler_enabled` (a nullable `dashboard_settings` column; NULL inherits the deprecated `CODEX_LB_AUTOMATIONS_SCHEDULER_ENABLED` environment variable, then the default `true`) SHALL decide whether automations run. It SHALL be exposed with provenance on `GET`/`PUT /api/settings` and offered as the "Pause all automations" control in Settings → Automations, its only dashboard control. The scheduler loop SHALL always start; each tick SHALL read the effective value from the dashboard-settings snapshot at the start of the tick and, while it is `false`, SHALL dispatch nothing — neither scheduled cycles nor pending manual runs — so a change applies on the next tick on every replica without a restart. While paused, `POST /api/automations/{id}/run-now` SHALL be refused with a `409` conflict error whose code is `automations_paused` and SHALL create no run. The scheduler MUST NOT read the database inside its lock to obtain the value: the snapshot is taken once per tick before the leader-gated body and passed into it. A failure of that read MUST NOT terminate the loop; the tick is logged and the next one retries.
 
 #### Scenario: Dashboard pause skips the next tick
 
@@ -314,4 +316,3 @@ The dashboard setting `automations_scheduler_enabled` (a nullable `dashboard_set
 - **GIVEN** `CODEX_LB_AUTOMATIONS_SCHEDULER_ENABLED=false` and no dashboard value
 - **WHEN** an operator sets `automations_scheduler_enabled` to `true` in the dashboard
 - **THEN** ticks dispatch due work and `provenance.automations_scheduler_enabled.source` is `dashboard`
-
