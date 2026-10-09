@@ -29115,14 +29115,10 @@ def test_native_response_create_serializers_sanitize_source_reasoning_replay(
     assert replay_text is not None
     for text_data in (initial_text, plain_text, replay_text):
         upstream_input = json.loads(text_data)["input"]
-        assert upstream_input[0] == {
-            "type": "reasoning",
-            "content": [],
-            "summary": [{"type": "summary_text", "text": "provider reasoning"}],
-        }
+        assert [item["type"] for item in upstream_input] == ["message", "function_call"]
+        assert "id" not in upstream_input[0]
         assert "id" not in upstream_input[1]
-        assert "id" not in upstream_input[2]
-        assert upstream_input[2]["call_id"] == "call_source"
+        assert upstream_input[1]["call_id"] == "call_source"
     original_reasoning = cast(list[dict[str, Any]], payload.to_payload()["input"])[0]
     assert original_reasoning["id"] == "rs_tmp_source_reasoning"
     assert original_reasoning["status"] == "completed"

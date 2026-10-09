@@ -55,7 +55,7 @@ def history(kind="thinking", *, client_scope="anonymous"):
 
 def assert_native(items, kind="thinking"):
     head = {
-        "thinking": [{"type": "reasoning", "summary": [{"type": "summary_text", "text": "Preserved Opus context"}]}],
+        "thinking": [],
         "redacted_thinking": [],
         "web_search": [
             {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": SEARCH_TEXT}]}
@@ -66,6 +66,7 @@ def assert_native(items, kind="thinking"):
     assert items[0]["call_id"] == items[1]["call_id"] == "call_1"
     assert items[1]["output"] == "retained result"
     assert "claude-v1." not in str(items)
+    assert "Preserved Opus context" not in str(items)
     assert "resp_msg" not in str(items)
     assert "upstream-owned-opaque-data" not in str(items)
 

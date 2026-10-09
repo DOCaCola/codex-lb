@@ -1222,7 +1222,7 @@ def test_backend_responses_websocket_retires_socket_after_model_restriction(app_
     assert len(first_upstream.sent_text) == len(replacement_upstream.sent_text) == 1
 
 
-def test_backend_responses_websocket_sanitizes_source_reasoning_for_native_upstream(
+def test_backend_responses_websocket_omits_source_reasoning_for_native_upstream(
     app_instance,
     monkeypatch,
 ):
@@ -1287,13 +1287,9 @@ def test_backend_responses_websocket_sanitizes_source_reasoning_for_native_upstr
     assert created["type"] == "response.created"
     assert completed["type"] == "response.completed"
     sent_input = json.loads(upstream.sent_text[0])["input"]
-    assert sent_input[0] == {
-        "type": "reasoning",
-        "content": [],
-        "summary": [{"type": "summary_text", "text": "provider reasoning"}],
-    }
-    assert "id" not in sent_input[1]
-    assert sent_input[2]["content"][0]["text"] == "continue natively"
+    assert [item["type"] for item in sent_input] == ["message", "message"]
+    assert "id" not in sent_input[0]
+    assert sent_input[1]["content"][0]["text"] == "continue natively"
 
 
 @pytest.mark.parametrize(

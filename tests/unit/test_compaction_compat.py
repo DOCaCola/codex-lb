@@ -74,7 +74,7 @@ def test_native_opaque_compaction_is_lowered_only_for_model_sources() -> None:
         lower_opaque_compaction_items_for_model_source(payload)
 
 
-def test_native_reasoning_sanitizer_removes_foreign_output_fields() -> None:
+def test_native_reasoning_sanitizer_omits_foreign_plaintext_reasoning() -> None:
     payload: dict[str, JsonValue] = {
         "input": [
             {
@@ -88,7 +88,6 @@ def test_native_reasoning_sanitizer_removes_foreign_output_fields() -> None:
     sanitized = sanitize_native_reasoning_input(payload)
 
     assert sanitized["input"] == [
-        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "provider thought"}], "content": []},
         {"type": "message", "role": "user", "content": "continue"},
     ]
     assert "provider thought" in str(payload["input"])

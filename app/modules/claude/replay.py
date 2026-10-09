@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
-from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX, append_reasoning_summary
+from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX
 from app.core.types import JsonValue as NativeJsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
 from app.modules.claude.search import assistant_history_message, claude_search_text, openai_search_text, search_replay
@@ -161,7 +161,7 @@ def project_native_replay(
             searches[item_id] = (index, claude_search_text(blocks))
         envelopes[index] = envelope
     projected: list[NativeJsonValue] = []
-    converted = omitted = searched = 0
+    omitted = searched = 0
     for index, item in enumerate(items):
         envelope = envelopes.get(index)
         if envelope is None:
@@ -172,36 +172,19 @@ def project_native_replay(
             else:
                 projected.append(item)
             continue
-        kind = envelope.block["type"]
-        # Redacted thinking has no readable content; search state travels as its call's projection.
-        if kind == "redacted_thinking":
+        # OpenAI accepts reasoning only as its own encrypted state, so Claude thinking has no native
+        # representation; search state travels as its call's projection.
+        if envelope.block["type"] != "web_search":
             omitted += 1
-            continue
-        if kind == "web_search":
-            continue
-        assert isinstance(item, dict)
-        param = f"input[{index}]"
-        text = envelope.block.get("thinking")
-        if not isinstance(text, str):
-            raise ClientPayloadError("Invalid Claude thinking text", param=param, code="invalid_provider_history")
-        result = dict(item)
-        result.pop("id", None)
-        result.pop("encrypted_content")
-        result.setdefault("summary", [])
-        if text:
-            append_reasoning_summary(result, text)
-        projected.append(result)
-        converted += 1
     if searches:
         raise ClientPayloadError(
             "Claude search state has no matching search item",
             param=f"input[{min(position for position, _ in searches.values())}]",
             code="invalid_provider_history",
         )
-    if converted or omitted or searched:
+    if omitted or searched:
         logger.info(
-            "claude_native_history_projection converted=%d redacted_omitted=%d search_projected=%d",
-            converted,
+            "claude_native_history_projection thinking_omitted=%d search_projected=%d",
             omitted,
             searched,
         )

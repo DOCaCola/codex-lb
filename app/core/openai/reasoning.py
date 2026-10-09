@@ -1,10 +1,13 @@
 """Portable reasoning and item identities at the native Responses boundary."""
 
+import logging
 from collections.abc import Mapping
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
+
+logger = logging.getLogger(__name__)
 
 CLAUDE_REASONING_PREFIX = "claude-v1."
 
@@ -34,50 +37,36 @@ def ensure_native_provider_history(payload: Mapping[str, JsonValue]) -> None:
             )
 
 
-def append_reasoning_summary(item: dict[str, JsonValue], text: str) -> None:
-    """Append recovered text once without replacing an existing summary."""
-    summary = item.get("summary")
-    if summary is not None and not is_json_list(summary):
-        raise ClientPayloadError("Reasoning summary must be an array", param="input", code="invalid_request_error")
-    parts = list(summary) if is_json_list(summary) else []
-    if not any(is_json_mapping(part) and part.get("text") == text for part in parts):
-        parts.append({"type": "summary_text", "text": text})
-    item["summary"] = parts
-
-
 def sanitize_native_reasoning_input(payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    """Preserve plaintext thinking in the native summary channel, not content."""
+    """Forward reasoning only as OpenAI's own encrypted state.
+
+    Native requests are stateless (`store=false`), so a reasoning item without `encrypted_content`
+    is not a lookup reference. OpenAI accepts such summary-only reasoning as fresh input but refuses
+    to chain a later turn onto a response that stored it as unverifiable hidden reasoning.
+    """
     sanitized = dict(payload)
     items = sanitized.get("input")
     if not is_json_list(items):
         return sanitized
     normalized: list[JsonValue] = []
-    for index, item in enumerate(items):
+    omitted = 0
+    for item in items:
         if not is_json_mapping(item) or item.get("type") != "reasoning":
             normalized.append(item)
+            continue
+        encrypted = item.get("encrypted_content")
+        if not isinstance(encrypted, str) or not encrypted:
+            omitted += 1
             continue
         result = dict(item)
         content = result.get("content")
         if is_json_list(content) and content:
-            for part in content:
-                if (
-                    not is_json_mapping(part)
-                    or part.get("type") != "reasoning_text"
-                    or not isinstance(part.get("text"), str)
-                ):
-                    raise ClientPayloadError(
-                        "Reasoning content cannot be represented as native summary text",
-                        param=f"input[{index}].content",
-                        code="nonportable_provider_history",
-                    )
-                text = part["text"]
-                assert isinstance(text, str)
-                if text:
-                    append_reasoning_summary(result, text)
             result["content"] = []
         result.setdefault("summary", [])
         result.pop("status", None)
         normalized.append(result)
+    if omitted:
+        logger.info("native_reasoning_projection unverifiable_omitted=%d", omitted)
     sanitized["input"] = normalized
     return sanitized
 

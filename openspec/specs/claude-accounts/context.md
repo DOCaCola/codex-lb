@@ -608,14 +608,21 @@ tool-continuation mocks exercise this behavior; live acceptance is unverified.
 The native Codex boundary cannot resolve Claude's `resp_msg_…` reasoning IDs or
 decode our authenticated `claude-v1.` envelopes. Renaming an ID would conceal
 only the first incompatibility. Native dispatch now authenticates the envelope
-against the same client scope used by source retention and extracts
-readable thinking into `summary_text`. It removes the Claude envelope and its
-foreign item identity from the outbound projection, never from retained history.
-Existing summaries and additional plaintext reasoning survive; ordinary messages
-and function/custom-tool call/result pairs retain their contents and call IDs.
-For example, a Claude thinking item with an empty summary becomes native
-`{type: reasoning, summary: [{type: summary_text, text: ...}]}` rather than an
-empty placeholder. This is portable context, not native signed OpenAI thinking.
+against the same client scope used by source retention and then omits Claude
+thinking from the outbound projection, never from retained history. Ordinary
+messages and function/custom-tool call/result pairs retain their contents and
+call IDs.
+
+Thinking used to become a summary-only `reasoning` item. OpenAI accepted that
+as fresh input, but stored it as "unverifiable hidden reasoning" and rejected
+the next turn chained onto it with `previous_response_id`
+(`unsupported_persisted_item_context`). CLIProxyAPI, sub2api and OmniRoute all
+forward reasoning to OpenAI only as genuine provider ciphertext, so the native
+boundary now drops every reasoning item without `encrypted_content`, including
+plaintext reasoning from OpenRouter models. The native model loses the other
+provider's private reasoning, not anything the user saw; switching back replays
+the retained originals. Logs count `thinking_omitted` and
+`unverifiable_omitted`, never content.
 
 ## Cross-route history projection
 
@@ -636,7 +643,7 @@ is translated rather than rejected:
 
 The rendering is deterministic, so the moved prefix stays cacheable, and retained
 history keeps the originals, so returning to the original route replays natively.
-Logs count `redacted_omitted`/`search_projected`, never content.
+Logs count omitted thinking and `search_projected`, never content.
 
 References (inspected 2026-10-06): CLIProxyAPI `a2976eb` drops redacted thinking
 toward foreign upstreams and folds a Claude search pair into a structured

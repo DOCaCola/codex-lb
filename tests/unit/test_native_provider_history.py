@@ -33,7 +33,7 @@ def convert(items, opaque, **overrides):
     )
 
 
-def test_empty_summary_envelope_is_recovered_without_mutating_tools_or_history():
+def test_claude_thinking_is_omitted_without_mutating_tools_or_history(caplog):
     opaque = codec()
     items = [
         reasoning(opaque),
@@ -44,14 +44,12 @@ def test_empty_summary_envelope_is_recovered_without_mutating_tools_or_history()
         {"type": "message", "role": "assistant", "content": "visible answer"},
     ]
     original = deepcopy(items)
-    projected = convert(items, opaque)
-    assert projected[0] == {
-        "type": "reasoning",
-        "summary": [{"type": "summary_text", "text": "Recovered Claude context"}],
-    }
-    assert projected[1:] == items[1:]
+    with caplog.at_level("INFO"):
+        projected = convert(items, opaque)
+    assert projected == items[1:]
     assert items == original
-    assert "signed" not in str(projected)
+    assert "Recovered Claude context" not in caplog.text
+    assert "thinking_omitted=1 search_projected=0" in caplog.text
     ensure_native_provider_history({"input": projected})
 
 
@@ -82,15 +80,17 @@ def search_state(opaque, item_id="resp_search_0"):
 
 def test_redacted_thinking_is_omitted_without_discarding_retained_history(caplog):
     opaque = codec()
-    items = [reasoning(opaque), reasoning(opaque, {"type": "redacted_thinking", "data": "opaque"})]
+    items = [
+        reasoning(opaque),
+        reasoning(opaque, {"type": "redacted_thinking", "data": "opaque"}),
+        {"type": "message", "role": "assistant", "content": "visible answer"},
+    ]
     original = deepcopy(items)
     with caplog.at_level("INFO"):
         projected = convert(items, opaque)
-    assert projected == [
-        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Recovered Claude context"}]}
-    ]
+    assert projected == [items[2]]
     assert items == original
-    assert "converted=1 redacted_omitted=1 search_projected=0" in caplog.text
+    assert "thinking_omitted=2 search_projected=0" in caplog.text
 
 
 def test_hosted_search_becomes_readable_text_in_place_of_its_call():
@@ -155,7 +155,7 @@ def test_openai_search_text(action, text):
     assert openai_search_text(item) == text
 
 
-def test_native_sanitation_preserves_all_distinct_plaintext_and_native_encryption():
+def test_native_sanitation_keeps_native_encryption_and_discards_plaintext():
     items: list[JsonValue] = [
         {
             "id": "rs_native",
@@ -178,10 +178,7 @@ def test_native_sanitation_preserves_all_distinct_plaintext_and_native_encryptio
         {
             "id": "rs_native",
             "type": "reasoning",
-            "summary": [
-                {"type": "summary_text", "text": "Existing summary"},
-                {"type": "summary_text", "text": "Additional thought"},
-            ],
+            "summary": [{"type": "summary_text", "text": "Existing summary"}],
             "content": [],
             "encrypted_content": "native-opaque",
         },
@@ -220,12 +217,25 @@ def test_native_frame_serializer_rejects_unprojected_envelope():
         proxy_service._response_create_text(payload, include_type_field=True, client_metadata=None)
 
 
-def test_nontext_reasoning_is_rejected_instead_of_discarded():
-    payload = {"input": [{"type": "reasoning", "content": [{"type": "unknown", "data": "retained"}]}]}
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "summary only"}]},
+        {"type": "reasoning", "summary": [], "content": [{"type": "reasoning_text", "text": "provider thought"}]},
+        {"type": "reasoning", "content": [{"type": "unknown", "data": "retained"}]},
+        {"type": "reasoning", "summary": [], "encrypted_content": ""},
+    ],
+)
+def test_reasoning_without_native_encryption_is_omitted(item, caplog):
+    payload: dict[str, JsonValue] = {
+        "store": False,
+        "input": [item, {"type": "message", "role": "user", "content": "continue"}],
+    }
     original = deepcopy(payload)
-    with pytest.raises(ClientPayloadError) as raised:
-        sanitize_native_responses_input(payload)
-    assert raised.value.param == "input[0].content"
+    with caplog.at_level("INFO"):
+        result = sanitize_native_responses_input(payload)
+    assert result["input"] == [{"type": "message", "role": "user", "content": "continue"}]
+    assert "native_reasoning_projection unverifiable_omitted=1" in caplog.text
     assert payload == original
 
 
@@ -238,7 +248,7 @@ def test_native_serializers_preserve_recovered_history(transport):
         {
             "model": "gpt-6.1-sol",
             "instructions": "Continue",
-            "input": convert([reasoning(opaque)], opaque),
+            "input": convert([reasoning(opaque), {"type": "message", "role": "user", "content": "next"}], opaque),
             "stream": True,
         }
     )

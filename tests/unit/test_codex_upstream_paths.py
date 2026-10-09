@@ -565,7 +565,7 @@ async def test_compact_responses_uses_codex_client_when_route_is_resolved(route:
 
 
 @pytest.mark.asyncio
-async def test_compact_responses_sanitizes_foreign_reasoning_for_native_upstream(
+async def test_compact_responses_omits_foreign_reasoning_for_native_upstream(
     route: ResolvedUpstreamRoute,
 ) -> None:
     client = _CodexClient(_CompactStreamResponse())
@@ -595,12 +595,7 @@ async def test_compact_responses_sanitizes_foreign_reasoning_for_native_upstream
         codex_client=cast(Any, client),
     )
 
-    sent_reasoning = client.calls[0]["json"]["input"][0]
-    assert sent_reasoning == {
-        "type": "reasoning",
-        "content": [],
-        "summary": [{"type": "summary_text", "text": "foreign plaintext"}],
-    }
+    assert client.calls[0]["json"]["input"] == [{"type": "compaction_trigger"}]
 
 
 @pytest.mark.asyncio
@@ -991,7 +986,7 @@ async def test_stream_responses_uses_codex_client_when_route_is_resolved(route: 
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_sanitizes_foreign_reasoning_for_native_upstream(
+async def test_stream_responses_omits_foreign_reasoning_for_native_upstream(
     route: ResolvedUpstreamRoute,
 ) -> None:
     client = _CodexClient(_StreamResponse())
@@ -1026,12 +1021,7 @@ async def test_stream_responses_sanitizes_foreign_reasoning_for_native_upstream(
         )
     ]
 
-    sent_reasoning = client.calls[0]["json"]["input"][0]
-    assert sent_reasoning == {
-        "type": "reasoning",
-        "content": [],
-        "summary": [{"type": "summary_text", "text": "foreign plaintext"}],
-    }
+    assert client.calls[0]["json"]["input"] == [{"type": "message", "role": "user", "content": "continue"}]
     assert "foreign plaintext" in str(payload.to_payload()["input"])
 
 
