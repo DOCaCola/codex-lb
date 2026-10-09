@@ -31,6 +31,9 @@ import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeListItem } from "@/features/claude/account-display";
 import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import { claudeStatus } from "@/features/claude/display-values";
+import type { ModelSource } from "@/features/model-sources/schemas";
+import { ModelSourceListItem } from "@/features/model-sources/account-display";
+import { modelSourceStatus } from "@/features/model-sources/display-values";
 
 const STATUS_FILTER_OPTIONS = [
   "all",
@@ -48,6 +51,9 @@ export type AccountListProps = {
   onOpenRouter?: () => void;
   claudeAccounts?: ClaudeAccount[];
   onClaude?: () => void;
+  /** User-defined OpenAI-compatible sources. */
+  modelSources?: ModelSource[];
+  onOpenAICompatible?: () => void;
   accountColors?: AccountColorHexes;
   selectedAccountId: string | null;
   onSelect: (accountId: string) => void;
@@ -65,6 +71,8 @@ export function AccountList({
   onOpenRouter,
   claudeAccounts = [],
   onClaude,
+  modelSources = [],
+  onOpenAICompatible,
   accountColors = NO_ACCOUNT_COLORS,
   selectedAccountId,
   onSelect,
@@ -148,6 +156,23 @@ export function AccountList({
         name: account.name,
         account,
       })),
+      ...modelSources
+        .filter(
+          (source) =>
+            (statusFilter === "all" ||
+              modelSourceStatus(source) === statusFilter) &&
+            (!needle ||
+              `${source.name} ${source.id} ${source.baseUrl} openai-compatible openai compatible`
+                .toLowerCase()
+                .includes(needle)),
+        )
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((source) => ({
+          kind: "openai_compatible" as const,
+          id: source.id,
+          name: source.name,
+          account: source,
+        })),
     ];
     if (activeSortMode === "name_asc" || activeSortMode === "name_desc") {
       result.sort(
@@ -161,13 +186,17 @@ export function AccountList({
     filtered,
     openRouterAccounts,
     claudeAccounts,
+    modelSources,
     search,
     statusFilter,
     activeSortMode,
     t,
   ]);
   const totalCount =
-    accounts.length + openRouterAccounts.length + claudeAccounts.length;
+    accounts.length +
+    openRouterAccounts.length +
+    claudeAccounts.length +
+    modelSources.length;
 
   return (
     <div className="flex max-h-[calc(100dvh-15rem)] min-h-0 min-w-0 flex-1 flex-col space-y-3">
@@ -300,6 +329,14 @@ export function AccountList({
                 selected={entry.id === selectedAccountId}
                 onSelect={onSelect}
               />
+            ) : entry.kind === "openai_compatible" ? (
+              <ModelSourceListItem
+                key={entry.id}
+                source={entry.account}
+                color={accountColors.modelSources.get(entry.id)}
+                selected={entry.id === selectedAccountId}
+                onSelect={onSelect}
+              />
             ) : (
               <AccountListItem
                 key={entry.id}
@@ -328,6 +365,7 @@ export function AccountList({
         onAddAccount={onOpenOauth}
         onOpenRouter={onOpenRouter}
         onClaude={onClaude}
+        onOpenAICompatible={onOpenAICompatible}
       />
     </div>
   );

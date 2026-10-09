@@ -707,25 +707,28 @@ test("deactivated account actions stay inside list cells and responsive cards", 
   }
 });
 
-test("the model source dialogs stay inside supported viewports", async ({ page }) => {
+test("the OpenAI-compatible provider dialogs stay inside supported viewports", async ({ page }) => {
   const viewportSizes = [
     { width: 320, height: 568 },
     { width: 390, height: 844 },
     { width: 1440, height: 900 },
   ] as const;
 
-  await page.goto("/settings/models", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "Model sources", exact: true })).toBeVisible();
+  await page.goto("/accounts", { waitUntil: "domcontentloaded" });
 
-  const openDialogButton = page.getByRole("button", { name: "Add source" });
-  const dialog = page.getByRole("dialog", { name: "Create model source" });
-  const title = dialog.getByRole("heading", { name: "Create model source" });
+  const addAccountButton = page.getByRole("button", { name: "Add account", exact: true });
+  const apiEndpointOption = page
+    .getByRole("dialog", { name: "Add account" })
+    .getByRole("button", { name: /^API endpoint/ });
+  const dialog = page.getByRole("dialog", { name: "Add OpenAI-compatible provider" });
+  const title = dialog.getByRole("heading", { name: "Add OpenAI-compatible provider" });
   const closeButton = dialog.getByRole("button", { name: "Close" });
   const createButton = dialog.getByRole("button", { name: "Create" });
 
   for (const size of viewportSizes) {
     await page.setViewportSize(size);
-    await openDialogButton.click();
+    await addAccountButton.click();
+    await apiEndpointOption.click();
 
     // Enabling Reasoning reveals the effort fields, which is what pushed the
     // form past the viewport: with the capability off the default form still
@@ -786,7 +789,7 @@ test("the model source dialogs stay inside supported viewports", async ({ page }
   }
 });
 
-test("the model source edit dialog keeps Save visible in compact viewports", async ({ page, request }) => {
+test("the OpenAI-compatible provider edit dialog keeps Save visible in compact viewports", async ({ page, request }) => {
   const created = await request.post("/api/model-sources/", {
     data: {
       name: "Viewport regression source",
@@ -800,13 +803,14 @@ test("the model source edit dialog keeps Save visible in compact viewports", asy
   expect(created.ok()).toBe(true);
   const source = await created.json() as { id: string };
   try {
-    await page.goto("/settings/models", { waitUntil: "domcontentloaded" });
+    await page.goto("/accounts", { waitUntil: "domcontentloaded" });
+    await page.getByText("Viewport regression source", { exact: true }).first().click();
     for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 1440, height: 900 }]) {
       await page.setViewportSize(size);
-      await page.getByRole("button", { name: "Edit Viewport regression source model source", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Edit model source" });
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Edit OpenAI-compatible provider" });
       const save = dialog.getByRole("button", { name: "Save", exact: true });
-      const title = dialog.getByRole("heading", { name: "Edit model source" });
+      const title = dialog.getByRole("heading", { name: "Edit OpenAI-compatible provider" });
       const close = dialog.getByRole("button", { name: "Close" });
       await expect(dialog).toHaveCSS("overflow-y", "clip");
       const scroll = dialog.getByTestId("model-source-edit-scroll-region");

@@ -18,6 +18,7 @@ from app.modules.model_sources.schemas import (
     ModelSourceUpdateRequest,
 )
 from app.modules.model_sources.service import ModelSourceNotFoundError, ModelSourceValidationError
+from app.modules.model_sources.trends import ProviderTrends, read_trends
 
 router = APIRouter(
     prefix="/api/model-sources",
@@ -31,6 +32,16 @@ async def list_model_sources(
     context: ModelSourcesContext = Depends(get_model_sources_context),
 ) -> ModelSourcesResponse:
     return ModelSourcesResponse(sources=await context.service.list_sources())
+
+
+@router.get("/{source_id}/trends", response_model=ProviderTrends)
+async def model_source_trends(
+    source_id: str,
+    context: ModelSourcesContext = Depends(get_model_sources_context),
+) -> ProviderTrends:
+    if await context.repository.get_by_id(source_id) is None:
+        raise DashboardNotFoundError(f"Model source not found: {source_id}")
+    return await read_trends(context.session, source_id, quota=False)
 
 
 @router.post("/", response_model=ModelSourceResponse)
@@ -89,6 +100,8 @@ async def delete_model_source(
         await context.service.delete_source(source_id)
     except ModelSourceNotFoundError as exc:
         raise DashboardNotFoundError(str(exc)) from exc
+    except ModelSourceValidationError as exc:
+        raise DashboardBadRequestError(str(exc), code="invalid_model_source_payload") from exc
     AuditService.log_async(
         "model_source_deleted",
         actor_ip=request.client.host if request.client else None,

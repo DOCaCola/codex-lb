@@ -49,7 +49,7 @@ SHALL render these cards, in order:
   sign-in policy, automatic account management.
 - Routing: routing settings, quota phase planner, sticky-session
   administration, cross-account cache isolation probe.
-- Models: model sources, model catalogue.
+- Models: model catalogue.
 - Upstream: upstream proxy administration, resilience, session bridge, upstream
   timeouts.
 - Automations: the pause control, automation jobs, recent runs.
@@ -77,7 +77,7 @@ the open section's entry is visible.
 #### Scenario: Sections fetch only when opened
 
 - **WHEN** a user opens `/settings/general`
-- **THEN** the model sources, firewall, quota planner and sticky-session data requests have not been issued
+- **THEN** the model catalogue, firewall, quota planner and sticky-session data requests have not been issued
 - **AND** opening `/settings/routing` issues the quota planner and sticky-session requests
 
 #### Scenario: Organisation is hidden without security write

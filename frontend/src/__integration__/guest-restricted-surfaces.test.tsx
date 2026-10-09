@@ -143,7 +143,6 @@ describe("guest restricted surfaces integration", () => {
     await visitEverySettingsSection(user);
     // Allowed self-fetching cards still load.
     await waitFor(() => expect(paths).toContain("/api/firewall/ips"));
-    await waitFor(() => expect(paths).toContain("/api/model-sources/"));
 
     expect(screen.queryByRole("button", { name: "Create key" })).not.toBeInTheDocument();
     expect(screen.queryByText("API Keys")).not.toBeInTheDocument();
@@ -162,6 +161,8 @@ describe("guest restricted surfaces integration", () => {
     expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "p***@example.com" })).toBeInTheDocument();
     await waitFor(() => expect(paths).toContain("/api/accounts/acc_primary/usage-reset-credits"));
+    // OpenAI-compatible sources are listed with the other provider accounts.
+    await waitFor(() => expect(paths).toContain("/api/model-sources/"));
 
     expect(screen.getAllByText(/Personal \/ unknown workspace/).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Need help?" })).not.toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { KeyRound, Plus, Upload, type LucideIcon } from "lucide-react";
+import { KeyRound, Plus, Server, Upload, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -12,6 +12,7 @@ export type AddAccountDialogProps = {
   onAddAccount: () => void;
   onOpenRouter?: () => void;
   onClaude?: () => void;
+  onOpenAICompatible?: () => void;
 };
 
 function AccountOption({ icon: Icon, title, description, onClick }: {
@@ -35,7 +36,7 @@ function AccountOption({ icon: Icon, title, description, onClick }: {
 }
 
 export function AddAccountDialog({
-  open, onOpenChange, onImport, onAddAccount, onOpenRouter, onClaude,
+  open, onOpenChange, onImport, onAddAccount, onOpenRouter, onClaude, onOpenAICompatible,
 }: AddAccountDialogProps) {
   const { t } = useTranslation();
   // Close first so Radix releases its pointer lock before the next modal opens.
@@ -75,6 +76,14 @@ export function AddAccountDialog({
               <AccountOption icon={KeyRound} title={t("accounts.addDialog.openRouterTitle", "API key")}
                 description={t("accounts.addDialog.openRouterDescription", "Connect an API key and choose models to make available to clients.")}
                 onClick={() => handleSelect(onOpenRouter)} />
+            </fieldset>
+          )}
+          {onOpenAICompatible && (
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-2 text-xs font-semibold text-muted-foreground">OpenAI-compatible</legend>
+              <AccountOption icon={Server} title={t("accounts.addDialog.openAICompatibleTitle", "API endpoint")}
+                description={t("accounts.addDialog.openAICompatibleDescription", "Connect any OpenAI-compatible API, such as LiteLLM, and define its models.")}
+                onClick={() => handleSelect(onOpenAICompatible)} />
             </fieldset>
           )}
         </div>

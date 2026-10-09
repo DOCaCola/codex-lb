@@ -39,7 +39,7 @@ const apiKeysSectionMock = vi.fn();
 const firewallSectionMock = vi.fn();
 const quotaPlannerSectionMock = vi.fn();
 const stickySessionsSectionMock = vi.fn();
-const modelSourcesSettingsMock = vi.fn();
+const modelCatalogueSettingsMock = vi.fn();
 const dataRetentionSettingsMock = vi.fn();
 const upstreamTimeoutSettingsMock = vi.fn();
 
@@ -105,7 +105,10 @@ vi.mock("@/features/settings/components/session-bridge-settings", () => ({
 }));
 
 vi.mock("@/features/settings/components/model-catalogue-settings", () => ({
-  ModelCatalogueSettings: () => <div>Model Catalogue Settings</div>,
+  ModelCatalogueSettings: (props: unknown) => {
+    modelCatalogueSettingsMock(props);
+    return <div>Model Catalogue Settings</div>;
+  },
 }));
 
 vi.mock("@/features/settings/components/background-jobs-settings", () => ({
@@ -159,13 +162,6 @@ vi.mock("@/features/sticky-sessions/components/sticky-sessions-section", () => (
   StickySessionsSection: (props: unknown) => {
     stickySessionsSectionMock(props);
     return <div>Sticky Sessions Section</div>;
-  },
-}));
-
-vi.mock("@/features/model-sources/components/model-sources-settings", () => ({
-  ModelSourcesSettings: (props: unknown) => {
-    modelSourcesSettingsMock(props);
-    return <div>Model Sources Settings</div>;
   },
 }));
 
@@ -233,7 +229,7 @@ describe("Settings sections", () => {
     firewallSectionMock.mockReset();
     quotaPlannerSectionMock.mockReset();
     stickySessionsSectionMock.mockReset();
-    modelSourcesSettingsMock.mockReset();
+    modelCatalogueSettingsMock.mockReset();
     dataRetentionSettingsMock.mockReset();
   });
 
@@ -310,7 +306,7 @@ describe("Settings sections", () => {
 
     expect(routingSettingsMock).not.toHaveBeenCalled();
     expect(upstreamProxySettingsMock).not.toHaveBeenCalled();
-    expect(modelSourcesSettingsMock).not.toHaveBeenCalled();
+    expect(modelCatalogueSettingsMock).not.toHaveBeenCalled();
     expect(firewallSectionMock).not.toHaveBeenCalled();
     expect(quotaPlannerSectionMock).not.toHaveBeenCalled();
     expect(stickySessionsSectionMock).not.toHaveBeenCalled();
@@ -338,7 +334,6 @@ describe("Settings sections", () => {
     unmount();
 
     renderSettings("/settings/models");
-    expect(screen.getByText("Model Sources Settings")).toBeInTheDocument();
     expect(screen.getByText("Model Catalogue Settings")).toBeInTheDocument();
   });
 
@@ -383,7 +378,7 @@ describe("Settings sections", () => {
     upstream.unmount();
 
     renderSettings("/settings/models");
-    expect(modelSourcesSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
+    expect(modelCatalogueSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
   });
 
   it("disables write-capable sections and hides restricted surfaces for read-only guests", () => {

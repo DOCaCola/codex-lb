@@ -135,6 +135,7 @@ const EXPECTED_ENDPOINTS = [
 	// models
 	"GET /api/models",
 	"GET /api/model-sources/",
+	"GET /api/model-sources/:sourceId/trends",
 	"POST /api/model-sources/",
 	"PATCH /api/model-sources/:sourceId",
 	"DELETE /api/model-sources/:sourceId",

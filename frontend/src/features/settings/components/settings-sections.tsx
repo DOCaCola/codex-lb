@@ -8,7 +8,6 @@ import { useAuthStore, usePermission } from "@/features/auth/hooks/use-auth";
 import { CacheIsolationProbeSection } from "@/features/cache-probe/components/cache-isolation-probe-section";
 import { useClaudeAccounts } from "@/features/claude/use-claude";
 import { FirewallSection } from "@/features/firewall/components/firewall-section";
-import { ModelSourcesSettings } from "@/features/model-sources/components/model-sources-settings";
 import { QuotaPlannerSection } from "@/features/quota-planner/components/quota-planner-section";
 import { AccessCard } from "@/features/settings/components/access/access-card";
 import { AppearanceSettings } from "@/features/settings/components/appearance-settings";
@@ -157,7 +156,6 @@ export function ModelsSettingsSection() {
   const { controlsDisabled } = useSettingsSection();
   return (
     <SettingsSection section="models">
-      <ModelSourcesSettings disabled={controlsDisabled} />
       <ModelCatalogueSettings disabled={controlsDisabled} />
     </SettingsSection>
   );

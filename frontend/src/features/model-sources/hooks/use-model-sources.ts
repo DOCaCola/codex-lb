@@ -13,23 +13,31 @@ import type {
   ModelSourceUpdateRequest,
 } from "@/features/model-sources/schemas";
 
+export function useModelSourcesList() {
+  return useQuery({
+    queryKey: ["model-sources", "list"],
+    queryFn: listModelSources,
+  });
+}
+
 export function useModelSources() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  const { data, error, isFetching, isLoading, isPending, isSuccess, refetch } = useQuery({
-    queryKey: ["model-sources", "list"],
-    queryFn: listModelSources,
-  });
+  const { data, error, isFetching, isLoading, isPending, isSuccess, refetch } = useModelSourcesList();
   const modelSourcesQuery = { data, error, isFetching, isLoading, isPending, isSuccess, refetch };
+  // Sources are provider accounts too: their colours and API-key scopes follow them.
+  const invalidate = () => {
+    for (const key of [["model-sources", "list"], ["api-keys", "list"], ["models"], ["account-colors"]]) {
+      void queryClient.invalidateQueries({ queryKey: key });
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: (payload: ModelSourceCreateRequest) => createModelSource(payload),
     onSuccess: () => {
       toast.success(t("modelSources.toasts.created"));
-      void queryClient.invalidateQueries({ queryKey: ["model-sources", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["api-keys", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
+      invalidate();
     },
     onError: (error: Error) => {
       toast.error(error.message || t("modelSources.toasts.createFailed"));
@@ -41,9 +49,7 @@ export function useModelSources() {
       updateModelSource(sourceId, payload),
     onSuccess: () => {
       toast.success(t("modelSources.toasts.updated"));
-      void queryClient.invalidateQueries({ queryKey: ["model-sources", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["api-keys", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
+      invalidate();
     },
     onError: (error: Error) => {
       toast.error(error.message || t("modelSources.toasts.updateFailed"));
@@ -54,9 +60,7 @@ export function useModelSources() {
     mutationFn: (sourceId: string) => deleteModelSource(sourceId),
     onSuccess: () => {
       toast.success(t("modelSources.toasts.deleted"));
-      void queryClient.invalidateQueries({ queryKey: ["model-sources", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["api-keys", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
+      invalidate();
     },
     onError: (error: Error) => {
       toast.error(error.message || t("modelSources.toasts.deleteFailed"));

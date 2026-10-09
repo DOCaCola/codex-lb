@@ -6,6 +6,7 @@ import { AddAccountDialog } from "./add-account-dialog";
 const props = () => ({
   open: true, onOpenChange: vi.fn(), onAddAccount: vi.fn(),
   onImport: vi.fn(), onClaude: vi.fn(), onOpenRouter: vi.fn(),
+  onOpenAICompatible: vi.fn(),
 });
 
 describe("AddAccountDialog", () => {
@@ -13,7 +14,7 @@ describe("AddAccountDialog", () => {
     render(<AddAccountDialog {...props()} />);
     const groups = screen.getAllByRole("group");
     expect(groups.map((group) => group.querySelector("legend")?.textContent))
-      .toEqual(["Codex", "Claude", "OpenRouter"]);
+      .toEqual(["Codex", "Claude", "OpenRouter", "OpenAI-compatible"]);
     expect(within(groups[0]!).getAllByRole("button")).toHaveLength(2);
     for (const group of groups) {
       for (const button of within(group).getAllByRole("button")) {
@@ -23,13 +24,14 @@ describe("AddAccountDialog", () => {
     }
   });
   it("omits unavailable providers", () => {
-    render(<AddAccountDialog {...props()} onClaude={undefined} onOpenRouter={undefined} />);
+    render(<AddAccountDialog {...props()} onClaude={undefined} onOpenRouter={undefined} onOpenAICompatible={undefined} />);
     expect(screen.getAllByRole("group")).toHaveLength(1);
     expect(screen.getByRole("group", { name: "Codex" })).toBeVisible();
   });
   it.each([
     ["Codex", 0, "onAddAccount"], ["Codex", 1, "onImport"],
     ["Claude", 0, "onClaude"], ["OpenRouter", 0, "onOpenRouter"],
+    ["OpenAI-compatible", 0, "onOpenAICompatible"],
   ] as const)("hands off %s option %s after closing", async (provider, index, action) => {
     const callbacks = props();
     render(<AddAccountDialog {...callbacks} />);

@@ -50,6 +50,7 @@ import type { AccountSummary, RequestLog } from "@/features/dashboard/schemas";
 import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import type { ModelItem } from "@/features/api-keys/schemas";
 import { ProviderAccountName, type AccountProvider } from "@/components/brand/provider-account-name";
+import { sourceKindProvider } from "@/components/brand/account-provider";
 import { ServiceTierMark } from "@/components/brand/service-tier-mark";
 import { modelDisplayName } from "@/utils/model-display";
 import { isServiceTierDowngrade, serviceTierLabel, visibleServiceTier } from "@/utils/service-tiers";
@@ -391,10 +392,8 @@ export function RecentRequestsTable({
     ? !!request.modelSourceName
     : !!(request.accountId && emailLabelIds.has(request.accountId));
   const requestAccountProvider = (request: RequestLog): AccountProvider | null => {
-    if (request.modelSourceKind === "openrouter" || request.modelSourceKind === "claude")
-      return request.modelSourceKind;
-    if (!request.modelSourceKind && !request.modelSourceId && request.accountId) return "codex";
-    return null;
+    if (request.modelSourceKind || request.modelSourceId) return sourceKindProvider(request.modelSourceKind);
+    return request.accountId ? "codex" : null;
   };
   const requestAccountColor = (request: RequestLog) => request.modelSourceId
     ? accountColors.modelSources.get(request.modelSourceId)

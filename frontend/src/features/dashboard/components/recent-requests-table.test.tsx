@@ -235,7 +235,7 @@ describe("Provider identity and readable models", () => {
     [null, null, "native", "codex"],
     ["openrouter", "or-source", null, "openrouter"],
     ["claude", "claude-source", null, "claude"],
-    ["openai_compatible", "custom-source", null, null],
+    ["openai_compatible", "custom-source", null, "openai_compatible"],
     [null, null, null, null],
   ])("uses log provenance %s/%s rather than model vendor", (kind, sourceId, accountId, provider) => {
     const { container } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}

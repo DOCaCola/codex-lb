@@ -74,10 +74,7 @@ class ModelSourcesService:
         if row is None:
             raise ModelSourceNotFoundError(f"Model source not found: {source_id}")
 
-        if row.kind == "openrouter":
-            raise ModelSourceValidationError("Manage OpenRouter accounts through the Accounts dashboard")
-        if row.kind == "claude":
-            raise ModelSourceValidationError("Manage Claude accounts through the Accounts dashboard")
+        _require_user_defined(row)
 
         fields = payload.model_fields_set
         if "name" in fields and payload.name is not None:
@@ -123,9 +120,24 @@ class ModelSourcesService:
         return _to_response(refreshed)
 
     async def delete_source(self, source_id: str) -> None:
+        row = await self._repository.get_by_id(source_id)
+        if row is None:
+            raise ModelSourceNotFoundError(f"Model source not found: {source_id}")
+        _require_user_defined(row)
         deleted = await self._repository.delete(source_id)
         if not deleted:
             raise ModelSourceNotFoundError(f"Model source not found: {source_id}")
+
+
+_PROVIDER_ACCOUNT_LABELS = {"claude": "Claude", "openrouter": "OpenRouter"}
+
+
+def _require_user_defined(row: ModelSource) -> None:
+    """Provider-backed sources belong to their provider account and change only through it."""
+    if row.kind != MODEL_SOURCE_KIND_OPENAI_COMPATIBLE:
+        raise ModelSourceValidationError(
+            f"Manage {_PROVIDER_ACCOUNT_LABELS[row.kind]} accounts through the Accounts dashboard"
+        )
 
 
 def _normalize_name(value: str) -> str:

@@ -13,10 +13,8 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.models import Account, ModelSource
 
-AccountProvider = Literal["codex", "claude", "openrouter"]
-
-# Source kinds with a dedicated brand; generic OpenAI-compatible sources have none.
-BRANDED_SOURCE_KINDS = ("claude", "openrouter")
+# Codex accounts, then the model-source kinds: every source is a provider account.
+AccountProvider = Literal["codex", "claude", "openrouter", "openai_compatible"]
 
 
 def provider_account_key(
@@ -34,6 +32,6 @@ def provider_account_name_expr() -> ColumnElement[str | None]:
 def provider_account_provider_expr() -> ColumnElement[str | None]:
     return case(
         (Account.id.is_not(None), literal("codex")),
-        (ModelSource.kind.in_(BRANDED_SOURCE_KINDS), ModelSource.kind),
+        (ModelSource.id.is_not(None), ModelSource.kind),
         else_=None,
     )

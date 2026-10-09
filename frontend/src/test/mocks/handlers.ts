@@ -938,6 +938,7 @@ export const handlers = [
   http.get("/api/claude-accounts", () => HttpResponse.json({ accounts: [] })),
   http.get("/api/claude-accounts/:id/trends", () => HttpResponse.json({ series: [] })),
   http.get("/api/openrouter-accounts/:id/trends", () => HttpResponse.json({ series: [] })),
+  http.get("/api/model-sources/:sourceId/trends", () => HttpResponse.json({ series: [] })),
   http.get("/api/openrouter-accounts", () => HttpResponse.json({ accounts: [] })),
   http.get("/health", () => {
     return HttpResponse.json({ status: "ok" });

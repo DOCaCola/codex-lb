@@ -14,7 +14,7 @@ without expanding anything, and a link can point at a section or a card.
 | Workspace | Access | Access (People / My sign-in), API keys, Firewall |
 | Workspace | Organisation (`security:write`) | Company sign-in, Reverse-proxy sign-in, Sign-in rules, Password sign-in, Automatic account management |
 | Traffic | Routing | Routing, Quota planner, Sticky sessions, Cross-account cache isolation probe |
-| Traffic | Models | Model sources, Model catalogue |
+| Traffic | Models | Model catalogue |
 | Traffic | Upstream | Upstream proxy routing, Resilience, Session bridge, Upstream timeouts |
 | Operations | Automations | Pause all automations, Jobs, Recent runs |
 | Operations | Data | Data retention, Conversation archive |
