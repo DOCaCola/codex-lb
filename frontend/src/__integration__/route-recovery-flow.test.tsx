@@ -57,9 +57,11 @@ vi.mock("@/features/accounts/components/accounts-page", () => {
   throw new Error("Rejected route chunk");
 });
 
-vi.mock("@/features/settings/components/settings-page", () => {
+vi.mock("@/features/settings/components/settings-layout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/settings/components/settings-layout")>();
   return {
-    SettingsPage() {
+    ...actual,
+    SettingsLayout() {
       const { hash, search } = useLocation();
       if (search || hash) {
         throw new Error("Settings route render failed");
@@ -128,12 +130,12 @@ describe("route recovery flow integration", () => {
   });
 
   it("remounts a failed route when search and hash recover on the same path", async () => {
-    window.history.pushState({}, "", "/settings?advanced=1#firewall");
+    window.history.pushState({}, "", "/settings/access?view=1#firewall");
 
     renderWithProviders(<App />);
     expect(await screen.findByTestId("route-load-error")).toBeInTheDocument();
 
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/access");
     window.dispatchEvent(new PopStateEvent("popstate"));
 
     expect(await screen.findByTestId("settings-route-loaded")).toHaveTextContent(
@@ -205,12 +207,12 @@ describe("route recovery flow integration", () => {
   });
 
   it("retains a new render failure introduced by a healthy location update", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/access");
 
     renderWithProviders(<App />);
     expect(await screen.findByTestId("settings-route-loaded")).toBeVisible();
 
-    window.history.pushState({}, "", "/settings?advanced=1#firewall");
+    window.history.pushState({}, "", "/settings/access?view=1#firewall");
     window.dispatchEvent(new PopStateEvent("popstate"));
 
     expect(await screen.findByTestId("route-load-error")).toBeVisible();

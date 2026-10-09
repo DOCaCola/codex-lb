@@ -1,20 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Eye, EyeOff, LogIn, LogOut, Menu, ShieldAlert } from "lucide-react";
+import { Eye, EyeOff, LogIn, LogOut, Menu, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 
 import { CodexLogo } from "@/components/brand/codex-logo";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { LanguageToggle, LanguageToggleMobile } from "@/components/layout/language-toggle";
-import { ADVANCED_NAV_ITEMS, CORE_NAV_ITEMS } from "@/components/layout/nav-items";
+import { CORE_NAV_ITEMS } from "@/components/layout/nav-items";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { listAccounts } from "@/features/accounts/api";
 import { hasPermission, useAuthStore } from "@/features/auth/hooks/use-auth";
@@ -38,7 +32,6 @@ export function AppHeader({
   className,
 }: AppHeaderProps) {
   const { t } = useTranslation();
-  const { pathname } = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const permissions = useAuthStore((state) => state.permissions);
   const tier = useAuthStore((state) => state.tier);
@@ -48,14 +41,10 @@ export function AppHeader({
   // so the indicator is a sibling of the chip, not an item inside its menu.
   const breakGlassSession = useAuthStore((state) => state.breakGlassSession);
   const coreNavItems = CORE_NAV_ITEMS.filter((item) => hasPermission(permissions, item.requires));
-  const advancedNavItems = ADVANCED_NAV_ITEMS.filter((item) => hasPermission(permissions, item.requires));
   // Individual installs keep today's Logout button; from the team tier the
   // signed-in account gets the avatar chip and its menu instead (desktop; the
   // mobile sheet keeps its Logout entry on every tier).
   const showAccountMenu = tier !== "individual" && user !== null;
-  const advancedActive = advancedNavItems.some(
-    (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
-  );
   const blurred = usePrivacyStore((s) => s.blurred);
   const togglePrivacy = usePrivacyStore((s) => s.toggle);
   const PrivacyIcon = blurred ? EyeOff : Eye;
@@ -131,29 +120,6 @@ export function AppHeader({
               </span>
             </NavLink>
           ))}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              data-active={advancedActive}
-              className={cn(
-                "relative inline-flex h-7 items-center gap-1 rounded-md px-3.5 text-xs leading-none font-medium transition-colors duration-200",
-                advancedActive
-                  ? "bg-background text-foreground shadow-[var(--shadow-xs)]"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t("nav.advanced")}
-              <ChevronDown className="h-3 w-3" aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {advancedNavItems.map((item) => (
-                <DropdownMenuItem key={item.to} asChild>
-                  <NavLink to={item.to} className="cursor-pointer">
-                    {t(item.labelKey)}
-                  </NavLink>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
         </nav>
 
         {/* Actions */}
@@ -248,26 +214,6 @@ export function AppHeader({
                             {accountsResetBadge}
                           </span>
                         ) : null}
-                      </span>
-                    )}
-                  </NavLink>
-                ))}
-                <div className="my-2 h-px bg-border" />
-                <p className="px-3 pb-1 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-                  {t("nav.advanced")}
-                </p>
-                {advancedNavItems.map((item) => (
-                  <NavLink key={item.to} to={item.to} onClick={() => setMobileOpen(false)}>
-                    {({ isActive }) => (
-                      <span
-                        className={cn(
-                          "relative block w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-                          isActive
-                            ? "bg-primary/10 text-primary"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                        )}
-                      >
-                        {t(item.labelKey)}
                       </span>
                     )}
                   </NavLink>

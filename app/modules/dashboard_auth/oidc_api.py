@@ -99,9 +99,10 @@ from app.modules.dashboard_users.repository import DashboardUsersRepository
 #: relative in-app path, so no absolute URL can appear even by accident.
 OIDC_DASHBOARD_PATH: Final[str] = "/dashboard"
 OIDC_PENDING_PATH: Final[str] = "/auth/pending"
-#: Where a completed pre-flight or re-authentication lands: the card that
-#: started it, through the settings page's existing deep-link convention.
-OIDC_SETTINGS_PATH: Final[str] = "/settings?org=1#oidc"
+#: Where a completed pre-flight or re-authentication lands: the company sign-in
+#: card in Settings → Organisation. The dashboard's `ORGANISATION_SETTINGS_RETURN_URL`
+#: names the same URL.
+OIDC_SETTINGS_PATH: Final[str] = "/settings/organisation#oidc"
 #: One failure destination for every refusal that is not "no account here", and
 #: a constant marker rather than a reason: an unauthenticated caller must not be
 #: able to tell a bad state from a bad nonce from a refused exchange.

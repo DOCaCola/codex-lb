@@ -13,14 +13,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuthStore, usePermission } from "@/features/auth/hooks/use-auth";
-import { ACCESS_HASH, ACCESS_PEOPLE_HASH } from "@/features/settings/advanced-settings-deeplink";
 import { PasswordChangeDialog } from "@/features/settings/components/password-change-dialog";
+import { ACCESS_MY_SIGN_IN_PATH, ACCESS_PEOPLE_PATH } from "@/features/settings/settings-links";
 import { cn } from "@/lib/utils";
-
-// Deep links into the Settings Access card: `#access` opens the person's own
-// controls (where the TOTP card lives), `#access-people` the People tab.
-const MY_SIGN_IN_PATH = `/settings${ACCESS_HASH}`;
-const PEOPLE_PATH = `/settings${ACCESS_PEOPLE_HASH}`;
 
 type AccountMenuItem = {
   key: string;
@@ -48,7 +43,7 @@ function useAccountMenuItems(onOpenPasswordDialog: () => void): AccountMenuItem[
       key: "two-factor",
       label: t("nav.account.myTwoFactor"),
       icon: ShieldCheck,
-      onSelect: () => navigate(MY_SIGN_IN_PATH),
+      onSelect: () => navigate(ACCESS_MY_SIGN_IN_PATH),
     });
   }
   if (canManageUsers) {
@@ -56,7 +51,7 @@ function useAccountMenuItems(onOpenPasswordDialog: () => void): AccountMenuItem[
       key: "invite",
       label: t("nav.account.inviteTeammate"),
       icon: UserPlus,
-      onSelect: () => navigate(PEOPLE_PATH),
+      onSelect: () => navigate(ACCESS_PEOPLE_PATH),
     });
   }
   items.push(

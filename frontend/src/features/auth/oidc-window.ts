@@ -6,7 +6,7 @@
 // first-party completion signal at all, and everything here exists to turn
 // "the window came back" into "ask the server again" — never into an answer.
 
-import { ORGANISATION_SETTINGS_RETURN_URL } from "@/features/settings/advanced-settings-deeplink";
+import { ORGANISATION_SETTINGS_PATH, ORGANISATION_SETTINGS_RETURN_URL } from "@/features/settings/settings-links";
 
 /**
  * The name the flow window carries. It is what lets the returning page know it
@@ -38,7 +38,7 @@ export const OIDC_FLOW_RETURN_MESSAGE = "codex-lb.oidc-flow-return";
 export const OIDC_FLOW_RETURN_CHANNEL = "codex-lb.oidc-flow-window";
 
 /** The two in-app paths the server returns a flow to (its settings and failure destinations). */
-const FLOW_RETURN_PATHS = new Set(["/settings", "/login"]);
+const FLOW_RETURN_PATHS = new Set([ORGANISATION_SETTINGS_PATH, "/login"]);
 
 const MARKER_KEY = "codex-lb.oidc-flow";
 const CLOSED_POLL_MS = 500;

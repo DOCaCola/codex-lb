@@ -24,7 +24,7 @@ vi.mock("@/features/automations/api", () => ({
   })),
 }));
 
-function createWrapper(initialEntry = "/automations") {
+function createWrapper(initialEntry = "/settings/automations") {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0 },

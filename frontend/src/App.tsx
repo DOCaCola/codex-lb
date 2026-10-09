@@ -19,6 +19,7 @@ import { AuthGate } from "@/features/auth/components/auth-gate";
 import { StepUpDialog } from "@/features/auth/components/step-up-dialog";
 import { hasPermission, useAuthStore } from "@/features/auth/hooks/use-auth";
 import { signedInLoginDestination } from "@/features/auth/oidc-window";
+import { DEFAULT_SETTINGS_SECTION } from "@/features/settings/settings-links";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 
 // Route-level code splitting: only the visited page's chunk loads, instead
@@ -35,15 +36,30 @@ const ReportsPage = lazy(() =>
 const AccountsPage = lazy(() =>
   import("@/features/accounts/components/accounts-page").then((m) => ({ default: m.AccountsPage })),
 );
-const AutomationsPage = lazy(() =>
-  import("@/features/automations/components/automations-page").then((m) => ({ default: m.AutomationsPage })),
-);
 const ApisPage = lazy(() => import("@/features/apis/components/apis-page").then((m) => ({ default: m.ApisPage })));
-const SettingsPage = lazy(() =>
-  import("@/features/settings/components/settings-page").then((m) => ({ default: m.SettingsPage })),
+const SettingsLayout = lazy(() =>
+  import("@/features/settings/components/settings-layout").then((m) => ({ default: m.SettingsLayout })),
 );
-const AccessPage = lazy(() =>
-  import("@/features/settings/components/access/access-page").then((m) => ({ default: m.AccessPage })),
+const settingsSections = () => import("@/features/settings/components/settings-sections");
+const GeneralSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.GeneralSettingsSection })));
+const AccountsSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.AccountsSettingsSection })));
+const AccessSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.AccessSettingsSection })));
+const RoutingSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.RoutingSettingsSection })));
+const ModelsSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.ModelsSettingsSection })));
+const UpstreamSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.UpstreamSettingsSection })));
+const DataSettingsSection = lazy(() => settingsSections().then((m) => ({ default: m.DataSettingsSection })));
+const NotificationsSettingsSection = lazy(() =>
+  settingsSections().then((m) => ({ default: m.NotificationsSettingsSection })),
+);
+const OrganisationSettingsSection = lazy(() =>
+  import("@/features/settings/components/organisation/organisation-section").then((m) => ({
+    default: m.OrganisationSettingsSection,
+  })),
+);
+const AutomationsSettingsSection = lazy(() =>
+  import("@/features/automations/components/automations-section").then((m) => ({
+    default: m.AutomationsSettingsSection,
+  })),
 );
 
 // Route guard: a page whose nav item the session cannot use is not rendered.
@@ -86,8 +102,11 @@ function AppLayout() {
         showLogout={(role === "admin" && passwordRequired) || (isGuest && guestPasswordRequired)}
       />
       <main className="mx-auto flex w-full max-w-[1500px] flex-1 flex-col px-4 py-8 sm:px-6">
+        {/* Keyed by the top-level page, so moving between Settings sections
+            keeps the Settings layout mounted; `resetKey` still clears an
+            error on every navigation. */}
         <RouteErrorBoundary
-          key={pathname}
+          key={pathname.split("/")[1]}
           resetKey={`${locationKey}:${pathname}${search}${hash}`}
         >
           <Suspense fallback={<RouteLoading />}>
@@ -121,12 +140,21 @@ export default function App() {
               <Route path="/logs" element={<LogsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/accounts" element={<AccountsPage />} />
-              <Route path="/automations" element={<AutomationsPage />} />
               <Route path="/apis" element={<ApisPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/settings/access" element={<AccessPage />} />
+              <Route path="/settings" element={<SettingsLayout />}>
+                <Route index element={<Navigate to={DEFAULT_SETTINGS_SECTION} replace />} />
+                <Route path="general" element={<GeneralSettingsSection />} />
+                <Route path="accounts" element={<AccountsSettingsSection />} />
+                <Route path="access" element={<AccessSettingsSection />} />
+                <Route path="organisation" element={<OrganisationSettingsSection />} />
+                <Route path="routing" element={<RoutingSettingsSection />} />
+                <Route path="models" element={<ModelsSettingsSection />} />
+                <Route path="upstream" element={<UpstreamSettingsSection />} />
+                <Route path="automations" element={<AutomationsSettingsSection />} />
+                <Route path="data" element={<DataSettingsSection />} />
+                <Route path="notifications" element={<NotificationsSettingsSection />} />
+              </Route>
             </Route>
-            <Route path="/firewall" element={<Navigate to="/settings?advanced=1#firewall" replace />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>

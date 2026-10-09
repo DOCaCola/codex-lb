@@ -1,5 +1,5 @@
 import { HttpResponse, http } from "msw";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -72,6 +72,15 @@ function restrictedRequests(paths: string[]): string[] {
   return paths.filter((path) => RESTRICTED_PATHS.includes(path) || path.startsWith("/api/api-keys/"));
 }
 
+/** Opens every settings section the side menu offers, waiting for each heading. */
+async function visitEverySettingsSection(user: ReturnType<typeof userEvent.setup>) {
+  const menu = await screen.findByRole("navigation", { name: "Settings sections" });
+  for (const link of within(menu).getAllByRole("link")) {
+    await user.click(link);
+    expect(await screen.findByRole("heading", { level: 2, name: link.textContent ?? "" })).toBeInTheDocument();
+  }
+}
+
 function useGuestSession() {
   server.use(
     http.get("/api/dashboard-auth/session", () => HttpResponse.json(guestSession)),
@@ -117,20 +126,22 @@ describe("guest restricted surfaces integration", () => {
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
-  it("does not mount or fetch API key, upstream-proxy, or sticky-session surfaces on /settings", async () => {
+  it("does not mount or fetch API key, upstream-proxy, or sticky-session surfaces in any settings section", async () => {
+    const user = userEvent.setup({ delay: null });
     useGuestSession();
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/settings?advanced=1");
+    window.history.pushState({}, "", "/settings");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
     expect(
       await screen.findByText(
         "You are viewing the dashboard with read-only guest access. Admin controls are disabled.",
       ),
     ).toBeInTheDocument();
-    // Advanced is expanded via the deep link; allowed self-fetching sections still load.
+    await visitEverySettingsSection(user);
+    // Allowed self-fetching cards still load.
     await waitFor(() => expect(paths).toContain("/api/firewall/ips"));
     await waitFor(() => expect(paths).toContain("/api/model-sources/"));
 
@@ -206,16 +217,17 @@ describe("guest restricted surfaces integration", () => {
   });
 
   it("keeps requesting the restricted reads for writers (regression)", async () => {
+    const user = userEvent.setup({ delay: null });
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/settings?advanced=1");
+    window.history.pushState({}, "", "/settings/access");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create key" })).toBeInTheDocument();
+    await visitEverySettingsSection(user);
     await waitFor(() => expect(paths).toContain("/api/api-keys/"));
     await waitFor(() => expect(paths).toContain("/api/settings/upstream-proxy"));
     await waitFor(() => expect(paths).toContain("/api/sticky-sessions"));
-    expect(await screen.findByRole("button", { name: "Create key" })).toBeInTheDocument();
   });
 
   it("keeps the API key page for writers (regression)", async () => {
@@ -255,14 +267,14 @@ describe("guest restricted surfaces integration", () => {
     const paths = spyRequestPaths();
     const cached = createUpstreamProxyAdmin();
 
-    window.history.pushState({}, "", "/settings?advanced=1");
+    window.history.pushState({}, "", "/settings/upstream");
     const settingsRender = renderWithProviders(<App />);
+    expect(await screen.findByRole("heading", { level: 2, name: "Upstream" })).toBeInTheDocument();
     // Simulates an admin's response still sitting in the cache after the
-    // session was downgraded; the disabled guest query still exposes it.
-    settingsRender.queryClient.setQueryData(["settings", "upstream-proxy"], cached);
-
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    await waitFor(() => expect(paths).toContain("/api/firewall/ips"));
+    // session was downgraded; the section's disabled guest query exposes it.
+    act(() => {
+      settingsRender.queryClient.setQueryData(["settings", "upstream-proxy"], cached);
+    });
     expect(settingsRender.queryClient.getQueryData(["settings", "upstream-proxy"])).toEqual(cached);
     expect(screen.queryByText("Upstream proxy routing")).not.toBeInTheDocument();
     expect(screen.queryByText("Primary proxy")).not.toBeInTheDocument();

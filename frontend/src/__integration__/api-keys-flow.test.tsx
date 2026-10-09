@@ -22,7 +22,7 @@ describe("api keys flow integration", () => {
     const createdName = "Integration Key";
     const updatedName = "Integration Key Updated";
 
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/access");
     renderWithProviders(<App />);
 
     const createButton = await screen.findByRole("button", { name: "Create key" });
@@ -70,7 +70,7 @@ describe("api keys flow integration", () => {
   it("creates an api key with assigned accounts", async () => {
     const user = userEvent.setup();
 
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/access");
     renderWithProviders(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Create key" }));
@@ -97,7 +97,7 @@ describe("api keys flow integration", () => {
   });
 
   it("displays the current api key list on settings", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/access");
     renderWithProviders(<App />);
 
     expect(await screen.findByRole("columnheader", { name: "Name" })).toBeInTheDocument();
@@ -127,7 +127,7 @@ describe("api keys flow integration", () => {
   it("shows usage bars when editing a key with limits", async () => {
     const user = userEvent.setup({ delay: null });
 
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/access");
     renderWithProviders(<App />);
 
     expect(await screen.findByText("Default key")).toBeInTheDocument();

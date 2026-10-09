@@ -6,7 +6,7 @@ How identities from a reverse proxy become accounts is described once, in [Authe
 
 ## Local sign-in policy
 
-The dashboard's local sign-in policy decides who may still use a password once a company login exists. It lives in the database (Settings → Organisation settings → local sign-in), has no environment variable, and defaults to the behaviour every install has today.
+The dashboard's local sign-in policy decides who may still use a password once a company login exists. It lives in the database (Settings → Organisation → local sign-in), has no environment variable, and defaults to the behaviour every install has today.
 
 | Policy | Who may sign in with a password | Where the form is |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ An administrator who signs in through the proxy and holds neither a password nor
 
 ## Edge SSO deployment
 
-Any IdP that an authenticating proxy can front (Authelia, oauth2-proxy, and through them SAML-only providers) works today through trusted-header mode: the proxy authenticates, codex-lb reads the header. The deployment side is documented where the rest of the proxy configuration lives — [Remote Access → Reverse proxy](deployment/remote.md#reverse-proxy) for trusted CIDRs, forwarded headers and the `Host` rule, and [Docker → Auth mode examples](deployment/docker.md#auth-mode-examples) for a runnable container. Group headers map to roles from Settings → Organisation settings.
+Any IdP that an authenticating proxy can front (Authelia, oauth2-proxy, and through them SAML-only providers) works today through trusted-header mode: the proxy authenticates, codex-lb reads the header. The deployment side is documented where the rest of the proxy configuration lives — [Remote Access → Reverse proxy](deployment/remote.md#reverse-proxy) for trusted CIDRs, forwarded headers and the `Host` rule, and [Docker → Auth mode examples](deployment/docker.md#auth-mode-examples) for a runnable container. Group headers map to roles from Settings → Organisation.
 
 ## Host recovery commands
 
@@ -85,7 +85,7 @@ Notes that matter in the middle of an incident:
 1. Sign in as the emergency account at `/login?local=1` with its password and authenticator code. If that works, you are in — nothing below is needed.
 2. Otherwise re-open local sign-in on the host: `codex-lb admin local-login enable`. Any active account that holds a password may sign in again.
 3. If sign-ins still land on the provider's screen or come back refused, the provider itself is answering: `codex-lb admin reset-login-policy` re-opens local sign-in and disables every company provider at once (`admin disable-provider <id>` does it one at a time).
-4. When the provider is healthy again, turn it back on and re-tighten the policy from Settings → Organisation settings. The dashboard refuses to tighten it until a qualifying emergency account exists, which is the check that keeps step 1 working next time.
+4. When the provider is healthy again, turn it back on and re-tighten the policy from Settings → Organisation. The dashboard refuses to tighten it until a qualifying emergency account exists, which is the check that keeps step 1 working next time.
 
 ### The second-factor secret is lost
 
@@ -103,7 +103,7 @@ Notes that matter in the middle of an incident:
    - Local sign-in policy: break_glass_only -> enabled (re-opened: no account was left that the policy would let in)
    ```
 
-   A policy that still has a working door is never touched, so this is not a way to relax one; if you want it open regardless, run `admin local-login enable` yourself. The install-wide two-factor requirement is left as configured, so if the install requires two-factor the account is sent straight back to enrolment on its next sign-in. Then, in this order: **enrol a fresh authenticator, and only then re-tighten the policy** from Settings → Organisation settings. Until it enrols, the account is designated but no longer qualifying, and the dashboard refuses to tighten the policy anyway.
+   A policy that still has a working door is never touched, so this is not a way to relax one; if you want it open regardless, run `admin local-login enable` yourself. The install-wide two-factor requirement is left as configured, so if the install requires two-factor the account is sent straight back to enrolment on its next sign-in. Then, in this order: **enrol a fresh authenticator, and only then re-tighten the policy** from Settings → Organisation. Until it enrols, the account is designated but no longer qualifying, and the dashboard refuses to tighten the policy anyway.
 
 ## What is not here yet
 

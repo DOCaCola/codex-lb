@@ -96,7 +96,7 @@ export function TotpSettings({ settings, disabled = false, canEditPolicy = true,
   };
 
   return (
-    <section id="totp" className="rounded-xl border bg-card p-5">
+    <section id="totp" className="scroll-mt-16 rounded-xl border bg-card p-5">
       <div className="space-y-3">
         {/* Status row */}
         <div className="flex items-center justify-between">

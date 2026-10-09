@@ -2,7 +2,7 @@
 
 API key auth is **disabled by default**. In that mode, only local requests to the protected proxy routes can
 proceed without a key; non-local requests are rejected until proxy authentication is configured. Enable it in
-**Settings → API Key Auth** on the dashboard when clients connect remotely or through Docker, VM, or container
+**Settings → Access → API Keys** on the dashboard when clients connect remotely or through Docker, VM, or container
 networking that appears non-local to the service.
 
 When enabled, clients must pass a valid API key as a Bearer token:

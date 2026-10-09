@@ -79,7 +79,7 @@ describe("/login with the real routes", () => {
 
     renderWithProviders(<App />);
 
-    await waitFor(() => expect(window.location.pathname).toBe("/settings"));
-    expect(`${window.location.search}${window.location.hash}`).toBe("?org=1#oidc");
+    await waitFor(() => expect(window.location.pathname).toBe("/settings/organisation"));
+    expect(`${window.location.search}${window.location.hash}`).toBe("#oidc");
   });
 });

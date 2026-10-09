@@ -39,10 +39,11 @@ import {
 } from "@/features/automations/components/run-status-utils";
 import { getAutomationRunDetails } from "@/features/automations/api";
 import { useAutomationListing } from "@/features/automations/hooks/use-automation-listing";
-import { useAutomationsPaused } from "@/features/automations/hooks/use-automations-paused";
 import { useAutomations } from "@/features/automations/hooks/use-automations";
 import { formatScheduleTimeForInput } from "@/features/automations/time-utils";
 import { PaginationControls } from "@/features/dashboard/components/filters/pagination-controls";
+import { SettingsSection } from "@/features/settings/components/settings-layout";
+import { useSettingsSection } from "@/features/settings/use-settings-section";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -152,7 +153,8 @@ function hasRunsFiltersApplied(filters: {
   );
 }
 
-export function AutomationsPage() {
+/** Settings → Automations: the pause-all control, the jobs and their recent runs. */
+export function AutomationsSettingsSection() {
   const { t } = useTranslation();
   const [editingJob, setEditingJob] = useState<AutomationJob | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -184,8 +186,9 @@ export function AutomationsPage() {
     deleteMutation,
     runNowMutation,
   } = useAutomations(null, { enableQueries: false });
-  // M2 background jobs: the backend refuses Run now while the scheduler is paused.
-  const automationsPaused = useAutomationsPaused() === true;
+  // The backend refuses Run now while the scheduler is paused.
+  const { settings } = useSettingsSection();
+  const automationsPaused = !settings.automationsSchedulerEnabled;
   const runDetailsQuery = useQuery({
     queryKey: ["automations", "run-details", selectedRunId],
     queryFn: () => getAutomationRunDetails(selectedRunId ?? ""),
@@ -420,16 +423,8 @@ export function AutomationsPage() {
   };
 
   return (
-    <div className="animate-fade-in-up space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{t("automations.page.title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("automations.page.subtitle")}
-          </p>
-        </div>
-        <AutomationsPauseToggle />
-      </div>
+    <SettingsSection section="automations" description={t("automations.page.subtitle")}>
+      <AutomationsPauseToggle />
 
       {errorMessage ? <AlertMessage variant="error">{errorMessage}</AlertMessage> : null}
 
@@ -920,6 +915,6 @@ export function AutomationsPage() {
         accountDisplayIndex={accountDisplayIndex}
         accountBlurIndex={accountBlurIndex}
       />
-    </div>
+    </SettingsSection>
   );
 }

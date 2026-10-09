@@ -324,25 +324,22 @@ for (const width of [390, 1440]) {
   test(`quota webhook settings containment ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     await installMobileContainmentFixtures(page);
-    await page.goto("/settings");
+    await page.goto("/settings/notifications");
     const card = page.getByRole("region", { name: "Quota reset webhook" });
     await card.scrollIntoViewIfNeeded();
     await expect(card).toBeVisible();
     await expect(card.getByRole("switch", { name: "Enable notifications" })).toBeEnabled();
     await expect(card.getByRole("button", { name: "Test delivery" })).toBeDisabled();
-    await expect(card.getByLabel("HTTPS webhook URL")).toBeVisible();
+    await expect(card.getByLabel("Webhook URL", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await card.screenshot({ path: testInfo.outputPath(`quota-webhook-${width}.png`) });
   });
 }
 
 async function openLongSettingsPage(page: Page, scrollTop: number): Promise<void> {
-  await page.goto("/settings", { waitUntil: "domcontentloaded" });
+  await page.goto("/settings/routing", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-
-  const advancedTrigger = page.getByRole("button", { name: "Show advanced settings" });
-  await advancedTrigger.click();
-  await expect(page.getByRole("heading", { name: "Firewall", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sticky sessions", exact: true })).toBeVisible();
 
   await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), scrollTop);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollTop);
@@ -582,12 +579,11 @@ test("desktop route navigation resets new pages without overriding query, histor
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(queryScrollTop);
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/routing$/);
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(1400);
 
-  await page.goto("/firewall", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/settings\?advanced=1#firewall$/);
+  await page.goto("/settings/access#firewall", { waitUntil: "domcontentloaded" });
   const firewallHeading = page.getByRole("heading", { name: "Firewall", exact: true });
   await expect(firewallHeading).toBeInViewport();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
@@ -718,10 +714,7 @@ test("the model source dialogs stay inside supported viewports", async ({ page }
     { width: 1440, height: 900 },
   ] as const;
 
-  await page.goto("/settings", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "Show advanced settings" }).click();
+  await page.goto("/settings/models", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Model sources", exact: true })).toBeVisible();
 
   const openDialogButton = page.getByRole("button", { name: "Add source" });
@@ -807,8 +800,7 @@ test("the model source edit dialog keeps Save visible in compact viewports", asy
   expect(created.ok()).toBe(true);
   const source = await created.json() as { id: string };
   try {
-    await page.goto("/settings", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Show advanced settings" }).click();
+    await page.goto("/settings/models", { waitUntil: "domcontentloaded" });
     for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 1440, height: 900 }]) {
       await page.setViewportSize(size);
       await page.getByRole("button", { name: "Edit Viewport regression source model source", exact: true }).click();

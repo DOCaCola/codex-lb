@@ -2,10 +2,8 @@ import { KeyRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { AlertMessage } from "@/components/alert-message";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SpinnerBlock } from "@/components/ui/spinner";
 import { useDashboardUsers } from "@/features/access/hooks";
 import { LOCAL_LOGIN_URL } from "@/features/auth/local-login";
 import type { LocalLoginPolicy } from "@/features/auth/schemas";
@@ -13,18 +11,18 @@ import {
   breakGlassAccountFromError,
   organisationErrorMessage,
   useOrganisationMutations,
-  useOrganisationSettings,
 } from "@/features/organisation/hooks";
 import { breakGlassDesignations, isQualifyingBreakGlass } from "@/features/organisation/rules";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
+import type { DashboardSettings } from "@/features/settings/schemas";
+import { ORGANISATION_LOGIN_POLICY_ID } from "@/features/settings/settings-links";
 
 const POLICIES: LocalLoginPolicy[] = ["enabled", "admins_only", "break_glass_only"];
 
 export type LoginPolicyCardProps = {
-  /** The whole query, not its data: a failed settings request and a pending one
-   * are different things to say, and `undefined` alone cannot tell them apart. */
-  settingsQuery: ReturnType<typeof useOrganisationSettings>;
-  /** Same, for the people list — an unreadable list must never read as "nobody is designated". */
+  /** The loaded settings document, which holds the saved policy. */
+  settings: DashboardSettings;
+  /** The whole query, not its data: an unreadable people list must never read as "nobody is designated". */
   usersQuery: ReturnType<typeof useDashboardUsers>;
   /** False without `users:manage`: the policy is still editable, the account name is not ours to show. */
   canSeeAccounts: boolean;
@@ -43,7 +41,7 @@ export type LoginPolicyCardProps = {
  * (PLAN §4.2), so the card can explain the refusal instead of provoking it.
  */
 export function LoginPolicyCard({
-  settingsQuery,
+  settings,
   usersQuery,
   canSeeAccounts,
   mutations,
@@ -52,8 +50,7 @@ export function LoginPolicyCard({
   const { t } = useTranslation();
   const mutation = mutations.updateLoginPolicy;
   const busy = disabled || mutation.isPending;
-  const settings = settingsQuery.data;
-  const policy: LocalLoginPolicy = settings?.localLoginPolicy ?? "enabled";
+  const policy = settings.localLoginPolicy;
   // A list that failed to arrive is not an empty list. Saying "no emergency
   // account is designated" because a request 500'd would send an operator to
   // designate a second one, or talk them into tightening a policy this card
@@ -68,7 +65,7 @@ export function LoginPolicyCard({
   const error = mutation.error ? organisationErrorMessage(mutation.error, t) : null;
 
   const save = (next: LocalLoginPolicy) => {
-    if (!settings || next === policy) {
+    if (next === policy) {
       return;
     }
     void mutation
@@ -77,7 +74,7 @@ export function LoginPolicyCard({
   };
 
   return (
-    <section id="organisation-login-policy" className="scroll-mt-16 space-y-3 rounded-xl border bg-card p-5">
+    <section id={ORGANISATION_LOGIN_POLICY_ID} className="scroll-mt-16 space-y-3 rounded-xl border bg-card p-5">
       <div className="flex items-center gap-2.5">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
           <KeyRound className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -90,48 +87,24 @@ export function LoginPolicyCard({
 
       {error ? <AlertMessage variant="error">{error}</AlertMessage> : null}
 
-      {settings === undefined ? (
-        settingsQuery.isError ? (
-          // Without the current value the select would offer "Everyone" as if
-          // that were the saved policy, and saving it would be a relaxation
-          // nobody asked for. Offer the retry instead of a control.
-          <AlertMessage variant="error">
-            <span className="flex flex-wrap items-center gap-2">
-              {t("organisation.loginPolicy.loadFailed")}
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                disabled={settingsQuery.isFetching}
-                onClick={() => void settingsQuery.refetch()}
-              >
-                {t("common.actions.retry")}
-              </Button>
-            </span>
-          </AlertMessage>
-        ) : (
-          <SpinnerBlock />
-        )
-      ) : (
-        <div className="space-y-1">
-          <Label htmlFor="organisation-login-policy-select" className="text-xs font-medium">
-            {t("organisation.loginPolicy.label")}
-          </Label>
-          <Select value={policy} disabled={busy} onValueChange={(value) => save(value as LocalLoginPolicy)}>
-            <SelectTrigger id="organisation-login-policy-select" aria-label={t("organisation.loginPolicy.label")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {POLICIES.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {t(`organisation.loginPolicy.options.${value}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-[11px] text-muted-foreground">{t(`organisation.loginPolicy.help.${policy}`)}</p>
-        </div>
-      )}
+      <div className="space-y-1">
+        <Label htmlFor="organisation-login-policy-select" className="text-xs font-medium">
+          {t("organisation.loginPolicy.label")}
+        </Label>
+        <Select value={policy} disabled={busy} onValueChange={(value) => save(value as LocalLoginPolicy)}>
+          <SelectTrigger id="organisation-login-policy-select" aria-label={t("organisation.loginPolicy.label")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {POLICIES.map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(`organisation.loginPolicy.options.${value}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">{t(`organisation.loginPolicy.help.${policy}`)}</p>
+      </div>
 
       {canSeeAccounts && accountsUnknown ? (
         <AlertMessage variant="warning">

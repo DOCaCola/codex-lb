@@ -3,39 +3,28 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { InheritBadge } from "@/features/settings/components/inherit-badge";
-import { useSettings } from "@/features/settings/hooks/use-settings";
+import { useSettingsSection } from "@/features/settings/use-settings-section";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
-import type { SettingsUpdateRequest } from "@/features/settings/schemas";
 
 const SWITCH_ID = "automations-pause-all";
 
 /**
- * "Pause all automations" switch in the Automations page header.
+ * "Pause all automations", the first card of Settings → Automations and the
+ * dashboard's only control for `automations_scheduler_enabled`.
  *
- * Wired to the same dashboard setting as Settings → Advanced → Background jobs
- * (`automations_scheduler_enabled`): on pauses the scheduler tick and refuses
- * manual runs on every replica from the next tick, without a restart. The
- * inheritance badge and reset action are the shared ones. Writing the setting
- * needs write access, so a read-only viewer sees the state but cannot flip it.
+ * On pauses the scheduler tick and refuses manual runs on every replica from
+ * the next tick, without a restart. The inheritance badge and reset action are
+ * the shared ones. Writing the setting needs write access, so a read-only
+ * viewer sees the state but cannot flip it.
  */
 export function AutomationsPauseToggle() {
   const { t } = useTranslation();
-  const canWrite = useAuthStore((state) => state.canWrite);
-  const { settingsQuery, updateSettingsMutation } = useSettings();
-  const settings = settingsQuery.data;
-  if (!settings) {
-    return null;
-  }
+  const { settings, controlsDisabled, onSave } = useSettingsSection();
   const paused = !settings.automationsSchedulerEnabled;
-  // Shared "busy" for the switch and the badge's reset action, as on the
-  // Settings page: a pending write, or no write permission at all.
-  const busy = updateSettingsMutation.isPending || !canWrite;
-  const save = (payload: SettingsUpdateRequest) => updateSettingsMutation.mutateAsync(payload).then(() => undefined);
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-xl border bg-card p-5">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <Label htmlFor={SWITCH_ID} className="text-sm font-medium">
@@ -57,8 +46,8 @@ export function AutomationsPauseToggle() {
             settings={settings}
             name="automations_scheduler_enabled"
             field="automationsSchedulerEnabled"
-            busy={busy}
-            onSave={save}
+            busy={controlsDisabled}
+            onSave={onSave}
           />
         </span>
       </div>
@@ -66,9 +55,9 @@ export function AutomationsPauseToggle() {
         id={SWITCH_ID}
         aria-label={t("automations.pause.ariaLabel")}
         checked={paused}
-        disabled={busy}
+        disabled={controlsDisabled}
         onCheckedChange={(checked) =>
-          void save(buildSettingsUpdateRequest(settings, { automationsSchedulerEnabled: !checked }))
+          void onSave(buildSettingsUpdateRequest(settings, { automationsSchedulerEnabled: !checked }))
         }
       />
     </div>

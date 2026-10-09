@@ -13,13 +13,14 @@ import {
 } from "@/features/auth/oidc-window";
 import { LoginHintSchema } from "@/features/auth/schemas";
 import { maskEmail, OIDC_KIND } from "@/features/organisation/rules";
+import { OrganisationSettingsSection } from "@/features/settings/components/organisation/organisation-section";
 import {
   ORGANISATION_LOGIN_POLICY_ID,
-  ORGANISATION_SCIM_HASH,
+  ORGANISATION_OIDC_ID,
+  ORGANISATION_REFUSED_HASH,
   ORGANISATION_SCIM_ID,
-} from "@/features/settings/advanced-settings-deeplink";
-import { OrganisationSettingsGroup } from "@/features/settings/components/organisation/organisation-group";
-import { renderAt, signInAsTeamAdmin } from "@/test/access-test-utils";
+} from "@/features/settings/settings-links";
+import { renderInSettings, signInAsTeamAdmin } from "@/test/access-test-utils";
 import {
   ADMIN_PERMISSIONS,
   createAccessSummary,
@@ -63,11 +64,12 @@ function useAssignableRoles(roles: ReturnType<typeof createDefaultDashboardRoles
   server.use(http.get("/api/role-mappings/assignable-roles", () => HttpResponse.json(roles)));
 }
 
-async function expand(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Show organisation settings" }));
+/** Settings → Organisation, optionally deep-linked to a card by `hash`. */
+function renderOrganisation(hash = "") {
+  return renderInSettings(<OrganisationSettingsSection />, "organisation", hash);
 }
 
-describe("OrganisationSettingsGroup", () => {
+describe("OrganisationSettingsSection", () => {
   beforeEach(() => {
     signInAsTeamAdmin();
   });
@@ -77,51 +79,38 @@ describe("OrganisationSettingsGroup", () => {
     vi.restoreAllMocks();
   });
 
-  it("is one collapsed line that mounts no card and issues no request", async () => {
-    const requests = trackEnterpriseRequests();
-    renderAt(<OrganisationSettingsGroup />);
+  it("says nothing an individual install has to decode while nothing is configured", async () => {
+    renderOrganisation();
 
-    expect(screen.getByRole("button", { name: "Show organisation settings" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Reverse-proxy sign-in" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Sign-in rules" })).not.toBeInTheDocument();
-    // Give any stray effect a turn to fire before asserting the silence.
-    await waitFor(() => expect(screen.getByTestId("organisation-group-line")).toBeInTheDocument());
-    expect(requests).toEqual([]);
-  });
-
-  it("says nothing an individual install has to decode while nothing is configured", () => {
-    renderAt(<OrganisationSettingsGroup />);
-
-    const line = screen.getByTestId("organisation-group-line");
+    const line = await screen.findByTestId("organisation-group-line");
     expect(line).toHaveTextContent("Company login, automatic account management, audit export.");
     expect(line.textContent ?? "").not.toMatch(ENTERPRISE_JARGON);
   });
 
-  it("replaces the line with a status summary once something is configured", () => {
+  it("replaces the line with a status summary once something is configured", async () => {
     signInAsTeamAdmin({
       accessSummary: createAccessSummary({ providersEnabled: ["password", "trusted_header"], roleMappings: 2 }),
     });
-    renderAt(<OrganisationSettingsGroup />);
+    renderOrganisation();
 
-    expect(screen.getByTestId("organisation-group-line")).toHaveTextContent(
+    expect(await screen.findByTestId("organisation-group-line")).toHaveTextContent(
       "Company login is set up. 2 sign-in rules.",
     );
   });
 
-  it("is not drawn at all without security:write", () => {
+  it("sends a session without security:write to the default section, issuing no request", async () => {
     signInAsTeamAdmin({ permissions: OPERATOR_PERMISSIONS });
-    renderAt(<OrganisationSettingsGroup />);
+    const requests = trackEnterpriseRequests();
+    renderOrganisation();
 
-    expect(screen.queryByRole("button", { name: "Show organisation settings" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/general$/));
+    expect(screen.queryByTestId("organisation-group-line")).not.toBeInTheDocument();
+    expect(requests).toEqual([]);
   });
 
-  it("fetches the cards' data only once it is expanded", async () => {
-    const user = userEvent.setup();
+  it("loads the cards' data when the section opens", async () => {
     const requests = trackEnterpriseRequests();
-    renderAt(<OrganisationSettingsGroup />);
-    expect(requests).toEqual([]);
-
-    await expand(user);
+    renderOrganisation();
 
     await screen.findByRole("heading", { name: "Reverse-proxy sign-in" });
     expect(requests).toContain("/api/auth-providers");
@@ -195,9 +184,7 @@ describe("OrganisationSettingsGroup", () => {
     }
 
     it("invites a connection without claiming nothing was ever set up", async () => {
-      const user = userEvent.setup();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await screen.findByRole("heading", { name: "Company sign-in" });
       const empty = screen.getByTestId("oidc-empty");
@@ -217,8 +204,7 @@ describe("OrganisationSettingsGroup", () => {
           return HttpResponse.json(createOidcAuthProvider());
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Connect company sign-in" }));
       await user.type(await screen.findByLabelText("Issuer address"), ISSUER);
@@ -262,8 +248,7 @@ describe("OrganisationSettingsGroup", () => {
           return HttpResponse.json(createOidcAuthProvider());
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Connect company sign-in" }));
       await user.type(await screen.findByLabelText("Issuer address"), "http://login.example.com");
@@ -287,8 +272,7 @@ describe("OrganisationSettingsGroup", () => {
           return HttpResponse.json(createOidcAuthProvider());
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Connect company sign-in" }));
       await user.type(await screen.findByLabelText("Issuer address"), ISSUER);
@@ -301,8 +285,7 @@ describe("OrganisationSettingsGroup", () => {
     it("says a saved connection is not on, and never hands the stored secret back", async () => {
       const user = userEvent.setup();
       useProviders(createAuthProvider(), createOidcAuthProvider());
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const card = await screen.findByTestId("oidc-connected");
       expect(card).toHaveTextContent("The connection is saved but not turned on");
@@ -319,8 +302,7 @@ describe("OrganisationSettingsGroup", () => {
     it("leaves the typed secret in nothing that outlives the round trip it was typed for", async () => {
       const user = userEvent.setup();
       server.use(http.patch("/api/auth-providers/:providerId", () => HttpResponse.json(createOidcAuthProvider())));
-      const { queryClient } = renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      const { queryClient } = renderOrganisation();
       await connect(user);
       // The document is written and the wizard has moved on to the test login.
       await screen.findByRole("button", { name: "Run test sign-in" });
@@ -360,8 +342,7 @@ describe("OrganisationSettingsGroup", () => {
         }),
       );
       const { handle, open } = stubFlowWindow();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       expect(await screen.findByRole("button", { name: "Turn on" })).toBeDisabled();
@@ -388,8 +369,7 @@ describe("OrganisationSettingsGroup", () => {
       const user = userEvent.setup();
       useProviders(createAuthProvider(), createOidcAuthProvider());
       const { handle } = stubFlowWindow();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       await user.click(await screen.findByRole("button", { name: "Run test sign-in" }));
@@ -416,8 +396,7 @@ describe("OrganisationSettingsGroup", () => {
       const requests = trackEnterpriseRequests();
       const reads = () => requests.filter((path) => path === "/api/auth-providers").length;
       const { handle } = stubFlowWindow();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       await user.click(await screen.findByRole("button", { name: "Run test sign-in" }));
@@ -448,8 +427,7 @@ describe("OrganisationSettingsGroup", () => {
         createAuthProvider(),
         createOidcAuthProvider({ testLoginVerifiedAt: new Date().toISOString() }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       expect(await screen.findByRole("button", { name: "Turn on" })).toBeDisabled();
@@ -461,8 +439,7 @@ describe("OrganisationSettingsGroup", () => {
       vi.spyOn(window, "open").mockReturnValue(null);
       const go = vi.spyOn(flowNavigation, "go").mockImplementation(() => {});
       useProviders(createAuthProvider(), createOidcAuthProvider());
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       await user.click(await screen.findByRole("button", { name: "Run test sign-in" }));
@@ -479,7 +456,7 @@ describe("OrganisationSettingsGroup", () => {
         createOidcAuthProvider({ testLoginVerifiedAt: "2026-02-01T00:00:00Z" }),
       );
       // The destination is the server's own, and it is not ours to change.
-      renderAt(<OrganisationSettingsGroup />, "/settings?org=1#oidc");
+      renderOrganisation(`#${ORGANISATION_OIDC_ID}`);
 
       expect(await screen.findByRole("button", { name: "Turn on" })).toBeEnabled();
       expect(takeFlow()).toBeNull();
@@ -501,8 +478,7 @@ describe("OrganisationSettingsGroup", () => {
           ),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
       await connect(user);
 
       expect(
@@ -527,8 +503,7 @@ describe("OrganisationSettingsGroup", () => {
         ),
       );
       const { handle } = stubFlowWindow();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       await user.click(await screen.findByRole("button", { name: "Run test sign-in" }));
@@ -557,8 +532,7 @@ describe("OrganisationSettingsGroup", () => {
         }),
       );
       stubFlowWindow();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       await user.click(await screen.findByRole("button", { name: "Run test sign-in" }));
@@ -588,8 +562,7 @@ describe("OrganisationSettingsGroup", () => {
         ),
       );
       const { handle } = stubFlowWindow();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Test and turn on" }));
       await user.click(await screen.findByRole("button", { name: "Run test sign-in" }));
@@ -619,8 +592,7 @@ describe("OrganisationSettingsGroup", () => {
           ),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Edit connection" }));
       await user.type(await screen.findByLabelText("Application secret"), TYPED_SECRET);
@@ -647,8 +619,7 @@ describe("OrganisationSettingsGroup", () => {
           return HttpResponse.json(createOidcAuthProvider());
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const toggle = await screen.findByRole("switch", { name: "Company sign-in is on" });
       expect(toggle).toBeEnabled();
@@ -661,16 +632,15 @@ describe("OrganisationSettingsGroup", () => {
       signInAsTeamAdmin({ permissions: OPERATOR_PERMISSIONS });
       useProviders(createAuthProvider(), createOidcAuthProvider({ enabled: true, active: true }));
       const requests = trackEnterpriseRequests();
-      renderAt(<OrganisationSettingsGroup />);
+      renderOrganisation();
 
-      await waitFor(() => expect(screen.getByTestId("location")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/general$/));
       expect(screen.queryByRole("heading", { name: "Company sign-in" })).not.toBeInTheDocument();
       expect(screen.queryByText("Okta")).not.toBeInTheDocument();
       expect(requests).toEqual([]);
     });
 
-    it("names the one connected provider in the collapsed summary, from the session's own hint", () => {
-      const requests = trackEnterpriseRequests();
+    it("names the one connected provider in the section description, from the session's own hint", async () => {
       signInAsTeamAdmin({
         accessSummary: createAccessSummary({ providersEnabled: [LOCAL_SIGN_IN_PROVIDER.kind, OIDC_KIND], roleMappings: 2 }),
         loginHint: LoginHintSchema.parse({
@@ -680,15 +650,14 @@ describe("OrganisationSettingsGroup", () => {
           ],
         }),
       });
-      renderAt(<OrganisationSettingsGroup />);
+      renderOrganisation();
 
-      const line = screen.getByTestId("organisation-group-line");
+      const line = await screen.findByTestId("organisation-group-line");
       expect(line).toHaveTextContent("Okta is connected. 2 sign-in rules.");
       expect(line.textContent ?? "").not.toMatch(ENTERPRISE_JARGON);
-      expect(requests).toEqual([]);
     });
 
-    it("quotes the operator's own label verbatim, even one this product would not write", () => {
+    it("quotes the operator's own label verbatim, even one this product would not write", async () => {
       signInAsTeamAdmin({
         accessSummary: createAccessSummary({ providersEnabled: [LOCAL_SIGN_IN_PROVIDER.kind, OIDC_KIND], roleMappings: 1 }),
         loginHint: LoginHintSchema.parse({
@@ -698,14 +667,14 @@ describe("OrganisationSettingsGroup", () => {
           ],
         }),
       });
-      renderAt(<OrganisationSettingsGroup />);
+      renderOrganisation();
 
       // The word ban governs the copy this product writes. A customer's name for
       // their own system is quoted, not rewritten, abbreviated or decoded.
-      expect(screen.getByTestId("organisation-group-line")).toHaveTextContent("SSO is connected. 1 sign-in rule.");
+      expect(await screen.findByTestId("organisation-group-line")).toHaveTextContent("SSO is connected. 1 sign-in rule.");
     });
 
-    it("keeps the unnamed summary when two company sign-in methods are active", () => {
+    it("keeps the unnamed summary when two company sign-in methods are active", async () => {
       signInAsTeamAdmin({
         accessSummary: createAccessSummary({
           providersEnabled: ["password", "trusted_header", "oidc"],
@@ -719,9 +688,9 @@ describe("OrganisationSettingsGroup", () => {
           ],
         }),
       });
-      renderAt(<OrganisationSettingsGroup />);
+      renderOrganisation();
 
-      expect(screen.getByTestId("organisation-group-line")).toHaveTextContent(
+      expect(await screen.findByTestId("organisation-group-line")).toHaveTextContent(
         "Company login is set up. 2 sign-in rules.",
       );
     });
@@ -729,9 +698,7 @@ describe("OrganisationSettingsGroup", () => {
 
   describe("reverse-proxy card", () => {
     it("shows the header names read-only next to the variables that set them", async () => {
-      const user = userEvent.setup();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await screen.findByRole("heading", { name: "Reverse-proxy sign-in" });
       expect(screen.getByText("Remote-User")).toBeInTheDocument();
@@ -743,14 +710,12 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("stays neutral about an install that does not run behind a proxy", async () => {
-      const user = userEvent.setup();
       server.use(
         http.get("/api/auth-providers", () =>
           HttpResponse.json([createAuthProvider({ active: false })]),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const note = await screen.findByText(/This install signs people in with a password today/);
       expect(note.textContent ?? "").not.toMatch(/wrong|invalid|misconfigur|error/i);
@@ -766,8 +731,7 @@ describe("OrganisationSettingsGroup", () => {
           return HttpResponse.json({ ...createAuthProvider(), ...(body as object) });
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("switch", { name: "Match by e-mail address" }));
       await waitFor(() => expect(patched).toEqual([{ linkByEmail: true }]));
@@ -778,9 +742,7 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("advises against admitting every arrival as an admin, without calling it an error", async () => {
-      const user = userEvent.setup();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const note = await screen.findByText(/Everyone the proxy vouches for becomes an admin/);
       expect(note.textContent ?? "").not.toMatch(/error|invalid|misconfigur/i);
@@ -796,8 +758,7 @@ describe("OrganisationSettingsGroup", () => {
           ),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("switch", { name: "Match by e-mail address" }));
 
@@ -808,8 +769,7 @@ describe("OrganisationSettingsGroup", () => {
 
     it("offers refusing an arriving identity as well as a preset", async () => {
       const user = userEvent.setup();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("combobox", { name: "Someone arriving for the first time" }));
       const options = await screen.findAllByRole("option");
@@ -824,30 +784,28 @@ describe("OrganisationSettingsGroup", () => {
 
   describe("group-to-role rules card", () => {
     it("explains what happens with no rules and offers the one-domain quick add", async () => {
-      const user = userEvent.setup();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const empty = await screen.findByTestId("organisation-rules-empty");
       expect(empty).toHaveTextContent("No rules yet.");
       // The seeded provider admits unknown identities as Admin (D10), so the
       // empty state says that rather than promising a refusal it would not do.
       expect(empty).toHaveTextContent("Everyone arriving through company login is admitted as Admin.");
-      // The suggestion comes from who was actually refused.
-      expect(within(empty).getByRole("textbox", { name: "Value to match" })).toHaveValue("example.com");
+      // The suggestion comes from who was actually refused, once that list arrives.
+      await waitFor(() =>
+        expect(within(empty).getByRole("textbox", { name: "Value to match" })).toHaveValue("example.com"),
+      );
       // Adding the first rule starts re-evaluating the accounts this method made.
       expect(empty).toHaveTextContent("accounts this login method created are checked again");
     });
 
     it("promises a refusal only when the provider refuses unknown identities", async () => {
-      const user = userEvent.setup();
       server.use(
         http.get("/api/auth-providers", () =>
           HttpResponse.json([createAuthProvider({ unknownIdentityRoleId: null })]),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(await screen.findByTestId("organisation-rules-empty")).toHaveTextContent(
         "Everyone arriving through company login is refused.",
@@ -866,8 +824,7 @@ describe("OrganisationSettingsGroup", () => {
           });
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const empty = await screen.findByTestId("organisation-rules-empty");
       await user.click(within(empty).getByRole("button", { name: "Add rule" }));
@@ -898,8 +855,7 @@ describe("OrganisationSettingsGroup", () => {
           return HttpResponse.json([second, first]);
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Move engineering up" }));
 
@@ -911,10 +867,8 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("cannot move the winner up or the last rule down", async () => {
-      const user = userEvent.setup();
       useRules(createRoleMapping({ id: "mapping_platform", claimValue: "platform", priority: 2 }), createRoleMapping());
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(await screen.findByRole("button", { name: "Move platform up" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Move engineering down" })).toBeDisabled();
@@ -922,8 +876,7 @@ describe("OrganisationSettingsGroup", () => {
 
     it("counts the refused sign-ins of the last week and opens the filtered list", async () => {
       const user = userEvent.setup();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const line = await screen.findByTestId("organisation-refused-line");
       expect(line).toHaveTextContent("2 refused sign-ins in the last 7 days");
@@ -939,21 +892,17 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("says nothing about refusals when there were none", async () => {
-      const user = userEvent.setup();
       server.use(http.get("/api/audit-logs", () => HttpResponse.json([])));
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await screen.findByRole("heading", { name: "Sign-in rules" });
       expect(screen.queryByTestId("organisation-refused-line")).not.toBeInTheDocument();
     });
 
     it("drops the counter, not the rules, for an account without audit:read", async () => {
-      const user = userEvent.setup();
       signInAsTeamAdmin({ permissions: ADMIN_PERMISSIONS.filter((grant) => grant !== "audit:read:all") });
       const requests = trackEnterpriseRequests();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await screen.findByRole("heading", { name: "Sign-in rules" });
       expect(screen.queryByTestId("organisation-refused-line")).not.toBeInTheDocument();
@@ -972,8 +921,7 @@ describe("OrganisationSettingsGroup", () => {
       };
       // The server has already dropped what this caller may not hand out.
       useAssignableRoles([...createDefaultDashboardRoles().filter((role) => role.assignableToUsers), custom]);
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("combobox", { name: "What they get" }));
       expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual([
@@ -1004,8 +952,7 @@ describe("OrganisationSettingsGroup", () => {
       assignableRoleIds: [],
     });
     useAssignableRoles(createDefaultDashboardRoles().filter((role) => role.slug === "viewer"));
-    renderAt(<OrganisationSettingsGroup />);
-    await expand(user);
+    renderOrganisation();
 
     await screen.findByRole("heading", { name: "Sign-in rules" });
     const picker = screen.getByRole("combobox", { name: "What they get" });
@@ -1016,10 +963,10 @@ describe("OrganisationSettingsGroup", () => {
     expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual(["Viewer"]);
   });
 
-  it("expands and opens the refused list from its deep link", async () => {
-    renderAt(<OrganisationSettingsGroup />, "/settings#organisation-refused");
+  it("opens the refused list from its deep link", async () => {
+    renderOrganisation(ORGANISATION_REFUSED_HASH);
 
-    // The open sheet takes the accessible tree, so the expanded group behind it
+    // The open sheet takes the accessible tree, so the section behind it
     // is only addressable as hidden content.
     expect(await screen.findByRole("heading", { name: "Refused sign-ins" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sign-in rules", hidden: true })).toBeInTheDocument();
@@ -1033,10 +980,8 @@ describe("OrganisationSettingsGroup", () => {
     }
 
     it("renders even on an install with no reverse proxy, where the other two cards do not", async () => {
-      const user = userEvent.setup();
       server.use(http.get("/api/auth-providers", () => HttpResponse.json([])));
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(await screen.findByRole("heading", { name: "Password sign-in" })).toBeInTheDocument();
       const note = screen.getByText(/No reverse proxy signs people in on this install/);
@@ -1048,10 +993,8 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("shows the emergency address and the account to save with it", async () => {
-      const user = userEvent.setup();
       useUsers(ENROLLED_ADMIN);
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const facts = await screen.findByTestId("organisation-emergency-facts");
       expect(facts).toHaveTextContent("rescue");
@@ -1060,10 +1003,8 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("names the account to enrol while nothing qualifies", async () => {
-      const user = userEvent.setup();
       useUsers(UNENROLLED_ADMIN);
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(
         await screen.findByText(
@@ -1074,10 +1015,8 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("says so plainly when no emergency account is designated at all", async () => {
-      const user = userEvent.setup();
       useUsers(createDashboardUser({ username: "rescue", isBreakGlass: false }));
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(
         await screen.findByText(
@@ -1101,8 +1040,7 @@ describe("OrganisationSettingsGroup", () => {
           );
         }),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("combobox", { name: "Allowed to sign in with a password" }));
       await user.click(await screen.findByRole("option", { name: "The emergency account only" }));
@@ -1130,8 +1068,7 @@ describe("OrganisationSettingsGroup", () => {
           ),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("combobox", { name: "Allowed to sign in with a password" }));
       await user.click(await screen.findByRole("option", { name: "Administrators only" }));
@@ -1145,32 +1082,30 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("does not name an account it was not told about", async () => {
-      const user = userEvent.setup();
       signInAsTeamAdmin({ permissions: ADMIN_PERMISSIONS.filter((grant) => grant !== "users:manage:all") });
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       const facts = await screen.findByTestId("organisation-emergency-facts");
       expect(facts).toHaveTextContent("Permission to manage people is needed to see which account this is.");
       expect(facts).not.toHaveTextContent("admin");
     });
 
-    it("summarises a policy-only install without claiming a company login it does not have", () => {
+    it("summarises a policy-only install without claiming a company login it does not have", async () => {
       signInAsTeamAdmin({ accessSummary: createAccessSummary({ localLoginPolicy: "break_glass_only" }) });
-      renderAt(<OrganisationSettingsGroup />);
+      renderOrganisation();
 
-      expect(screen.getByTestId("organisation-group-line")).toHaveTextContent("Password sign-in is restricted.");
-      expect(screen.getByTestId("organisation-group-line")).not.toHaveTextContent("sign-in rules");
+      expect(await screen.findByTestId("organisation-group-line")).toHaveTextContent("Password sign-in is restricted.");
+      expect(await screen.findByTestId("organisation-group-line")).not.toHaveTextContent("sign-in rules");
     });
 
-    it("expands and scrolls from its own deep link", async () => {
-      renderAt(<OrganisationSettingsGroup />, "/settings#organisation-login-policy");
+    it("scrolls from its own deep link", async () => {
+      renderOrganisation(`#${ORGANISATION_LOGIN_POLICY_ID}`);
 
       expect(await screen.findByRole("heading", { name: "Password sign-in" })).toBeInTheDocument();
     });
 
-    it("waits for the group's own queries before scrolling to the card", async () => {
-      // The card's anchor lives behind the group's spinner, and the scroll is
+    it("waits for the section's own queries before scrolling to the card", async () => {
+      // The card's anchor lives behind the section's spinner, and the scroll is
       // one animation-frame lookup that never retries: a deep link that raced
       // the providers, rules and roles requests used to find nothing and leave
       // the operator at the top of the page.
@@ -1195,12 +1130,10 @@ describe("OrganisationSettingsGroup", () => {
       );
       const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
 
-      renderAt(<OrganisationSettingsGroup />, "/settings#organisation-login-policy");
+      renderOrganisation(`#${ORGANISATION_LOGIN_POLICY_ID}`);
 
-      // The group is open on the spinner, so the anchor does not exist yet.
-      await waitFor(() =>
-        expect(screen.getByRole("button", { name: "Hide organisation settings" })).toBeInTheDocument(),
-      );
+      // The section is open on the spinner, so the anchor does not exist yet.
+      await screen.findByTestId("organisation-group-line");
       expect(document.getElementById(ORGANISATION_LOGIN_POLICY_ID)).toBeNull();
       expect(scrollIntoView).not.toHaveBeenCalled();
 
@@ -1216,7 +1149,7 @@ describe("OrganisationSettingsGroup", () => {
       scrollIntoView.mockRestore();
     });
 
-    it("offers a retry instead of an endless spinner when the settings request fails", async () => {
+    it("offers no policy control until the settings load, and a retry when they fail", async () => {
       const user = userEvent.setup();
       let attempts = 0;
       server.use(
@@ -1228,10 +1161,9 @@ describe("OrganisationSettingsGroup", () => {
         }),
       );
       useUsers(ENROLLED_ADMIN);
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
-      expect(await screen.findByText("The current setting could not be loaded.")).toBeInTheDocument();
+      await screen.findByRole("alert");
       // Never a select offering "Everyone" as though that were the saved value.
       expect(screen.queryByRole("combobox", { name: "Allowed to sign in with a password" })).not.toBeInTheDocument();
 
@@ -1243,14 +1175,12 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("does not turn an unreadable people list into 'nobody is designated'", async () => {
-      const user = userEvent.setup();
       server.use(
         http.get("/api/dashboard-users", () =>
           HttpResponse.json({ error: { code: "internal_error", message: "boom" } }, { status: 500 }),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(
         await screen.findByText(
@@ -1283,10 +1213,8 @@ describe("OrganisationSettingsGroup", () => {
     }
 
     it("is drawn on an install that cannot use it yet, disabled, with the reason", async () => {
-      const user = userEvent.setup();
       passwordOnly();
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(await screen.findByRole("heading", { name: "Automatic account management" })).toBeInTheDocument();
       expect(screen.getByTestId("automatic-accounts-blocked")).toHaveTextContent(
@@ -1299,7 +1227,6 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("mounts last, after the login-policy card", async () => {
-      const user = userEvent.setup();
       server.use(
         http.get("/api/auth-providers", () =>
           HttpResponse.json([
@@ -1309,8 +1236,7 @@ describe("OrganisationSettingsGroup", () => {
           ]),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await screen.findByRole("heading", { name: "Automatic account management" });
       expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual([
@@ -1331,8 +1257,7 @@ describe("OrganisationSettingsGroup", () => {
         return useAuthStore.getState() as never;
       });
       signInAsTeamAdmin({ refreshSession });
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.type(await screen.findByLabelText("Name this credential"), "Directory");
       await user.click(screen.getByRole("button", { name: "Create credential" }));
@@ -1356,8 +1281,7 @@ describe("OrganisationSettingsGroup", () => {
 
     it("holds the plaintext in component state alone while it is on screen", async () => {
       const user = userEvent.setup();
-      const { queryClient } = renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      const { queryClient } = renderOrganisation();
 
       await user.type(await screen.findByLabelText("Name this credential"), "Directory");
       await user.click(screen.getByRole("button", { name: "Create credential" }));
@@ -1392,8 +1316,7 @@ describe("OrganisationSettingsGroup", () => {
           HttpResponse.json({ token: { ...existing, rotatedAt: "2026-02-03T00:00:00Z" }, secret: replacement }),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.click(await screen.findByRole("button", { name: "Replace" }));
 
@@ -1421,8 +1344,7 @@ describe("OrganisationSettingsGroup", () => {
           ),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       await user.type(await screen.findByLabelText("Name this credential"), "Directory");
       await user.click(screen.getByRole("button", { name: "Create credential" }));
@@ -1433,7 +1355,6 @@ describe("OrganisationSettingsGroup", () => {
     });
 
     it("warns that a person will arrive twice while the company sign-in does not match by e-mail", async () => {
-      const user = userEvent.setup();
       server.use(
         http.get("/api/auth-providers", () =>
           HttpResponse.json([
@@ -1442,22 +1363,19 @@ describe("OrganisationSettingsGroup", () => {
           ]),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(await screen.findByText(/Okta does not match people by e-mail/)).toBeInTheDocument();
       expect(screen.queryByTestId("automatic-accounts-blocked")).not.toBeInTheDocument();
     });
 
     it("does not turn an unreadable credential list into 'no credential exists'", async () => {
-      const user = userEvent.setup();
       server.use(
         http.get("/api/scim-tokens", () =>
           HttpResponse.json({ error: { code: "internal_error", message: "boom" } }, { status: 500 }),
         ),
       );
-      renderAt(<OrganisationSettingsGroup />);
-      await expand(user);
+      renderOrganisation();
 
       expect(await screen.findByText("The list of credentials could not be loaded.")).toBeInTheDocument();
       expect(screen.queryByTestId("scim-token-list")).not.toBeInTheDocument();
@@ -1467,38 +1385,18 @@ describe("OrganisationSettingsGroup", () => {
       expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
     });
 
-    it("says accounts are managed automatically once one credential exists, without the banned words", () => {
+    it("says accounts are managed automatically once one credential exists, without the banned words", async () => {
       signInAsTeamAdmin({ accessSummary: createAccessSummary({ scimTokens: 1 }) });
-      renderAt(<OrganisationSettingsGroup />);
+      renderOrganisation();
 
-      const line = screen.getByTestId("organisation-group-line");
+      const line = await screen.findByTestId("organisation-group-line");
       expect(line).toHaveTextContent("Accounts are added and disabled automatically.");
       expect(line.textContent ?? "").not.toMatch(ENTERPRISE_JARGON);
     });
 
-    it("issues no credential request while the group is collapsed", async () => {
-      const seen: string[] = [];
-      server.events.on("request:start", ({ request }) => {
-        if (new URL(request.url).pathname.startsWith("/api/scim-tokens")) {
-          seen.push(request.method);
-        }
-      });
-      renderAt(<OrganisationSettingsGroup />);
-
-      await waitFor(() => expect(screen.getByTestId("organisation-group-line")).toBeInTheDocument());
-      expect(seen).toEqual([]);
-    });
-
-    it("is not drawn at all without security:write", () => {
-      signInAsTeamAdmin({ permissions: OPERATOR_PERMISSIONS });
-      renderAt(<OrganisationSettingsGroup />);
-
-      expect(screen.queryByRole("heading", { name: "Automatic account management" })).not.toBeInTheDocument();
-    });
-
-    it("expands and scrolls from its own deep link", async () => {
+    it("scrolls from its own deep link", async () => {
       const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
-      renderAt(<OrganisationSettingsGroup />, `/settings${ORGANISATION_SCIM_HASH}`);
+      renderOrganisation(`#${ORGANISATION_SCIM_ID}`);
 
       expect(await screen.findByRole("heading", { name: "Automatic account management" })).toBeInTheDocument();
       await waitFor(() => {

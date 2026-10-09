@@ -19,7 +19,7 @@ import { SpinnerBlock } from "@/components/ui/spinner";
 import type { AuthProvider, ScimTokenIssued } from "@/features/organisation/api";
 import { organisationErrorMessage, useOrganisationMutations, useScimTokens } from "@/features/organisation/hooks";
 import { companyLoginProvider } from "@/features/organisation/rules";
-import { ORGANISATION_SCIM_ID } from "@/features/settings/advanced-settings-deeplink";
+import { ORGANISATION_SCIM_ID } from "@/features/settings/settings-links";
 
 const MAX_LABEL_LENGTH = 64;
 

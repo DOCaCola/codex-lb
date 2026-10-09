@@ -28,7 +28,7 @@ import {
   type OidcField,
 } from "@/features/organisation/rules";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
-import { getSettings, updateSettings } from "@/features/settings/api";
+import { updateSettings } from "@/features/settings/api";
 import type { SettingsUpdateRequest } from "@/features/settings/schemas";
 import { ApiError } from "@/lib/api-client";
 import { getErrorMessage } from "@/utils/errors";
@@ -110,11 +110,6 @@ export function organisationErrorMessage(error: unknown, t: TFunction): string {
     return t(`organisation.errors.${error.code}`);
   }
   return getErrorMessage(error);
-}
-
-/** The settings row, for the one field this group owns (`local_login_policy`). */
-export function useOrganisationSettings(enabled = true) {
-  return useQuery({ queryKey: SETTINGS_QUERY_KEY, queryFn: getSettings, enabled });
 }
 
 export function useAuthProviders(enabled = true) {

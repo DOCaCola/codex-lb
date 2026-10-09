@@ -1,6 +1,6 @@
 # Quota reset webhook
 
-Configure the optional webhook in **Settings → Quota reset webhook**. Choose
+Configure the optional webhook in **Settings → Notifications → Quota reset webhook**. Choose
 scheduled and/or unexpected resets, enter an HTTP or HTTPS destination (including internal addresses), and optionally
 set a signing secret. The feature is disabled by default. Use **Test delivery** and
 the displayed delivery status to verify the destination.

@@ -18,7 +18,7 @@ import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/comp
 import { Label } from "@/components/ui/label";
 import { startOidcStepUp, stepUp } from "@/features/auth/api";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
-import { ACCESS_HASH } from "@/features/settings/advanced-settings-deeplink";
+import { ACCESS_MY_SIGN_IN_PATH } from "@/features/settings/settings-links";
 import { setStepUpHandlers, type StepUpMethod } from "@/lib/api-client";
 import { getErrorMessage } from "@/utils/errors";
 
@@ -75,7 +75,7 @@ export function StepUpDialog() {
           description: t("auth.stepUp.unavailable.description"),
           action: {
             label: t("auth.stepUp.unavailable.action"),
-            onClick: () => navigate(`/settings${ACCESS_HASH}`),
+            onClick: () => navigate(ACCESS_MY_SIGN_IN_PATH),
           },
         });
       },

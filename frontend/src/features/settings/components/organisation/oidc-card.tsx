@@ -16,7 +16,7 @@ import type { AuthProvider } from "@/features/organisation/api";
 import { organisationErrorMessage, useOrganisationMutations } from "@/features/organisation/hooks";
 import { armedByTestLogin, isConnected } from "@/features/organisation/rules";
 import { ApiError } from "@/lib/api-client";
-import { ORGANISATION_OIDC_ID } from "@/features/settings/advanced-settings-deeplink";
+import { ORGANISATION_OIDC_ID } from "@/features/settings/settings-links";
 import {
   OidcConnectDialog,
   type OidcStep,

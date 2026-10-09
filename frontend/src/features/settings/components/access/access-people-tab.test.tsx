@@ -4,8 +4,9 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
-import { AccessPeopleTab } from "@/features/settings/components/access/access-people-tab";
-import { renderAt, signInAsTeamAdmin } from "@/test/access-test-utils";
+import { AccessPeopleTab, type AccessPeopleTabProps } from "@/features/settings/components/access/access-people-tab";
+import { useSettingsSection } from "@/features/settings/use-settings-section";
+import { renderInSettings, signInAsTeamAdmin } from "@/test/access-test-utils";
 import {
   OPERATOR_PERMISSIONS,
   PRESET_ROLE_IDS,
@@ -21,11 +22,21 @@ function conflict(code: string, status = 409) {
   return HttpResponse.json({ error: { code, message: code } }, { status });
 }
 
-function renderTab(overrides: Partial<Parameters<typeof AccessPeopleTab>[0]> = {}) {
+/** The tab as the Access section draws it: fed the layout's settings document. */
+function PeopleTabInSection(props: Omit<AccessPeopleTabProps, "settings">) {
+  const { settings } = useSettingsSection();
+  return <AccessPeopleTab settings={settings} {...props} />;
+}
+
+function renderTab() {
   const onInvite = vi.fn();
   const onIssued = vi.fn();
-  renderAt(<AccessPeopleTab onInvite={onInvite} onIssued={onIssued} {...overrides} />);
-  return { onInvite, onIssued };
+  const onOpenMySignIn = vi.fn();
+  renderInSettings(
+    <PeopleTabInSection onInvite={onInvite} onIssued={onIssued} onOpenMySignIn={onOpenMySignIn} />,
+    "access",
+  );
+  return { onInvite, onIssued, onOpenMySignIn };
 }
 
 async function openRowMenu(user: ReturnType<typeof userEvent.setup>, username: string, name: string) {
@@ -66,7 +77,6 @@ describe("AccessPeopleTab", () => {
     expect(within(invited).getByText("Never")).toBeInTheDocument();
 
     expect(screen.getByRole("button", { name: "Pending invites (1)" })).toBeInTheDocument();
-    expect(screen.queryByText("View full page")).not.toBeInTheDocument();
     expect(await screen.findByText("Two-factor is not required for everyone at sign-in.")).toBeInTheDocument();
   });
 
@@ -79,7 +89,7 @@ describe("AccessPeopleTab", () => {
     expect(await screen.findByText("Two-factor is required for everyone at sign-in.")).toBeInTheDocument();
   });
 
-  it("fails closed while the TOTP policy is unknown: no statement, retry re-requests", async () => {
+  it("is not shown until the settings load, so the TOTP policy is never stated unknown", async () => {
     const user = userEvent.setup();
     let settingsRequests = 0;
     let fail = true;
@@ -91,28 +101,15 @@ describe("AccessPeopleTab", () => {
           : HttpResponse.json(createDashboardSettings({ totpRequiredOnLogin: true }));
       }),
     );
-    signInAsTeamAdmin({ user: createSessionUser({ id: "user_ops", username: "ops" }) });
     renderTab();
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Could not load the sign-in requirements.");
-    expect(screen.queryByText("Two-factor is not required for everyone at sign-in.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Two-factor is required for everyone at sign-in.")).not.toBeInTheDocument();
-    // An unknown policy withholds the statement, not a row action: the rows
-    // offer what any row offers and the server answers for itself.
-    expect(menuLabels(await openRowMenu(user, "admin", "admin"))).toEqual([
-      "Change role",
-      "Rename",
-      "Disable",
-      "Reset two-factor",
-      "Log out everywhere",
-      "Delete",
-    ]);
-    await user.keyboard("{Escape}");
+    await screen.findByRole("alert");
+    expect(screen.queryByTestId("people-row-admin")).not.toBeInTheDocument();
+    expect(screen.queryByText(/required for everyone at sign-in/)).not.toBeInTheDocument();
 
     fail = false;
     const before = settingsRequests;
-    await user.click(within(alert).getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Two-factor is required for everyone at sign-in.")).toBeInTheDocument();
     expect(settingsRequests).toBe(before + 1);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -191,18 +188,6 @@ describe("AccessPeopleTab", () => {
 
       expect(await screen.findByRole("alert")).toHaveTextContent("Settings were modified");
     });
-  });
-
-  it("treats a still-loading TOTP policy as unknown", async () => {
-    const user = userEvent.setup();
-    server.use(http.get("/api/settings", () => new Promise<never>(() => undefined)));
-    signInAsTeamAdmin({ user: createSessionUser({ id: "user_ops", username: "ops" }) });
-    renderTab();
-
-    await screen.findByTestId("people-row-admin");
-    expect(screen.getByTestId("sign-in-requirements-loading")).toBeInTheDocument();
-    expect(screen.queryByText(/required at sign-in/)).not.toBeInTheDocument();
-    expect(menuLabels(await openRowMenu(user, "admin", "admin"))).toContain("Reset two-factor");
   });
 
   it("marks SSO-only rows as awaiting sign-in and offers no link to copy", async () => {
@@ -615,26 +600,11 @@ describe("AccessPeopleTab", () => {
     expect(within(sheet).queryByRole("button", { name: /clone|edit|duplicate/i })).not.toBeInTheDocument();
   });
 
-  it("offers the full page only above eight rows and routes the header actions", async () => {
+  it("routes the header actions", async () => {
     const user = userEvent.setup();
-    const onOpenMySignIn = vi.fn();
-    server.use(
-      http.get("/api/dashboard-users", () =>
-        HttpResponse.json(
-          Array.from({ length: 9 }, (_, index) =>
-            createDashboardUser({
-              id: `user_${index}`,
-              username: `person${index}`,
-              role: { id: PRESET_ROLE_IDS.viewer, slug: "viewer", name: "Viewer", kind: "preset" },
-            }),
-          ),
-        ),
-      ),
-    );
-    const { onInvite } = renderTab({ onOpenMySignIn });
+    const { onInvite, onOpenMySignIn } = renderTab();
 
-    expect(await screen.findByRole("link", { name: "View full page" })).toHaveAttribute("href", "/settings/access");
-    await user.click(screen.getByRole("button", { name: "Change in My sign-in" }));
+    await user.click(await screen.findByRole("button", { name: "Change in My sign-in" }));
     expect(onOpenMySignIn).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Invite" }));
     expect(onInvite).toHaveBeenCalledTimes(1);

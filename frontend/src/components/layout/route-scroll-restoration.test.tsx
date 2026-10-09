@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RouteScrollRestoration } from "@/components/layout/route-scroll-restoration";
@@ -22,22 +22,12 @@ function NavigationHarness() {
       <button type="button" onClick={() => void navigate(`${location.pathname}?filter=active`)}>
         Change query
       </button>
-      <button type="button" onClick={() => void navigate("/settings?advanced=1#firewall")}>
+      <button type="button" onClick={() => void navigate("/settings/access#firewall")}>
         Open hash target
-      </button>
-      <button type="button" onClick={() => void navigate("/firewall")}>
-        Open legacy hash redirect
-      </button>
-      <button type="button" onClick={() => void navigate("/firewall/")}>
-        Open trailing-slash legacy hash redirect
       </button>
       <button type="button" onClick={() => void navigate(-1)}>
         Go back
       </button>
-      <Routes>
-        <Route path="/firewall" element={<Navigate to="/settings?advanced=1#firewall" replace />} />
-        <Route path="*" element={null} />
-      </Routes>
     </>
   );
 }
@@ -88,25 +78,7 @@ describe("RouteScrollRestoration", () => {
 
     await user.click(screen.getByRole("button", { name: "Open hash target" }));
 
-    expect(await screen.findByRole("status", { name: "location" })).toHaveTextContent(
-      "/settings?advanced=1#firewall",
-    );
-    expect(scrollTo).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["canonical", "Open legacy hash redirect"],
-    ["trailing-slash", "Open trailing-slash legacy hash redirect"],
-  ])("preserves the hash intent of the %s in-app Firewall compatibility redirect", async (_path, action) => {
-    const user = userEvent.setup({ delay: null });
-    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
-    renderHarness();
-
-    await user.click(screen.getByRole("button", { name: action }));
-
-    expect(await screen.findByRole("status", { name: "location" })).toHaveTextContent(
-      "/settings?advanced=1#firewall",
-    );
+    expect(await screen.findByRole("status", { name: "location" })).toHaveTextContent("/settings/access#firewall");
     expect(scrollTo).not.toHaveBeenCalled();
   });
 

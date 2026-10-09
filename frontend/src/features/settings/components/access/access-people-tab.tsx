@@ -1,9 +1,8 @@
 import { ShieldCheck } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api-client";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
 
 import { AlertMessage } from "@/components/alert-message";
 import { Badge } from "@/components/ui/badge";
@@ -20,8 +19,7 @@ import {
   usePermissionDescriptors,
 } from "@/features/access/hooks";
 import { useAuthStore, usePermission } from "@/features/auth/hooks/use-auth";
-import { ACCESS_HASH } from "@/features/settings/advanced-settings-deeplink";
-import { getSettings, updateSettings } from "@/features/settings/api";
+import { updateSettings } from "@/features/settings/api";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
 import type { DashboardSettings } from "@/features/settings/schemas";
 import type { IssuedLink } from "@/features/settings/components/access/invite-dialog";
@@ -32,16 +30,13 @@ import { RolesSheet } from "@/features/settings/components/access/roles-sheet";
 import { formatDateTimeInline, formatExpiresIn } from "@/utils/formatters";
 import { getErrorMessage } from "@/utils/errors";
 
-// Above this many rows the card offers the full page.
-const FULL_PAGE_THRESHOLD = 8;
-
 type Sheet = "pending" | "roles" | null;
 
 export type AccessPeopleTabProps = {
-  /** `/settings/access`: no "view full page" link, wider table. */
-  fullPage?: boolean;
-  onOpenMySignIn?: () => void;
-  /** The invite dialog and the one-time link are owned by the card/page. */
+  /** The loaded settings document: the sign-in requirements line and the administrator toggle read it. */
+  settings: DashboardSettings;
+  onOpenMySignIn: () => void;
+  /** The invite dialog and the one-time link are owned by the card. */
   onInvite: () => void;
   onIssued: (issued: IssuedLink) => void;
 };
@@ -126,7 +121,7 @@ function AdminTotpRequirement({ settings }: { settings: DashboardSettings }) {
 }
 
 /** Everyone who can sign in: the table, its row actions and the invite entry points. */
-export function AccessPeopleTab({ fullPage = false, onOpenMySignIn, onInvite, onIssued }: AccessPeopleTabProps) {
+export function AccessPeopleTab({ settings, onOpenMySignIn, onInvite, onIssued }: AccessPeopleTabProps) {
   const { t } = useTranslation();
   const selfId = useAuthStore((state) => state.user?.id ?? null);
   const assignableRoleIds = useAuthStore((state) => state.assignableRoleIds);
@@ -137,13 +132,6 @@ export function AccessPeopleTab({ fullPage = false, onOpenMySignIn, onInvite, on
   const invitesQuery = usePendingInvites();
   const rolesQuery = useDashboardRoles();
   const permissionsQuery = usePermissionDescriptors();
-  // The configured policy, not the session's per-login challenge flag (which
-  // is false again once this admin has passed TOTP). Shares the Settings
-  // page's cache entry and loads it on `/settings/access`. Unknown while it
-  // loads or after a failure: the tab then states no policy at all rather than
-  // guessing one (fail closed).
-  const settingsQuery = useQuery({ queryKey: ["settings", "detail"], queryFn: getSettings });
-  const totpPolicyOn: boolean | undefined = settingsQuery.data?.totpRequiredOnLogin;
   const mutations = useAccessMutations({
     onMutate: () => setError(null),
     onError: (caught) => setError(accessErrorMessage(caught, t)),
@@ -259,49 +247,19 @@ export function AccessPeopleTab({ fullPage = false, onOpenMySignIn, onInvite, on
         </Table>
       </div>
 
-      {canWriteSecurity && settingsQuery.data ? <AdminTotpRequirement settings={settingsQuery.data} /> : null}
+      {canWriteSecurity ? <AdminTotpRequirement settings={settings} /> : null}
 
-      <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-        <p className="flex flex-wrap items-center gap-x-1">
-          <span className="font-medium text-foreground">{t("access.people.signInRequirements.label")}</span>{" "}
-          {totpPolicyOn === undefined ? (
-            settingsQuery.isError ? (
-              <span role="alert" className="inline-flex items-center gap-2 text-destructive">
-                {t("access.people.signInRequirements.loadFailed")}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  disabled={settingsQuery.isFetching}
-                  onClick={() => void settingsQuery.refetch()}
-                >
-                  {t("common.actions.retry")}
-                </Button>
-              </span>
-            ) : (
-              <span data-testid="sign-in-requirements-loading">{t("common.loading")}</span>
-            )
-          ) : totpPolicyOn ? (
-            t("access.people.signInRequirements.totpOn")
-          ) : (
-            t("access.people.signInRequirements.totpOff")
-          )}{" "}
-          {fullPage ? (
-            <Link to={`/settings${ACCESS_HASH}`} className="text-primary underline-offset-4 hover:underline">
-              {t("access.people.signInRequirements.change")}
-            </Link>
-          ) : (
-            <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={onOpenMySignIn}>
-              {t("access.people.signInRequirements.change")}
-            </button>
-          )}
-        </p>
-        {!fullPage && users.length > FULL_PAGE_THRESHOLD ? (
-          <Link to="/settings/access" className="text-primary underline-offset-4 hover:underline">
-            {t("access.people.viewFullPage")}
-          </Link>
-        ) : null}
-      </div>
+      <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{t("access.people.signInRequirements.label")}</span>{" "}
+        {/* The configured policy, not the session's per-login challenge flag
+            (which is false again once this admin has passed TOTP). */}
+        {settings.totpRequiredOnLogin
+          ? t("access.people.signInRequirements.totpOn")
+          : t("access.people.signInRequirements.totpOff")}{" "}
+        <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={onOpenMySignIn}>
+          {t("access.people.signInRequirements.change")}
+        </button>
+      </p>
 
       <PendingInvitesSheet
         open={sheet === "pending"}

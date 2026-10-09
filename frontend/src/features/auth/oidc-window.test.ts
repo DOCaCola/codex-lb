@@ -10,7 +10,7 @@ import {
   takeFlow,
   watchFlowWindow,
 } from "@/features/auth/oidc-window";
-import { ORGANISATION_SETTINGS_RETURN_URL } from "@/features/settings/advanced-settings-deeplink";
+import { ORGANISATION_SETTINGS_RETURN_URL } from "@/features/settings/settings-links";
 
 const PROVIDER_ID = "provider_oidc";
 
@@ -186,7 +186,7 @@ describe("the sign-in flow window", () => {
     Object.defineProperty(window, "opener", { value: opener, configurable: true, writable: true });
 
     // An ordinary tab that happens to have an opener is not a flow window.
-    window.history.replaceState({}, "", "/settings?org=1#oidc");
+    window.history.replaceState({}, "", ORGANISATION_SETTINGS_RETURN_URL);
     window.name = "";
     expect(closeFlowWindowOnReturn()).toBe(false);
 
@@ -195,7 +195,7 @@ describe("the sign-in flow window", () => {
     window.history.replaceState({}, "", "/dashboard");
     expect(closeFlowWindowOnReturn()).toBe(false);
 
-    window.history.replaceState({}, "", "/settings?org=1#oidc");
+    window.history.replaceState({}, "", ORGANISATION_SETTINGS_RETURN_URL);
     expect(closeFlowWindowOnReturn()).toBe(true);
     // The message says the round trip ended. It carries no verdict.
     expect(opener.postMessage).toHaveBeenCalledWith({ type: OIDC_FLOW_RETURN_MESSAGE }, window.location.origin);
@@ -210,7 +210,7 @@ describe("the sign-in flow window", () => {
     const close = vi.spyOn(window, "close").mockImplementation(() => {});
     Object.defineProperty(window, "opener", { value: null, configurable: true, writable: true });
     window.name = OIDC_FLOW_WINDOW_NAME;
-    window.history.replaceState({}, "", "/settings?org=1#oidc");
+    window.history.replaceState({}, "", ORGANISATION_SETTINGS_RETURN_URL);
 
     const handle = { closed: true } as unknown as Window;
     const ended = vi.fn();

@@ -15,14 +15,13 @@ export type BackgroundJobsSettingsProps = {
 
 type BackgroundJobToggle = {
   /** Backend setting name: dashboard column, env alias and provenance key. */
-  name: "auth_guardian_enabled" | "automations_scheduler_enabled" | "rate_limit_reset_credits_refresh_enabled";
-  field: "authGuardianEnabled" | "automationsSchedulerEnabled" | "rateLimitResetCreditsRefreshEnabled";
-  i18nKey: "authGuardian" | "automations" | "resetCredits";
+  name: "auth_guardian_enabled" | "rate_limit_reset_credits_refresh_enabled";
+  field: "authGuardianEnabled" | "rateLimitResetCreditsRefreshEnabled";
+  i18nKey: "authGuardian" | "resetCredits";
 };
 
 const BACKGROUND_JOB_TOGGLES: readonly BackgroundJobToggle[] = [
   { name: "auth_guardian_enabled", field: "authGuardianEnabled", i18nKey: "authGuardian" },
-  { name: "automations_scheduler_enabled", field: "automationsSchedulerEnabled", i18nKey: "automations" },
   {
     name: "rate_limit_reset_credits_refresh_enabled",
     field: "rateLimitResetCreditsRefreshEnabled",
@@ -31,7 +30,8 @@ const BACKGROUND_JOB_TOGGLES: readonly BackgroundJobToggle[] = [
 ];
 
 /**
- * Auth Guardian, the automations scheduler and reset-credit polling.
+ * Auth Guardian and reset-credit polling. The automations scheduler has its
+ * own control in Settings → Automations.
  *
  * Each switch shows the effective value. Until the operator touches a switch
  * the value is inherited (environment variable or code default) and the badge

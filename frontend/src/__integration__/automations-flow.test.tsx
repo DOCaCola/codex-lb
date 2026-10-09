@@ -4,7 +4,6 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "@/App";
-import { AutomationsPage } from "@/features/automations/components/automations-page";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/utils";
 
@@ -19,33 +18,32 @@ function getJobRow(jobName: string): HTMLElement {
 
 describe("automations page integration", () => {
 	beforeEach(() => {
-		window.history.pushState({}, "", "/automations");
+		window.history.pushState({}, "", "/settings/automations");
 	});
 
-	it("navigates to automations through the Advanced header menu", async () => {
+	it("navigates to automations through the settings side menu", async () => {
 		const user = userEvent.setup({ delay: null });
 		window.history.pushState({}, "", "/dashboard");
 		renderWithProviders(<App />);
 
-		const advancedTrigger = await screen.findByRole("button", { name: "Advanced" });
-		expect(screen.queryByRole("link", { name: "Automations" })).not.toBeInTheDocument();
-		await user.click(advancedTrigger);
-		await user.click(await screen.findByRole("menuitem", { name: "Automations" }));
+		await user.click(await screen.findByRole("link", { name: "Settings" }));
+		const sideMenu = await screen.findByRole("navigation", { name: "Settings sections" });
+		await user.click(within(sideMenu).getByRole("link", { name: "Automations" }));
 
 		expect(await screen.findByRole("heading", { name: "Automations" })).toBeInTheDocument();
-		expect(window.location.pathname).toBe("/automations");
+		expect(window.location.pathname).toBe("/settings/automations");
 	});
 
-	it("renders automations from a direct /automations deep link", async () => {
+	it("renders automations from a direct /settings/automations deep link", async () => {
 		renderWithProviders(<App />);
 
 		expect(await screen.findByRole("heading", { name: "Automations" })).toBeInTheDocument();
-		expect(window.location.pathname).toBe("/automations");
+		expect(window.location.pathname).toBe("/settings/automations");
 	});
 
 	it("validates form input, creates a job, updates it, and renders run history", async () => {
 		const user = userEvent.setup({ delay: null });
-		renderWithProviders(<AutomationsPage />);
+		renderWithProviders(<App />);
 
 		expect(await screen.findByRole("heading", { name: "Automations" })).toBeInTheDocument();
 		expect(await screen.findByText("No automations")).toBeInTheDocument();
@@ -111,7 +109,7 @@ describe("automations page integration", () => {
 
 	it("creates automation with default all-accounts selection", async () => {
 		const user = userEvent.setup({ delay: null });
-		renderWithProviders(<AutomationsPage />);
+		renderWithProviders(<App />);
 
 		expect(await screen.findByRole("heading", { name: "Automations" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Add automation" }));
@@ -139,7 +137,7 @@ describe("automations page integration", () => {
 			),
 		);
 		const user = userEvent.setup({ delay: null });
-		renderWithProviders(<AutomationsPage />);
+		renderWithProviders(<App />);
 
 		expect(await screen.findByRole("heading", { name: "Automations" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Add automation" }));

@@ -127,7 +127,7 @@ describe("AppHeader", () => {
     });
   });
 
-  it("renders core destinations as top-level links and keeps Automations out of the pill bar", async () => {
+  it("renders the core destinations as the only top-level links", async () => {
     renderHeader();
 
     expect(await screen.findByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
@@ -136,26 +136,12 @@ describe("AppHeader", () => {
     expect(screen.getByRole("link", { name: /APIs/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Settings/i })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Automations" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Advanced" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Advanced" })).not.toBeInTheDocument();
   });
 
-  it("reveals Automations after opening the Advanced menu", async () => {
-    const user = userEvent.setup();
-    renderHeader();
-
-    await user.click(screen.getByRole("button", { name: "Advanced" }));
-
-    expect(await screen.findByRole("menuitem", { name: "Automations" })).toBeInTheDocument();
-  });
-
-  it("marks the Advanced trigger active only while an advanced route is current", () => {
-    renderHeader("/automations");
-    expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("data-active", "true");
-  });
-
-  it("keeps the Advanced trigger inactive on core routes", () => {
-    renderHeader("/dashboard");
-    expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("data-active", "false");
+  it("marks Settings current on any settings section", () => {
+    renderHeader("/settings/automations");
+    expect(screen.getByRole("link", { name: /Settings/i })).toHaveAttribute("aria-current", "page");
   });
 
   describe("account tiering", () => {
@@ -218,11 +204,11 @@ describe("AppHeader", () => {
 
       await user.click(screen.getByRole("button", { name: /admin\s*·\s*Admin/ }));
       await user.click(await screen.findByRole("menuitem", { name: "Invite teammate" }));
-      expect(screen.getByTestId("location")).toHaveTextContent("/settings#access-people");
+      expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/access#people$/);
 
       await user.click(screen.getByRole("button", { name: /admin\s*·\s*Admin/ }));
       await user.click(await screen.findByRole("menuitem", { name: "My two-factor" }));
-      expect(screen.getByTestId("location")).toHaveTextContent("/settings#access");
+      expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/access#my-sign-in$/);
     });
 
     it("offers My two-factor only when the Settings page would show the TOTP card, and Invite teammate only with users:manage", async () => {

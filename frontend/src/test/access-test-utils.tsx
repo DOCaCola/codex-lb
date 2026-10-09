@@ -5,6 +5,8 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
+import { SettingsLayout } from "@/features/settings/components/settings-layout";
+import { settingsPath, type SettingsSectionId } from "@/features/settings/settings-links";
 import {
   ADMIN_PERMISSIONS,
   ASSIGNABLE_ROLE_IDS,
@@ -50,6 +52,33 @@ export function renderAt(ui: ReactElement, initialEntry = "/settings") {
           <MemoryRouter initialEntries={[initialEntry]}>
             <Routes>
               <Route path="*" element={ui} />
+            </Routes>
+            <LocationProbe />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    ),
+    queryClient,
+  };
+}
+
+/**
+ * `ui` as the open settings section: mounted under the real layout, so it
+ * reads the settings document and saves through the same path as the page.
+ * `hash` is appended to the section's path for deep-link tests.
+ */
+export function renderInSettings(ui: ReactElement, section: SettingsSectionId, hash = "") {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={[`${settingsPath(section)}${hash}`]}>
+            <Routes>
+              <Route path="/settings" element={<SettingsLayout />}>
+                <Route path={section} element={ui} />
+              </Route>
+              <Route path="*" element={null} />
             </Routes>
             <LocationProbe />
           </MemoryRouter>

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { AccessCard } from "@/features/settings/components/access/access-card";
+import { ACCESS_MY_SIGN_IN_PATH, ACCESS_PEOPLE_PATH } from "@/features/settings/settings-links";
 import { renderAt, settings, signInAsTeamAdmin } from "@/test/access-test-utils";
 import { OPERATOR_PERMISSIONS, VIEWER_PERMISSIONS, createAccessSummary, createSessionUser } from "@/test/mocks/factories";
 import { MOCK_ISSUED_INVITE_TOKEN } from "@/test/mocks/handlers";
@@ -30,11 +31,11 @@ const TODAYS_ORDER = ["Guest Access Settings", "Password Settings", "Session Set
 // Guest access and session length are security settings; without `security:write` only the personal controls render.
 const PERSONAL_ORDER = ["Password Settings", "TOTP Settings"];
 
-function renderCard(initialEntry = "/settings") {
+function renderCard(initialEntry = "/settings/access") {
   return renderAt(
     <>
       <AccessCard settings={settings} busy={false} onSave={vi.fn().mockResolvedValue(undefined)} onRefresh={vi.fn()} />
-      <Link to="/settings#access-people">go to people</Link>
+      <Link to={ACCESS_PEOPLE_PATH}>go to people</Link>
     </>,
     initialEntry,
   );
@@ -167,23 +168,21 @@ describe("AccessCard", () => {
     expect(await screen.findByTestId("people-row-ops")).toBeInTheDocument();
   });
 
-  it("#access-people selects People, #access selects My sign-in, #totp reaches the TOTP section", async () => {
+  it("#people selects People, #my-sign-in selects My sign-in, #totp reaches the TOTP section", async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
     signInAsTeamAdmin();
 
-    let view = renderCard("/settings#access-people");
+    let view = renderCard(ACCESS_PEOPLE_PATH);
     expect(tabState("People")).toBe("true");
-    await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
-    expect((scrollIntoView.mock.contexts[0] as HTMLElement).id).toBe("access");
     view.unmount();
 
-    view = renderCard("/settings#access");
+    view = renderCard(ACCESS_MY_SIGN_IN_PATH);
     expect(tabState("My sign-in")).toBe("true");
     expect(await controlLabels()).toEqual(TODAYS_ORDER);
     view.unmount();
 
     scrollIntoView.mockClear();
-    renderCard("/settings#totp");
+    renderCard("/settings/access#totp");
     expect(tabState("My sign-in")).toBe("true");
     await controlLabels();
     await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
@@ -194,13 +193,13 @@ describe("AccessCard", () => {
   it("a clicked tab holds only until the next navigation, even to the same hash", async () => {
     const user = userEvent.setup();
     signInAsTeamAdmin();
-    renderCard("/settings#access-people");
+    renderCard(ACCESS_PEOPLE_PATH);
 
     await user.click(screen.getByRole("tab", { name: "My sign-in" }));
     expect(tabState("My sign-in")).toBe("true");
 
     await user.click(screen.getByRole("link", { name: "go to people" }));
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings#access-people");
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/access#people$/);
     await waitFor(() => expect(tabState("People")).toBe("true"));
   });
 });

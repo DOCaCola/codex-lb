@@ -8,8 +8,7 @@ import type { DashboardSettings } from "@/features/settings/schemas";
 import { createDashboardSettings } from "@/test/mocks/factories";
 
 const PROVENANCE = {
-  auth_guardian_enabled: { source: "default" as const, envValue: true, default: true },
-  automations_scheduler_enabled: { source: "dashboard" as const, envValue: true, default: true },
+  auth_guardian_enabled: { source: "dashboard" as const, envValue: true, default: true },
   rate_limit_reset_credits_refresh_enabled: { source: "env" as const, envValue: false, default: true },
 };
 
@@ -20,11 +19,10 @@ function renderSettings(settings: DashboardSettings) {
 }
 
 describe("BackgroundJobsSettings", () => {
-  it("renders the three switches with their effective values and inheritance badges", () => {
+  it("renders the two switches with their effective values and inheritance badges", () => {
     renderSettings(
       createDashboardSettings({
         authGuardianEnabled: true,
-        automationsSchedulerEnabled: false,
         rateLimitResetCreditsRefreshEnabled: false,
         provenance: PROVENANCE,
       }),
@@ -32,9 +30,8 @@ describe("BackgroundJobsSettings", () => {
 
     expect(screen.getByText("Background jobs")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Auth Guardian" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Automations scheduler" })).not.toBeChecked();
+    expect(screen.queryByRole("switch", { name: "Automations scheduler" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Reset-credit polling" })).not.toBeChecked();
-    expect(screen.getByText("Default (on)")).toBeInTheDocument();
     expect(screen.getByText("Inherited from environment (off)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reset to inherited" })).toBeInTheDocument();
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
@@ -52,25 +49,23 @@ describe("BackgroundJobsSettings", () => {
 
   it("stores a dashboard value when a switch is flipped", async () => {
     const user = userEvent.setup();
-    const settings = createDashboardSettings({ automationsSchedulerEnabled: true, provenance: PROVENANCE });
+    const settings = createDashboardSettings({ authGuardianEnabled: true, provenance: PROVENANCE });
     const onSave = renderSettings(settings);
 
-    await user.click(screen.getByRole("switch", { name: "Automations scheduler" }));
+    await user.click(screen.getByRole("switch", { name: "Auth Guardian" }));
 
-    expect(onSave).toHaveBeenCalledWith(
-      buildSettingsUpdateRequest(settings, { automationsSchedulerEnabled: false }),
-    );
+    expect(onSave).toHaveBeenCalledWith(buildSettingsUpdateRequest(settings, { authGuardianEnabled: false }));
   });
 
   it("resets a dashboard-owned toggle to inherited with an explicit null", async () => {
     const user = userEvent.setup();
-    const settings = createDashboardSettings({ automationsSchedulerEnabled: false, provenance: PROVENANCE });
+    const settings = createDashboardSettings({ authGuardianEnabled: false, provenance: PROVENANCE });
     const onSave = renderSettings(settings);
 
     await user.click(screen.getByRole("button", { name: "Reset to inherited" }));
 
-    const payload = buildSettingsUpdateRequest(settings, { automationsSchedulerEnabled: null });
-    expect(payload.automationsSchedulerEnabled).toBeNull();
+    const payload = buildSettingsUpdateRequest(settings, { authGuardianEnabled: null });
+    expect(payload.authGuardianEnabled).toBeNull();
     expect(onSave).toHaveBeenCalledWith(payload);
   });
 

@@ -1,27 +1,23 @@
 import { Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuthStore, usePermission } from "@/features/auth/hooks/use-auth";
-import {
-  ACCESS_CARD_ID,
-  ACCESS_HASH,
-  ACCESS_PEOPLE_HASH,
-  accessTabFromHash,
-  type AccessTab,
-} from "@/features/settings/advanced-settings-deeplink";
 import { AccessMySignInTab, type AccessMySignInTabProps } from "@/features/settings/components/access/access-my-sign-in-tab";
 import { AccessPeopleTab } from "@/features/settings/components/access/access-people-tab";
 import { AccessSoloBody } from "@/features/settings/components/access/access-solo-body";
 import { InviteDialog, IssuedLinkDialog, type IssuedLink } from "@/features/settings/components/access/invite-dialog";
+import { accessTabFromHash, type AccessTab } from "@/features/settings/settings-links";
+import { useHashTargetScroll } from "@/features/settings/use-hash-target-scroll";
 
 /**
  * The one Settings card for "who can open this dashboard". Its body follows the
  * store's derived tier: an individual install sees a single line plus today's
  * four controls; a team sees a People tab next to those controls. The hash
- * `#access-people` selects People, `#access` the person's own controls.
+ * `#people` selects People, `#my-sign-in` (or `#totp`, which then scrolls to
+ * the TOTP card) the person's own controls.
  *
  * The invite flow lives here, outside the tier-dependent subtree: creating the
  * first invite flips the tier and would otherwise unmount the dialog that has
@@ -45,18 +41,7 @@ export function AccessCard(props: AccessMySignInTabProps) {
   // implicit local admin and the disabled-auth principal get their own
   // sign-in controls only. A reverse-proxy account is an account.
   const showPeople = tier !== "individual" && canManageUsers && user !== null;
-
-  useEffect(() => {
-    if (hashTab === null) {
-      return;
-    }
-    // `#totp` targets the TOTP section itself once the tab has mounted it.
-    const targetId = hash === ACCESS_HASH || hash === ACCESS_PEOPLE_HASH ? ACCESS_CARD_ID : hash.slice(1);
-    const frame = window.requestAnimationFrame(() => {
-      document.getElementById(targetId)?.scrollIntoView({ block: "start" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [hash, hashTab, locationKey]);
+  useHashTargetScroll(true);
 
   const openInvite = () => setInviteOpen(true);
   const closeIssued = () => {
@@ -66,7 +51,7 @@ export function AccessCard(props: AccessMySignInTabProps) {
   };
 
   return (
-    <section id={ACCESS_CARD_ID} className="scroll-mt-20 rounded-xl border bg-card p-5">
+    <section className="rounded-xl border bg-card p-5">
       <div className="space-y-4">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
@@ -86,6 +71,7 @@ export function AccessCard(props: AccessMySignInTabProps) {
             </TabsList>
             <TabsContent value="people">
               <AccessPeopleTab
+                settings={props.settings}
                 onOpenMySignIn={() => setChoice({ key: locationKey, tab: "my-sign-in" })}
                 onInvite={openInvite}
                 onIssued={setIssued}
