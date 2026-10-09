@@ -267,6 +267,20 @@ describe("RoutingSettings", () => {
     expect(onSave).toHaveBeenCalledWith({ ...BASE_UPDATE_PAYLOAD, proxyAccountErrorRateWeightingEnabled: false });
   });
 
+  it("locks the routing weights while the card is read-only", () => {
+    render(<RoutingSettings settings={BASE_SETTINGS} busy onSave={vi.fn()} />);
+
+    for (const name of [
+      "Overload isolation (seconds)",
+      "In-flight penalty (% per request)",
+      "Leased-token weight",
+      "Account lease TTL (seconds)",
+    ]) {
+      expect(screen.getByRole("spinbutton", { name })).toBeDisabled();
+    }
+    expect(screen.getByRole("switch", { name: "Toggle error-rate weighting" })).toBeDisabled();
+  });
+
   it.each([
     ["Response-create limit", "proxyAccountResponseCreateLimit"],
     ["Stream limit", "proxyAccountStreamLimit"],

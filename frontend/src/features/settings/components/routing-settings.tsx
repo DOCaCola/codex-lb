@@ -915,6 +915,7 @@ export function RoutingSettings({
                 </span>
                 <Input
                   aria-label={t("settings.routing.overload.isolationSecondsLabel")}
+                  disabled={busy}
                   type="number"
                   min={0}
                   step={1}
@@ -941,6 +942,7 @@ export function RoutingSettings({
                 </span>
                 <Input
                   aria-label={t("settings.routing.overload.inflightPenaltyPctLabel")}
+                  disabled={busy}
                   type="number"
                   min={0}
                   max={100}
@@ -968,6 +970,7 @@ export function RoutingSettings({
                 </span>
                 <Input
                   aria-label={t("settings.routing.overload.leaseTokenWeightLabel")}
+                  disabled={busy}
                   type="number"
                   min={0}
                   step="any"
@@ -994,6 +997,7 @@ export function RoutingSettings({
                 </span>
                 <Input
                   aria-label={t("settings.routing.overload.leaseTtlSecondsLabel")}
+                  disabled={busy}
                   type="number"
                   min={0}
                   step="any"
