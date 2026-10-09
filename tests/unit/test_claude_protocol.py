@@ -13,7 +13,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.responses import ResponsesProjection
-from app.modules.claude.tool_names import ClaudeToolNames
+from app.modules.claude.tool_names import ClaudeToolNames, ToolIdentity
 from tests.claude_json_helpers import array, at
 
 pytestmark = pytest.mark.unit
@@ -468,6 +468,37 @@ def test_undeclared_tool_is_rejected_with_bounded_content_free_diagnostics(caplo
     else:
         assert "tool_name=None" in caplog.text
         assert name not in caplog.text
+
+
+def test_undeclared_tool_logs_the_declared_tools_only_on_failure(caplog):
+    tools = ClaudeToolNames()
+    tools.add(ToolIdentity("apply_patch", None, True))
+    tools.add(ToolIdentity("lookup", "mcp__docs", False))
+    tools.add(ToolIdentity("private\nname", None, False))
+    adapter = ResponsesProjection(scope(), tools, codec())
+    adapter.consume({"type": "message_start", "message": {"id": "msg_fixture", "usage": {}}})
+    adapter.consume(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "call-a", "name": "ApplyPatch", "input": {}},
+        }
+    )
+    assert "declared_tools" not in caplog.text
+    with pytest.raises(ClaudeError, match="undeclared tool"):
+        adapter.consume(
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "tool_use", "id": "call-b", "name": "write_stdin", "input": {}},
+            }
+        )
+    declared = caplog.text.split("declared_tools=", 1)[1].splitlines()[0]
+    entries = declared.split(",")
+    assert entries[0] == "ApplyPatch=apply_patch(custom)"
+    assert entries[1].endswith("=mcp__docs/lookup")
+    assert entries[2].split("=", 1)[1].startswith("#")
+    assert "private\nname" not in caplog.text
 
 
 def test_text_and_inline_image_projection_does_not_mutate_input():

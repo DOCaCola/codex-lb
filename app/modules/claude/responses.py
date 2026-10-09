@@ -99,6 +99,25 @@ class Usage(BaseModel):
         return result
 
 
+def _tool_name_hash(name: str) -> str:
+    return hashlib.sha256(name.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+
+
+def _loggable_tool_name(name: str) -> str:
+    return name if _LOGGABLE_TOOL_NAME.fullmatch(name) else "#" + _tool_name_hash(name)
+
+
+def _declared_tools(tools: ClaudeToolNames) -> str:
+    """The request's tools as wire=client entries, logged only when Claude calls an undeclared one."""
+    entries = []
+    for wire, identity in tools.by_wire.items():
+        client = _loggable_tool_name(identity.name)
+        if identity.namespace is not None:
+            client = f"{_loggable_tool_name(identity.namespace)}/{client}"
+        entries.append(f"{wire}={client}{'(custom)' if identity.custom else ''}")
+    return ",".join(entries)
+
+
 @dataclass
 class ResponsesProjection:
     scope: OpaqueScope
@@ -230,16 +249,15 @@ class ResponsesProjection:
             if identity is None:
                 logger.warning(
                     "claude_undeclared_tool source_id=%s model=%s response_id=%s content_index=%d "
-                    "declared_count=%d tool_name=%s tool_name_hash=%s",
+                    "declared_count=%d tool_name=%s tool_name_hash=%s declared_tools=%s",
                     self.scope.source_id,
                     self.scope.model,
                     self.response_id,
                     index,
                     len(self.tools),
                     name if isinstance(name, str) and _LOGGABLE_TOOL_NAME.fullmatch(name) else None,
-                    hashlib.sha256(name.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
-                    if isinstance(name, str)
-                    else None,
+                    _tool_name_hash(name) if isinstance(name, str) else None,
+                    _declared_tools(self.tools),
                 )
                 raise ClaudeError("Claude returned an undeclared tool")
             self.called_tools[index] = identity
