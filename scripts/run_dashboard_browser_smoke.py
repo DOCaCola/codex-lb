@@ -41,7 +41,6 @@ BACKGROUND_LOOP_BUILDERS: tuple[str, ...] = (
     "build_rate_limit_reset_credits_scheduler",
     "build_account_usage_rollup_scheduler",
     "build_data_retention_scheduler",
-    "build_telemetry_scheduler",
     "build_account_deletion_scheduler",
 )
 

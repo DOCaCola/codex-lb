@@ -139,6 +139,9 @@ _REMOVED_SETTINGS: tuple[str, ...] = (
     # refresh by stamping its isolated ``auth.json`` inside the window instead
     # of widening the window for the whole process.
     "CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS",
+    # remove-anonymous-telemetry: this fork has no telemetry at all.
+    "CODEX_LB_TELEMETRY_ENABLED",
+    "CODEX_LB_TELEMETRY_ENDPOINT",
 )
 
 
@@ -398,10 +401,6 @@ class Settings(BaseSettings):
     upstream_route_cache_ttl_seconds: float = Field(default=60.0, ge=0)
     # T3 → dashboard (deprecated env alias, remove next minor)
     automations_scheduler_enabled: bool = True
-    # T3 (dashboard home: dashboard_settings.telemetry_consent). Headless
-    # first-boot opt-out fallback; a persisted dashboard decision always wins.
-    telemetry_enabled: bool | None = None
-    telemetry_endpoint: str = "https://telemetry.tokmaxxing.com"
     encryption_key_file: Path = DEFAULT_ENCRYPTION_KEY_FILE
     # Startup cross-replica encryption-key consistency check against the shared
     # database sentinel: "enforce" refuses startup on mismatch, "warn" logs an

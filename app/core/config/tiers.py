@@ -79,8 +79,6 @@ SETTING_TIERS: Final[dict[str, Tier]] = {
     "http_responses_session_bridge_advertise_base_url": "T1",
     "upstream_route_cache_ttl_seconds": "T1",
     "automations_scheduler_enabled": "T3",
-    "telemetry_enabled": "T3",
-    "telemetry_endpoint": "T1",
     "encryption_key_file": "T0",
     "encryption_key_fingerprint_mode": "T0",
     "database_migrations_fail_fast": "T0",
@@ -168,8 +166,6 @@ MIGRATING: Final[dict[str, str]] = {}
 # fails when the column does not exist. The field's environment variable is the
 # fallback while that column holds no decision, per the precedence rule.
 DASHBOARD_HOMES: Final[dict[str, str]] = {
-    # persisted decision > CODEX_LB_TELEMETRY_ENABLED > default (telemetry spec)
-    "telemetry_enabled": "dashboard_settings.telemetry_consent",
     # M4 model catalogue: one row per slug; the env dict is the per-slug fallback
     "model_context_window_overrides": "model_context_window_overrides.context_window",
 }

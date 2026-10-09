@@ -68,7 +68,6 @@ def test_background_loop_seam_is_explicit_and_complete() -> None:
         "build_rate_limit_reset_credits_scheduler",
         "build_account_usage_rollup_scheduler",
         "build_data_retention_scheduler",
-        "build_telemetry_scheduler",
         "build_account_deletion_scheduler",
     )
     patched = set(BACKGROUND_LOOP_BUILDERS)

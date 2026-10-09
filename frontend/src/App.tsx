@@ -19,7 +19,6 @@ import { AuthGate } from "@/features/auth/components/auth-gate";
 import { StepUpDialog } from "@/features/auth/components/step-up-dialog";
 import { hasPermission, useAuthStore } from "@/features/auth/hooks/use-auth";
 import { signedInLoginDestination } from "@/features/auth/oidc-window";
-import { TelemetryConsentDialog } from "@/features/settings/components/telemetry-consent-dialog";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 
 // Route-level code splitting: only the visited page's chunk loads, instead
@@ -97,7 +96,6 @@ function AppLayout() {
         </RouteErrorBoundary>
       </main>
       <StatusBar onHeightChange={setStatusBarHeight} />
-      <TelemetryConsentDialog />
     </div>
   );
 }

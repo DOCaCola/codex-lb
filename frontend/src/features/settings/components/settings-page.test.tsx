@@ -30,7 +30,6 @@ const stickySessionsSectionMock = vi.fn();
 const modelSourcesSettingsMock = vi.fn();
 const dataRetentionSettingsMock = vi.fn();
 const upstreamTimeoutSettingsMock = vi.fn();
-const telemetrySettingsMock = vi.fn();
 
 vi.mock("@/features/settings/hooks/use-settings", () => ({
   useSettings: () => useSettingsMock(),
@@ -120,13 +119,6 @@ vi.mock("@/features/settings/components/upstream-timeout-settings", () => ({
   UpstreamTimeoutSettings: (props: unknown) => {
     upstreamTimeoutSettingsMock(props);
     return <div>Upstream Timeout Settings</div>;
-  },
-}));
-
-vi.mock("@/features/settings/components/telemetry-settings", () => ({
-  TelemetrySettings: (props: unknown) => {
-    telemetrySettingsMock(props);
-    return <div>Telemetry Settings</div>;
   },
 }));
 
@@ -231,7 +223,6 @@ describe("SettingsPage", () => {
     stickySessionsSectionMock.mockReset();
     modelSourcesSettingsMock.mockReset();
     dataRetentionSettingsMock.mockReset();
-    telemetrySettingsMock.mockReset();
   });
 
   function renderSettings(initialEntry = "/settings") {
@@ -282,7 +273,6 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Appearance Settings")).toBeInTheDocument();
     expect(screen.getByText("Import Settings")).toBeInTheDocument();
     expect(screen.getByText("API Keys Section")).toBeInTheDocument();
-    expect(screen.getByText("Telemetry Settings")).toBeInTheDocument();
   });
 
   it("renders the security-bearing controls read-only for an operator (write without security:write)", async () => {
@@ -345,7 +335,6 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Password Settings")).not.toBeInTheDocument();
     expect(screen.queryByText("Session Settings")).not.toBeInTheDocument();
     expect(importSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ busy: true }));
-    expect(telemetrySettingsMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: true }));
     // Backend answers API-key and upstream-proxy reads with 403 for guests, so
     // the section is not mounted and the admin query is never enabled.
     expect(screen.queryByText("API Keys Section")).not.toBeInTheDocument();

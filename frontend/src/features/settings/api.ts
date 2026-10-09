@@ -6,8 +6,6 @@ import {
   ModelContextWindowOverrideUpsertRequestSchema,
   ModelContextWindowOverridesSchema,
   SettingsUpdateRequestSchema,
-  TelemetryConsentSchema,
-  TelemetryConsentUpdateRequestSchema,
   UpstreamProxyAdminSchema,
   UpstreamProxyEndpointCreateRequestSchema,
   UpstreamProxyEndpointSchema,
@@ -19,7 +17,6 @@ import {
 
 const SETTINGS_PATH = "/api/settings";
 const UPSTREAM_PROXY_PATH = `${SETTINGS_PATH}/upstream-proxy`;
-const TELEMETRY_PATH = `${SETTINGS_PATH}/telemetry`;
 const MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = `${SETTINGS_PATH}/model-context-window-overrides`;
 
 export function getSettings() {
@@ -29,18 +26,6 @@ export function getSettings() {
 export function updateSettings(payload: unknown) {
   const validated = SettingsUpdateRequestSchema.parse(payload);
   return put(SETTINGS_PATH, DashboardSettingsSchema, {
-    body: validated,
-  });
-}
-
-export function getTelemetryConsent(options: { includePreview?: boolean } = {}) {
-  const path = options.includePreview ? `${TELEMETRY_PATH}?include_preview=true` : TELEMETRY_PATH;
-  return get(path, TelemetryConsentSchema);
-}
-
-export function updateTelemetryConsent(payload: unknown) {
-  const validated = TelemetryConsentUpdateRequestSchema.parse(payload);
-  return put(TELEMETRY_PATH, TelemetryConsentSchema, {
     body: validated,
   });
 }

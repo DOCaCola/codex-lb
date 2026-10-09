@@ -29,7 +29,6 @@ import { RoutingSettings } from "@/features/settings/components/routing-settings
 import { useClaudeAccounts } from "@/features/claude/use-claude";
 import { UpstreamTimeoutSettings } from "@/features/settings/components/upstream-timeout-settings";
 import { SettingsSkeleton } from "@/features/settings/components/settings-skeleton";
-import { TelemetrySettings } from "@/features/settings/components/telemetry-settings";
 import { QuotaResetWebhookSettings } from "@/features/settings/components/quota-reset-webhook-settings";
 import { UpstreamProxySettings } from "@/features/settings/components/upstream-proxy-settings";
 import { CacheIsolationProbeSection } from "@/features/cache-probe/components/cache-isolation-probe-section";
@@ -210,7 +209,6 @@ export function SettingsPage() {
               />
             ) : null}
 
-            <TelemetrySettings disabled={controlsDisabled} />
             <QuotaResetWebhookSettings disabled={controlsDisabled || !canWriteOps} />
 
             <AdvancedSettingsGroup

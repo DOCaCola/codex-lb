@@ -63,8 +63,7 @@ class _NoopScheduler:
 # tuple against the builders ``app.main`` actually imports, so adding a loop
 # without classifying it here fails the suite instead of silently running.
 # Tests that exercise a scheduler construct it directly or patch the builder
-# themselves (e.g. test_otel, test_telemetry_consent,
-# test_model_registry_replication) and keep working.
+# themselves (e.g. test_otel, test_model_registry_replication) and keep working.
 BACKGROUND_LOOP_BUILDERS: tuple[str, ...] = (
     "build_quota_webhook_scheduler",
     "build_claude_refresh_scheduler",
@@ -78,7 +77,6 @@ BACKGROUND_LOOP_BUILDERS: tuple[str, ...] = (
     "build_rate_limit_reset_credits_scheduler",
     "build_account_usage_rollup_scheduler",
     "build_data_retention_scheduler",
-    "build_telemetry_scheduler",
     "build_account_deletion_scheduler",
 )
 

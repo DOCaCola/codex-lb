@@ -97,8 +97,9 @@ def test_removed_settings_tuple_covers_the_current_warning_batch():
     # + 27 never-tuned core tunables (constantize-core-tunables)
     # + seven K2 bridge names (constantize-session-bridge-tunables)
     # + the ambiguous-continuation recovery mode (drop-bridge-recovery-modes)
-    # + the token refresh interval (constantize-token-refresh-interval).
-    assert len(_REMOVED_SETTINGS) == 34 + 7 + 1 + 1
+    # + the token refresh interval (constantize-token-refresh-interval)
+    # + the two telemetry names (remove-anonymous-telemetry).
+    assert len(_REMOVED_SETTINGS) == 34 + 7 + 1 + 1 + 2
     assert all(name.startswith("CODEX_LB_") for name in _REMOVED_SETTINGS)
     assert len(set(_REMOVED_SETTINGS)) == len(_REMOVED_SETTINGS)
 

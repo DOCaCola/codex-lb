@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { AuthSessionSchema } from "../src/features/auth/schemas";
 import { DashboardProjectionsSchema } from "../src/features/dashboard/schemas";
@@ -13,7 +13,6 @@ import {
   createRequestLogEntry,
   createRequestLogFilterOptions,
   createRequestLogsResponse,
-  createTelemetryConsent,
 } from "../src/test/mocks/factories";
 
 const REQUIRED_API_PATHS = [
@@ -22,7 +21,6 @@ const REQUIRED_API_PATHS = [
   "/api/dashboard/projections",
   "/api/request-logs/options",
   "/api/request-logs",
-  "/api/settings/telemetry",
 ] as const;
 
 async function installMobileContainmentFixtures(page: Page, accounts = [
@@ -45,7 +43,6 @@ async function installMobileContainmentFixtures(page: Page, accounts = [
     "/api/dashboard/projections": createDashboardProjections(),
     "/api/request-logs/options": createRequestLogFilterOptions({ accountIds: accounts.map((account) => account.accountId) }),
     "/api/request-logs": createRequestLogsResponse([createRequestLogEntry({ accountId: "acc_primary", requestId: "req_mobile_containment" })], 1, false),
-    "/api/settings/telemetry": createTelemetryConsent({ state: "enabled", source: "persisted", active: true }),
     "/api/settings": createDashboardSettings(),
     "/api/settings/quota-reset-webhook": { enabled: false, kinds: ["scheduled", "unexpected"],
       urlConfigured: false, signingSecretConfigured: false, pending: 0, lastDelivery: null },
@@ -65,16 +62,6 @@ async function installMobileContainmentFixtures(page: Page, accounts = [
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
-}
-
-async function acceptTelemetryConsent(page: Page, consentDialog: Locator): Promise<void> {
-  const consentDecision = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/settings/telemetry" && response.request().method() === "PUT",
-  );
-  await consentDialog.getByRole("button", { name: "Keep enabled" }).click();
-  expect((await consentDecision).ok()).toBe(true);
-  await expect(consentDialog).toBeHidden();
 }
 
 for (const width of [320, 390, 1440]) {
@@ -323,7 +310,6 @@ for (const width of [390, 1440]) {
       }));
       await page.route(`**/api/${provider}-accounts/provider-test/trends`, (route) => route.fulfill({ json: { series } }));
       await page.goto("/accounts?selected=provider-test");
-      await acceptTelemetryConsentIfShown(page);
       const chart = page.getByRole("region", { name: provider === "claude" ? "Claude quota history" : "OpenRouter activity" });
       await expect(chart).toBeVisible();
       await expect(chart.locator(".recharts-surface")).toBeVisible();
@@ -339,7 +325,6 @@ for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await installMobileContainmentFixtures(page);
     await page.goto("/settings");
-    await acceptTelemetryConsentIfShown(page);
     const card = page.getByRole("region", { name: "Quota reset webhook" });
     await card.scrollIntoViewIfNeeded();
     await expect(card).toBeVisible();
@@ -351,18 +336,9 @@ for (const width of [390, 1440]) {
   });
 }
 
-async function acceptTelemetryConsentIfShown(page: Page): Promise<void> {
-  await page.waitForLoadState("networkidle");
-  const consentDialog = page.getByRole("dialog", { name: "Anonymous telemetry" });
-  if (await consentDialog.isVisible()) {
-    await acceptTelemetryConsent(page, consentDialog);
-  }
-}
-
 async function openLongSettingsPage(page: Page, scrollTop: number): Promise<void> {
   await page.goto("/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  await acceptTelemetryConsentIfShown(page);
 
   const advancedTrigger = page.getByRole("button", { name: "Show advanced settings" });
   await advancedTrigger.click();
@@ -453,16 +429,6 @@ test("the built dashboard accepts real backend responses", async ({ page }) => {
     throw new Error("Dashboard projections response was not captured");
   }
   DashboardProjectionsSchema.parse(await projectionsResponse.json());
-
-  // First run against an empty database resolves telemetry consent as
-  // undecided/default, so the informed-consent dialog must appear before
-  // anything else. Exercise it as a first-class scenario: verify the exact
-  // transmitted envelope is rendered, then keep telemetry enabled to unblock
-  // the dashboard underneath.
-  const consentDialog = page.getByRole("dialog", { name: "Anonymous telemetry" });
-  await expect(consentDialog).toBeVisible();
-  await expect(consentDialog.getByText('"instance_id"').first()).toBeVisible();
-  await acceptTelemetryConsent(page, consentDialog);
 
   await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
   await expect(page.getByText("No accounts connected yet", { exact: true })).toBeVisible();
@@ -648,12 +614,6 @@ test("the API key create dialog stays inside supported viewports", async ({ page
 
   await page.goto("/apis", { waitUntil: "networkidle" });
 
-  const consentDialog = page.getByRole("dialog", { name: "Anonymous telemetry" });
-  if (await consentDialog.isVisible()) {
-    await consentDialog.getByRole("button", { name: "Keep enabled" }).click();
-    await expect(consentDialog).toBeHidden();
-  }
-
   await expect(page.getByRole("heading", { name: "APIs", exact: true })).toBeVisible();
   const openDialogButton = page.getByRole("button", { name: "Create API Key" });
   const dialog = page.getByRole("dialog", { name: "Create API key" });
@@ -760,7 +720,6 @@ test("the model source dialogs stay inside supported viewports", async ({ page }
 
   await page.goto("/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  await acceptTelemetryConsentIfShown(page);
 
   await page.getByRole("button", { name: "Show advanced settings" }).click();
   await expect(page.getByRole("heading", { name: "Model sources", exact: true })).toBeVisible();
@@ -849,7 +808,6 @@ test("the model source edit dialog keeps Save visible in compact viewports", asy
   const source = await created.json() as { id: string };
   try {
     await page.goto("/settings", { waitUntil: "domcontentloaded" });
-    await acceptTelemetryConsentIfShown(page);
     await page.getByRole("button", { name: "Show advanced settings" }).click();
     for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 1440, height: 900 }]) {
       await page.setViewportSize(size);

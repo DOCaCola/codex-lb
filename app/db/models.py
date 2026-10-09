@@ -1565,14 +1565,6 @@ class DashboardSettings(Base):
         server_default=false(),
         nullable=False,
     )
-    telemetry_consent: Mapped[str] = mapped_column(
-        String(16),
-        default="undecided",
-        server_default=text("'undecided'"),
-        nullable=False,
-    )
-    telemetry_instance_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    telemetry_private_key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     http_responses_session_bridge_prompt_cache_idle_ttl_seconds: Mapped[int] = mapped_column(
         Integer,
         default=3600,

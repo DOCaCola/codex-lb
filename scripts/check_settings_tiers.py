@@ -64,7 +64,6 @@ ENV_READ_ALLOWLIST: Mapping[str, tuple[int, str]] = {
     "app/core/clients/http.py": (3, "outbound proxy env fallback"),
     "app/core/clients/proxy_websocket.py": (2, "outbound proxy env fallback"),
     "app/modules/runtime/service.py": (1, "GITHUB_TOKEN release-version lookup"),
-    "app/modules/telemetry/snapshot.py": (1, "KUBERNETES_SERVICE_HOST deployment detection"),
     "app/modules/automations/service.py": (1, "TZ default schedule timezone (S13)"),
     "app/db/session.py": (2, "CODEX_LB_TEST_DATABASE_URL (CI only)"),
     "app/db/alembic/versions/20260312_000000_add_additional_usage_quota_key.py": (1, "migration-time registry path"),
