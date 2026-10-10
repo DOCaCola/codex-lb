@@ -1,0 +1,4 @@
+- [x] 1. Advertise `tool_mode: code_mode_only` for Claude models in the model catalog.
+- [x] 2. Append the fixed code-mode contract after the client instructions when a translated request declares Codex code mode.
+- [x] 3. Project later outputs of an answered code-mode `exec` call into its open `tool_result`, or as labelled context after a later step; keep other repeated results invalid.
+- [x] 4. Add unit and integration tests, then run the Claude checks and OpenSpec validation.

@@ -17,6 +17,7 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, supports_mid_system
+from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_contract
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
 from app.modules.claude.task_input import is_external_task_input, task_metadata_complete
@@ -302,6 +303,9 @@ def project_responses(
     searchable = any(isinstance(tool, dict) and tool.get("type") == "tool_search" for tool in raw_tools)
     for index, tool in enumerate(raw_tools):
         declare(tool, param=f"tools[{index}]")
+    contract = code_mode_contract(tools)
+    if contract is not None:
+        system.append({"type": "text", "text": contract})
     raw_input = payload.get("input", [])
     if isinstance(raw_input, str):
         items: list[JsonValue] = [{"role": "user", "content": raw_input}]
@@ -364,6 +368,34 @@ def project_responses(
     }
     pending: set[str] = set()
     seen_calls: set[str] = set()
+    # Code-mode ``notify()`` adds outputs to an exec call after its own result
+    # (codex-rs code_mode/delegate.rs). They extend that call's tool_result.
+    exec_calls: set[str] = set()
+    exec_results: dict[str, dict[str, JsonValue]] = {}
+
+    def notify(call_id: str, content: list[JsonValue]) -> None:
+        """Place a code-mode notification for an answered exec call.
+
+        Codex queues it as pending input, so it follows every result of its step. While the
+        call's tool_result is still in the open result turn it joins that result; after a later
+        assistant step (a ``wait`` cycle) it is labelled context closing the newest result turn.
+        """
+        result = exec_results[call_id]
+        last = messages[-1]
+        assert isinstance(last, dict)
+        blocks = last["content"]
+        assert isinstance(blocks, list)
+        open_result = last["role"] == "user" and all(
+            isinstance(block, dict) and block.get("type") == "tool_result" for block in blocks
+        )
+        if open_result and any(block is result for block in blocks):
+            output = result["content"]
+            assert isinstance(output, list)
+            output.extend(content)
+            return
+        label = f"[Later exec output: tool_use_id={result['tool_use_id']}]"
+        append("user", [{"type": "text", "text": label}, *content])
+
     search_items: set[str] = set()
     for index, item in enumerate(items):
         if not isinstance(item, dict):
@@ -392,6 +424,8 @@ def project_responses(
             if call_id in seen_calls:
                 raise invalid("Duplicate tool call_id")
             identity = tools.identity(ToolIdentity(name, namespace, kind == "custom_tool_call"))
+            if identity.key == CODE_MODE_EXEC.key:
+                exec_calls.add(call_id)
             if identity.custom:
                 arguments: JsonValue = {"input": item.get("input")}
                 if not isinstance(item.get("input"), str):
@@ -459,6 +493,9 @@ def project_responses(
                 )
             reason = None
             if call_id in seen_calls and call_id not in pending:
+                if kind == "custom_tool_call_output" and call_id in exec_results and not pending:
+                    notify(call_id, _content(item.get("output")))
+                    continue
                 reason = "duplicate_result"
             elif call_id in call_ids and call_id not in seen_calls:
                 reason = "out_of_order_result"
@@ -473,7 +510,14 @@ def project_responses(
                 else _content(item.get("output"))
             )
             if in_result:
-                append("user", [{"type": "tool_result", "tool_use_id": _wire_call_id(call_id), "content": content}])
+                result: dict[str, JsonValue] = {
+                    "type": "tool_result",
+                    "tool_use_id": _wire_call_id(call_id),
+                    "content": content,
+                }
+                append("user", [result])
+                if call_id in exec_calls:
+                    exec_results[call_id] = result
                 pending.remove(call_id)
             else:
                 # Codex delegation/imported history can contain output without

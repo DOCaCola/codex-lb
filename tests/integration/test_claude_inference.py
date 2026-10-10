@@ -1462,6 +1462,48 @@ async def test_codex_tool_search_defers_loaded_tools_upstream(async_client, pool
     assert results[0]["content"] == [{"type": "tool_reference", "tool_name": deferred[0]["name"]}]
 
 
+async def test_codex_code_mode_reaches_claude_with_its_contract(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch)
+    exec_tool = {
+        "type": "custom",
+        "name": "exec",
+        "description": "Run JavaScript code to orchestrate/compose tool calls",
+        "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+    }
+    call = {"type": "custom_tool_call", "call_id": "call_exec", "name": "exec", "input": "notify('a'); text('b')"}
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={
+            "model": MODEL,
+            "stream": True,
+            "instructions": "Be brief.",
+            "tools": [exec_tool],
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Run it"}]},
+                call,
+                {"type": "custom_tool_call_output", "call_id": "call_exec", "output": "b"},
+                {"type": "custom_tool_call_output", "call_id": "call_exec", "name": "exec", "output": "a"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = captured[0][2]
+    texts = [
+        block["text"]
+        for blocks in (body["system"], *(message["content"] for message in body["messages"]))
+        if isinstance(blocks, list)
+        for block in blocks
+        if block.get("type") == "text"
+    ]
+    contracts = [index for index, text in enumerate(texts) if text.startswith("Code mode: the `Exec` tool")]
+    assert len(contracts) == 1
+    assert texts.index("Be brief.") < contracts[0]
+    [tool_use] = [block for message in body["messages"] for block in message["content"] if block["type"] == "tool_use"]
+    assert tool_use["name"] == "Exec"
+    [result] = [block for message in body["messages"] for block in message["content"] if block["type"] == "tool_result"]
+    assert result["content"] == [{"type": "text", "text": "b"}, {"type": "text", "text": "a"}]
+
+
 @pytest.mark.parametrize("switch", ["account", "model", "none"])
 @pytest.mark.parametrize(
     "user_input",

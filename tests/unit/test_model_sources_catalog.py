@@ -114,10 +114,12 @@ def test_claude_client_budget_is_distinct_from_provider_capacity(capacity: int, 
         assert model.raw["apply_patch_tool_type"] == "freeform"
         assert model.raw["multi_agent_version"] == "v2"
         assert model.raw["supports_search_tool"] is True
+        assert model.raw["tool_mode"] == "code_mode_only"
     else:
         assert "apply_patch_tool_type" not in model.raw
         assert "multi_agent_version" not in model.raw
         assert model.raw["supports_search_tool"] is False
+        assert "tool_mode" not in model.raw
     assert entry.context_window == capacity
     assert json.loads(entry.raw_metadata_json)["auto_compact_token_limit"] == capacity * 9 // 10
 

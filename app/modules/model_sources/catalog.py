@@ -57,6 +57,9 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         # Anthropic's deferred tools: the tool list stays identical across a thread's side chats and
         # loading a tool keeps the prompt cache.
         raw["supports_search_tool"] = True
+        # Codex then offers its tools through code mode, as for its own models: one JavaScript
+        # exec batching dependent calls. The Claude adapter adds the code-mode contract.
+        raw["tool_mode"] = "code_mode_only"
     raw.setdefault("visibility", "list")
     raw.setdefault("shell_type", "shell_command")
     raw.setdefault("max_context_window", context_window)
