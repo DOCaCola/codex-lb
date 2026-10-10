@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import cast
@@ -23,6 +24,24 @@ from app.modules.claude.tool_names import ClaudeToolNames, ToolIdentity
 from app.modules.claude.tool_schema import adapt_tool_schema
 
 logger = logging.getLogger(__name__)
+
+# Anthropic accepts tool_use IDs matching ``^[a-zA-Z0-9_-]+$``. Histories from
+# other providers can carry call IDs outside that alphabet.
+_WIRE_CALL_ID = re.compile(r"[A-Za-z0-9_-]+")
+_ENCODED_CALL_ID_PREFIX = "cxlb_tid_v1_"
+
+
+def _wire_call_id(call_id: str) -> str:
+    """Deterministic, injective Claude wire form of a Responses ``call_id``.
+
+    IDs Anthropic accepts pass unchanged unless they carry the reserved prefix;
+    every other ID is the prefix plus its base64url encoding. The two images
+    are disjoint, so distinct call IDs never share a wire ID. Claude's own IDs
+    pass unchanged, so its replies need no reverse mapping.
+    """
+    if _WIRE_CALL_ID.fullmatch(call_id) and not call_id.startswith(_ENCODED_CALL_ID_PREFIX):
+        return call_id
+    return _ENCODED_CALL_ID_PREFIX + base64.urlsafe_b64encode(call_id.encode()).rstrip(b"=").decode()
 
 
 def _unsigned_open_turn(messages: list[JsonValue]) -> bool:
@@ -324,7 +343,14 @@ def project_responses(
                     arguments = identity.arguments.encode(arguments)
             append(
                 "assistant",
-                [{"type": "tool_use", "id": call_id, "name": tools.wire_name(identity), "input": arguments}],
+                [
+                    {
+                        "type": "tool_use",
+                        "id": _wire_call_id(call_id),
+                        "name": tools.wire_name(identity),
+                        "input": arguments,
+                    }
+                ],
             )
             pending.add(call_id)
             seen_calls.add(call_id)
@@ -352,7 +378,7 @@ def project_responses(
                 raise _tool_output_error(reason, index=index, kind=str(kind), item=item, pending_count=len(pending))
             content = _content(item.get("output"))
             if call_id in pending:
-                append("user", [{"type": "tool_result", "tool_use_id": call_id, "content": content}])
+                append("user", [{"type": "tool_result", "tool_use_id": _wire_call_id(call_id), "content": content}])
                 pending.remove(call_id)
             else:
                 # Codex delegation/imported history can contain output without

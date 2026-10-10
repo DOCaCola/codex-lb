@@ -1,0 +1,2 @@
+- [x] 1. Encode translated `tool_use` and `tool_result` IDs in a deterministic, injective wire form that Anthropic accepts.
+- [x] 2. Add unit regressions, then run the Claude checks.

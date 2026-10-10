@@ -1250,3 +1250,63 @@ When Claude's model catalog reports a model's capabilities, advertised reasoning
 #### Scenario: Unsupported xhigh steps down
 - **WHEN** a client requests `xhigh` for a model whose catalog reports effort up to `max` without `xhigh`
 - **THEN** the request is sent with effort `high`, not `max`
+
+### Requirement: Translated Claude tool IDs are portable
+
+When the service projects Responses tool calls and their outputs into Claude
+Messages, it SHALL write each `call_id` as a wire ID matching
+`^[a-zA-Z0-9_-]+$`. A call ID already matching that pattern SHALL pass
+unchanged unless it starts with the reserved prefix `cxlb_tid_v1_`; every other
+call ID SHALL become that prefix followed by the unpadded base64url encoding of
+its UTF-8 bytes. A tool call and its result SHALL use the same wire ID, and
+distinct call IDs SHALL never share one. Tool-cycle pairing and validation
+SHALL use the original call IDs.
+
+#### Scenario: Foreign call ID from another provider
+
+- **GIVEN** history containing a tool call and output with call ID `functions.shell:0`
+- **WHEN** the request is projected for Claude
+- **THEN** the `tool_use.id` and the `tool_result.tool_use_id` are both
+  `cxlb_tid_v1_ZnVuY3Rpb25zLnNoZWxsOjA`
+
+#### Scenario: Claude's own call ID is unchanged
+
+- **GIVEN** history containing a tool call with call ID `toolu_01Abc-d_E`
+- **WHEN** the request is projected for Claude
+- **THEN** the `tool_use.id` is `toolu_01Abc-d_E`
+
+#### Scenario: Reserved prefix cannot collide
+
+- **GIVEN** history containing a call ID that already starts with `cxlb_tid_v1_`
+- **WHEN** the request is projected for Claude
+- **THEN** that call ID is encoded and its wire ID differs from every other
+  call's wire ID
+
+### Requirement: Relocated OAuth instructions follow the leading user run
+
+When OAuth instruction relocation places the caller's system blocks in a
+mid-conversation `system` turn, the service SHALL insert that turn after the
+leading run that starts with the first ordinary user turn. User turns and
+effort directives (system turns with empty content and an `output_config`)
+SHALL continue the run; any other turn SHALL end it. The relocated turn
+SHALL therefore precede an assistant turn, another content-bearing system
+turn, or the end of `messages`, and no existing message SHALL be rewritten
+or reordered.
+
+#### Scenario: Request after client compaction
+
+- **GIVEN** messages consisting of a user summary, an effort directive and a new user message
+- **WHEN** instructions are relocated for a model with mid-conversation system support
+- **THEN** the relocated system turn is the last message
+
+#### Scenario: Consecutive user turns
+
+- **GIVEN** messages starting with two user turns followed by an assistant turn
+- **WHEN** instructions are relocated
+- **THEN** the relocated system turn sits between the second user turn and the assistant turn
+
+#### Scenario: Single leading user turn
+
+- **GIVEN** messages starting with one user turn followed by an assistant tool call
+- **WHEN** instructions are relocated
+- **THEN** the relocated system turn directly follows that user turn, as before

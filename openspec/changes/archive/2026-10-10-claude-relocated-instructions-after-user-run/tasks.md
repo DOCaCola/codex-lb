@@ -1,0 +1,2 @@
+- [x] 1. Insert relocated OAuth instructions after the leading run of user turns and effort directives.
+- [x] 2. Add unit regressions, then run the Claude checks.

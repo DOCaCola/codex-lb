@@ -131,6 +131,37 @@ def test_modern_projection_preserves_instructions_and_tool_adjacency(endpoint):
         assert at(projected.body, "system", 0, "text") == CLI_IDENTITY
 
 
+_DIRECTIVE: JsonValue = {"role": "system", "content": [], "output_config": {"effort": "low"}}
+
+
+@pytest.mark.parametrize(
+    "tail,insert_at",
+    [
+        pytest.param([_DIRECTIVE, {"role": "user", "content": "next"}], 3, id="compacted history"),
+        pytest.param(
+            [_DIRECTIVE, {"role": "user", "content": "next"}, {"role": "assistant", "content": "answer"}],
+            3,
+            id="before assistant",
+        ),
+        pytest.param([_DIRECTIVE, _DIRECTIVE, {"role": "user", "content": "next"}], 4, id="multiple directives"),
+        pytest.param([{"role": "user", "content": "more"}, {"role": "assistant", "content": "a"}], 2, id="user run"),
+        pytest.param([_DIRECTIVE], 2, id="terminal directive"),
+        pytest.param(
+            [{"role": "system", "content": [{"type": "text", "text": "rule"}]}, {"role": "assistant", "content": "a"}],
+            1,
+            id="content-bearing system",
+        ),
+    ],
+)
+def test_relocated_instructions_follow_the_leading_user_run(tail, insert_at):
+    request = logical()
+    request["messages"] = [{"role": "user", "content": "summary"}, *tail]
+    projected = project_request(request, profile(), endpoint="messages")
+    messages = array(projected.body["messages"])
+    assert messages[insert_at] == {"role": "system", "content": request["system"]}
+    assert messages[:insert_at] + messages[insert_at + 1 :] == request["messages"]
+
+
 def test_legacy_placement_preserves_block_cache_and_signed_turn():
     request = logical("claude-haiku-4-5-20251001")
     projected = project_request(request, profile(), endpoint="messages")

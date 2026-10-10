@@ -103,6 +103,36 @@ def test_developer_message_between_assistant_items_waits_for_a_user_turn():
     assert [message["role"] for message in body["messages"]] == ["user", "assistant", "user", "system"]
 
 
+def _tool_ids(body):
+    return [
+        block.get("id") or block.get("tool_use_id")
+        for message in body["messages"]
+        for block in message["content"]
+        if block.get("type") in ("tool_use", "tool_result")
+    ]
+
+
+def test_foreign_call_ids_get_an_injective_wire_form_on_call_and_result():
+    foreign = ["functions.shell:0", "call|fc_1", "cxlb_tid_v1_Y2FsbA"]
+    native = ["toolu_01Abc-d_E", "call_xyz"]
+    history = [_user("Hi")]
+    for call_id in [*foreign, *native]:
+        history += [_call(call_id), _output(call_id)]
+
+    body = project(request(input=history), max_output_tokens=64000).body
+
+    wire_ids = _tool_ids(body)
+    assert wire_ids[0::2] == wire_ids[1::2]
+    call_ids = wire_ids[0::2]
+    assert call_ids[3:] == native
+    assert call_ids[:3] == [
+        "cxlb_tid_v1_ZnVuY3Rpb25zLnNoZWxsOjA",
+        "cxlb_tid_v1_Y2FsbHxmY18x",
+        "cxlb_tid_v1_Y3hsYl90aWRfdjFfWTJGc2JB",
+    ]
+    assert len(set(call_ids)) == len(call_ids)
+
+
 def test_developer_message_after_an_assistant_tail_follows_the_continuation():
     body = project(request(input=[_user("Hi"), _assistant("Partial"), _developer("Note")]), max_output_tokens=64000)
     assert body.body["messages"][2:] == [

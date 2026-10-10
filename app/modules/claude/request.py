@@ -107,6 +107,25 @@ def _preserve_cache_ttl_order(logical: dict[str, JsonValue], body: dict[str, Jso
     return changed
 
 
+def _leading_user_run_end(messages: list[JsonValue], first_user: int) -> int:
+    """Index after the run of user turns starting at ``first_user``.
+
+    Anthropic accepts a content-bearing system turn only before an assistant
+    turn or at the end of ``messages``, so relocated instructions must follow
+    every user turn of the run. Effort directives (system turns with empty
+    content and ``output_config``) are accepted at any position and do not
+    end the run.
+    """
+    end = first_user + 1
+    for message in messages[end:]:
+        assert isinstance(message, dict)
+        role = message.get("role")
+        if role != "user" and not (role == "system" and message.get("content") == [] and "output_config" in message):
+            break
+        end += 1
+    return end
+
+
 def _project_request(
     logical: dict[str, JsonValue],
     profile: RequestProfile,
@@ -159,9 +178,10 @@ def _project_request(
             raise ClaudeError("OAuth instruction relocation cannot alter server-tool history")
 
     if modern:
-        # Insert only after an ordinary user turn, never between an assistant
-        # tool call and its result. No existing message/block is rewritten.
-        index = next(
+        # Insert after the leading run that starts with the first ordinary
+        # user turn, never between an assistant tool call and its result. No
+        # existing message/block is rewritten.
+        first_user = next(
             (
                 index
                 for index, message in enumerate(messages)
@@ -176,9 +196,9 @@ def _project_request(
             ),
             None,
         )
-        if index is None:
+        if first_user is None:
             raise ClaudeError("OAuth instructions need an ordinary user turn before tool continuation")
-        messages.insert(index + 1, {"role": "system", "content": blocks})
+        messages.insert(_leading_user_run_end(messages, first_user), {"role": "system", "content": blocks})
         return RequestProjection(body, (MID_SYSTEM_BETA,), ("oauth_identity", "mid_system_instructions"))
 
     # Separate delimiter blocks preserve caller text and cache breakpoints
