@@ -1636,6 +1636,9 @@ class _WebSocketUpstreamControl:
     downstream_sequence_number: int | None = None
     seen_tool_call_keys: dict[ToolCallDedupeKey, None] = field(default_factory=dict)
     terminal_message_task: asyncio.Task[bool] | None = None
+    # Upstream response IDs that reached their terminal event on this
+    # connection; a late event naming one is not attributed to another turn.
+    finished_response_ids: deque[str] = field(default_factory=lambda: deque(maxlen=64))
 
 
 @dataclass(slots=True)

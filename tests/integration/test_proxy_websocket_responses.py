@@ -15047,6 +15047,141 @@ def _assert_turn_state_follow_up_re_sent_to_its_owner(
     assert other_account_upstream.sent_text == []
 
 
+def _upstream_text_message(payload: dict[str, JsonValue]) -> _FakeUpstreamMessage:
+    return _FakeUpstreamMessage("text", text=json.dumps(payload, separators=(",", ":")))
+
+
+def _interrupt_frame(response_id: str) -> str:
+    return json.dumps({"type": "response.interrupt", "response_id": response_id, "mode": "discard_partial_items"})
+
+
+def _install_interrupt_test_upstream(monkeypatch, upstream: _FakeUpstreamWebSocket) -> list[dict[str, Any]]:
+    request_logs: list[dict[str, Any]] = []
+
+    class _FakeSettingsCache:
+        async def get(self):
+            return _websocket_settings()
+
+    async def allow_firewall(_websocket):
+        return None
+
+    async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
+        return None
+
+    async def fake_connect_proxy_websocket(self, headers, **kwargs):
+        del self, headers, kwargs
+        return account_fixture(id="acct_ws_interrupt"), upstream
+
+    async def fake_write_request_log(self, **kwargs):
+        del self
+        request_logs.append(kwargs)
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
+    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
+    return request_logs
+
+
+def _interrupt_test_turn(text: str, *, previous_response_id: str | None = None) -> str:
+    frame: dict[str, JsonValue] = {"type": "response.create", "model": "gpt-5.4", "input": text, "stream": True}
+    if previous_response_id is not None:
+        frame["previous_response_id"] = previous_response_id
+    return json.dumps(frame)
+
+
+def test_v1_responses_websocket_forwards_in_flight_interrupt_and_logs_it_as_cancelled(app_instance, monkeypatch):
+    interrupted: dict[str, JsonValue] = {
+        "type": "response.incomplete",
+        "response": {
+            "id": "resp_interrupted",
+            "status": "incomplete",
+            "incomplete_details": {"reason": "interrupted"},
+            "output": [],
+        },
+    }
+    upstream = _SequencedUpstreamWebSocket(
+        [_upstream_text_message({"type": "response.created", "response": {"id": "resp_interrupted"}})],
+        deferred_message_batches=[[], [_upstream_text_message(interrupted)], _completed_turn_messages("resp_next")],
+    )
+    request_logs = _install_interrupt_test_upstream(monkeypatch, upstream)
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/v1/responses") as websocket:
+            websocket.send_text(_interrupt_test_turn("first"))
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            websocket.send_text(_interrupt_frame("resp_interrupted"))
+            incomplete = json.loads(websocket.receive_text())
+            websocket.send_text(_interrupt_test_turn("second", previous_response_id="resp_interrupted"))
+            next_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+
+    assert incomplete["type"] == "response.incomplete"
+    assert incomplete["response"]["incomplete_details"] == {"reason": "interrupted"}
+    assert json.loads(upstream.sent_text[1]) == json.loads(_interrupt_frame("resp_interrupted"))
+    assert json.loads(upstream.sent_text[2])["previous_response_id"] == "resp_interrupted"
+    assert [event["type"] for event in next_events] == ["response.created", "response.completed"]
+    assert [(log["request_id"], log["status"], log["error_code"]) for log in request_logs] == [
+        ("resp_interrupted", "cancelled", "interrupted"),
+        ("resp_next", "success", None),
+    ]
+
+
+def test_v1_responses_websocket_consumes_interrupt_of_finished_response(app_instance, monkeypatch):
+    upstream = _SequencedUpstreamWebSocket(
+        _completed_turn_messages("resp_first"),
+        deferred_message_batches=[[], _completed_turn_messages("resp_second")],
+    )
+    _install_interrupt_test_upstream(monkeypatch, upstream)
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/v1/responses") as websocket:
+            # Before any upstream exists, an interrupt has nothing to name.
+            websocket.send_text(_interrupt_frame("resp_unknown"))
+            websocket.send_text(_interrupt_test_turn("first"))
+            first_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+            # The interrupt crossed the first response's terminal event.
+            websocket.send_text(_interrupt_frame("resp_first"))
+            websocket.send_text(_interrupt_test_turn("second", previous_response_id="resp_first"))
+            second_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+
+    assert [event["type"] for event in first_events] == ["response.created", "response.completed"]
+    assert [(event["type"], event["response"]["id"]) for event in second_events] == [
+        ("response.created", "resp_second"),
+        ("response.completed", "resp_second"),
+    ]
+    assert [json.loads(text)["type"] for text in upstream.sent_text] == ["response.create", "response.create"]
+
+
+def test_v1_responses_websocket_drops_late_upstream_event_of_finished_response(app_instance, monkeypatch):
+    late_error: dict[str, JsonValue] = {
+        "type": "error",
+        "response_id": "resp_first",
+        "error": {"type": "invalid_request_error", "code": "response_not_in_progress", "message": "Not in progress."},
+    }
+    upstream = _SequencedUpstreamWebSocket(
+        _completed_turn_messages("resp_first"),
+        deferred_message_batches=[[], [_upstream_text_message(late_error), *_completed_turn_messages("resp_second")]],
+    )
+    request_logs = _install_interrupt_test_upstream(monkeypatch, upstream)
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/v1/responses") as websocket:
+            websocket.send_text(_interrupt_test_turn("first"))
+            [websocket.receive_text() for _ in range(2)]
+            websocket.send_text(_interrupt_test_turn("second", previous_response_id="resp_first"))
+            second_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+
+    assert [(event["type"], event["response"]["id"]) for event in second_events] == [
+        ("response.created", "resp_second"),
+        ("response.completed", "resp_second"),
+    ]
+    assert [(log["request_id"], log["status"]) for log in request_logs] == [
+        ("resp_first", "success"),
+        ("resp_second", "success"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("error_code", "error_message"),
     [

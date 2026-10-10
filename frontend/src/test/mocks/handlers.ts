@@ -81,7 +81,7 @@ const accountModelCatalog = ["gpt-6-astra", "gpt-5.4"].map((model) => ({
   reasoningLevels: ["none", "low", "medium", "high", "max"],
   defaultReasoningLevel: "medium",
 }));
-const STATUS_ORDER = ["ok", "reconnect", "cancelled", "rate_limit", "quota", "error"] as const;
+const STATUS_ORDER = ["ok", "interrupted", "reconnect", "cancelled", "rate_limit", "quota", "error"] as const;
 
 // ── Zod schemas for mock request bodies ──
 

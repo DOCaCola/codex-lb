@@ -8,8 +8,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import ResourceClosedError
 
-from app.db.models import ModelSource, RequestLog
+from app.core.crypto import TokenEncryptor
+from app.core.utils.time import utcnow
+from app.db.models import Account, AccountStatus, ModelSource, RequestLog
 from app.db.session import SessionLocal
+from app.modules.accounts.repository import AccountsRepository
 from app.modules.request_logs import repository as repository_module
 from app.modules.request_logs.repository import RequestLogsRepository
 
@@ -561,3 +564,51 @@ async def test_conversation_count_cache_evicts_oldest_entry_at_256_entries(monke
 
     assert result.total == 7
     assert len(count_queries) == 258
+
+
+@pytest.mark.asyncio
+async def test_owner_lookup_accepts_interrupted_responses_only_among_cancelled(db_setup) -> None:
+    del db_setup
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(
+            Account(
+                id="acc_interrupt_owner",
+                email="interrupt-owner@example.com",
+                plan_type="plus",
+                access_token_encrypted=encryptor.encrypt("access"),
+                refresh_token_encrypted=encryptor.encrypt("refresh"),
+                id_token_encrypted=encryptor.encrypt("id"),
+                last_refresh=utcnow(),
+                status=AccountStatus.ACTIVE,
+                deactivation_reason=None,
+            )
+        )
+        repo = RequestLogsRepository(session)
+        for request_id, error_code in (
+            ("resp_interrupted", "interrupted"),
+            ("resp_disconnected", "client_disconnected"),
+        ):
+            await repo.add_log(
+                account_id="acc_interrupt_owner",
+                request_id=request_id,
+                model="gpt-6.1-sol",
+                input_tokens=10,
+                output_tokens=5,
+                latency_ms=25,
+                status="cancelled",
+                error_code=error_code,
+            )
+
+        interrupted_owner = await repo.find_latest_owner_record_for_response_id(
+            response_id="resp_interrupted",
+            api_key_id=None,
+        )
+        disconnected_owner = await repo.find_latest_owner_record_for_response_id(
+            response_id="resp_disconnected",
+            api_key_id=None,
+        )
+
+    assert interrupted_owner is not None
+    assert interrupted_owner.account_id == "acc_interrupt_owner"
+    assert disconnected_owner is None

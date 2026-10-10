@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import aclosing
 from dataclasses import replace
 
@@ -17,6 +17,8 @@ from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import parse_sse_data_json, parse_sse_data_json_text
 
 logger = logging.getLogger(__name__)
+
+_HTTP_TERMINAL_EVENT_TYPES = frozenset({"response.completed", "response.failed", "response.incomplete", "error"})
 
 
 def utf8_size(text: str) -> int:
@@ -71,6 +73,11 @@ class ResponsesTransport:
         self._send_lock = asyncio.Lock()
         self._http_idle = asyncio.Event()
         self._http_idle.set()
+        # The single in-flight HTTP turn, so a client interrupt can cancel it.
+        self._http_task: asyncio.Task[None] | None = None
+        self._http_response_id: str | None = None
+        self._http_output: list[object] = []
+        self._http_terminal_relayed = False
 
     def _spawn(self, coroutine: Coroutine[None, None, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coroutine, name="responses-transport-relay")
@@ -97,8 +104,17 @@ class ResponsesTransport:
             await self._http_idle.wait()
             await self._events.put(UpstreamWebSocketMessage(kind="error", error="Upstream websocket read failed"))
 
+    async def _put_http_event(self, payload: Mapping[str, object]) -> None:
+        await self._events.put(
+            UpstreamWebSocketMessage(kind="text", text=json.dumps(payload, separators=(",", ":")), transport="http")
+        )
+        if payload.get("type") in _HTTP_TERMINAL_EVENT_TYPES:
+            self._http_terminal_relayed = True
+
     async def _read_http(self, text: str) -> None:
-        response_id = get_request_id()
+        self._http_response_id = get_request_id()
+        self._http_output = []
+        self._http_terminal_relayed = False
         try:
             async with aclosing(self._stream_http(text)) as events:
                 async for block in events:
@@ -108,44 +124,60 @@ class ResponsesTransport:
                         if isinstance(response, dict):
                             event_response_id = response.get("id")
                             if isinstance(event_response_id, str):
-                                response_id = event_response_id
-                        await self._events.put(
-                            UpstreamWebSocketMessage(
-                                kind="text", text=json.dumps(payload, separators=(",", ":")), transport="http"
-                            )
-                        )
+                                self._http_response_id = event_response_id
+                        if payload.get("type") == "response.output_item.done" and "item" in payload:
+                            self._http_output.append(payload["item"])
+                        await self._put_http_event(payload)
         except ProxyResponseError as exc:
             error = exc.payload["error"]
-            await self._events.put(
-                UpstreamWebSocketMessage(
-                    kind="text",
-                    transport="http",
-                    text=json.dumps(
-                        synthetic_stream_failure_event(
-                            error.get("code") or "upstream_error",
-                            error.get("message") or "Upstream HTTP request failed",
-                            error_type=error.get("type") or "server_error",
-                            response_id=response_id,
-                            error_param=error.get("param"),
-                        )
-                    ),
+            await self._put_http_event(
+                synthetic_stream_failure_event(
+                    error.get("code") or "upstream_error",
+                    error.get("message") or "Upstream HTTP request failed",
+                    error_type=error.get("type") or "server_error",
+                    response_id=self._http_response_id,
+                    error_param=error.get("param"),
                 )
             )
         except Exception:
             logger.exception("Responses HTTP relay failed")
-            await self._events.put(
-                UpstreamWebSocketMessage(
-                    kind="text",
-                    transport="http",
-                    text=json.dumps(
-                        synthetic_stream_failure_event(
-                            "upstream_reset",
-                            "Upstream HTTP stream failed",
-                            response_id=response_id,
-                        )
-                    ),
+            await self._put_http_event(
+                synthetic_stream_failure_event(
+                    "upstream_reset",
+                    "Upstream HTTP stream failed",
+                    response_id=self._http_response_id,
                 )
             )
+
+    async def interrupt_http(self, response_id: str) -> bool:
+        """Interrupt the in-flight HTTP turn the way upstream interrupts a WS turn.
+
+        HTTP has no interrupt frame, so the stream is cancelled locally and the
+        turn ends with ``response.incomplete`` (reason ``interrupted``) carrying
+        the output items already completed. Returns False, without side
+        effects, when that response is not the in-flight HTTP turn or its
+        terminal event has already been relayed.
+        """
+        task = self._http_task
+        if task is None or task.done() or self._http_response_id != response_id:
+            return False
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if self._http_terminal_relayed:
+            return False
+        await self._put_http_event(
+            {
+                "type": "response.incomplete",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "interrupted"},
+                    "output": list(self._http_output),
+                },
+            }
+        )
+        return True
 
     async def send_text(self, text: str) -> None:
         async with self._send_lock:
@@ -158,8 +190,8 @@ class ResponsesTransport:
                 await self._check_send_open()
                 logger.info("responses_transport_selected transport=http reason=frame_size bytes=%s", frame_bytes)
                 self._http_idle.clear()
-                task = self._spawn(self._read_http(text))
-                task.add_done_callback(lambda _: self._http_idle.set())
+                self._http_task = self._spawn(self._read_http(text))
+                self._http_task.add_done_callback(lambda _: self._http_idle.set())
                 return
             websocket = await self._connected_websocket()
             await websocket.send_text(text)

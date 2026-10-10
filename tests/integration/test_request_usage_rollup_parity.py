@@ -351,16 +351,15 @@ async def _listing_totals(logs: RequestLogsRepository, lead_since: datetime) -> 
 
     return {
         "default": await _total(),
-        "success_only": await _total(include_cancelled=False, include_error_other=False),
+        "success_only": await _total(cancelled_statuses=frozenset(), include_error_other=False),
         "cancelled_only": await _total(
             include_success=False,
-            include_cancelled=True,
             include_error_other=False,
         ),
-        "error_only": await _total(include_success=False, include_cancelled=False),
+        "error_only": await _total(include_success=False, cancelled_statuses=frozenset()),
         "no_status_filter": await _total(
             include_success=False,
-            include_cancelled=False,
+            cancelled_statuses=frozenset(),
             include_error_other=False,
         ),
         "windowed": await _total(since=lead_since, until=UNTIL_UNALIGNED),

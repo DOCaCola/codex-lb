@@ -797,6 +797,7 @@
   "dashboard.requestStatus.cancelled": "已取消",
   "dashboard.requestStatus.quota": "Quota",
   "dashboard.requestStatus.rate_limit": "Rate limit",
+  "dashboard.requestStatus.interrupted": "已中断",
   "dashboard.requestStatus.reconnect": "Reconnect",
   "dashboard.requestDetails.clientIp": "客户端 IP",
   "dashboard.requestDetails.copyClientIp": "复制 Client IP",

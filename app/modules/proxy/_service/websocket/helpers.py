@@ -63,6 +63,7 @@ from app.core.openai.requests import (
     ResponsesRequest,
 )
 from app.core.types import JsonValue
+from app.core.usage.logs import CLIENT_INTERRUPT_ERROR_CODE
 from app.core.utils.shared_future import (
     _await_cleanup_deferring_cancellation as _await_cleanup_deferring_cancellation,
 )
@@ -1428,6 +1429,14 @@ def _websocket_event_incomplete_reason(
         return None
     stripped = reason.strip()
     return stripped or None
+
+
+def _is_websocket_interrupted_terminal(
+    event_type: str | None,
+    payload: dict[str, JsonValue] | None,
+) -> bool:
+    """Whether a terminal ends a response the client interrupted (``response.interrupt``)."""
+    return _websocket_event_incomplete_reason(event_type, payload) == CLIENT_INTERRUPT_ERROR_CODE
 
 
 def _maybe_rewrite_websocket_previous_response_not_found_event(

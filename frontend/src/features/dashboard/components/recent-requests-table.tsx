@@ -70,6 +70,7 @@ import {
 
 const STATUS_CLASS_MAP: Record<string, string> = {
   ok: "bg-emerald-500/15 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-400",
+  interrupted: "bg-indigo-500/10 text-indigo-700 border-indigo-500/20 hover:bg-indigo-500/15 dark:text-indigo-300",
   reconnect: "bg-slate-500/10 text-slate-700 border-slate-500/20 hover:bg-slate-500/15 dark:text-slate-300",
   cancelled: "bg-sky-500/15 text-sky-700 border-sky-500/20 hover:bg-sky-500/20 dark:text-sky-400",
   rate_limit: "bg-orange-500/15 text-orange-700 border-orange-500/20 hover:bg-orange-500/20 dark:text-orange-400",

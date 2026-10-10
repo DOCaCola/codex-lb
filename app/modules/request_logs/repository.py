@@ -18,8 +18,8 @@ from app.core.usage.coverage import CostCoverage, coverage_from_values, request_
 from app.core.usage.logs import (
     CANCELLED_STATUS,
     CLIENT_DISCONNECT_ERROR_CODE,
+    CLIENT_INTERRUPT_ERROR_CODE,
     NON_ERROR_STATUSES,
-    WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
     RequestLogLike,
     calculated_cost_from_log,
 )
@@ -62,6 +62,7 @@ from app.modules.accounts.usage_time_rollup_read import (
     read_hourly_window,
     sum_demand_window,
 )
+from app.modules.request_logs.mappers import ALL_CANCELLED_PUBLIC_STATUSES, CANCELLED_PUBLIC_STATUSES
 from app.modules.request_logs.observability import (
     CacheActivityRow,
     ConversationAnalyticsRows,
@@ -555,7 +556,11 @@ class RequestLogsRepository:
 
         base_conditions = [
             RequestLog.request_id == response_id_value,
-            RequestLog.status == "success",
+            # Interrupted turns are cancelled but remain continuation anchors.
+            or_(
+                RequestLog.status == "success",
+                and_(RequestLog.status == CANCELLED_STATUS, RequestLog.error_code == CLIENT_INTERRUPT_ERROR_CODE),
+            ),
             RequestLog.account_id.is_not(None),
         ]
         if api_key_id is not None:
@@ -1336,8 +1341,7 @@ class RequestLogsRepository:
         models: list[str] | None = None,
         reasoning_efforts: list[str] | None = None,
         include_success: bool = True,
-        include_cancelled: bool = True,
-        include_reconnect: bool = True,
+        cancelled_statuses: frozenset[str] = ALL_CANCELLED_PUBLIC_STATUSES,
         include_error_other: bool = True,
         error_codes_in: list[str] | None = None,
         error_codes_excluding: list[str] | None = None,
@@ -1361,8 +1365,7 @@ class RequestLogsRepository:
             models=models,
             reasoning_efforts=reasoning_efforts,
             include_success=include_success,
-            include_cancelled=include_cancelled,
-            include_reconnect=include_reconnect,
+            cancelled_statuses=cancelled_statuses,
             include_error_other=include_error_other,
             error_codes_in=error_codes_in,
             error_codes_excluding=error_codes_excluding,
@@ -1394,8 +1397,9 @@ class RequestLogsRepository:
             search is None
             and not error_codes_in
             and not error_codes_excluding
-            # Demand rollups fold cancelled rows without their error code.
-            and include_cancelled == include_reconnect
+            # Demand rollups fold cancelled rows without their error code, so
+            # they can serve only all or none of the cancelled public statuses.
+            and cancelled_statuses in (frozenset(), ALL_CANCELLED_PUBLIC_STATUSES)
             and not any(value.startswith("source:") for value in account_ids or [])
         ):
             demand_params = _DemandCountParams(
@@ -1407,7 +1411,7 @@ class RequestLogsRepository:
                 models=models,
                 reasoning_efforts=reasoning_efforts,
                 include_success=include_success,
-                include_cancelled=include_cancelled,
+                include_cancelled=bool(cancelled_statuses),
                 include_error_other=include_error_other,
             )
 
@@ -1429,8 +1433,7 @@ class RequestLogsRepository:
             tuple(models or ()),
             tuple(reasoning_efforts or ()),
             include_success,
-            include_cancelled,
-            include_reconnect,
+            tuple(sorted(cancelled_statuses)),
             include_error_other,
             tuple(sorted(error_codes_in)) if error_codes_in else None,
             tuple(sorted(error_codes_excluding)) if error_codes_excluding else None,
@@ -1592,7 +1595,6 @@ class RequestLogsRepository:
             models=models,
             reasoning_efforts=reasoning_efforts,
             include_success=True,
-            include_cancelled=True,
             include_error_other=True,
             error_codes_in=None,
             error_codes_excluding=None,
@@ -1607,7 +1609,6 @@ class RequestLogsRepository:
             models=models,
             reasoning_efforts=reasoning_efforts,
             include_success=True,
-            include_cancelled=True,
             include_error_other=True,
             error_codes_in=None,
             error_codes_excluding=None,
@@ -1770,8 +1771,7 @@ class RequestLogsRepository:
         models: list[str] | None = None,
         reasoning_efforts: list[str] | None = None,
         include_success: bool = True,
-        include_cancelled: bool = True,
-        include_reconnect: bool = True,
+        cancelled_statuses: frozenset[str] = ALL_CANCELLED_PUBLIC_STATUSES,
         include_error_other: bool = True,
         error_codes_in: list[str] | None = None,
         error_codes_excluding: list[str] | None = None,
@@ -1824,25 +1824,23 @@ class RequestLogsRepository:
         status_conditions = []
         if include_success:
             status_conditions.append(RequestLog.status == "success")
-        if include_cancelled and include_reconnect:
+        if cancelled_statuses == ALL_CANCELLED_PUBLIC_STATUSES:
             status_conditions.append(RequestLog.status == CANCELLED_STATUS)
-        elif include_cancelled:
-            status_conditions.append(
-                and_(
-                    RequestLog.status == CANCELLED_STATUS,
+        elif cancelled_statuses:
+            cancelled_clauses: list[ColumnElement[bool]] = []
+            selected_codes = [
+                code for code, status in CANCELLED_PUBLIC_STATUSES.items() if status in cancelled_statuses
+            ]
+            if selected_codes:
+                cancelled_clauses.append(RequestLog.error_code.in_(selected_codes))
+            if CANCELLED_STATUS in cancelled_statuses:
+                cancelled_clauses.append(
                     or_(
                         RequestLog.error_code.is_(None),
-                        RequestLog.error_code != WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
-                    ),
+                        RequestLog.error_code.not_in(list(CANCELLED_PUBLIC_STATUSES)),
+                    )
                 )
-            )
-        elif include_reconnect:
-            status_conditions.append(
-                and_(
-                    RequestLog.status == CANCELLED_STATUS,
-                    RequestLog.error_code == WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
-                )
-            )
+            status_conditions.append(and_(RequestLog.status == CANCELLED_STATUS, or_(*cancelled_clauses)))
         if error_codes_in:
             status_conditions.append(and_(RequestLog.status == "error", RequestLog.error_code.in_(error_codes_in)))
         if include_error_other:

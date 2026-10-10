@@ -28,6 +28,10 @@ CLIENT_DISCONNECT_ERROR_CODE = "client_disconnected"
 # connection and resends the turn, so the refused attempt is a superseded
 # terminal like a disconnect: stored as cancelled and shown as a reconnect.
 WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE = "websocket_connection_limit_reached"
+# A Responses turn the client stopped with ``response.interrupt``. It ends with
+# ``response.incomplete`` (reason ``interrupted``), is stored as cancelled and
+# still anchors the client's follow-up like a completed turn.
+CLIENT_INTERRUPT_ERROR_CODE = "interrupted"
 
 
 class RequestLogLike(Protocol):

@@ -67,6 +67,7 @@ from app.core.clients.proxy_websocket import (
     is_account_neutral_websocket_error_code,
     is_upstream_lifecycle_close,
 )
+from app.core.clients.responses_transport import ResponsesTransport
 from app.core.clock import Clock, Scheduler, clock_for, scheduler_for
 from app.core.config.settings import get_settings as replay_settings
 from app.core.errors import (
@@ -423,6 +424,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _find_websocket_request_state_by_response_id,
     _forget_websocket_stale_previous_response,
     _install_verified_fresh_replay,
+    _is_websocket_interrupted_terminal,
     _is_websocket_response_create,
     _is_websocket_stale_previous_response,
     _match_websocket_request_state_for_anonymous_event,
@@ -908,6 +910,52 @@ async def _wait_for_process_network_recovery(
 def _websocket_text_with_account_installation_id(text_data: str, account: Account) -> str:
     codex_installation_id = getattr(account, "codex_installation_id", None)
     return _text_with_account_installation_id(text_data, codex_installation_id)
+
+
+async def _route_websocket_response_interrupt(
+    payload: dict[str, JsonValue],
+    *,
+    upstream: UpstreamWebSocket | None,
+    pending_requests: deque[_WebSocketRequestState],
+    pending_lock: anyio.Lock,
+) -> str | None:
+    """Deliver a client ``response.interrupt`` only to the response it names.
+
+    Codex interrupts the response it is still reading, so the interrupt can
+    cross that response's terminal event. Upstream answers an interrupt for a
+    finished response with an error the client reads as the failure of its
+    next turn, so an interrupt naming no in-flight response is consumed. An
+    HTTP turn is interrupted locally. Returns the frame to forward upstream,
+    addressed to the upstream response ID, or None when nothing is forwarded.
+    """
+    response_id = payload.get("response_id")
+    request_state: _WebSocketRequestState | None = None
+    if isinstance(response_id, str):
+        async with pending_lock:
+            request_state = next(
+                (
+                    pending
+                    for pending in pending_requests
+                    if pending.response_id is not None and _websocket_downstream_response_id(pending) == response_id
+                ),
+                None,
+            )
+    forwarded_text: str | None = None
+    if request_state is None or request_state.response_id is None:
+        outcome = "not_in_flight"
+    elif request_state.upstream_transport == "http":
+        # Only the Responses transport relays HTTP turns on this connection.
+        interrupted = await cast(ResponsesTransport, upstream).interrupt_http(request_state.response_id)
+        outcome = "local_http" if interrupted else "not_in_flight"
+    else:
+        forwarded_text = json.dumps({**payload, "response_id": request_state.response_id}, separators=(",", ":"))
+        outcome = "forwarded"
+    _facade().logger.info(
+        "websocket_response_interrupt outcome=%s response_id=%s",
+        outcome,
+        _hash_identifier(response_id) if isinstance(response_id, str) else None,
+    )
+    return forwarded_text
 
 
 def _websocket_enforce_response_create_text_size(
@@ -2149,6 +2197,15 @@ class _WebSocketMixin:
                                         )
                                     )
                                 continue
+                            if payload.get("type") == "response.interrupt":
+                                text_data = await _route_websocket_response_interrupt(
+                                    payload,
+                                    upstream=upstream,
+                                    pending_requests=pending_requests,
+                                    pending_lock=pending_lock,
+                                )
+                                if text_data is None:
+                                    continue
 
                 if upstream_reader is not None and upstream_reader.done():
                     try:
@@ -5777,6 +5834,21 @@ class _WebSocketMixin:
             created_request_state = None
             has_other_pending_requests = False
             grouped_previous_response_request_states: list[_WebSocketRequestState] = []
+            if (
+                response_id is not None
+                and response_id in upstream_control.finished_response_ids
+                and _find_websocket_request_state_by_response_id(pending_requests, response_id) is None
+            ):
+                # A finished response emits nothing further for the client; a
+                # late reply (for example to an interrupt that crossed the
+                # terminal event) must not be attributed to another request.
+                _facade().logger.info(
+                    "websocket_finished_response_event_dropped event_type=%s response_id=%s",
+                    event_type,
+                    _hash_identifier(response_id),
+                )
+                upstream_control.suppress_downstream_event = True
+                return text
             if event_type == "response.created":
                 request_state = _assign_websocket_response_id(pending_requests, response_id)
                 created_request_state = request_state
@@ -5965,6 +6037,11 @@ class _WebSocketMixin:
                         reconnect_requested=True,
                         original_text=text,
                     )
+                for finished_request_state in (
+                    [request_state] if request_state is not None else []
+                ) + grouped_previous_response_request_states:
+                    if finished_request_state.response_id is not None:
+                        upstream_control.finished_response_ids.append(finished_request_state.response_id)
                 has_other_pending_requests = bool(pending_requests)
             else:
                 request_state = None
@@ -6393,7 +6470,13 @@ class _WebSocketMixin:
             and completed_usage is not None
             and completed_usage.output_tokens == 0
         )
-        if event_type == "response.completed" and continuity_state is not None and not completed_empty_prewarm:
+        # An interrupted response keeps its completed output and anchors the
+        # client's follow-up (``previous_response_id``) like a completion.
+        if (
+            (event_type == "response.completed" or _is_websocket_interrupted_terminal(event_type, payload))
+            and continuity_state is not None
+            and not completed_empty_prewarm
+        ):
             if (
                 upstream_transport == "http"
                 and request_state.http_replay_conversation_id is not None
@@ -6768,7 +6851,8 @@ class _WebSocketMixin:
             error_message = error.message if error else _websocket_event_error_message(event_type, payload)
             error_payload = _upstream_error_from_openai(error)
         elif event_type in {"response.failed", "response.incomplete"}:
-            status = "error"
+            # A client interrupt is a cancellation, not an upstream failure.
+            status = CANCELLED_STATUS if _is_websocket_interrupted_terminal(event_type, payload) else "error"
             error = event.response.error if event and event.response else None
             error_code = _normalize_error_code(error.code if error else None, error.type if error else None)
             error_message = error.message if error else None
@@ -6891,9 +6975,12 @@ class _WebSocketMixin:
             usage.output_tokens_details.reasoning_tokens if usage and usage.output_tokens_details else None
         )
         request_log_handoff_succeeded = True
+        # Successful and interrupted responses are both continuation anchors:
+        # their log row carries the ID the client continues from.
+        anchors_continuation = settlement.record_success or _is_websocket_interrupted_terminal(event_type, payload)
         if not request_state.skip_request_log:
             request_log_response_id = (
-                _websocket_downstream_response_id(request_state) if settlement.record_success else response_id
+                _websocket_downstream_response_id(request_state) if anchors_continuation else response_id
             )
             try:
                 await proxy._write_request_log(
@@ -7041,14 +7128,19 @@ class _WebSocketMixin:
                     )
                     if not isolate_account_health_failure:
                         raise
-            if request_state.upstream_transport != "http":
-                for remembered_response_id in _websocket_continuity_response_ids(request_state, response_id):
-                    proxy._remember_websocket_previous_response_owner(
-                        previous_response_id=remembered_response_id,
-                        api_key_id=api_key.id if api_key is not None else None,
-                        account_id=account_id_value,
-                        session_id=request_state.session_id,
-                    )
+        if (
+            anchors_continuation
+            and settlement_committed
+            and request_log_handoff_succeeded
+            and request_state.upstream_transport != "http"
+        ):
+            for remembered_response_id in _websocket_continuity_response_ids(request_state, response_id):
+                proxy._remember_websocket_previous_response_owner(
+                    previous_response_id=remembered_response_id,
+                    api_key_id=api_key.id if api_key is not None else None,
+                    account_id=account_id_value,
+                    session_id=request_state.session_id,
+                )
 
         checkpoint_replay_scope = checkpoint_scope(api_key)
         checkpoint_request_text = request_state.fresh_upstream_request_text or request_state.request_text

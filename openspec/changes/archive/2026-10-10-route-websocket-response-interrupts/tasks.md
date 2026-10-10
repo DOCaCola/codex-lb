@@ -1,0 +1,5 @@
+- [x] 1. Route `response.interrupt` to the in-flight response: forward it with the upstream response ID, interrupt an HTTP-relayed turn locally, and consume an interrupt naming no in-flight response.
+- [x] 2. Drop upstream events naming a response that already finished on the connection.
+- [x] 3. Log interrupted responses as `cancelled` with error code `interrupted`, and let them anchor the follow-up turn.
+- [x] 4. Add unit and integration regressions, then run the backend checks.
+- [x] 5. Expose interrupted rows as public Request Logs status `interrupted` with its own filter, status option, localized label and non-error badge.

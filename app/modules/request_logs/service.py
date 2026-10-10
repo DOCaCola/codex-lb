@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
 from app.modules.request_logs.mappers import (
+    ALL_CANCELLED_PUBLIC_STATUSES,
     QUOTA_CODES,
     RATE_LIMIT_CODES,
     normalize_log_status,
@@ -47,8 +48,7 @@ class RequestLogApiKeyOption:
 @dataclass(frozen=True, slots=True)
 class RequestLogStatusFilter:
     include_success: bool
-    include_cancelled: bool
-    include_reconnect: bool
+    cancelled_statuses: frozenset[str]
     include_error_other: bool
     error_codes_in: list[str] | None
     error_codes_excluding: list[str] | None
@@ -161,8 +161,7 @@ class RequestLogsService:
             models=models,
             reasoning_efforts=reasoning_efforts,
             include_success=status_filter.include_success,
-            include_cancelled=status_filter.include_cancelled,
-            include_reconnect=status_filter.include_reconnect,
+            cancelled_statuses=status_filter.cancelled_statuses,
             include_error_other=status_filter.include_error_other,
             error_codes_in=status_filter.error_codes_in,
             error_codes_excluding=status_filter.error_codes_excluding,
@@ -293,8 +292,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
     if not status:
         return RequestLogStatusFilter(
             include_success=True,
-            include_cancelled=True,
-            include_reconnect=True,
+            cancelled_statuses=ALL_CANCELLED_PUBLIC_STATUSES,
             include_error_other=True,
             error_codes_in=None,
             error_codes_excluding=None,
@@ -303,16 +301,13 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
     if not normalized or "all" in normalized:
         return RequestLogStatusFilter(
             include_success=True,
-            include_cancelled=True,
-            include_reconnect=True,
+            cancelled_statuses=ALL_CANCELLED_PUBLIC_STATUSES,
             include_error_other=True,
             error_codes_in=None,
             error_codes_excluding=None,
         )
 
     include_success = "ok" in normalized
-    include_cancelled = "cancelled" in normalized
-    include_reconnect = "reconnect" in normalized
     include_rate_limit = "rate_limit" in normalized
     include_quota = "quota" in normalized
     include_error_other = "error" in normalized
@@ -325,8 +320,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
 
     return RequestLogStatusFilter(
         include_success=include_success,
-        include_cancelled=include_cancelled,
-        include_reconnect=include_reconnect,
+        cancelled_statuses=ALL_CANCELLED_PUBLIC_STATUSES & normalized,
         include_error_other=include_error_other,
         error_codes_in=sorted(error_codes_in) if error_codes_in else None,
         error_codes_excluding=sorted(RATE_LIMIT_CODES | QUOTA_CODES) if include_error_other else None,
@@ -335,7 +329,7 @@ def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
 
 def _normalize_status_values(values: list[tuple[str, str | None]]) -> list[str]:
     normalized = {normalize_log_status(status, error_code) for status, error_code in values}
-    ordered = ["ok", "reconnect", "cancelled", "rate_limit", "quota", "error"]
+    ordered = ["ok", "interrupted", "reconnect", "cancelled", "rate_limit", "quota", "error"]
     return [status for status in ordered if status in normalized]
 
 

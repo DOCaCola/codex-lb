@@ -265,3 +265,71 @@ async def test_new_http_turn_cannot_dispatch_behind_pending_ws_close():
         assert calls == ["first"]
     finally:
         await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_http_ends_turn_incomplete_with_completed_items():
+    finalized = asyncio.Event()
+    calls = []
+    item = {"type": "message", "id": "msg_1", "role": "assistant", "content": []}
+
+    async def stream(text):
+        calls.append(text)
+        try:
+            yield format_sse_event({"type": "response.created", "response": {"id": "resp_http"}})
+            yield format_sse_event({"type": "response.output_item.done", "output_index": 0, "item": item})
+            await asyncio.Event().wait()
+            yield ""
+        finally:
+            finalized.set()
+
+    connect = AsyncMock()
+    transport = ResponsesTransport(None, connect=connect, stream_http=stream, max_frame_bytes=1)
+    try:
+        await transport.send_text("large")
+        assert (await receive_json(transport))["type"] == "response.created"
+        assert (await receive_json(transport))["type"] == "response.output_item.done"
+
+        assert await transport.interrupt_http("resp_http")
+
+        assert finalized.is_set()
+        assert await receive_json(transport) == {
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp_http",
+                "object": "response",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "interrupted"},
+                "output": [item],
+            },
+        }
+        connect.assert_not_awaited()
+        await transport.send_text("next")
+        assert (await receive_json(transport))["type"] == "response.created"
+        assert calls == ["large", "next"]
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_http_ignores_other_and_finished_responses():
+    release = asyncio.Event()
+
+    async def stream(text):
+        yield format_sse_event({"type": "response.created", "response": {"id": "resp_http"}})
+        await release.wait()
+        yield format_sse_event({"type": "response.completed", "response": {"id": "resp_http", "output": []}})
+
+    transport = ResponsesTransport(None, connect=AsyncMock(), stream_http=stream, max_frame_bytes=1)
+    try:
+        await transport.send_text("large")
+        assert (await receive_json(transport))["type"] == "response.created"
+
+        assert not await transport.interrupt_http("resp_other")
+
+        release.set()
+        assert (await receive_json(transport))["type"] == "response.completed"
+        assert not await transport.interrupt_http("resp_http")
+        assert transport._events.empty()
+    finally:
+        await transport.close()

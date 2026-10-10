@@ -651,7 +651,10 @@ describe("RecentRequestsTable", () => {
     expect(writeText).toHaveBeenCalledWith(longError);
   });
 
-  it("renders cancelled requests with a distinct non-error badge", () => {
+  it.each([
+    { status: "cancelled", errorCode: "client_disconnected", label: "Cancelled", badgeClass: "bg-sky-500/15" },
+    { status: "interrupted", errorCode: "interrupted", label: "Interrupted", badgeClass: "bg-indigo-500/10" },
+  ])("renders $status requests with a distinct non-error badge", ({ status, errorCode, label, badgeClass }) => {
     render(
       <RecentRequestsTable
         {...PAGINATION_PROPS}
@@ -674,8 +677,8 @@ describe("RecentRequestsTable", () => {
             actualServiceTier: null,
             transport: "http",
             ...NULL_USERAGENT_METADATA,
-            status: "cancelled",
-            errorCode: "client_disconnected",
+            status,
+            errorCode,
             errorMessage: null,
             ...NULL_FAILURE_METADATA,
             tokens: 1,
@@ -695,9 +698,9 @@ describe("RecentRequestsTable", () => {
       />,
     );
 
-    const badge = screen.getByText("Cancelled");
+    const badge = screen.getByText(label);
 
-    expect(badge).toHaveClass("bg-sky-500/15");
+    expect(badge).toHaveClass(badgeClass);
     expect(badge).not.toHaveClass("bg-zinc-500/15");
   });
 

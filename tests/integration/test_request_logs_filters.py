@@ -138,20 +138,46 @@ async def _seed_reconnect_log() -> None:
         )
 
 
+async def _seed_interrupted_log() -> None:
+    async with SessionLocal() as session:
+        await RequestLogsRepository(session).add_log(
+            account_id="acc_cancelled_filter",
+            request_id="req_interrupted_filter",
+            model="gpt-5.1",
+            input_tokens=120,
+            output_tokens=8,
+            latency_ms=10,
+            status="cancelled",
+            error_code="interrupted",
+            requested_at=utcnow() - timedelta(seconds=20),
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query,expected",
     [
-        ("", {"req_reconnect_filter", "req_cancelled_filter", "req_cancelled_error_control"}),
+        (
+            "",
+            {
+                "req_interrupted_filter",
+                "req_reconnect_filter",
+                "req_cancelled_filter",
+                "req_cancelled_error_control",
+            },
+        ),
+        ("status=interrupted", {"req_interrupted_filter"}),
         ("status=reconnect", {"req_reconnect_filter"}),
         ("status=cancelled", {"req_cancelled_filter"}),
         ("status=reconnect&status=cancelled", {"req_reconnect_filter", "req_cancelled_filter"}),
+        ("status=interrupted&status=ok", {"req_interrupted_filter"}),
         ("status=error", {"req_cancelled_error_control"}),
     ],
 )
-async def test_connection_limit_rows_are_reconnects(async_client, db_setup, query, expected):
+async def test_cancelled_rows_with_named_endings_have_own_statuses(async_client, db_setup, query, expected):
     await _seed_cancelled_and_error_logs()
     await _seed_reconnect_log()
+    await _seed_interrupted_log()
 
     response = await async_client.get(f"/api/request-logs?limit=10&{query}")
     options = await async_client.get("/api/request-logs/options")
@@ -162,7 +188,8 @@ async def test_connection_limit_rows_are_reconnects(async_client, db_setup, quer
     assert payload["total"] == len(expected)
     statuses = {request["requestId"]: request["status"] for request in payload["requests"]}
     assert statuses.get("req_reconnect_filter", "reconnect") == "reconnect"
-    assert options.json()["statuses"] == ["reconnect", "cancelled", "error"]
+    assert statuses.get("req_interrupted_filter", "interrupted") == "interrupted"
+    assert options.json()["statuses"] == ["interrupted", "reconnect", "cancelled", "error"]
 
 
 @pytest.mark.asyncio

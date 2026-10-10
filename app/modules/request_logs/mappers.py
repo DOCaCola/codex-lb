@@ -4,6 +4,7 @@ from typing import cast as typing_cast
 
 from app.core.usage.logs import (
     CANCELLED_STATUS,
+    CLIENT_INTERRUPT_ERROR_CODE,
     WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE,
     RequestLogLike,
     cached_input_tokens_from_log,
@@ -17,13 +18,20 @@ from app.modules.request_logs.schemas import RequestLogCostBreakdown, RequestLog
 
 RATE_LIMIT_CODES = {"rate_limit_exceeded", "usage_limit_reached"}
 QUOTA_CODES = {"insufficient_quota", "usage_not_included", "quota_exceeded"}
+# Cancelled rows whose error code names why the turn ended get their own public
+# status; every other cancelled row is public status ``cancelled``.
+CANCELLED_PUBLIC_STATUSES: dict[str, str] = {
+    WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE: "reconnect",
+    CLIENT_INTERRUPT_ERROR_CODE: "interrupted",
+}
+ALL_CANCELLED_PUBLIC_STATUSES = frozenset((*CANCELLED_PUBLIC_STATUSES.values(), CANCELLED_STATUS))
 
 
 def normalize_log_status(status: str, error_code: str | None) -> str:
     if status == "success":
         return "ok"
     if status == CANCELLED_STATUS:
-        return "reconnect" if error_code == WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE else "cancelled"
+        return CANCELLED_PUBLIC_STATUSES.get(error_code, CANCELLED_STATUS) if error_code else CANCELLED_STATUS
     if error_code in RATE_LIMIT_CODES:
         return "rate_limit"
     if error_code in QUOTA_CODES:
