@@ -706,7 +706,7 @@ Completed function arguments SHALL be unwrapped before public Responses output, 
 - **THEN** it fails locally naming the tool rather than weakening the contract
 
 ### Requirement: Portable standalone tool-output context
-Translated Claude Responses over HTTP and WebSocket SHALL preserve a function/custom-tool output with a nonempty call identifier and no corresponding call anywhere in the expanded input as explicitly labeled user context, including supported text and images. The label SHALL identify the original output kind and call identifier. Projection MUST NOT invent a tool call, tool result or signed reasoning, and MUST NOT mutate retained logical history. Real tool results SHALL remain paired exactly once with preceding pending calls. Malformed identifiers, duplicate paired results, outputs preceding their calls and interrupted or incomplete tool cycles MUST fail before dispatch. Standalone context MUST NOT discharge an active pending call. Rejection diagnostics SHALL include the request identifier, item index, output kind, classification, a bounded call-identifier fingerprint and pending-call count, without content or credentials. Native Messages and authenticated continuation/ownership rules SHALL remain unchanged.
+Translated Claude Responses over HTTP and WebSocket SHALL preserve a function/custom-tool output with a nonempty call identifier and no corresponding call anywhere in the expanded input as explicitly labeled user context, including supported text and images. The label SHALL identify the original output kind and call identifier. Projection MUST NOT invent a tool call, tool result or signed reasoning, and MUST NOT mutate retained logical history. Real tool results SHALL remain paired exactly once with preceding pending calls. A later `custom_tool_call_output` for an answered code-mode `exec` call, while no call is pending, is a code-mode notification: it SHALL extend that call's `tool_result` while the result is in the open result turn, and SHALL otherwise be labeled user context naming the call's tool-use identifier after the newest results. Malformed identifiers, other duplicate paired results, outputs preceding their calls and interrupted or incomplete tool cycles MUST fail before dispatch. Standalone context MUST NOT discharge an active pending call. Rejection diagnostics SHALL include the request identifier, item index, output kind, classification, a bounded call-identifier fingerprint and pending-call count, without content or credentials. Native Messages and authenticated continuation/ownership rules SHALL remain unchanged.
 
 #### Scenario: Delegation context without a call
 - **WHEN** a Codex request begins with standalone tool output followed by a user instruction
@@ -717,8 +717,12 @@ Translated Claude Responses over HTTP and WebSocket SHALL preserve a function/cu
 - **THEN** continuation expansion restores the pair and Claude receives a real tool_use/tool_result cycle
 
 #### Scenario: Duplicate or out-of-order output
-- **WHEN** an output repeats a consumed result or precedes its corresponding call
+- **WHEN** an output repeats a consumed result of anything but a code-mode `exec` call, or precedes its corresponding call
 - **THEN** the request fails before upstream dispatch with content-free classification diagnostics
+
+#### Scenario: Code-mode notification
+- **WHEN** a code-mode `exec` call's result is followed by a further output for the same call
+- **THEN** the notification joins that call's tool_result if no assistant step followed it, and otherwise follows the newest results as labeled context
 
 #### Scenario: Incomplete active cycle
 - **WHEN** standalone output arrives while a different call remains pending
@@ -1368,3 +1372,56 @@ output SHALL be forwarded without a per-model gate.
 
 - **WHEN** a translated request asks for a JSON-schema text format on `claude-fable-5-1`
 - **THEN** the schema is forwarded as `output_config.format` and Anthropic decides whether the model supports it
+
+### Requirement: Claude models support Codex client-side tool search
+
+The model catalog SHALL advertise `supports_search_tool` for Claude models.
+When a translated request declares a client-executed `tool_search` tool, the
+service SHALL declare it to Claude as `ToolSearch`, translate each
+`tool_search_call` into an assistant `tool_use` and each `tool_search_output`
+into a `tool_result` containing one `tool_reference` per loaded tool, and
+declare every loaded tool once with `defer_loading: true`. Deferred tools SHALL
+NOT carry a cache breakpoint and SHALL NOT count toward the cache-lineage tool
+shape. A request with deferred tools SHALL send the
+`advanced-tool-use-2025-11-20` beta. A streamed `ToolSearch` call SHALL be
+returned as a client `tool_search_call` with its parsed arguments.
+
+#### Scenario: Loaded tools stay out of the cached prefix
+
+- **GIVEN** a Codex request that declares `shell` and `tool_search` and whose history loaded `canvas_open` through tool search
+- **WHEN** it is sent to a Claude account
+- **THEN** the upstream request declares `canvas_open` with `defer_loading: true` and without `cache_control`, the search result is a `tool_reference` to it, and the advanced-tool-use beta is sent
+
+#### Scenario: Claude searches for a tool
+
+- **GIVEN** a Claude response that calls `ToolSearch` with a query
+- **WHEN** it is streamed to Codex
+- **THEN** Codex receives a `tool_search_call` with `execution: client` and the query as arguments
+
+#### Scenario: Loaded tools without search are ordinary
+
+- **GIVEN** a request whose history loaded a tool but which no longer declares `tool_search`
+- **WHEN** it is sent to a Claude account
+- **THEN** the loaded tool is declared without `defer_loading`
+
+### Requirement: Claude models use Codex code mode
+
+The model catalog SHALL advertise `tool_mode: code_mode_only` for Claude
+models. When a translated request declares Codex's un-namespaced freeform `exec`
+tool and no un-namespaced `exec_command` or `shell_command` function, the service
+SHALL append the code-mode contract to the system instructions after the
+client's instructions. The contract SHALL name the `exec` tool by its wire name
+and SHALL NOT list the request's other tools, so it is identical for every tool
+set. Requests without Codex code mode SHALL NOT receive it.
+
+#### Scenario: Code-mode request
+
+- **GIVEN** a Codex request with instructions that declares the freeform `exec` tool
+- **WHEN** it is sent to a Claude account
+- **THEN** the instructions are followed by the code-mode contract naming `Exec`, wherever OAuth instruction placement puts them
+
+#### Scenario: Flat tool surface
+
+- **GIVEN** a request that declares `exec` alongside a bare `exec_command`, or declares no freeform `exec`
+- **WHEN** it is projected for Claude
+- **THEN** no code-mode contract is added
