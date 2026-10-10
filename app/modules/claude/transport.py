@@ -18,6 +18,7 @@ from app.core.clients.stream_errors import StreamEventTooLargeError, StreamIdleT
 from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler
 from app.core.types import JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
+from app.modules.claude.cache_lineage import CACHE_LINEAGE
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.dispatch import PreparedClaudeRequest
 from app.modules.claude.native import NativeObserver, usage_totals
@@ -138,6 +139,7 @@ async def _open_responses(
     native_observer = NativeObserver(holder)
     observer = SourceStreamUsageParser(holder, response_shape="responses")
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
+    start_usage: JsonValue = None
     try:
         await record_headers(
             prepared.source.id, prepared.credential_generation, response.headers, requested_at=requested_at
@@ -176,6 +178,8 @@ async def _open_responses(
                     )
                 if event.get("type") == "message_start":
                     message = event.get("message")
+                    if isinstance(message, dict):
+                        start_usage = message.get("usage")
                     if isinstance(message, dict) and message.get("content", []) == []:
                         usage = message.get("usage", {})
                         if isinstance(usage, dict) and usage.get("output_tokens", 0) == 0:
@@ -191,6 +195,13 @@ async def _open_responses(
         if isinstance(exc, (aiohttp.ClientError, StreamEventTooLargeError)):
             raise _failure("invalid_upstream_response", "Claude SSE response could not be read") from exc
         raise
+    CACHE_LINEAGE.observe(
+        conversation_id=prepared.conversation_id,
+        session_id=prepared.session_id,
+        source_id=prepared.source.id,
+        body=prepared.body,
+        usage=start_usage,
+    )
 
     async def frames() -> AsyncIterator[bytes]:
         try:

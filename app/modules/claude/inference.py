@@ -156,7 +156,9 @@ async def prepare_responses(
             owner_source_id=account.source_id,
             reasoning_effort=requested_effort,
         )
-        prepared = replace(prepared, require_complete_history=require_complete_history)
+        prepared = replace(
+            prepared, require_complete_history=require_complete_history, session_id=continuation.session_id
+        )
         detach_session_objects(session)
     continuation.source_id = prepared.source.id
     reasoning = logical.get("reasoning")

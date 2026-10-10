@@ -1,0 +1,3 @@
+- [x] 1. Record a digest-only prefix shape per Claude conversation and log the changed part on a full cache miss against the conversation or its parent session.
+- [x] 2. Carry the parent session ID on the prepared Claude request and observe the cache usage reported at `message_start`.
+- [x] 3. Add unit tests, then run the Claude checks and OpenSpec validation.

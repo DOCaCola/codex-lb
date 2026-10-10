@@ -28,9 +28,10 @@ class SourceContinuation:
         self, request: Request, api_key: ApiKeyData | None, source_id: str, *, retain_incomplete: bool = False
     ) -> None:
         _, _, conversation_id = _request_log_client_fields(request.headers)
+        self.session_id = _owner_lookup_session_id_from_headers(request.headers)
         self.scope = ReplayScope(
             api_key.id if api_key else None,
-            conversation_id or _owner_lookup_session_id_from_headers(request.headers) or "source-responses",
+            conversation_id or self.session_id or "source-responses",
         )
         self.store = HTTPFallbackReplayStore(get_settings().data_dir / "http-fallback-replay")
         self.source_id = source_id

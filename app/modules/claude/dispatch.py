@@ -54,6 +54,7 @@ class PreparedClaudeRequest:
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
     require_complete_history: bool = False
     reasoning_effort: str | None = None
+    session_id: str | None = None
 
 
 class ClaudeDispatchPreparer:
