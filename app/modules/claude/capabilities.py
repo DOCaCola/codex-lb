@@ -1,11 +1,12 @@
-"""Explicit model policies shared by catalog and protocol projection.
-
-Dated snapshots of a known model inherit its policy; an unknown minor model
-does not automatically inherit request features from its family name.
+"""Model capabilities shared by catalog and protocol projection.
 
 Reasoning capabilities come from Claude's own model catalog when it reports
 them; the policy table is the fallback for catalog entries stored before
-capabilities were recorded.
+capabilities were recorded. Dated snapshots of a known model inherit its policy.
+
+Instruction placement follows CLIProxyAPI: only the listed legacy models reject
+a mid-conversation ``system`` turn, and every other model, including future
+ones, receives it.
 """
 
 import re
@@ -24,10 +25,8 @@ _API_DEFAULT_EFFORT = {"claude-opus-5-5": "medium"}
 
 @dataclass(frozen=True)
 class ModelPolicy:
-    mid_system: bool = False
     adaptive_reasoning: bool = False
     budget_reasoning: bool = False
-    structured_output: bool = False
 
     @property
     def supports_reasoning(self) -> bool:
@@ -35,15 +34,35 @@ class ModelPolicy:
 
 
 _POLICIES = {
-    "claude-opus-5-5": ModelPolicy(mid_system=True, adaptive_reasoning=True, structured_output=True),
-    "claude-sonnet-5-5": ModelPolicy(mid_system=True, adaptive_reasoning=True, structured_output=True),
-    "claude-opus-5": ModelPolicy(mid_system=True, adaptive_reasoning=True, structured_output=True),
-    "claude-sonnet-5": ModelPolicy(mid_system=True, adaptive_reasoning=True, structured_output=True),
-    "claude-opus-4-6": ModelPolicy(adaptive_reasoning=True, structured_output=True),
-    "claude-sonnet-4-6": ModelPolicy(adaptive_reasoning=True, structured_output=True),
-    "claude-sonnet-4-5": ModelPolicy(budget_reasoning=True, structured_output=True),
-    "claude-haiku-4-5": ModelPolicy(budget_reasoning=True, structured_output=True),
+    "claude-opus-5-5": ModelPolicy(adaptive_reasoning=True),
+    "claude-sonnet-5-5": ModelPolicy(adaptive_reasoning=True),
+    "claude-opus-5": ModelPolicy(adaptive_reasoning=True),
+    "claude-sonnet-5": ModelPolicy(adaptive_reasoning=True),
+    "claude-opus-4-6": ModelPolicy(adaptive_reasoning=True),
+    "claude-sonnet-4-6": ModelPolicy(adaptive_reasoning=True),
+    "claude-sonnet-4-5": ModelPolicy(budget_reasoning=True),
+    "claude-haiku-4-5": ModelPolicy(budget_reasoning=True),
 }
+
+# Models that reject a mid-conversation ``system`` turn (CLIProxyAPI's
+# claudeLegacySystemReminderModels, from captured native Claude Code traffic).
+_LEGACY_SYSTEM_REMINDER_MODELS = frozenset(
+    {
+        "claude-3-5-haiku",
+        "claude-3-5-haiku-latest",
+        "claude-3-7-sonnet",
+        "claude-3-7-sonnet-latest",
+        "claude-haiku-4-5",
+        "claude-opus-4",
+        "claude-opus-4-1",
+        "claude-opus-4-5",
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-sonnet-4",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-6",
+    }
+)
 
 
 def _base_model(model: str) -> str:
@@ -52,6 +71,11 @@ def _base_model(model: str) -> str:
 
 def model_policy(model: str) -> ModelPolicy | None:
     return _POLICIES.get(_base_model(model))
+
+
+def supports_mid_system(model: str) -> bool:
+    """Whether the model accepts instructions as a mid-conversation ``system`` turn."""
+    return _base_model(model) not in _LEGACY_SYSTEM_REMINDER_MODELS
 
 
 class CatalogCapabilities(BaseModel):

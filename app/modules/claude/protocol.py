@@ -16,7 +16,7 @@ from pydantic import JsonValue
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
 from app.core.utils.request_id import get_request_id
-from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, model_policy
+from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, supports_mid_system
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import search_replay, search_tool
 from app.modules.claude.task_input import is_external_task_input, task_metadata_complete
@@ -250,8 +250,7 @@ def project_responses(
     # accepts a system turn only right after a user turn and before an assistant turn or the end,
     # so each one waits for the next such boundary. Models without mid-conversation system turns
     # receive it as a reminder closing the preceding user turn.
-    policy = model_policy(str(payload.get("model", "")))
-    system_turns = policy is not None and policy.mid_system
+    system_turns = supports_mid_system(str(payload.get("model", "")))
     pending_system: list[JsonValue] = []
 
     def place_system() -> None:
@@ -517,8 +516,6 @@ def project_responses(
         if isinstance(output_format, dict) and output_format.get("type") not in (None, "text"):
             if output_format.get("type") != "json_schema" or not isinstance(output_format.get("schema"), dict):
                 raise invalid("Claude structured output requires a JSON schema", "text.format")
-            if policy is None or not policy.structured_output:
-                raise invalid("Claude structured output is not configured for this model", "text.format")
             config = body.setdefault("output_config", {})
             assert isinstance(config, dict)
             config["format"] = {"type": "json_schema", "schema": output_format["schema"]}

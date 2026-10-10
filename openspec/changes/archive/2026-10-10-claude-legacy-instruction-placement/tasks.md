@@ -1,0 +1,3 @@
+- [x] 1. Replace the per-model `mid_system` flag with CLIProxyAPI's legacy system-reminder model list and use it in OAuth projection and Responses translation.
+- [x] 2. Dispatch unlisted models instead of refusing them, and drop the per-model structured-output gate.
+- [x] 3. Update unit tests, then run the Claude checks and OpenSpec validation.

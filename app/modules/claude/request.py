@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import JsonValue
 
-from app.modules.claude.capabilities import model_policy
+from app.modules.claude.capabilities import supports_mid_system
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import CLI_IDENTITY, MID_SYSTEM_BETA, RequestProfile
 
@@ -152,10 +152,7 @@ def _project_request(
     model = body.get("model")
     if not isinstance(model, str):
         raise ClaudeError("Claude model is required")
-    policy = model_policy(model)
-    if policy is None:
-        raise ClaudeError("OAuth instruction placement is not qualified for this Claude model")
-    modern = policy.mid_system
+    modern = supports_mid_system(model)
 
     # Server tool artifacts may bind the entire layout, not merely their own
     # signature bytes. Ordinary client tools named 'advisor' are not artifacts.

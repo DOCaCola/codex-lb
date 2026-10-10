@@ -153,6 +153,18 @@ def test_models_without_system_turns_close_the_user_turn_with_a_reminder():
     ]
 
 
+def test_unlisted_models_receive_system_turns_and_structured_output():
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
+    history = [_user("Hi"), _assistant("Hello"), _developer("Sandbox changed"), _user("Next")]
+    text = {"format": {"type": "json_schema", "schema": schema}}
+    body = project(request(model="anthropic/claude-fable-5-1", input=history, text=text), max_output_tokens=64000).body
+    assert body["messages"][2:] == [
+        {"role": "user", "content": [{"type": "text", "text": "Next"}]},
+        _system_turn("Sandbox changed"),
+    ]
+    assert body["output_config"] == {"format": {"type": "json_schema", "schema": schema}}
+
+
 @pytest.mark.parametrize("reasoning", [None, {"effort": "high"}])
 def test_null_sampling_controls_are_absent(reasoning):
     body = project(

@@ -270,9 +270,15 @@ def test_billing_first_native_cache_prefix_is_preserved(billing):
     assert not has_native_identity(request)
 
 
-def test_unknown_model_and_server_artifacts_reject_unsafe_relocation():
-    with pytest.raises(ClaudeError, match="not qualified"):
-        project_request(logical("claude-unknown"), profile(), endpoint="messages")
+def test_unlisted_model_receives_system_turn_instructions():
+    request = logical("claude-haiku-5-5")
+    projected = project_request(request, profile(), endpoint="messages")
+    assert at(projected.body, "messages", 1) == {"role": "system", "content": request["system"]}
+    assert projected.feature_betas == (MID_SYSTEM_BETA,)
+    assert "mid_system_instructions" in projected.transformations
+
+
+def test_server_artifacts_reject_unsafe_relocation():
     request = logical()
     request["messages"][1]["content"][1]["type"] = "server_tool_use"
     with pytest.raises(ClaudeError, match="server-tool"):
