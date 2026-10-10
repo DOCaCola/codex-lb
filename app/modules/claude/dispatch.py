@@ -24,6 +24,7 @@ from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.failover import SendBudget
 from app.modules.claude.profile import RequestProfile, recognize_native
+from app.modules.claude.protocol import ADVANCED_TOOL_USE_BETA, defers_tools
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.resources import ResourceScope, resolve_origins, resource_ids
@@ -222,6 +223,8 @@ class ClaudeDispatchPreparer:
             thinking = projected.body.get("thinking")
             if isinstance(thinking, dict) and thinking.get("type") in {"enabled", "adaptive"}:
                 feature_betas.append("interleaved-thinking-2025-05-14")
+            if defers_tools(projected.body):
+                feature_betas.append(ADVANCED_TOOL_USE_BETA)
             output = projected.body.get("output_config")
             if isinstance(output, dict):
                 if "effort" in output:

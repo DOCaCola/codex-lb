@@ -24,7 +24,7 @@ from app.modules.claude.tool_schema import MAX_TOOL_ARGUMENT_BYTES
 logger = logging.getLogger(__name__)
 _LOGGABLE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _LOGGABLE_REFUSAL_CATEGORY = re.compile(r"[A-Za-z0-9_.-]{1,64}")
-_EXECUTABLE_ITEMS = frozenset({"function_call", "custom_tool_call"})
+_EXECUTABLE_ITEMS = frozenset({"function_call", "custom_tool_call", "tool_search_call"})
 # Stops that cut the turn short, mapped to their Responses incomplete reason. pause_turn and an
 # exhausted context window leave unfinished output, as truncation does.
 INCOMPLETE_STOP_REASONS = {
@@ -114,7 +114,8 @@ def _declared_tools(tools: ClaudeToolNames) -> str:
         client = _loggable_tool_name(identity.name)
         if identity.namespace is not None:
             client = f"{_loggable_tool_name(identity.namespace)}/{client}"
-        entries.append(f"{wire}={client}{'(custom)' if identity.custom else ''}")
+        kind = "(custom)" if identity.custom else "(search)" if identity.search else ""
+        entries.append(f"{wire}={client}{kind}")
     return ",".join(entries)
 
 
@@ -264,6 +265,18 @@ class ResponsesProjection:
             arguments = block.get("input", {})
             if not isinstance(arguments, dict):
                 raise ClaudeError("Claude tool input must be an object")
+            if identity.search:
+                # Codex runs only client-executed searches, with arguments as a JSON object.
+                if final and identity.arguments is not None:
+                    arguments = identity.arguments.decode(arguments)
+                return {
+                    "id": item_id,
+                    "type": "tool_search_call",
+                    "call_id": block.get("id"),
+                    "execution": "client",
+                    "status": "completed" if final else "in_progress",
+                    "arguments": arguments if final else {},
+                }
             result = {
                 "id": item_id,
                 "call_id": block.get("id"),
@@ -452,8 +465,8 @@ class ResponsesProjection:
                 if wrapped:
                     return []  # The private envelope must never reach client deltas.
                 item = self.outputs[index]
-                if item["type"] in ("custom_tool_call", "web_search_call"):
-                    return []  # JSON escapes must be decoded before emitting free-form input.
+                if item["type"] in ("custom_tool_call", "web_search_call", "tool_search_call"):
+                    return []  # Their input is decoded and delivered whole when the block completes.
                 return [
                     self.event(
                         "response.function_call_arguments.delta", item_id=item["id"], output_index=index, delta=piece

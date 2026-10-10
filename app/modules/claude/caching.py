@@ -25,8 +25,14 @@ def cache_translated(body: dict[str, JsonValue]) -> None:
         targets.append(system[-1])
     else:
         tools = body.get("tools")
-        if isinstance(tools, list) and tools and isinstance(tools[-1], dict):
-            targets.append(tools[-1])
+        # Deferred tools sit outside the cached prefix and cannot carry a breakpoint.
+        prefix = (
+            [tool for tool in tools if isinstance(tool, dict) and not tool.get("defer_loading")]
+            if isinstance(tools, list)
+            else []
+        )
+        if prefix:
+            targets.append(prefix[-1])
     messages = body.get("messages")
     if isinstance(messages, list):
         users: list[dict[str, JsonValue]] = []

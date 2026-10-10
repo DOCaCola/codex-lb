@@ -1,0 +1,4 @@
+- [x] 1. Advertise `supports_search_tool` for Claude models in the model catalog.
+- [x] 2. Translate `tool_search` declarations, `tool_search_call` and `tool_search_output` history into Anthropic custom tool search with deferred loaded tools, and stream `ToolSearch` calls back as client `tool_search_call` items.
+- [x] 3. Send the advanced-tool-use beta for deferred tools; keep deferred tools out of cache breakpoints and cache-lineage shapes.
+- [x] 4. Add unit and integration tests, then run the Claude checks and OpenSpec validation.

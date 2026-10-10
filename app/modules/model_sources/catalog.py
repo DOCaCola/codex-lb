@@ -53,6 +53,10 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         raw["apply_patch_tool_type"] = "freeform"
         # Message-based subagents: reports travel as portable plaintext agent messages.
         raw["multi_agent_version"] = "v2"
+        # Codex then defers MCP tools behind its client tool_search, which the adapter maps onto
+        # Anthropic's deferred tools: the tool list stays identical across a thread's side chats and
+        # loading a tool keeps the prompt cache.
+        raw["supports_search_tool"] = True
     raw.setdefault("visibility", "list")
     raw.setdefault("shell_type", "shell_command")
     raw.setdefault("max_context_window", context_window)

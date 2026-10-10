@@ -61,10 +61,11 @@ class PrefixShape:
         return cls(
             source_id=source_id,
             observed_at=observed_at,
+            # Deferred tools stay outside the cached prefix; loading them through tool search keeps the cache.
             tools=tuple(
                 (str(tool.get("name") or tool.get("type")), _digest(tool))
                 for tool in (tools if isinstance(tools, list) else [])
-                if isinstance(tool, dict)
+                if isinstance(tool, dict) and not tool.get("defer_loading")
             ),
             system=_digest(body.get("system")),
             params=tuple((key, _digest(value)) for key, value in body.items() if key not in _UNCACHED_PARAMS),

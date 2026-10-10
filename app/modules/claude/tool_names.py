@@ -102,10 +102,12 @@ class ToolIdentity:
     arguments: ToolArguments | None = None
     # The client asked the OpenAI backend to encrypt some arguments; Claude returns them as plaintext.
     encrypted_arguments: bool = False
+    # The client's own tool search (Responses ``tool_search``), not a function of that name.
+    search: bool = False
 
     @property
-    def key(self) -> tuple[str | None, str, bool]:
-        return (self.namespace, self.name, self.custom)
+    def key(self) -> tuple[str | None, str, bool, bool]:
+        return (self.namespace, self.name, self.custom, self.search)
 
     @property
     def qualified_name(self) -> str:
@@ -140,7 +142,7 @@ class ClaudeToolNames:
     """One request's client tool identities, keyed by the name sent to Claude."""
 
     by_wire: dict[str, ToolIdentity] = field(default_factory=dict)
-    _wire_by_key: dict[tuple[str | None, str, bool], str] = field(default_factory=dict)
+    _wire_by_key: dict[tuple[str | None, str, bool, bool], str] = field(default_factory=dict)
     _by_original: dict[str, ToolIdentity | None] = field(default_factory=dict)
 
     def __len__(self) -> int:

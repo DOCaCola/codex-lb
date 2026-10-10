@@ -1384,6 +1384,84 @@ async def test_translated_disabled_thinking_does_not_enable_thinking_beta(async_
     assert "x-stainless-helper-method" not in headers
 
 
+@pytest.mark.parametrize("deferred", [True, False])
+async def test_translated_deferred_tools_send_the_advanced_tool_use_beta(async_client, pool, monkeypatch, deferred):
+    captured, _ = install_upstream(monkeypatch)
+    schema = {"type": "object", "properties": {}}
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 100,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {"name": "ToolSearch", "input_schema": schema},
+                {"name": "Canvas", "input_schema": schema, **({"defer_loading": True} if deferred else {})},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    betas = captured[0][3]["anthropic-beta"].split(",")
+    assert ("advanced-tool-use-2025-11-20" in betas) is deferred
+    tools = captured[0][2]["tools"]
+    assert "cache_control" not in tools[1] or not deferred
+
+
+async def test_codex_tool_search_defers_loaded_tools_upstream(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch)
+    schema = {"type": "object", "properties": {"path": {"type": "string"}}}
+    canvas = {"type": "function", "name": "canvas_open", "description": "Open a canvas", "parameters": schema}
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={
+            "model": MODEL,
+            "stream": True,
+            "instructions": "Be brief.",
+            "tools": [
+                {"type": "function", "name": "shell", "description": "Run a command", "parameters": schema},
+                {
+                    "type": "tool_search",
+                    "execution": "client",
+                    "description": "Search deferred tools",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                },
+            ],
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Open a canvas"}]},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "call_search",
+                    "execution": "client",
+                    "status": "completed",
+                    "arguments": {"query": "canvas"},
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "call_search",
+                    "execution": "client",
+                    "status": "completed",
+                    "tools": [canvas],
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body, headers = captured[0][2], captured[0][3]
+    assert "advanced-tool-use-2025-11-20" in headers["anthropic-beta"].split(",")
+    deferred = [tool for tool in body["tools"] if tool.get("defer_loading")]
+    assert len(deferred) == 1
+    assert "cache_control" not in deferred[0]
+    results = [
+        block
+        for message in body["messages"]
+        if message["role"] == "user" and isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] == "tool_result"
+    ]
+    assert results[0]["content"] == [{"type": "tool_reference", "tool_name": deferred[0]["name"]}]
+
+
 @pytest.mark.parametrize("switch", ["account", "model", "none"])
 @pytest.mark.parametrize(
     "user_input",

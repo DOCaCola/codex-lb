@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 # other providers can carry call IDs outside that alphabet.
 _WIRE_CALL_ID = re.compile(r"[A-Za-z0-9_-]+")
 _ENCODED_CALL_ID_PREFIX = "cxlb_tid_v1_"
+# Claude Code sends this beta while tool search defers tools (CLIProxyAPI claudeBodyUsesAdvancedToolUse).
+ADVANCED_TOOL_USE_BETA = "advanced-tool-use-2025-11-20"
+
+
+def defers_tools(body: dict[str, JsonValue]) -> bool:
+    tools = body.get("tools")
+    return isinstance(tools, list) and any(isinstance(tool, dict) and tool.get("defer_loading") for tool in tools)
 
 
 def _wire_call_id(call_id: str) -> str:
@@ -134,6 +141,21 @@ class MessagesProjection:
     search_enabled: bool = False
 
 
+def _tool_references(tools: ClaudeToolNames, loaded: list[ToolIdentity], *, in_result: bool) -> list[JsonValue]:
+    """A client tool search result as the ``tool_reference`` blocks Claude expands into loaded tools.
+
+    Anthropic's custom tool search returns references, not definitions: the referenced tools are
+    declared deferred, outside the cached prompt prefix, so loading them keeps the cache intact.
+    References exist only inside tool results; elsewhere the result is named in text.
+    """
+    if not loaded:
+        return [{"type": "text", "text": "No matching tools found."}]
+    names = [tools.wire_name(identity) for identity in loaded]
+    if not in_result:
+        return [{"type": "text", "text": "Loaded tools: " + ", ".join(names)}]
+    return [{"type": "tool_reference", "tool_name": name} for name in names]
+
+
 def _content(value: JsonValue) -> list[JsonValue]:
     if isinstance(value, str):
         return [{"type": "text", "text": value}]
@@ -195,13 +217,33 @@ def project_responses(
     tools = ClaudeToolNames()
     declarations: list[JsonValue] = []
 
-    def declare(tool: JsonValue, namespace: str | None = None, *, param: str) -> None:
+    def declare(
+        tool: JsonValue, namespace: str | None = None, *, param: str, loaded: list[ToolIdentity] | None = None
+    ) -> None:
+        """Declare a client tool; ``loaded`` collects the tools a tool search result loads instead."""
         if not isinstance(tool, dict):
             raise invalid("Invalid Claude tool declaration", "tools")
         kind = tool.get("type")
+        if kind == "tool_search":
+            if namespace is not None or loaded is not None:
+                raise invalid("Tool search cannot be namespaced or loaded by a search", param)
+            if tool.get("execution") != "client":
+                raise invalid("Claude supports only client-executed tool search", f"{param}.execution")
+            identity = ToolIdentity("tool_search", None, False, search=True)
+            if identity in tools:
+                raise invalid("Duplicate tool search declaration", param)
+            schema = tool.get("parameters")
+            if not isinstance(schema, dict):
+                raise invalid("Tool search requires a JSON object schema", f"{param}.parameters")
+            schema, arguments = adapt_tool_schema(schema, tool_name="tool_search", param=f"{param}.parameters")
+            identity = replace(identity, arguments=arguments)
+            declarations.append(
+                {"name": tools.add(identity), "description": tool.get("description", ""), "input_schema": schema}
+            )
+            return
         if kind in ("web_search", "web_search_preview"):
-            if namespace is not None:
-                raise invalid("Hosted search cannot be namespaced", "tools")
+            if namespace is not None or loaded is not None:
+                raise invalid("Hosted search cannot be namespaced or loaded by a search", "tools")
             declaration = search_tool(tool)
             if declaration is not None:
                 if any(isinstance(t, dict) and t.get("name") == "web_search" for t in declarations):
@@ -216,12 +258,16 @@ def project_responses(
             if namespace is not None or not isinstance(nested, list):
                 raise invalid("Invalid tool namespace", "tools")
             for index, child in enumerate(nested):
-                declare(child, name, param=f"{param}.tools[{index}]")
+                declare(child, name, param=f"{param}.tools[{index}]", loaded=loaded)
             return
         if kind not in ("function", "custom"):
             raise invalid(f"Unsupported Claude tool type: {kind}", "tools")
         identity = ToolIdentity(name, namespace, kind == "custom")
         if identity in tools:
+            if loaded is not None:
+                # Searches load tools again that earlier results or the request already declared.
+                loaded.append(tools.identity(identity))
+                return
             raise invalid("Duplicate tool identity", "tools")
         schema: JsonValue = (
             tool.get("parameters") if kind == "function" else _custom_tool_input_schema(tool, param=param)
@@ -237,13 +283,42 @@ def project_responses(
             )
             identity = replace(identity, arguments=arguments, encrypted_arguments=encrypted_arguments)
         wire_name = tools.add(identity)
-        declarations.append({"name": wire_name, "description": tool.get("description", ""), "input_schema": schema})
+        declaration: dict[str, JsonValue] = {
+            "name": wire_name,
+            "description": tool.get("description", ""),
+            "input_schema": schema,
+        }
+        if loaded is not None:
+            loaded.append(identity)
+            if searchable:
+                declaration["defer_loading"] = True
+        declarations.append(declaration)
 
     raw_tools = payload.get("tools", [])
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
+    # Loaded tools stay deferred behind the search tool. A request without one (a tool-less
+    # compaction) declares them as ordinary tools: Claude rejects a request whose tools are all deferred.
+    searchable = any(isinstance(tool, dict) and tool.get("type") == "tool_search" for tool in raw_tools)
     for index, tool in enumerate(raw_tools):
         declare(tool, param=f"tools[{index}]")
+    raw_input = payload.get("input", [])
+    if isinstance(raw_input, str):
+        items: list[JsonValue] = [{"role": "user", "content": raw_input}]
+    elif isinstance(raw_input, list):
+        items = raw_input
+    else:
+        raise invalid("Responses input must be text or an array")
+    # Every tool a search loaded is declared, in history order, before the conversation refers to it.
+    search_results: dict[int, list[ToolIdentity]] = {}
+    for index, item in enumerate(items):
+        if isinstance(item, dict) and item.get("type") == "tool_search_output":
+            loaded_tools = item.get("tools")
+            if not isinstance(loaded_tools, list):
+                raise invalid("Tool search output requires a tools array", f"input[{index}].tools")
+            search_results[index] = []
+            for position, tool in enumerate(loaded_tools):
+                declare(tool, param=f"input[{index}].tools[{position}]", loaded=search_results[index])
     messages: list[JsonValue] = []
     # Developer/system messages that follow conversation content keep their position, so a new
     # instruction extends the cached prefix instead of rewriting it from the first turn. Claude
@@ -280,18 +355,11 @@ def project_responses(
         else:
             messages.append({"role": role, "content": content})
 
-    raw_input = payload.get("input", [])
-    if isinstance(raw_input, str):
-        items: list[JsonValue] = [{"role": "user", "content": raw_input}]
-    elif isinstance(raw_input, list):
-        items = raw_input
-    else:
-        raise invalid("Responses input must be text or an array")
     call_ids = {
         call_id
         for item in items
         if isinstance(item, dict)
-        and item.get("type") in ("function_call", "custom_tool_call")
+        and item.get("type") in ("function_call", "custom_tool_call", "tool_search_call")
         and isinstance(call_id := item.get("call_id"), str)
     }
     pending: set[str] = set()
@@ -353,8 +421,31 @@ def project_responses(
             )
             pending.add(call_id)
             seen_calls.add(call_id)
-        elif kind in ("function_call_output", "custom_tool_call_output"):
-            if is_external_task_input(item):
+        elif kind == "tool_search_call":
+            call_id, arguments = item.get("call_id"), item.get("arguments")
+            if not isinstance(call_id, str) or not call_id or not isinstance(arguments, dict):
+                raise invalid("Tool search calls require a call_id and object arguments")
+            if call_id in seen_calls:
+                raise invalid("Duplicate tool call_id")
+            # Search history from a request without the search tool still names the client's search.
+            identity = tools.identity(ToolIdentity("tool_search", None, False, search=True))
+            if identity.arguments is not None:
+                arguments = identity.arguments.encode(arguments)
+            append(
+                "assistant",
+                [
+                    {
+                        "type": "tool_use",
+                        "id": _wire_call_id(call_id),
+                        "name": tools.wire_name(identity),
+                        "input": arguments,
+                    }
+                ],
+            )
+            pending.add(call_id)
+            seen_calls.add(call_id)
+        elif kind in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
+            if kind != "tool_search_output" and is_external_task_input(item):
                 if pending:
                     raise _tool_output_error(
                         "interrupted_tool_cycle", index=index, kind=str(kind), item=item, pending_count=len(pending)
@@ -375,8 +466,13 @@ def project_responses(
                 reason = "interrupted_tool_cycle"
             if reason is not None:
                 raise _tool_output_error(reason, index=index, kind=str(kind), item=item, pending_count=len(pending))
-            content = _content(item.get("output"))
-            if call_id in pending:
+            in_result = call_id in pending
+            content = (
+                _tool_references(tools, search_results[index], in_result=in_result)
+                if kind == "tool_search_output"
+                else _content(item.get("output"))
+            )
+            if in_result:
                 append("user", [{"type": "tool_result", "tool_use_id": _wire_call_id(call_id), "content": content}])
                 pending.remove(call_id)
             else:
