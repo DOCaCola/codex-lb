@@ -40,13 +40,13 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
     # client-visible catalog payloads built from UpstreamModel.raw.
     raw.pop("source_request_overrides", None)
     raw.pop("allowed_reasoning_efforts", None)
+    # Source models advertise their real capacity as both the default and the
+    # ceiling; the Settings model catalogue may lower the reported window. The
+    # Codex client derives compaction from that window (90%), as it does for
+    # OpenAI's own catalog, so no compaction threshold is advertised here.
     context_window = source_model.context_window or DEFAULT_SOURCE_CONTEXT_WINDOW
+    raw["max_context_window"] = context_window
     if source.kind == "claude":
-        from app.modules.claude.model_limits import default_client_context_window
-
-        raw["max_context_window"] = context_window
-        context_window = default_client_context_window(context_window)
-        raw["auto_compact_token_limit"] = context_window * 9 // 10
         raw["effective_context_window_percent"] = 95
         # The Claude adapter projects Codex's grammar-format apply_patch tool,
         # and Codex registers that tool only for catalogs advertising it.
@@ -62,7 +62,6 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         raw["tool_mode"] = "code_mode_only"
     raw.setdefault("visibility", "list")
     raw.setdefault("shell_type", "shell_command")
-    raw.setdefault("max_context_window", context_window)
     raw.setdefault("truncation_policy", {"mode": "tokens", "limit": 10_000})
     raw.setdefault("include_skills_usage_instructions", False)
     raw.setdefault("supports_image_detail_original", False)

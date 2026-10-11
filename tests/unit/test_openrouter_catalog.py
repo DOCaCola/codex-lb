@@ -34,8 +34,8 @@ def test_all_mode_preserves_overrides_removed_claims_and_explicit_image_selectio
         ("openrouter/text", True),
     ]
     assert state.selections == [ModelSelection(model="removed")]
-    state.selections.append(ModelSelection(model="text", context_window=100000))
-    assert project_models(state)[1].context_window == 100000
+    state.selections.append(ModelSelection(model="text", display_name="Chosen"))
+    assert project_models(state)[1].context_window == 1000000
     state.selections.append(ModelSelection(model="image"))
     assert project_models(state)[-1].model == "openrouter/image"
 
@@ -68,7 +68,7 @@ def test_mandatory_reasoning_never_advertises_none(efforts, expected):
     )
     state = AccountState(catalog=[model], selections=[ModelSelection(model="test")])
     row = project_models(state)[0]
-    assert row.context_window == 262144
+    assert row.context_window == 500_000
     assert row.input_per_1m == 1
     assert row.raw_metadata_json is not None
     assert json.loads(row.raw_metadata_json)["supported_reasoning_levels"] == expected

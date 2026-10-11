@@ -3,8 +3,6 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 const SelectionSchema = z.object({
   model: z.string(),
-  contextWindow: z.number().int().positive(),
-  maxOutputTokens: z.number().nullable(),
   displayName: z.string().nullable(),
 });
 export type Selection = z.infer<typeof SelectionSchema>;

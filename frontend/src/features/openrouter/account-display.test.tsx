@@ -25,7 +25,7 @@ describe("Unified provider accounts", () => {
     const account = createOpenRouterAccount();
     account.state.all_models = allModels;
     account.state.selections = ["model-a", "model-b"].map((model) => ({
-      model, contextWindow: 256000, maxOutputTokens: null, displayName: null,
+      model, displayName: null,
     }));
     render(<MemoryRouter><OpenRouterAccountCard account={account} /></MemoryRouter>);
     expect(screen.getByTestId("openrouter-account-card")).toHaveTextContent("OpenRouter · Paid");

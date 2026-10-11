@@ -1583,10 +1583,11 @@ async def test_model_context_window_override(async_client):
 @pytest.mark.asyncio
 async def test_model_context_window_override_clamped_to_max_context_window(async_client):
     registry = get_model_registry()
-    models = [_make_upstream_model("gpt-5.4", raw=_raw_with_max_context_window(872_000))]
-    await registry.update({"pro": models})
+    await registry.update({"pro": [_make_upstream_model("gpt-5.4", raw=_raw_with_max_context_window(1_000_000))]})
 
     await _put_context_window_override(async_client, "gpt-5.4", 1_000_000)
+    # Upstream later lowers the ceiling below the stored override.
+    await registry.update({"pro": [_make_upstream_model("gpt-5.4", raw=_raw_with_max_context_window(872_000))]})
 
     resp_v1 = await async_client.get("/v1/models")
     assert resp_v1.status_code == 200

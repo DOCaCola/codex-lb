@@ -402,8 +402,10 @@ describe("Claude shared account surfaces", () => {
       />,
     );
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    // Context windows live in Settings → Model catalogue, not on the account.
+    expect(screen.queryByText(/maximum output/i)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/1M context.*128K maximum output.*64K default output/i),
+      screen.getByText(/Token limits unavailable/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: "Unknown model — Unavailable" }),

@@ -63,8 +63,6 @@ describe("OpenRouter model selection", () => {
         "vendor/retired",
       ].map((model) => ({
         model,
-        contextWindow: 123456,
-        maxOutputTokens: 4096,
         displayName: "Custom name",
       }));
       const save = vi.fn().mockResolvedValue(undefined);
@@ -162,8 +160,6 @@ describe("OpenRouter model selection", () => {
     filtered.state.selections = ["vendor/test", "vendor/retired"].map(
       (model) => ({
         model,
-        contextWindow: 262144,
-        maxOutputTokens: null,
         displayName: null,
       }),
     );
@@ -242,7 +238,7 @@ describe("OpenRouter model selection", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Display name for vendor/test")).toBeVisible();
   });
-  it("requires explicit selection and defaults to a bounded context", async () => {
+  it("requires explicit selection and offers no per-model token limits", async () => {
     const user = userEvent.setup();
     const save = vi.fn().mockResolvedValue(undefined);
     render(
@@ -255,19 +251,15 @@ describe("OpenRouter model selection", () => {
     );
     expect(screen.getByRole("checkbox")).not.toBeChecked();
     await user.click(screen.getByRole("checkbox"));
-    expect(screen.getByLabelText("Context cap for vendor/test")).toHaveValue(
-      262144,
-    );
+    expect(
+      screen.queryByLabelText("Context cap for vendor/test"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Output cap for vendor/test"),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save 1 model" }));
     expect(save).toHaveBeenCalledWith(
-      [
-        {
-          model: "vendor/test",
-          contextWindow: 262144,
-          maxOutputTokens: null,
-          displayName: null,
-        },
-      ],
+      [{ model: "vendor/test", displayName: null }],
       { allModels: false, reasoningRestrictions: {} },
     );
   });
@@ -279,12 +271,7 @@ describe("OpenRouter model selection", () => {
         ...account.state,
         catalog: [],
         selections: [
-          {
-            model: "vendor/retired",
-            contextWindow: 262144,
-            maxOutputTokens: null,
-            displayName: null,
-          },
+          { model: "vendor/retired", displayName: null },
         ],
       },
     };

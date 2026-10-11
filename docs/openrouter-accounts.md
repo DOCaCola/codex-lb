@@ -20,7 +20,7 @@ OpenRouter accounts appear alongside Codex accounts in the dashboard's existing 
 
 ## Models and cost
 
-Authenticated discovery uses OpenRouter's `/api/v1/models/user`. Catalog refresh runs every six hours and on **Refresh**. Prices, modalities, tool support and reasoning efforts follow the provider catalog. Context defaults to 262,144 tokens and is capped by upstream limits. Operators can set a smaller context cap, an output cap, and a display name.
+Authenticated discovery uses OpenRouter's `/api/v1/models/user`. Catalog refresh runs every six hours and on **Refresh**. Prices, modalities, tool support, reasoning efforts and context/output limits follow the provider catalog. Operators can set a display name per model; a smaller context window is set in **Settings → Model catalogue**.
 
 Removed models retain their selection but stop routing; new models stay unselected
 by default. **All models** automatically makes eligible conversation models

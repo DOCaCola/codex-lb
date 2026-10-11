@@ -2331,7 +2331,18 @@ _OVERRIDES_PATH = "/api/settings/model-context-window-overrides"
 async def test_model_context_window_overrides_round_trip_with_provenance(async_client, monkeypatch):
     initial = await async_client.get(_OVERRIDES_PATH)
     assert initial.status_code == 200
-    assert initial.json() == {"overrides": []}
+    assert initial.json()["overrides"] == []
+    # Enabled text models are listed with their default window and ceiling.
+    models = {model["slug"]: model for model in initial.json()["models"]}
+    assert models["gpt-5.4"] == {
+        "slug": "gpt-5.4",
+        "displayName": models["gpt-5.4"]["displayName"],
+        "provider": "subscription",
+        "defaultContextWindow": 272_000,
+        "maxContextWindow": 1_000_000,
+    }
+    # A synthesized parseability ceiling is not a real one.
+    assert models["gpt-5.5"]["maxContextWindow"] is None
 
     # The environment dict is the per-slug fallback and is reported as such.
     environment = settings_api_module.get_app_settings().model_copy(
@@ -2339,9 +2350,9 @@ async def test_model_context_window_overrides_round_trip_with_provenance(async_c
     )
     monkeypatch.setattr(settings_api_module, "get_app_settings", lambda: environment)
     inherited = await async_client.get(_OVERRIDES_PATH)
-    assert inherited.json() == {
-        "overrides": [{"slug": "gpt-5.4", "contextWindow": 300_000, "source": "env", "envValue": 300_000}]
-    }
+    assert inherited.json()["overrides"] == [
+        {"slug": "gpt-5.4", "contextWindow": 300_000, "source": "env", "envValue": 300_000}
+    ]
 
     # A dashboard row wins for its slug and still reports the environment value.
     stored = await async_client.put(f"{_OVERRIDES_PATH}/gpt-5.4", json={"contextWindow": 515_000})
@@ -2351,32 +2362,49 @@ async def test_model_context_window_overrides_round_trip_with_provenance(async_c
     ]
 
     # Rows for slugs the environment does not know have no environment value.
-    added = await async_client.put(f"{_OVERRIDES_PATH}/custom-model", json={"contextWindow": 32_768})
+    added = await async_client.put(f"{_OVERRIDES_PATH}/gpt-5.5", json={"contextWindow": 32_768})
     assert added.status_code == 200
     assert added.json()["overrides"] == [
-        {"slug": "custom-model", "contextWindow": 32_768, "source": "dashboard", "envValue": None},
         {"slug": "gpt-5.4", "contextWindow": 515_000, "source": "dashboard", "envValue": 300_000},
+        {"slug": "gpt-5.5", "contextWindow": 32_768, "source": "dashboard", "envValue": None},
     ]
 
     # PUT on an existing slug updates in place (no duplicate row).
-    updated = await async_client.put(f"{_OVERRIDES_PATH}/custom-model", json={"contextWindow": 65_536})
-    assert [o["contextWindow"] for o in updated.json()["overrides"] if o["slug"] == "custom-model"] == [65_536]
+    updated = await async_client.put(f"{_OVERRIDES_PATH}/gpt-5.5", json={"contextWindow": 65_536})
+    assert [o["contextWindow"] for o in updated.json()["overrides"] if o["slug"] == "gpt-5.5"] == [65_536]
 
     async with SessionLocal() as session:
         rows = (await session.execute(text("SELECT slug, context_window FROM model_context_window_overrides"))).all()
-    assert sorted(tuple(row) for row in rows) == [("custom-model", 65_536), ("gpt-5.4", 515_000)]
+    assert sorted(tuple(row) for row in rows) == [("gpt-5.4", 515_000), ("gpt-5.5", 65_536)]
 
     # Deleting the row returns the slug to the environment entry; deleting a
     # dashboard-only slug removes it from the list.
     cleared = await async_client.delete(f"{_OVERRIDES_PATH}/gpt-5.4")
     assert cleared.status_code == 200
     assert cleared.json()["overrides"] == [
-        {"slug": "custom-model", "contextWindow": 65_536, "source": "dashboard", "envValue": None},
         {"slug": "gpt-5.4", "contextWindow": 300_000, "source": "env", "envValue": 300_000},
+        {"slug": "gpt-5.5", "contextWindow": 65_536, "source": "dashboard", "envValue": None},
     ]
-    removed = await async_client.delete(f"{_OVERRIDES_PATH}/custom-model")
+    removed = await async_client.delete(f"{_OVERRIDES_PATH}/gpt-5.5")
     assert removed.json()["overrides"] == [
         {"slug": "gpt-5.4", "contextWindow": 300_000, "source": "env", "envValue": 300_000}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_model_context_window_override_requires_catalogue_model_within_maximum(async_client):
+    unknown = await async_client.put(f"{_OVERRIDES_PATH}/custom-model", json={"contextWindow": 32_768})
+    assert unknown.status_code == 400
+    assert unknown.json()["error"]["code"] == "model_not_in_catalogue"
+
+    above = await async_client.put(f"{_OVERRIDES_PATH}/gpt-5.4", json={"contextWindow": 1_000_001})
+    assert above.status_code == 400
+    assert above.json()["error"]["code"] == "context_window_above_maximum"
+
+    at_maximum = await async_client.put(f"{_OVERRIDES_PATH}/gpt-5.4", json={"contextWindow": 1_000_000})
+    assert at_maximum.status_code == 200
+    assert at_maximum.json()["overrides"] == [
+        {"slug": "gpt-5.4", "contextWindow": 1_000_000, "source": "dashboard", "envValue": None}
     ]
 
 
@@ -2414,7 +2442,7 @@ async def test_model_context_window_override_delete_without_row_is_not_found(asy
 async def test_model_context_window_override_rejects_invalid_window(async_client, payload):
     response = await async_client.put(f"{_OVERRIDES_PATH}/gpt-5.4", json=payload)
     assert response.status_code == 422
-    assert (await async_client.get(_OVERRIDES_PATH)).json() == {"overrides": []}
+    assert (await async_client.get(_OVERRIDES_PATH)).json()["overrides"] == []
 
 
 @pytest.mark.asyncio
@@ -2424,7 +2452,7 @@ async def test_model_context_window_override_rejects_invalid_slug(async_client, 
     response = await async_client.put(f"{_OVERRIDES_PATH}/{slug}", json={"contextWindow": 1000})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_model_slug"
-    assert (await async_client.get(_OVERRIDES_PATH)).json() == {"overrides": []}
+    assert (await async_client.get(_OVERRIDES_PATH)).json()["overrides"] == []
 
 
 @pytest.mark.asyncio
@@ -2448,11 +2476,10 @@ async def test_model_context_window_override_concurrent_creates_of_one_slug_both
 @pytest.mark.asyncio
 async def test_model_context_window_override_slug_may_contain_a_slash(async_client):
     # Source-catalog slugs such as "vendor/model" are reachable through the
-    # path-typed segment.
+    # path-typed segment: the full slug reaches the catalogue lookup.
     response = await async_client.put(f"{_OVERRIDES_PATH}/vendor/model-a", json={"contextWindow": 4096})
-    assert response.status_code == 200
-    assert response.json()["overrides"][0]["slug"] == "vendor/model-a"
-    assert (await async_client.delete(f"{_OVERRIDES_PATH}/vendor/model-a")).status_code == 200
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "model_not_in_catalogue"
 
 
 # M5 conversation archive

@@ -61,6 +61,7 @@ from app.modules.proxy.account_cache import (
     get_account_selection_cache,
     propagate_account_routing_change,
 )
+from app.modules.proxy.api import context_window_ceiling, list_model_catalogue
 from app.modules.settings.repository import ModelContextWindowOverridesRepository
 from app.modules.settings.schemas import (
     SECURITY_SETTINGS_FIELDS,
@@ -70,6 +71,7 @@ from app.modules.settings.schemas import (
     DashboardSettingsResponse,
     DashboardSettingsUpdateRequest,
     LocalLoginPolicyLiteral,
+    ModelCatalogueEntryResponse,
     ModelContextWindowOverrideResponse,
     ModelContextWindowOverridesResponse,
     ModelContextWindowOverrideUpsertRequest,
@@ -766,6 +768,16 @@ async def _model_context_window_overrides_response(context: SettingsContext) -> 
     dashboard = await ModelContextWindowOverridesRepository(context.session).by_slug()
     resolved = resolve_context_window_overrides(dashboard, get_app_settings().model_context_window_overrides)
     return ModelContextWindowOverridesResponse(
+        models=[
+            ModelCatalogueEntryResponse(
+                slug=model.slug,
+                display_name=model.display_name,
+                provider=model.source_kind,
+                default_context_window=model.context_window,
+                max_context_window=context_window_ceiling(model),
+            )
+            for model in await list_model_catalogue()
+        ],
         overrides=[
             ModelContextWindowOverrideResponse(
                 slug=override.slug,
@@ -774,7 +786,7 @@ async def _model_context_window_overrides_response(context: SettingsContext) -> 
                 env_value=override.env_value,
             )
             for override in resolved.values()
-        ]
+        ],
     )
 
 
@@ -794,6 +806,18 @@ async def put_model_context_window_override(
     context: SettingsContext = Depends(get_settings_context),
 ) -> ModelContextWindowOverridesResponse:
     normalized = _validate_model_slug(slug)
+    model = next((model for model in await list_model_catalogue() if model.slug == normalized), None)
+    if model is None:
+        raise DashboardBadRequestError(
+            "Model is not offered to clients; enable it before overriding its context window",
+            code="model_not_in_catalogue",
+        )
+    ceiling = context_window_ceiling(model)
+    if ceiling is not None and payload.context_window > ceiling:
+        raise DashboardBadRequestError(
+            f"Context window exceeds the model maximum of {ceiling}",
+            code="context_window_above_maximum",
+        )
     await ModelContextWindowOverridesRepository(context.session).upsert(normalized, payload.context_window)
     # The catalog reads a cached snapshot of the rows: clear + durably bump
     # before responding so every replica reports the new window.

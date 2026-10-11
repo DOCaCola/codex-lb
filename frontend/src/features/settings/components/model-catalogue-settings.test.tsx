@@ -22,100 +22,112 @@ function mockHook(overrides = createModelContextWindowOverrides()) {
   return { upsert, remove };
 }
 
+function row(slug: string): HTMLElement {
+  const element = screen.getByText(slug).closest("tr");
+  expect(element).not.toBeNull();
+  return element as HTMLElement;
+}
+
 describe("ModelCatalogueSettings", () => {
   beforeEach(() => {
     useModelContextWindowOverridesMock.mockReset();
   });
 
-  it("lists rows with per-row provenance and the clamp hint", () => {
+  it("lists enabled models with default, maximum and reported window", () => {
     mockHook();
     render(<ModelCatalogueSettings />);
 
     expect(screen.getByText("Model catalogue")).toBeInTheDocument();
-    expect(screen.getByText(/clamped to the upstream max_context_window/)).toBeInTheDocument();
+    expect(screen.getByText(/clients compact at 90% of it/)).toBeInTheDocument();
 
-    const dashboardRow = screen.getByText("gpt-5.4").closest("tr");
-    expect(dashboardRow).not.toBeNull();
-    expect(within(dashboardRow as HTMLElement).getByText("515,000")).toBeInTheDocument();
-    expect(within(dashboardRow as HTMLElement).getByText("Dashboard")).toBeInTheDocument();
-    expect(within(dashboardRow as HTMLElement).getByText("Environment: 300,000")).toBeInTheDocument();
-    // A dashboard row that shadows an environment entry resets to it instead of vanishing.
-    expect(within(dashboardRow as HTMLElement).getByRole("button", { name: "Reset to inherited" })).toBeInTheDocument();
+    const dashboardRow = row("gpt-5.4");
+    expect(within(dashboardRow).getByText("GPT-5.4")).toBeInTheDocument();
+    expect(within(dashboardRow).getByText("272,000")).toBeInTheDocument();
+    expect(within(dashboardRow).getByText("1,000,000")).toBeInTheDocument();
+    expect(within(dashboardRow).getByText("515,000")).toBeInTheDocument();
+    expect(within(dashboardRow).getByText("Dashboard")).toBeInTheDocument();
+    expect(within(dashboardRow).getByText("Environment: 300,000")).toBeInTheDocument();
+    // A dashboard override that shadows an environment entry resets to it instead of vanishing.
+    expect(within(dashboardRow).getByRole("button", { name: "Reset to inherited" })).toBeInTheDocument();
 
-    const envRow = screen.getByText("gpt-5.5").closest("tr");
-    expect(envRow).not.toBeNull();
-    expect(within(envRow as HTMLElement).getByText("Inherited from environment (400,000)")).toBeInTheDocument();
-    // Environment-inherited rows are read-only until overridden: no remove/reset action.
-    expect(within(envRow as HTMLElement).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
-    expect(within(envRow as HTMLElement).queryByRole("button", { name: "Reset to inherited" })).not.toBeInTheDocument();
-    expect(within(envRow as HTMLElement).getByRole("button", { name: "Override" })).toBeInTheDocument();
+    const envRow = row("gpt-5.5");
+    expect(within(envRow).getByText("—")).toBeInTheDocument();
+    expect(within(envRow).getByText("Inherited from environment (400,000)")).toBeInTheDocument();
+    expect(within(envRow).queryByRole("button", { name: "Reset to inherited" })).not.toBeInTheDocument();
+    expect(within(envRow).getByRole("button", { name: "Override" })).toBeInTheDocument();
+
+    const defaultRow = row("anthropic/claude-opus-5-5");
+    expect(within(defaultRow).getByText("Default")).toBeInTheDocument();
+    expect(within(defaultRow).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   });
 
-  it("adds an override for a new slug and rejects a non-positive window client-side", async () => {
+  it("overrides a model within its maximum", async () => {
     const user = userEvent.setup();
     const { upsert } = mockHook();
     render(<ModelCatalogueSettings />);
 
-    const addButton = screen.getByRole("button", { name: "Add override" });
-    expect(addButton).toBeDisabled();
+    await user.click(within(row("anthropic/claude-opus-5-5")).getByRole("button", { name: "Override" }));
+    const input = screen.getByLabelText("Context window for anthropic/claude-opus-5-5");
+    expect(input).toHaveValue("1000000");
 
-    await user.type(screen.getByLabelText("Model slug"), "custom-model");
-    await user.type(screen.getByLabelText("Context window (tokens)"), "0");
-    expect(addButton).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, "1000001");
+    expect(screen.getByText("Above the model maximum of 1,000,000")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
-    await user.clear(screen.getByLabelText("Context window (tokens)"));
-    await user.type(screen.getByLabelText("Context window (tokens)"), "32768");
-    await user.click(addButton);
+    await user.clear(input);
+    await user.type(input, "350000");
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(upsert).toHaveBeenCalledWith({ slug: "custom-model", contextWindow: 32768 });
+    expect(upsert).toHaveBeenCalledWith({ slug: "anthropic/claude-opus-5-5", contextWindow: 350000 });
   });
 
-  it("overrides an environment-inherited row with the slug locked", async () => {
+  it("overrides an environment-inherited value starting from it", async () => {
     const user = userEvent.setup();
     const { upsert } = mockHook();
     render(<ModelCatalogueSettings />);
 
-    await user.click(screen.getByRole("button", { name: "Override" }));
-    const slugInput = screen.getByLabelText("Model slug");
-    expect(slugInput).toHaveValue("gpt-5.5");
-    expect(slugInput).toBeDisabled();
-
-    const windowInput = screen.getByLabelText("Context window (tokens)");
-    expect(windowInput).toHaveValue("400000");
-    await user.clear(windowInput);
-    await user.type(windowInput, "600000");
+    await user.click(within(row("gpt-5.5")).getByRole("button", { name: "Override" }));
+    const input = screen.getByLabelText("Context window for gpt-5.5");
+    expect(input).toHaveValue("400000");
+    await user.clear(input);
+    await user.type(input, "0");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, "600000");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(upsert).toHaveBeenCalledWith({ slug: "gpt-5.5", contextWindow: 600000 });
   });
 
-  it("removes a dashboard row after confirmation", async () => {
+  it("removes a dashboard override after confirmation", async () => {
     const user = userEvent.setup();
     const { remove } = mockHook(
       createModelContextWindowOverrides({
-        overrides: [{ slug: "custom-model", contextWindow: 32768, source: "dashboard", envValue: null }],
+        overrides: [{ slug: "anthropic/claude-opus-5-5", contextWindow: 350000, source: "dashboard", envValue: null }],
       }),
     );
     render(<ModelCatalogueSettings />);
 
-    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(within(row("anthropic/claude-opus-5-5")).getByRole("button", { name: "Remove" }));
     const dialog = screen.getByRole("alertdialog");
-    expect(within(dialog).getByText(/custom-model/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/anthropic\/claude-opus-5-5/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Remove" }));
 
-    expect(remove).toHaveBeenCalledWith("custom-model");
+    expect(remove).toHaveBeenCalledWith("anthropic/claude-opus-5-5");
   });
 
-  it("shows the empty state when nothing is overridden", () => {
-    mockHook(createModelContextWindowOverrides({ overrides: [] }));
+  it("shows the empty state when no model is enabled", () => {
+    mockHook(createModelContextWindowOverrides({ models: [], overrides: [] }));
     render(<ModelCatalogueSettings />);
-    expect(screen.getByText("No context window overrides")).toBeInTheDocument();
+    expect(screen.getByText("No enabled models")).toBeInTheDocument();
   });
 
-  it("disables inputs when the page is read-only", () => {
+  it("disables actions when the page is read-only", () => {
     mockHook();
     render(<ModelCatalogueSettings disabled />);
-    expect(screen.getByLabelText("Model slug")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Override" })).toBeDisabled();
+    for (const button of screen.getAllByRole("button", { name: "Override" })) {
+      expect(button).toBeDisabled();
+    }
   });
 });

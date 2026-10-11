@@ -36,7 +36,6 @@ def _project(
         supports_streaming=True,
         supports_tools=False,
         supports_vision=False,
-        context_window=selection.context_window,
     )
     metadata: dict[str, object] = {
         "upstream_model": selection.model,
@@ -54,14 +53,12 @@ def _project(
     if model is not None:
         assert model.context_length is not None
         metadata["supported_parameters"] = model.supported_parameters
-        context_window = min(
-            selection.context_window, model.context_length, model.top_provider.context_length or model.context_length
-        )
+        # Real capacity: the routed provider may serve less than the model's
+        # nominal context. The Settings model catalogue lowers what clients see.
+        context_window = min(model.context_length, model.top_provider.context_length or model.context_length)
         row.context_window = context_window
-        output_limits = [
-            value for value in (selection.max_output_tokens, model.top_provider.max_completion_tokens) if value
-        ]
-        row.max_output_tokens = min(*output_limits, context_window) if output_limits else None
+        max_completion_tokens = model.top_provider.max_completion_tokens
+        row.max_output_tokens = min(max_completion_tokens, context_window) if max_completion_tokens else None
         row.supports_tools = "tools" in model.supported_parameters
         row.supports_vision = "image" in model.architecture.input_modalities
         row.input_per_1m = model.pricing.prompt * 1_000_000 if model.pricing.prompt is not None else None

@@ -36,7 +36,7 @@ The client WebSocket bridge follows OpenCodex's separation of downstream transpo
 
 OpenRouter's Responses API rejects stored continuation. Existing private replay storage materializes complete history, using client-key and conversation identity. Unknown handles produce an explicit full-resend request. No account substitution occurs after response delivery begins. Provider 403 responses are not retried across credentials; the gateway does not attempt to bypass access or moderation restrictions.
 
-For example, selecting `z-ai/glm-5.3-flash` publishes `openrouter/z-ai/glm-5.3-flash` with a default 262144-token cap. The upstream receives `z-ai/glm-5.3-flash`, price-first provider selection and `store:false` over HTTPS while Codex receives events on its existing WebSocket.
+For example, selecting `z-ai/glm-5.3-flash` publishes `openrouter/z-ai/glm-5.3-flash` with the provider's context window. The upstream receives `z-ai/glm-5.3-flash`, price-first provider selection and `store:false` over HTTPS while Codex receives events on its existing WebSocket.
 
 Operator setup and monitoring details: [native OpenRouter accounts](../../../docs/openrouter-accounts.md).
 

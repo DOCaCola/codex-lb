@@ -1126,6 +1126,29 @@ export function createModelContextWindowOverrides(
 	overrides: Partial<ModelContextWindowOverrides> = {},
 ): ModelContextWindowOverrides {
 	return ModelContextWindowOverridesSchema.parse({
+		models: [
+			{
+				slug: "gpt-5.4",
+				displayName: "GPT-5.4",
+				provider: "subscription",
+				defaultContextWindow: 272000,
+				maxContextWindow: 1000000,
+			},
+			{
+				slug: "gpt-5.5",
+				displayName: "GPT-5.5",
+				provider: "subscription",
+				defaultContextWindow: 272000,
+				maxContextWindow: null,
+			},
+			{
+				slug: "anthropic/claude-opus-5-5",
+				displayName: "Claude Opus 5.5",
+				provider: "claude",
+				defaultContextWindow: 1000000,
+				maxContextWindow: 1000000,
+			},
+		],
 		overrides: [
 			{ slug: "gpt-5.4", contextWindow: 515000, source: "dashboard", envValue: 300000 },
 			{ slug: "gpt-5.5", contextWindow: 400000, source: "env", envValue: 400000 },

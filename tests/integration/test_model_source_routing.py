@@ -3031,9 +3031,8 @@ async def test_v1_models_metadata_reflects_reasoning_optin(async_client):
 
 @pytest.mark.asyncio
 async def test_v1_models_context_window_override_applies_to_source_model(async_client):
-    # Source-catalog models synthesize `max_context_window == context_window`
-    # purely so Codex clients can parse the entry; that parseability default
-    # must not clamp an operator raise override to the un-raised window.
+    # A source model's declared capacity is its ceiling: an override may lower
+    # the reported window but never raise it above that capacity.
     await _create_model_source(
         async_client,
         name="override-source",
@@ -3042,19 +3041,24 @@ async def test_v1_models_context_window_override_applies_to_source_model(async_c
     )
 
     # M4 model catalogue: the override is a dashboard row (not an env monkeypatch).
-    seeded = await async_client.put(
+    raised = await async_client.put(
         "/api/settings/model-context-window-overrides/override-source-model", json={"contextWindow": 32_768}
+    )
+    assert raised.status_code == 400
+    assert raised.json()["error"]["code"] == "context_window_above_maximum"
+    seeded = await async_client.put(
+        "/api/settings/model-context-window-overrides/override-source-model", json={"contextWindow": 4_096}
     )
     assert seeded.status_code == 200, seeded.text
 
     response = await async_client.get("/v1/models")
     assert response.status_code == 200
     item = next(m for m in response.json()["data"] if m["id"] == "override-source-model")
-    assert item["metadata"]["context_window"] == 32_768
-    assert item["metadata"]["input_context_window"] == 32_768
-    assert item["capabilities"]["context_length"] == 32_768
-    assert item["contextLength"] == 32_768
-    assert item["context_length"] == 32_768
+    assert item["metadata"]["context_window"] == 4_096
+    assert item["metadata"]["input_context_window"] == 4_096
+    assert item["capabilities"]["context_length"] == 4_096
+    assert item["contextLength"] == 4_096
+    assert item["context_length"] == 4_096
 
 
 @pytest.mark.asyncio

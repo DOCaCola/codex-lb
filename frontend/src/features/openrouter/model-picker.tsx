@@ -95,13 +95,6 @@ export function ModelPicker({
   const selectedCount = selected.filter(
     (item) => modelSelectionKind(catalog.get(item.model)) === kind,
   ).length;
-  const valid = selected.every(
-    (item) =>
-      Number.isInteger(item.contextWindow) &&
-      item.contextWindow > 0 &&
-      (item.maxOutputTokens === null ||
-        (Number.isInteger(item.maxOutputTokens) && item.maxOutputTokens > 0)),
-  );
   return (
     <Dialog
       open
@@ -119,7 +112,7 @@ export function ModelPicker({
           <DialogDescription>
             {kind === "images"
               ? "Select image generation and editing models for the public Images API. Conversational selections are preserved. Refresh the account if an image model is missing."
-              : "Choose models for selected mode and configure per-model limits. Saved choices and image selections are retained when All models is enabled."}
+              : "Choose models for selected mode. Context windows are set in Settings → Model catalogue. Saved choices and image selections are retained when All models is enabled."}
           </DialogDescription>
         </DialogHeader>
         {kind === "models" && (
@@ -194,12 +187,7 @@ export function ModelPicker({
                         checked
                           ? [
                               ...current,
-                              {
-                                model: id,
-                                contextWindow: 262144,
-                                maxOutputTokens: null,
-                                displayName: null,
-                              },
+                              { model: id, displayName: null },
                             ]
                           : current.filter((item) => item.model !== id),
                       )
@@ -285,8 +273,8 @@ export function ModelPicker({
                   </div>
                 )}
                 {selection && (
-                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                    <label className="space-y-1 text-xs">
+                  <div className="mt-2">
+                    <label className="block space-y-1 text-xs sm:max-w-[50%]">
                       Display name
                       <Input
                         aria-label={`Display name for ${id}`}
@@ -307,63 +295,7 @@ export function ModelPicker({
                         }
                       />
                     </label>
-                    {!imageOnly && (
-                      <label className="space-y-1 text-xs">
-                        Output cap (optional)
-                        <Input
-                          type="number"
-                          min={1}
-                          step={1}
-                          aria-label={`Output cap for ${id}`}
-                          value={selection.maxOutputTokens ?? ""}
-                          placeholder="Provider limit"
-                          disabled={busy}
-                          onChange={(event) =>
-                            setSelected((current) =>
-                              current.map((item) =>
-                                item.model === id
-                                  ? {
-                                      ...item,
-                                      maxOutputTokens: event.target.value
-                                        ? Number(event.target.value)
-                                        : null,
-                                    }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </label>
-                    )}
                   </div>
-                )}
-                {selection && !imageOnly && (
-                  <label className="mt-2 flex items-center gap-3 text-xs">
-                    Context cap
-                    <Input
-                      type="number"
-                      min={1}
-                      step={1}
-                      className="w-36"
-                      aria-label={`Context cap for ${id}`}
-                      value={selection.contextWindow}
-                      onChange={(event) =>
-                        setSelected((current) =>
-                          current.map((item) =>
-                            item.model === id
-                              ? {
-                                  ...item,
-                                  contextWindow: Number(event.target.value),
-                                }
-                              : item,
-                          ),
-                        )
-                      }
-                    />
-                    <span className="text-muted-foreground">
-                      Upstream limits also apply
-                    </span>
-                  </label>
                 )}
               </div>
             );
@@ -379,7 +311,7 @@ export function ModelPicker({
             Cancel
           </Button>
           <Button
-            disabled={busy || !valid}
+            disabled={busy}
             onClick={async () => {
               try {
                 await onSave(

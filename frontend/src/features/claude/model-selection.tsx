@@ -1,5 +1,4 @@
 import { AccountModelPicker } from "@/features/accounts/components/account-model-picker";
-import { formatCompactNumber } from "@/utils/formatters";
 import type { ClaudeAccount, ClaudeUpdate } from "./api";
 
 export function ModelSelection({
@@ -40,7 +39,7 @@ export function ModelSelection({
           : [],
         description:
           model.max_input_tokens !== null && model.max_tokens !== null
-            ? `${formatCompactNumber(model.max_input_tokens)} context · ${formatCompactNumber(model.max_tokens)} maximum output · ${formatCompactNumber(Math.min(64000, model.max_tokens))} default output`
+            ? undefined
             : "Token limits unavailable. Refresh the catalog before enabling this model.",
       }))}
     />

@@ -18,7 +18,7 @@ import {
 export type AccountModelOption = {
   model: string;
   name: string;
-  description: string;
+  description?: string;
   available: boolean;
   reasoningLevels: string[];
 };
@@ -136,9 +136,11 @@ export function AccountModelPicker({
               <p className="mt-1 break-all text-xs text-muted-foreground">
                 {entry.model}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {entry.description}
-              </p>
+              {entry.description ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {entry.description}
+                </p>
+              ) : null}
               <div className="mt-2">
                 <ModelReasoningPicker
                   model={entry.model}

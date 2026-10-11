@@ -1816,9 +1816,23 @@ export const handlers = [
         { status: 400 },
       );
     }
+    const model = state.modelContextWindowOverrides.models.find((entry) => entry.slug === slug);
+    if (!model) {
+      return HttpResponse.json(
+        { error: { code: "model_not_in_catalogue", message: "Model is not offered to clients" } },
+        { status: 400 },
+      );
+    }
+    if (model.maxContextWindow !== null && payload.contextWindow > model.maxContextWindow) {
+      return HttpResponse.json(
+        { error: { code: "context_window_above_maximum", message: "Context window exceeds the model maximum" } },
+        { status: 400 },
+      );
+    }
     const existing = state.modelContextWindowOverrides.overrides.find((entry) => entry.slug === slug);
     const others = state.modelContextWindowOverrides.overrides.filter((entry) => entry.slug !== slug);
     state.modelContextWindowOverrides = {
+      ...state.modelContextWindowOverrides,
       overrides: [
         ...others,
         { slug, contextWindow: payload.contextWindow, source: "dashboard" as const, envValue: existing?.envValue ?? null },
@@ -1838,6 +1852,7 @@ export const handlers = [
     }
     const others = state.modelContextWindowOverrides.overrides.filter((entry) => entry.slug !== slug);
     state.modelContextWindowOverrides = {
+      ...state.modelContextWindowOverrides,
       overrides:
         existing.envValue !== null
           ? [...others, { slug, contextWindow: existing.envValue, source: "env" as const, envValue: existing.envValue }].sort(

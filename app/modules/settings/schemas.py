@@ -409,7 +409,19 @@ class ModelContextWindowOverrideResponse(DashboardModel):
     env_value: int | None = None
 
 
+# A text model currently offered to clients. ``default_context_window`` is the
+# window it reports without an override; ``max_context_window`` is the largest
+# override it accepts (``None`` when its provider declares no ceiling).
+class ModelCatalogueEntryResponse(DashboardModel):
+    slug: str
+    display_name: str
+    provider: str
+    default_context_window: int
+    max_context_window: int | None
+
+
 class ModelContextWindowOverridesResponse(DashboardModel):
+    models: list[ModelCatalogueEntryResponse]
     overrides: list[ModelContextWindowOverrideResponse]
 
 

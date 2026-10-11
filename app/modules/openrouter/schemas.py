@@ -11,7 +11,6 @@ from app.modules.shared.schemas import DashboardModel
 
 OPENROUTER_KIND = "openrouter"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_CONTEXT_CAP = 262_144
 
 
 class ReasoningMetadata(BaseModel):
@@ -145,9 +144,8 @@ class CreditResponse(BaseModel):
 
 
 class ModelSelection(DashboardModel):
+    model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1, max_length=255)
-    context_window: int = Field(default=DEFAULT_CONTEXT_CAP, gt=0)
-    max_output_tokens: int | None = Field(default=None, gt=0)
     display_name: str | None = Field(default=None, max_length=255)
 
 

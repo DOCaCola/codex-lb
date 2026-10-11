@@ -508,7 +508,18 @@ export const ModelContextWindowOverrideSchema = z.object({
   envValue: z.number().int().positive().nullable().optional().default(null),
 });
 
+// A text model currently offered to clients. `maxContextWindow` is the largest
+// override the backend accepts for it (null when its provider declares none).
+export const ModelCatalogueEntrySchema = z.object({
+  slug: z.string().min(1),
+  displayName: z.string(),
+  provider: z.string(),
+  defaultContextWindow: z.number().int().positive(),
+  maxContextWindow: z.number().int().positive().nullable(),
+});
+
 export const ModelContextWindowOverridesSchema = z.object({
+  models: z.array(ModelCatalogueEntrySchema),
   overrides: z.array(ModelContextWindowOverrideSchema),
 });
 
@@ -527,5 +538,6 @@ export type AccountProxyBinding = z.infer<typeof AccountProxyBindingSchema>;
 export type AccountProxyBindingRequest = z.infer<typeof AccountProxyBindingRequestSchema>;
 export type UpstreamProxyAdmin = z.infer<typeof UpstreamProxyAdminSchema>;
 export type ModelContextWindowOverride = z.infer<typeof ModelContextWindowOverrideSchema>;
+export type ModelCatalogueEntry = z.infer<typeof ModelCatalogueEntrySchema>;
 export type ModelContextWindowOverrides = z.infer<typeof ModelContextWindowOverridesSchema>;
 export type ModelContextWindowOverrideUpsertRequest = z.infer<typeof ModelContextWindowOverrideUpsertRequestSchema>;

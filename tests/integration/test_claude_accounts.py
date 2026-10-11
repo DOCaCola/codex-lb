@@ -225,16 +225,17 @@ async def test_automatic_catalog_limits_and_rejected_override_api(async_client, 
     assert good.json()["state"]["selections"] == [{"model": "claude-opus-5"}]
     catalog = (await async_client.get("/backend-api/codex/models")).json()["models"]
     model = next(item for item in catalog if item["slug"] == "anthropic/claude-opus-5")
-    assert model["context_window"] == 272000
+    assert model["context_window"] == 1000000
     assert model["max_context_window"] == 1000000
     assert model["max_output_tokens"] == 128000
-    assert model["auto_compact_token_limit"] == 244800
+    # The Codex client compacts at 90% of the advertised window.
+    assert model.get("auto_compact_token_limit") is None
     assert model["effective_context_window_percent"] == 95
     assert model["apply_patch_tool_type"] == "freeform"
     assert model["multi_agent_version"] == "v2"
     generic = (await async_client.get("/v1/models")).json()["data"]
     generic_model = next(item for item in generic if item["id"] == "anthropic/claude-opus-5")
-    assert generic_model["context_length"] == generic_model["metadata"]["input_context_window"] == 272000
+    assert generic_model["context_length"] == generic_model["metadata"]["input_context_window"] == 1000000
     assert generic_model["max_output_tokens"] == 128000
     assert good.json()["state"]["catalog"][0]["max_input_tokens"] == 1000000
     assert (await async_client.patch(path, json={"routingPolicy": "invalid"})).status_code == 422

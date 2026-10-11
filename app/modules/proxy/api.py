@@ -153,7 +153,12 @@ from app.core.openai.images import (
     V1ImagesEditsForm,
     V1ImagesGenerationsRequest,
 )
-from app.core.openai.model_registry import UpstreamModel, get_model_registry, is_public_model
+from app.core.openai.model_registry import (
+    MODEL_SOURCE_KIND_SUBSCRIPTION,
+    UpstreamModel,
+    get_model_registry,
+    is_public_model,
+)
 from app.core.openai.models import (
     CompactResponsePayload,
     CompactResponseResult,
@@ -4392,10 +4397,6 @@ def _to_codex_model_entry(
     effective_cw = _resolved_context_window(model, context_window_overrides)
     if effective_cw != model.context_window and "max_context_window" in extra:
         extra["max_context_window"] = effective_cw
-    if model.source_kind == "claude":
-        # A global context override changes the working budget, not the
-        # discovered capability. Its default compaction hint must follow it.
-        extra["auto_compact_token_limit"] = effective_cw * 9 // 10
 
     return CodexModelEntry(
         slug=model.slug,
@@ -4441,15 +4442,9 @@ def _resolved_context_window(model: UpstreamModel, overrides: Mapping[str, int])
     # `metadata.input_context_window`). Generic clients read those rather than
     # `metadata.context_window` and would otherwise cap themselves at the
     # un-overridden upstream budget while Codex-native clients use the wider window.
-    # The override is clamped to the upstream-declared `max_context_window` so it can
-    # never advertise more input than the backend sanctions — the same clamp the Codex
-    # client applies to `model_context_window` in config.toml. The clamp only applies
-    # when upstream declares a ceiling strictly above `context_window`: bootstrap
-    # subscription models (`_bootstrap_model`) and source-catalog models
-    # (`source_models_to_upstream_models`) synthesize `max_context_window ==
-    # context_window` purely so Codex clients can parse the entry, and treating that
-    # parseability default as a real ceiling would silently disable every raise
-    # override for those models.
+    # The override is clamped to the model's ceiling (`context_window_ceiling`) so it
+    # can never advertise more input than the backend sanctions — the same clamp the
+    # Codex client applies to `model_context_window` in config.toml.
     #
     # This is the single resolution point for the reported window: the Codex-native
     # `context_window`/`max_context_window` rewrite, `metadata.context_window`, and
@@ -4458,14 +4453,42 @@ def _resolved_context_window(model: UpstreamModel, overrides: Mapping[str, int])
     override = overrides.get(model.slug)
     if override is None:
         return model.context_window
+    ceiling = context_window_ceiling(model)
+    return override if ceiling is None else min(override, ceiling)
+
+
+def context_window_ceiling(model: UpstreamModel) -> int | None:
+    """Largest window an operator override may advertise, or ``None`` when unknown.
+
+    Source models (Claude, OpenRouter, OpenAI-compatible) carry their real
+    capacity as ``max_context_window``. Subscription models are bounded only
+    when upstream declares a ceiling above ``context_window``: bootstrap entries
+    synthesize ``max_context_window == context_window`` purely so Codex clients
+    can parse them, and that parseability default is not a real ceiling.
+    """
     max_context_window = model.raw.get("max_context_window")
-    if (
-        isinstance(max_context_window, int)
-        and not isinstance(max_context_window, bool)
-        and max_context_window > model.context_window
-    ):
-        return min(override, max_context_window)
-    return override
+    if not isinstance(max_context_window, int) or isinstance(max_context_window, bool):
+        return None
+    if model.source_kind != MODEL_SOURCE_KIND_SUBSCRIPTION or max_context_window > model.context_window:
+        return max_context_window
+    return None
+
+
+async def list_model_catalogue() -> list[UpstreamModel]:
+    """Text models currently offered to clients, for the Settings model catalogue."""
+    registry = get_model_registry()
+    native = await _operator_available_native_models(registry.get_models_with_fallback(), None)
+    models = [
+        model
+        for model in native.values()
+        if _is_codex_backend_catalog_model(model) and _model_visibility(model) == "list"
+    ]
+    seen = {model.slug for model in models}
+    for model in await _list_enabled_source_catalog_models(None):
+        if model.slug not in seen and not _is_openrouter_image_only(model):
+            models.append(model)
+            seen.add(model.slug)
+    return models
 
 
 def _v1_max_output_tokens(model: UpstreamModel) -> int | None:

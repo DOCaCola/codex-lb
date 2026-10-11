@@ -155,7 +155,9 @@ async def test_all_mode_retains_curated_choices_and_applies_priority_after_coold
         assert updated.json()["state"]["selections"] == []
     async with SessionLocal() as session:
         sources = list(await session.scalars(select(ModelSource).where(ModelSource.id.in_(ids))))
-        assert all(source.models[0].context_window == 262144 for source in sources)
+        # Real capacity: the routed provider's limit, below the model's nominal context.
+        assert all(source.models[0].context_window == 500_000 for source in sources)
+        assert all(source.models[0].max_output_tokens == 32_000 for source in sources)
         assert (await routing.select_available(session, sources, "openrouter/vendor/test")).id == ids[0]
         session.add(
             OpenRouterCooldown(source_id=ids[0], model="openrouter/vendor/test", until=utcnow() + timedelta(minutes=1))
@@ -165,10 +167,13 @@ async def test_all_mode_retains_curated_choices_and_applies_priority_after_coold
         assert (
             await routing.select_available(session, sources, "openrouter/vendor/test", excluded={ids[1]})
         ).id == ids[2]
-    selected = [{"model": "vendor/test", "contextWindow": 100000}]
+    capped = [{"model": "vendor/test", "contextWindow": 100000}]
+    rejected = await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"selections": capped})
+    assert rejected.status_code == 422
+    selected = [{"model": "vendor/test", "displayName": "Curated"}]
     await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"selections": selected})
     off = await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"allModels": False})
-    assert off.json()["state"]["selections"][0]["contextWindow"] == 100000
+    assert off.json()["state"]["selections"][0]["displayName"] == "Curated"
     refreshed = await async_client.post(f"/api/openrouter-accounts/{ids[0]}/refresh")
     assert refreshed.json()["state"]["all_models"] is False
     assert refreshed.json()["routingPolicy"] == "burn_first"
@@ -301,7 +306,7 @@ async def test_account_lifecycle_selection_and_disappearance(async_client, provi
         },
     )
     assert selected.status_code == 200, selected.text
-    assert selected.json()["state"]["selections"][0]["contextWindow"] == 262144
+    assert selected.json()["state"]["selections"][0] == {"model": "vendor/test", "displayName": None}
     original_catalog = provider.data
     provider.data = []
     refreshed = await async_client.post(f"/api/openrouter-accounts/{account_id}/refresh")

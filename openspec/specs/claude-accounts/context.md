@@ -417,16 +417,14 @@ invalidated catalogs; a failed refresh remains visible.
 
 A model ceiling and a default request budget are different contracts. The
 translated default is min(64,000, output maximum); valid explicit budgets survive.
-Client metadata now separates the default working context from true capacity:
-min(272000, capacity), 90% default auto-compaction and 95% effective context.
-Opus at 1M advertises 272000 default / 1000000 maximum, with 244800 compaction
-and 258400 usable tokens. Smaller 200k models remain at 200k. The 272k default
-is the operator-approved policy aligned with the local Codex catalog; neither
-threshold is a Claude quality benchmark. Discovered capabilities remain intact
-in account state and model-source storage. Derivation at catalog construction
-also updates existing projections without waiting for discovery. No arbitrary
-350k cap or provider-specific token editor is retained. Existing global context
-overrides remain an operator-level control through the shared catalog path.
+Client metadata reports the real input capacity as both the default and the
+maximum window, with 95% effective context and no compaction threshold: the
+Codex client derives compaction at 90% of the reported window, exactly as it
+does for OpenAI's own catalog (OpenCodex advertises routed models the same
+way). A smaller working window is an operator decision made once in Settings →
+Model catalogue, which applies to every provider through the shared catalog
+path; no provider-specific default or token editor exists. Discovered
+capabilities remain intact in account state and model-source storage.
 
 Historical evidence (source/comments inspected at the following revisions):
 
