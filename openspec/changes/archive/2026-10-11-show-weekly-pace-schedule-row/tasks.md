@@ -1,0 +1,4 @@
+- [x] 1. Add the schedule row to the runway card using live, scheduled and smoothed pace fields.
+- [x] 2. Make over-schedule amount strings unit-aware in en, ko and zh-CN.
+- [x] 3. Remove the Recommendations section from both card layouts and its strings.
+- [x] 4. Cover over, below, on-pace and Claude unit cases in card tests.

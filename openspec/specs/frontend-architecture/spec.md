@@ -191,6 +191,14 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 - **AND** `actualUsedPercent` remains the live current value
 - **AND** the Weekly pace card displays the smoothed gap while keeping `actualUsedPercent` as the live current value
 
+#### Scenario: Runway card compares usage with the linear schedule
+
+- **WHEN** the runway card renders for Codex or Claude
+- **THEN** a schedule row beneath the runway timeline shows Used now (`actualUsedPercent`), Scheduled by now (`scheduledUsedPercent`), and the smoothed gap as over planned usage, below planned usage, or On pace when the gap rounds to zero percent
+- **AND** its bar marks the scheduled position, stripes usage beyond the schedule, and outlines scheduled usage that has not happened yet
+- **AND** when `smoothedScheduleGapCredits` is positive the row states that amount over planned usage over the smoothing window, in credits for Codex and Pro units for Claude
+- **AND** the row stays neutral in every state because status emphasis belongs to the runway verdict
+
 #### Scenario: Weekly pace smoothing resets with quota window
 
 - **GIVEN** a smoothing time window contains samples from before and after a weekly quota reset
@@ -251,14 +259,15 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 
 - **WHEN** trailing seven-day fleet demand in quota-weeks exceeds current fleet weekly capacity
 - **AND** the runway verdict is `runs_dry` or at least one account is saturated
-- **THEN** the response recommends additional Pro accounts (Codex) or Pro-equivalents (Claude) computed from the weekly demand surplus
-- **AND** the recommendation does not change materially from hour to hour under steady traffic
+- **THEN** the response reports additional Pro accounts (Codex) or Pro-equivalents (Claude) computed from the weekly demand surplus
+- **AND** the figure does not change materially from hour to hour under steady traffic
 
 #### Scenario: Throttle guidance precedes purchase guidance
 
 - **WHEN** the runway verdict is `runs_dry`
 - **AND** `throttleToPercent` is available
-- **THEN** the card presents throttling to the sustainable rate as the first remedy before any add-capacity suggestion
+- **THEN** neither card layout presents a recommendations section
+- **AND** the response keeps the throttle, pause and add-capacity figures for API consumers
 
 #### Scenario: Card paints without the projections request
 

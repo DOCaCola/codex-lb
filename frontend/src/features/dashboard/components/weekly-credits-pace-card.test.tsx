@@ -47,20 +47,16 @@ describe("WeeklyCreditsPaceCard", () => {
     expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.getByText("14%")).toBeInTheDocument();
     expect(screen.getByText("24% over planned usage")).toBeInTheDocument();
-    expect(screen.getByText("Recommendations")).toBeInTheDocument();
-    expect(screen.getByText("Pause")).toBeInTheDocument();
-    expect(screen.getByText("2d 12h until reset")).toBeInTheDocument();
-    expect(screen.getByText("Throttle")).toBeInTheDocument();
-    expect(screen.getByText("Reduce ongoing weekly-credit load by ~72%")).toBeInTheDocument();
-    expect(screen.getByText("Add capacity")).toBeInTheDocument();
-    expect(screen.getByText("7.1x Pro weekly pool (~8 accounts)")).toBeInTheDocument();
+    expect(screen.queryByText("Recommendations")).not.toBeInTheDocument();
+    expect(screen.queryByText(/until reset/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/weekly-credit load/)).not.toBeInTheDocument();
     expect(screen.getByText("240K credits over planned usage over 30m")).toBeInTheDocument();
     expect(screen.getByText("360K credits projected short before reset")).toBeInTheDocument();
     expect(screen.queryByText("500K")).not.toBeInTheDocument();
     expect(screen.getByText("Schedule marker")).toBeInTheDocument();
   });
 
-  it("hides recommendations when the pool is on the safe side of schedule", () => {
+  it("reports usage below the schedule", () => {
     render(
       <WeeklyCreditsPaceCard
         pace={{
@@ -84,28 +80,11 @@ describe("WeeklyCreditsPaceCard", () => {
       />,
     );
 
-    expect(screen.queryByText("Recommendations")).not.toBeInTheDocument();
-    expect(screen.queryByText("No pause needed")).not.toBeInTheDocument();
     expect(screen.getByText("8% below planned usage")).toBeInTheDocument();
     expect(screen.queryByText("80K credits projected low-water mark")).not.toBeInTheDocument();
   });
 
-  it("shows fractional pro account capacity before the rounded account count", () => {
-    render(
-      <WeeklyCreditsPaceCard
-        pace={{
-          ...BASE_PACE,
-          overPlanCredits: 26_750,
-          proAccountEquivalentToCoverOverPlan: 26_750 / 50_400,
-          proAccountsToCoverOverPlan: 1,
-        }}
-      />,
-    );
-
-    expect(screen.getByText("0.53x Pro weekly pool (~1 account)")).toBeInTheDocument();
-  });
-
-  it("shows recommendations for a current schedule gap even when recent forecast is safe", () => {
+  it("reports a current schedule gap when the recent forecast is safe", () => {
     render(
       <WeeklyCreditsPaceCard
         pace={{
@@ -120,8 +99,8 @@ describe("WeeklyCreditsPaceCard", () => {
           paceMultiplier: 0,
           throttleToPercent: null,
           reduceByPercent: null,
-          proAccountEquivalentToCoverOverPlan: null,
-          proAccountsToCoverOverPlan: null,
+          proAccountEquivalentToCoverOverPlan: 3_096 / 50_400,
+          proAccountsToCoverOverPlan: 1,
           forecastBurnRateCreditsPerHour: 0,
           scheduledBurnRateCreditsPerHour: 1_032,
           status: "ahead",
@@ -129,12 +108,7 @@ describe("WeeklyCreditsPaceCard", () => {
       />,
     );
 
-    expect(screen.getByText("Recommendations")).toBeInTheDocument();
-    expect(screen.queryByText("Pause")).not.toBeInTheDocument();
-    expect(screen.queryByText("3h to return to schedule")).not.toBeInTheDocument();
-    expect(screen.queryByText("Throttle")).not.toBeInTheDocument();
-    expect(screen.getByText("Add capacity")).toBeInTheDocument();
-    expect(screen.getByText("0.061x Pro weekly pool (~1 account)")).toBeInTheDocument();
+    expect(screen.queryByText(/Pro weekly pool/)).not.toBeInTheDocument();
     expect(screen.getByText("36% over planned usage")).toBeInTheDocument();
     expect(screen.getByText("3.1K credits over planned usage now")).toBeInTheDocument();
     expect(screen.getByText("No weekly shortfall projected at recent pace")).toBeInTheDocument();
@@ -226,7 +200,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getByText("now")).toBeInTheDocument();
   });
 
-  it("labels Claude amounts in Pro units and recommends Pro-equivalents", () => {
+  it("labels Claude amounts in Pro units", () => {
     render(
       <WeeklyCreditsPaceCard
         pace={{
@@ -237,6 +211,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
           burnRateRecentCreditsPerHour: 0.125,
           nextReliefCredits: 5,
           resetEvents: [{ at: new Date(Date.now() + 26 * 3_600_000).toISOString(), creditsReturned: 5 }],
+          smoothedScheduleGapCredits: 0.25,
           throttleToPercent: null,
           addProAccounts: 3,
         }}
@@ -247,7 +222,8 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getByText("4.5 Pro units left")).toBeInTheDocument();
     expect(screen.getByText("at ~0.13/h")).toBeInTheDocument();
     expect(screen.getByTestId("runway-reset-tick").getAttribute("title")).toMatch(/^\+5 Pro units at /);
-    expect(screen.getByTestId("runway-recommendations")).toHaveTextContent("Add 3 Pro-equivalents (Max 5× = 5)");
+    expect(screen.getByText("0.25 Pro units over planned usage over 30m")).toBeInTheDocument();
+    expect(screen.queryByText(/Pro-equivalent/)).not.toBeInTheDocument();
   });
 
   it("renders a neutral verdict badge without warning emphasis when safe", () => {
@@ -258,8 +234,6 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(verdict.className).toContain("text-muted-foreground");
     expect(verdict.className).not.toContain("amber");
     expect(verdict.className).not.toContain("red");
-    expect(screen.queryByTestId("runway-recommendations")).not.toBeInTheDocument();
-    expect(screen.queryByText("Recommendations")).not.toBeInTheDocument();
   });
 
   it("renders an amber verdict badge when tight", () => {
@@ -292,7 +266,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getByText("8.0%")).toBeInTheDocument();
   });
 
-  it("shows throttle guidance before add-capacity when runs dry", () => {
+  it("recommends no remedies even when the pool runs dry", () => {
     render(
       <WeeklyCreditsPaceCard
         pace={{
@@ -305,28 +279,53 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
       />,
     );
 
-    const recommendations = screen.getByTestId("runway-recommendations");
-    const text = recommendations.textContent ?? "";
-    expect(text).toContain("~28% of current load");
-    expect(text).toContain("Add 2 Pro accounts");
-    expect(text.indexOf("~28% of current load")).toBeLessThan(text.indexOf("Add 2 Pro accounts"));
+    expect(screen.queryByText("Recommendations")).not.toBeInTheDocument();
+    expect(screen.queryByText(/of current load/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pro account/)).not.toBeInTheDocument();
   });
 
-  it("hides throttle guidance outside runs_dry but keeps a gated add-capacity line", () => {
+  it("compares live usage with the linear schedule", () => {
+    render(<WeeklyCreditsPaceCard pace={RUNWAY_PACE} />);
+
+    const row = screen.getByTestId("runway-schedule-row");
+    expect(row).toHaveTextContent("Used now58%");
+    expect(row).toHaveTextContent("Scheduled by now40%");
+    expect(row).toHaveTextContent("18% over planned usage");
+    expect(row).toHaveTextContent("Actual");
+    expect(row).toHaveTextContent("Schedule marker");
+    expect(screen.getByTestId("runway-schedule-marker")).toHaveStyle({ left: "40%" });
+    expect(screen.getByTestId("runway-schedule-over")).toHaveStyle({ left: "40%", width: "18%" });
+    expect(row).not.toHaveTextContent("over planned usage over");
+  });
+
+  it("names the smoothed credit gap when usage runs over schedule", () => {
+    render(<WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, smoothedScheduleGapCredits: 18_000 }} />);
+
+    expect(screen.getByTestId("runway-schedule-row")).toHaveTextContent("18K credits over planned usage over 30m");
+  });
+
+  it("outlines scheduled usage that has not happened yet", () => {
     render(
       <WeeklyCreditsPaceCard
-        pace={{
-          ...RUNWAY_PACE,
-          runwayStatus: "tight",
-          throttleToPercent: 28,
-          addProAccounts: 1,
-        }}
+        pace={{ ...RUNWAY_PACE, actualUsedPercent: 30, deltaPercent: -10, smoothedDeltaPercent: -10 }}
       />,
     );
 
-    const recommendations = screen.getByTestId("runway-recommendations");
-    expect(recommendations.textContent).not.toContain("Throttle");
-    expect(recommendations.textContent).toContain("Add 1 Pro account");
+    expect(screen.getByText("10% below planned usage")).toBeInTheDocument();
+    expect(screen.getByTestId("runway-schedule-under")).toHaveStyle({ left: "30%", width: "10%" });
+    expect(screen.queryByTestId("runway-schedule-over")).not.toBeInTheDocument();
+  });
+
+  it("reports on pace when the smoothed gap rounds to zero", () => {
+    render(
+      <WeeklyCreditsPaceCard
+        pace={{ ...RUNWAY_PACE, actualUsedPercent: 40, deltaPercent: 0, smoothedDeltaPercent: 0.3 }}
+      />,
+    );
+
+    expect(screen.getByTestId("runway-schedule-row")).toHaveTextContent("On pace");
+    expect(screen.queryByTestId("runway-schedule-over")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("runway-schedule-under")).not.toBeInTheDocument();
   });
 
   it("stretches the timeline horizon so reset events past 48h are not dropped", () => {

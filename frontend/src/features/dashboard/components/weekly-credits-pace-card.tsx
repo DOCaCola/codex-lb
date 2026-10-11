@@ -11,8 +11,6 @@ import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
 import { formatCompactNumber, formatDateTimeInline } from "@/utils/formatters";
 
-const PRO_WEEKLY_CAPACITY_CREDITS = 50_400;
-
 type Translate = ReturnType<typeof useTranslation>["t"];
 
 export type WeeklyCreditsPaceCardProps = {
@@ -31,10 +29,6 @@ function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
-function formatApproxPercent(value: number): string {
-  return `~${Math.round(value)}%`;
-}
-
 function formatSignedPercent(value: number): string {
   return `${Math.round(Math.abs(value))}%`;
 }
@@ -42,13 +36,6 @@ function formatSignedPercent(value: number): string {
 function formatHeadroomPercent(value: number): string {
   const clamped = Math.max(0, value);
   return clamped > 0 && clamped < 10 ? `${clamped.toFixed(1)}%` : `${Math.round(clamped)}%`;
-}
-
-function formatProAccountEquivalent(value: number): string {
-  if (value < 1) {
-    return value >= 0.1 ? value.toFixed(2) : value.toFixed(3);
-  }
-  return value < 10 ? value.toFixed(1) : value.toFixed(0);
 }
 
 function statusLabel(pace: WeeklyCreditPace, t: ReturnType<typeof useTranslation>["t"]): string {
@@ -68,9 +55,10 @@ function scheduleGapLine(pace: WeeklyCreditPace, t: ReturnType<typeof useTransla
   const smoothingMinutes = pace.paceGapSmoothingMinutes ?? 0;
   const window = smoothingMinutes > 0 ? formatDurationHours(smoothingMinutes / 60, t) : null;
   if (scheduleGapCredits > 0) {
+    const amount = formatUnitAmount(scheduleGapCredits, pace.unit, t);
     return window
-      ? t("dashboard.weeklyPace.lines.overPlannedWindow", { credits: formatCompactNumber(scheduleGapCredits), window })
-      : t("dashboard.weeklyPace.lines.overPlannedNow", { credits: formatCompactNumber(scheduleGapCredits) });
+      ? t("dashboard.weeklyPace.lines.overPlannedWindow", { amount, window })
+      : t("dashboard.weeklyPace.lines.overPlannedNow", { amount });
   }
   if (deltaPercent < 0) {
     return window
@@ -114,44 +102,6 @@ function formatDurationHours(hours: number, t: ReturnType<typeof useTranslation>
       : t("formatters.duration.hours", { count: hoursPart });
   }
   return t("formatters.duration.minutes", { count: minutesPart });
-}
-
-function breakEvenLine(pace: WeeklyCreditPace, t: ReturnType<typeof useTranslation>["t"]): string | null {
-  if (pace.projectedShortfallCredits <= 0) {
-    return null;
-  }
-  if (pace.pauseForBreakEvenHours == null) {
-    return t("dashboard.weeklyPace.recommendations.untilReset");
-  }
-  return t("dashboard.weeklyPace.recommendations.pauseUntilReset", {
-    duration: formatDurationHours(pace.pauseForBreakEvenHours, t),
-  });
-}
-
-function proAccountsLine(pace: WeeklyCreditPace, t: ReturnType<typeof useTranslation>["t"]): string | null {
-  const scheduleGapCredits = pace.smoothedScheduleGapCredits ?? pace.scheduleGapCredits;
-  const gapCredits =
-    pace.projectedShortfallCredits > 0 ? pace.projectedShortfallCredits : Math.max(0, scheduleGapCredits);
-  const equivalent =
-    pace.proAccountEquivalentToCoverOverPlan ?? (gapCredits > 0 ? gapCredits / PRO_WEEKLY_CAPACITY_CREDITS : null);
-  const accounts = pace.proAccountsToCoverOverPlan ?? (gapCredits > 0 ? Math.ceil(gapCredits / PRO_WEEKLY_CAPACITY_CREDITS) : null);
-
-  if (!accounts || equivalent == null) {
-    return null;
-  }
-  return t("dashboard.weeklyPace.recommendations.proAccounts", {
-    equivalent: formatProAccountEquivalent(equivalent),
-    count: accounts,
-  });
-}
-
-function throttleLine(pace: WeeklyCreditPace, t: ReturnType<typeof useTranslation>["t"]): string | null {
-  if (pace.throttleToPercent == null || pace.reduceByPercent == null) {
-    return null;
-  }
-  return t("dashboard.weeklyPace.recommendations.throttle", {
-    percent: formatApproxPercent(pace.reduceByPercent),
-  });
 }
 
 const VERDICT_LABEL_KEYS: Record<WeeklyCreditRunwayStatus, string> = {
@@ -231,6 +181,81 @@ function buildRunwayTimeline(
   return { etaAtLabel, horizonHours, etaPercent, resetTicks };
 }
 
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+// The schedule row compares live usage with the straight-line weekly
+// schedule. It stays neutral: status emphasis belongs to the runway verdict.
+function ScheduleRow({ pace }: { pace: WeeklyCreditPace }) {
+  const { t } = useTranslation();
+  const usedPercent = clampPercent(pace.actualUsedPercent);
+  const scheduledPercent = clampPercent(pace.scheduledUsedPercent);
+  const deltaPercent = pace.smoothedDeltaPercent ?? pace.deltaPercent;
+  const roundedGap = Math.round(Math.abs(deltaPercent));
+  const gapLabel =
+    roundedGap === 0
+      ? t("dashboard.weeklyPace.status.onPace")
+      : t(deltaPercent > 0 ? "dashboard.weeklyPace.status.overPlanned" : "dashboard.weeklyPace.status.belowPlanned", {
+          percent: `${roundedGap}%`,
+        });
+  const scheduleGapCredits = pace.smoothedScheduleGapCredits ?? pace.scheduleGapCredits;
+  const lowerPercent = Math.min(usedPercent, scheduledPercent);
+  const gapWidth = Math.abs(usedPercent - scheduledPercent);
+  const overSchedule = usedPercent > scheduledPercent;
+
+  return (
+    <div className="border-t border-dashed pt-3.5" data-testid="runway-schedule-row">
+      <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
+        <div className="flex gap-3.5 tabular-nums text-muted-foreground">
+          <span>
+            {t("dashboard.weeklyPace.usedNow")}
+            <span className="ml-1 font-semibold text-foreground">{formatPercent(pace.actualUsedPercent)}</span>
+          </span>
+          <span>
+            {t("dashboard.weeklyPace.scheduledByNow")}
+            <span className="ml-1 font-semibold text-foreground">{formatPercent(pace.scheduledUsedPercent)}</span>
+          </span>
+        </div>
+        <span className="whitespace-nowrap font-medium tabular-nums">{gapLabel}</span>
+      </div>
+      <div className="relative h-2 rounded-full bg-muted">
+        <div className="absolute inset-y-0 left-0 rounded-full bg-muted-foreground/45" style={{ width: `${lowerPercent}%` }} />
+        {gapWidth > 0 ? (
+          <div
+            data-testid={overSchedule ? "runway-schedule-over" : "runway-schedule-under"}
+            className={cn(
+              "absolute inset-y-0 rounded-r-full",
+              overSchedule
+                ? "bg-[repeating-linear-gradient(-45deg,color-mix(in_oklab,var(--muted-foreground)_70%,transparent)_0_3px,color-mix(in_oklab,var(--muted-foreground)_40%,transparent)_3px_6px)]"
+                : "ring-1 ring-inset ring-muted-foreground/45",
+            )}
+            style={{ left: `${lowerPercent}%`, width: `${gapWidth}%` }}
+          />
+        ) : null}
+        <div
+          data-testid="runway-schedule-marker"
+          className="absolute -top-[3px] h-3.5 w-0.5 -translate-x-px rounded-full bg-foreground/70"
+          style={{ left: `${scheduledPercent}%` }}
+        />
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-4 rounded-full bg-muted-foreground/45" />
+          {t("dashboard.weeklyPace.actual")}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-0.5 rounded-full bg-foreground/70" />
+          {t("dashboard.weeklyPace.scheduleMarker")}
+        </span>
+      </div>
+      {scheduleGapCredits > 0 ? (
+        <p className="mt-2 text-xs tabular-nums text-muted-foreground">{scheduleGapLine(pace, t)}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function RunwayWeeklyCreditsPaceCard({
   pace,
   runwayStatus,
@@ -263,10 +288,6 @@ function RunwayWeeklyCreditsPaceCard({
     pace.resetEvents,
     (epochMs) => formatDateTimeInline(new Date(epochMs).toISOString(), dateDisplayFormat),
   );
-
-  const throttleToPercent = runsDry && pace.throttleToPercent != null ? pace.throttleToPercent : null;
-  const addProAccounts = pace.addProAccounts != null && pace.addProAccounts > 0 ? pace.addProAccounts : null;
-  const showRecommendations = throttleToPercent != null || addProAccounts != null;
 
   const burnRateLine =
     burnRate != null && burnRate > 0
@@ -383,40 +404,7 @@ function RunwayWeeklyCreditsPaceCard({
           </div>
         </div>
 
-        {showRecommendations ? (
-          <div className="rounded-lg border bg-background/60 px-3 py-2 text-xs" data-testid="runway-recommendations">
-            <p className="font-medium">{t("dashboard.weeklyPace.recommendations.title")}</p>
-            <div className="mt-2 grid gap-1.5">
-              {throttleToPercent != null ? (
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="shrink-0 text-muted-foreground">
-                    {t("dashboard.weeklyPace.recommendations.throttleLabel")}
-                  </span>
-                  <span className="min-w-0 text-right tabular-nums">
-                    {t("dashboard.weeklyPace.recommendations.throttleTo", {
-                      percent: formatPercent(throttleToPercent),
-                    })}
-                  </span>
-                </div>
-              ) : null}
-              {addProAccounts != null ? (
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="shrink-0 text-muted-foreground">
-                    {t("dashboard.weeklyPace.recommendations.addCapacity")}
-                  </span>
-                  <span className="min-w-0 text-right tabular-nums">
-                    {t(
-                      unit === "credits"
-                        ? "dashboard.weeklyPace.recommendations.addProAccounts"
-                        : "dashboard.weeklyPace.recommendations.addProEquivalents",
-                      { count: addProAccounts },
-                    )}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        <ScheduleRow pace={pace} />
       </div>
     </section>
   );
@@ -436,16 +424,6 @@ function LegacyWeeklyCreditsPaceCard({ pace }: { pace: WeeklyCreditPace }) {
   const scheduledMarkerLeft = Math.max(0, Math.min(100, pace.scheduledUsedPercent));
   const actualBarClass =
     pace.status === "danger" ? "bg-red-500" : pace.status === "ahead" ? "bg-amber-500" : "bg-primary";
-  const throttle = throttleLine(pace, t);
-  const proAccounts = proAccountsLine(pace, t);
-  const breakEven = breakEvenLine(pace, t);
-  const smoothedScheduleGapCredits = pace.smoothedScheduleGapCredits ?? pace.scheduleGapCredits;
-  const showRecommendations =
-    smoothedScheduleGapCredits > 0 ||
-    pace.projectedShortfallCredits > 0 ||
-    Boolean(breakEven) ||
-    Boolean(throttle) ||
-    Boolean(proAccounts);
 
   return (
     <section className="rounded-xl border bg-card p-5" aria-label={t("dashboard.weeklyPace.title")}>
@@ -496,32 +474,6 @@ function LegacyWeeklyCreditsPaceCard({ pace }: { pace: WeeklyCreditPace }) {
 	            <p className="mt-1">{forecastLine(pace, t)}</p>
           </div>
         </div>
-
-        {showRecommendations ? (
-          <div className="rounded-lg border bg-background/60 px-3 py-2 text-xs">
-	            <p className="font-medium">{t("dashboard.weeklyPace.recommendations.title")}</p>
-            <div className="mt-2 grid gap-1.5">
-              {breakEven ? (
-                <div className="flex items-baseline justify-between gap-3">
-	                  <span className="shrink-0 text-muted-foreground">{t("dashboard.weeklyPace.recommendations.pause")}</span>
-                  <span className="min-w-0 text-right tabular-nums">{breakEven}</span>
-                </div>
-              ) : null}
-              {throttle ? (
-                <div className="flex items-baseline justify-between gap-3">
-	                  <span className="shrink-0 text-muted-foreground">{t("dashboard.weeklyPace.recommendations.throttleLabel")}</span>
-                  <span className="min-w-0 text-right tabular-nums">{throttle}</span>
-                </div>
-              ) : null}
-              {proAccounts ? (
-                <div className="flex items-baseline justify-between gap-3">
-	                  <span className="shrink-0 text-muted-foreground">{t("dashboard.weeklyPace.recommendations.addCapacity")}</span>
-                  <span className="min-w-0 text-right tabular-nums">{proAccounts}</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
       </div>
     </section>
   );
