@@ -15,6 +15,7 @@ from typing import cast
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
 from app.core.utils.request_id import get_request_id
+from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_helper, custom_tool_input
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.search import url_citations
@@ -247,6 +248,10 @@ class ResponsesProjection:
         if kind == "tool_use":
             name = block.get("name")
             identity = self.tools.resolve(name) if isinstance(name, str) else None
+            # A nested code-mode helper Claude called by name is the exec program that calls it.
+            helper = code_mode_helper(self.tools, name) if identity is None and isinstance(name, str) else None
+            if helper is not None:
+                identity = self.tools.identity(CODE_MODE_EXEC)
             if identity is None:
                 logger.warning(
                     "claude_undeclared_tool source_id=%s model=%s response_id=%s content_index=%d "
@@ -287,10 +292,21 @@ class ResponsesProjection:
             if identity.namespace is not None:
                 result["namespace"] = identity.namespace
             if identity.custom:
-                value = arguments.get("input", "")
-                if not isinstance(value, str):
-                    raise ClaudeError("Claude custom tool input must be text")
-                result["input"] = value
+                tool_input = custom_tool_input(self.tools, identity, arguments, helper)
+                if final and (tool_input.repairs or tool_input.shell_shaped):
+                    logger.info(
+                        "claude_tool_input_repair source_id=%s model=%s response_id=%s content_index=%d "
+                        "tool=%s recovered_from=%s repairs=%s shell_shaped=%s",
+                        self.scope.source_id,
+                        self.scope.model,
+                        self.response_id,
+                        index,
+                        _loggable_tool_name(identity.name),
+                        _loggable_tool_name(helper) if helper is not None else None,
+                        ",".join(tool_input.repairs) or "none",
+                        tool_input.shell_shaped,
+                    )
+                result["input"] = tool_input.text
             else:
                 if final and identity.arguments is not None:
                     arguments = identity.arguments.decode(arguments)

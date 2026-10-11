@@ -1,0 +1,4 @@
+- [x] 1. Read freeform bodies through one alternate field and an outer fence, and forward unreadable bodies as Claude's JSON.
+- [x] 2. Compile nested code-mode helper calls and whole-patch `exec` bodies into `exec` programs, and restore patch delimiters.
+- [x] 3. Log repair kinds and shell-shaped bodies without content.
+- [x] 4. Add unit regressions and run the Claude checks.
