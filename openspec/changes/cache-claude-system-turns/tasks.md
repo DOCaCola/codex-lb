@@ -1,0 +1,3 @@
+- [x] 1. Report the relocated instruction turn from the OAuth projection.
+- [x] 2. Mark the instruction turn and a request-ending system turn in translated cache placement.
+- [x] 3. Add unit regressions and update the routing expectation, then run the Claude checks.

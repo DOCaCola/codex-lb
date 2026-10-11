@@ -22,6 +22,8 @@ class RequestProjection:
     body: dict[str, JsonValue]
     feature_betas: tuple[str, ...]
     transformations: tuple[str, ...]
+    # Index in body["messages"] of the system turn holding relocated instructions.
+    instruction_turn: int | None = None
 
 
 def _system_blocks(value: JsonValue) -> list[JsonValue]:
@@ -195,8 +197,11 @@ def _project_request(
         )
         if first_user is None:
             raise ClaudeError("OAuth instructions need an ordinary user turn before tool continuation")
-        messages.insert(_leading_user_run_end(messages, first_user), {"role": "system", "content": blocks})
-        return RequestProjection(body, (MID_SYSTEM_BETA,), ("oauth_identity", "mid_system_instructions"))
+        instruction_turn = _leading_user_run_end(messages, first_user)
+        messages.insert(instruction_turn, {"role": "system", "content": blocks})
+        return RequestProjection(
+            body, (MID_SYSTEM_BETA,), ("oauth_identity", "mid_system_instructions"), instruction_turn
+        )
 
     # Separate delimiter blocks preserve caller text and cache breakpoints
     # exactly. This intentionally lowers role authority, unlike modern system

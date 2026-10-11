@@ -208,7 +208,7 @@ class ClaudeDispatchPreparer:
             logger.info("claude_cache_ttl_order_normalized source_id=%s", account.source_id)
         retains_thinking = translated and retain_thinking(projected.body)
         if translated:
-            cache_translated(projected.body)
+            cache_translated(projected.body, instruction_turn=projected.instruction_turn)
             transformations += ("translated_cache_boundaries",)
         if retains_thinking:
             transformations += ("thinking_retention",)

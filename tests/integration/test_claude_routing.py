@@ -314,7 +314,9 @@ async def test_prepare_uses_provider_credentials_and_preserves_logical_history(p
         assert prepared.headers["authorization"] in {"Bearer access-account-a", "Bearer access-account-b"}
         assert at(prepared.body, "messages", 1) == {
             "role": "system",
-            "content": [{"type": "text", "text": "Caller instructions"}],
+            "content": [
+                {"type": "text", "text": "Caller instructions", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+            ],
         }
         assert "access-secret" not in repr(prepared)
         assert "Caller instructions" not in repr(prepared)
