@@ -1,5 +1,5 @@
 import { ShieldCheck } from "lucide-react";
-import { lazy, Suspense, useCallback, useMemo } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { AlertMessage } from "@/components/alert-message";
@@ -17,6 +17,7 @@ import { ApiDetail } from "@/features/apis/components/api-detail";
 import { ApiComparisonTrend } from "@/features/apis/components/api-comparison-trend";
 import { ApiList } from "@/features/apis/components/api-list";
 import { ApisSkeleton } from "@/features/apis/components/apis-skeleton";
+import type { ComparisonProvider } from "@/features/apis/comparison-trends";
 import {
 	useApiKeys,
 	useApiKeysTrends,
@@ -87,7 +88,8 @@ export function ApisPage() {
 	);
 
 	const trendsQuery = useApiKeyTrends(selectedApiKey?.id ?? null, { enabled: canReadKeys });
-	const comparisonQuery = useApiKeysTrends({ enabled: canReadKeys });
+	const [comparisonProvider, setComparisonProvider] = useState<ComparisonProvider>("all");
+	const comparisonQuery = useApiKeysTrends(comparisonProvider, { enabled: canReadKeys });
 	const usage7DayQuery = useApiKeyUsage7Day(selectedApiKey?.id ?? null, { enabled: canReadKeys });
 
 	const mutationBusy =
@@ -174,7 +176,8 @@ export function ApisPage() {
 				<div className="space-y-6">
 					<ApiKeysOverview apiKeys={apiKeys} trend={
 						<ApiComparisonTrend data={comparisonQuery.data} loading={comparisonQuery.isPending}
-							error={!!comparisonQuery.error} onRetry={() => void comparisonQuery.refetch()} />
+							error={!!comparisonQuery.error} onRetry={() => void comparisonQuery.refetch()}
+							provider={comparisonProvider} onProviderChange={setComparisonProvider} />
 					} />
 
 					<div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">

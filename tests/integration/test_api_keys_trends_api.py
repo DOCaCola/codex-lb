@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ModelSource, RequestLog
+from app.db.models import Account, AccountStatus, ModelSource, RequestLog, RequestUsageHourlyRollup
 from app.db.session import SessionLocal
+from app.modules.accounts.usage_time_rollup import DIMENSION_SENTINEL, run_hourly_fold_pass
 from app.modules.api_keys.repository import ApiKeysRepository
 
 pytestmark = pytest.mark.integration
@@ -123,6 +125,46 @@ async def test_collection_trends_empty_window(async_client, monkeypatch):
     response = await async_client.get("/api/api-keys/trends")
     assert response.status_code == 200
     assert response.json()["series"] == []
+
+
+@pytest.mark.asyncio
+async def test_collection_trends_filter_by_provider_across_folded_and_raw_hours(async_client, monkeypatch):
+    key_id = await _create_api_key(async_client, name="Mixed")
+    now = datetime(2026, 9, 30, 10, 37)
+    monkeypatch.setattr("app.modules.api_keys.service.utcnow", lambda: now)
+    kinds = {None: 1, "claude": 10, "openrouter": 100, "openai_compatible": 1000}
+    await _insert_request_logs(
+        *[
+            RequestLog(
+                api_key_id=key_id,
+                request_id=f"provider-{index}-{age}",
+                requested_at=now - timedelta(minutes=age),
+                model="any-model",
+                status="success",
+                input_tokens=tokens,
+                output_tokens=0,
+                cost_usd=0,
+                model_source_kind=kind,
+            )
+            for index, (kind, tokens) in enumerate(kinds.items())
+            for age in (3 * 24 * 60, 10)
+        ]
+    )
+    await run_hourly_fold_pass(now=now)
+    async with SessionLocal() as session:
+        folded = {row.model_source_kind for row in (await session.scalars(select(RequestUsageHourlyRollup))).all()}
+    assert folded == {DIMENSION_SENTINEL, "claude", "openrouter", "openai_compatible"}
+
+    async def tokens(query: str) -> int:
+        response = await async_client.get(f"/api/api-keys/trends{query}")
+        assert response.status_code == 200
+        return sum(point["v"] for item in response.json()["series"] for point in item["tokens"])
+
+    assert await tokens("") == 2 * 1111
+    assert await tokens("?provider=codex") == 2 * 1
+    assert await tokens("?provider=claude") == 2 * 10
+    assert await tokens("?provider=openrouter") == 2 * 100
+    assert (await async_client.get("/api/api-keys/trends?provider=other")).status_code == 422
 
 
 @pytest.mark.asyncio

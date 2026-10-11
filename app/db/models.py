@@ -401,6 +401,9 @@ class RequestUsageHourlyRollup(Base):
     service_tier: Mapped[str] = mapped_column(String, primary_key=True)
     request_kind: Mapped[str] = mapped_column(String, primary_key=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, primary_key=True, default=False, server_default=false())
+    # Model-source kind of the request (claude, openrouter, ...); NULL sentinel
+    # for Codex subscription traffic. Lets readers split usage by provider.
+    model_source_kind: Mapped[str] = mapped_column(String, primary_key=True)
     request_count: Mapped[int] = mapped_column(BigInteger, default=0, server_default=text("0"), nullable=False)
     # sum(status NOT IN ('success', 'cancelled')) — status is folded as a
     # measure, not a dimension. Rows folded before cancelled_count existed

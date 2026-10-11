@@ -12,6 +12,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, raiseload, selectinload
 
+from app.core.openai.model_registry import MODEL_SOURCE_KIND_SUBSCRIPTION
 from app.core.usage.coverage import request_cost_expressions
 from app.core.utils.time import utcnow
 from app.db.models import (
@@ -1153,8 +1154,9 @@ class ApiKeysRepository:
         since: datetime,
         until: datetime,
         bucket_seconds: int = 3600,
+        provider: AccountProvider | None = None,
     ) -> dict[str, list[ApiKeyTrendBucket]]:
-        return await self._trend_buckets(since, until, bucket_seconds)
+        return await self._trend_buckets(since, until, bucket_seconds, provider=provider)
 
     async def key_names(self) -> dict[str, str]:
         rows = await self._session.execute(select(ApiKey.id, ApiKey.name))
@@ -1167,6 +1169,7 @@ class ApiKeysRepository:
         bucket_seconds: int,
         *,
         key_id: str | None = None,
+        provider: AccountProvider | None = None,
     ) -> dict[str, list[ApiKeyTrendBucket]]:
         # Folded history from the hourly rollups (the api_key_id dimension
         # and the output-or-reasoning measure were folded for exactly this
@@ -1210,6 +1213,7 @@ class ApiKeysRepository:
                     if key_id is not None
                     else RequestUsageHourlyRollup.api_key_id != to_dimension(None),
                     RequestUsageHourlyRollup.request_kind.not_in(WARMUP_REQUEST_KINDS),
+                    *(() if provider is None else (_rollup_provider_clause(provider),)),
                 ),
             )
             for rollup in rollup_rows:
@@ -1254,6 +1258,7 @@ class ApiKeysRepository:
                     RequestLog.api_key_id == key_id if key_id is not None else RequestLog.api_key_id.is_not(None),
                     raw_windows_clause(raw_windows),
                     self._exclude_warmup_clause(),
+                    *(() if provider is None else (_raw_provider_clause(provider),)),
                 )
                 .group_by(RequestLog.api_key_id, bucket_col)
             )
@@ -1379,3 +1384,19 @@ def _compute_increment(limit: ApiKeyLimit, input_tokens: int, output_tokens: int
 
 def _limit_key(limit: ApiKeyLimit) -> tuple[LimitType, LimitWindow, str | None]:
     return (limit.limit_type, limit.limit_window, limit.model_filter)
+
+
+# Codex traffic carries no model-source kind (or the subscription kind);
+# every other provider is the kind of the model source that served it.
+def _rollup_provider_clause(provider: AccountProvider):
+    column = RequestUsageHourlyRollup.model_source_kind
+    if provider == "codex":
+        return column.in_((to_dimension(None), MODEL_SOURCE_KIND_SUBSCRIPTION))
+    return column == provider
+
+
+def _raw_provider_clause(provider: AccountProvider):
+    column = RequestLog.model_source_kind
+    if provider == "codex":
+        return or_(column.is_(None), column == MODEL_SOURCE_KIND_SUBSCRIPTION)
+    return column == provider

@@ -13,6 +13,7 @@ from app.core.auth.dependencies import (
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.dependencies import ApiKeysContext, get_api_keys_context
 from app.modules.account_colors.service import AccountColorService
+from app.modules.accounts.provider_accounts import AccountProvider
 from app.modules.api_keys.repository import ApiKeyOwnerDisabledError
 from app.modules.api_keys.schemas import (
     ApiKeyAccountCostResponse,
@@ -312,9 +313,10 @@ async def regenerate_api_key(
 @router.get("/trends", response_model=ApiKeysTrendsResponse)
 @router.get("/trends/", response_model=ApiKeysTrendsResponse, include_in_schema=False)
 async def get_api_keys_trends(
+    provider: AccountProvider | None = None,
     context: ApiKeysContext = Depends(get_api_keys_context),
 ) -> ApiKeysTrendsResponse:
-    result = await context.service.get_keys_trends()
+    result = await context.service.get_keys_trends(provider)
     return ApiKeysTrendsResponse(
         since=result.since,
         until=result.until,

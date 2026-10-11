@@ -3,6 +3,7 @@ import { isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 
 export type ComparisonMetric = "cost" | "tokens";
 export type ComparisonMode = "hourly" | "cumulative";
+export type ComparisonProvider = "all" | "codex" | "claude" | "openrouter";
 export type ComparisonSeries = {
   id: string;
   name: string | null;

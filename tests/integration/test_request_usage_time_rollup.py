@@ -55,6 +55,7 @@ def _hourly_row(
     service_tier: str = DIMENSION_SENTINEL,
     request_kind: str = "normal",
     is_deleted: bool = False,
+    model_source_kind: str = DIMENSION_SENTINEL,
     **measures,
 ) -> HourlyUsageRollupRow:
     return HourlyUsageRollupRow(
@@ -65,6 +66,7 @@ def _hourly_row(
         service_tier=service_tier,
         request_kind=request_kind,
         is_deleted=is_deleted,
+        model_source_kind=model_source_kind,
         **measures,
     )
 

@@ -208,7 +208,11 @@ class ApiKeysRepositoryProtocol(Protocol):
     ) -> list[ApiKeyTrendBucket]: ...
 
     async def trends_by_keys(
-        self, since: datetime, until: datetime, bucket_seconds: int = 3600
+        self,
+        since: datetime,
+        until: datetime,
+        bucket_seconds: int = 3600,
+        provider: AccountProvider | None = None,
     ) -> dict[str, list[ApiKeyTrendBucket]]: ...
 
     async def key_names(self) -> dict[str, str]: ...
@@ -1314,11 +1318,11 @@ class ApiKeysService:
         )
         return _build_api_key_trends(key_id, buckets, since, now, _DETAIL_BUCKET_SECONDS)
 
-    async def get_keys_trends(self) -> ApiKeysTrendsData:
+    async def get_keys_trends(self, provider: AccountProvider | None = None) -> ApiKeysTrendsData:
         now = utcnow()
         since = now - timedelta(days=_SPARKLINE_DAYS)
         names = await self._repository.key_names()
-        buckets_by_key = await self._repository.trends_by_keys(since, now, _DETAIL_BUCKET_SECONDS)
+        buckets_by_key = await self._repository.trends_by_keys(since, now, _DETAIL_BUCKET_SECONDS, provider)
         series: list[ApiKeyComparisonSeriesData] = []
         deleted_buckets: list[ApiKeyTrendBucket] = []
         for key_id, buckets in sorted(buckets_by_key.items()):

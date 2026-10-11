@@ -37,7 +37,30 @@ const fixture: ApiKeysTrendsResponse = {
   }],
 };
 
+const providerProps = { provider: "all" as const, onProviderChange: vi.fn() };
+
 describe("ApiComparisonTrend", () => {
+  it("offers the provider filter and reports the chosen provider", async () => {
+    const user = userEvent.setup();
+    const onProviderChange = vi.fn();
+    const view = renderWithProviders(
+      <ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()}
+        provider="all" onProviderChange={onProviderChange} />,
+    );
+    const filter = screen.getByRole("group", { name: "Provider" });
+    expect(within(filter).getAllByRole("button").map((button) => button.textContent)).toEqual(
+      ["All", "Codex", "Claude", "OpenRouter"],
+    );
+    expect(within(filter).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(filter).getByRole("button", { name: "Claude" }));
+    expect(onProviderChange).toHaveBeenCalledWith("claude");
+    view.rerender(
+      <ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()}
+        provider="claude" onProviderChange={onProviderChange} />,
+    );
+    expect(within(filter).getByRole("button", { name: "Claude" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("renders independent hourly costs and tokens without stacking", async () => {
     const user = userEvent.setup();
     const data: ApiKeysTrendsResponse = {
@@ -48,7 +71,7 @@ describe("ApiComparisonTrend", () => {
         tokens: [{ t: "2026-09-30T08:00:00Z", v: value * 100 }],
       })),
     };
-    renderWithProviders(<ApiComparisonTrend data={data} loading={false} error={false} onRetry={vi.fn()} />);
+    renderWithProviders(<ApiComparisonTrend data={data} loading={false} error={false} onRetry={vi.fn()} {...providerProps} />);
     for (const value of [2, 3]) {
       expect(screen.getByTestId(`series-key:key-${value}`)).not.toHaveAttribute("data-stack-id");
       expect(chartData[0].values[`key:key-${value}`]).toBe(value);
@@ -66,7 +89,7 @@ describe("ApiComparisonTrend", () => {
 
   it("switches measure and accumulation, and preserves legend choices across controls", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()} />);
+    renderWithProviders(<ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()} {...providerProps} />);
     expect(screen.getByTestId("hourly-chart")).toBeVisible();
     expect(screen.getByText("Unknown", { exact: true })).toBeVisible();
     expect(screen.getByText("$0.00", { exact: true })).toBeVisible();
@@ -85,11 +108,11 @@ describe("ApiComparisonTrend", () => {
 
   it("shows explicit loading, empty and retryable error states", async () => {
     const onRetry = vi.fn();
-    const view = renderWithProviders(<ApiComparisonTrend loading error={false} onRetry={onRetry} />);
+    const view = renderWithProviders(<ApiComparisonTrend loading error={false} onRetry={onRetry} {...providerProps} />);
     expect(screen.getByRole("status", { name: "Loading usage trends" })).toBeVisible();
-    view.rerender(<ApiComparisonTrend data={{ ...fixture, series: [] }} loading={false} error={false} onRetry={onRetry} />);
+    view.rerender(<ApiComparisonTrend data={{ ...fixture, series: [] }} loading={false} error={false} onRetry={onRetry} {...providerProps} />);
     expect(screen.getByText("No usage recorded in the last 7 days.")).toBeVisible();
-    view.rerender(<ApiComparisonTrend loading={false} error onRetry={onRetry} />);
+    view.rerender(<ApiComparisonTrend loading={false} error onRetry={onRetry} {...providerProps} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Usage trends could not be loaded.");
     expect(screen.queryByText("No usage recorded in the last 7 days.")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));

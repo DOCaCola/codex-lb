@@ -2,11 +2,18 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ChartToggle } from "@/components/chart-toggle";
+import { ProviderLogo } from "@/components/brand/provider-account-name";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/lazy-recharts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildComparisonPoints, comparisonSeriesId, selectComparisonSeries } from "@/features/apis/comparison-trends";
-import type { ComparisonMetric, ComparisonMode, ComparisonPoint, ComparisonSeries } from "@/features/apis/comparison-trends";
+import type {
+  ComparisonMetric,
+  ComparisonMode,
+  ComparisonPoint,
+  ComparisonProvider,
+  ComparisonSeries,
+} from "@/features/apis/comparison-trends";
 import type { ApiKeysTrendsResponse } from "@/features/apis/schemas";
 import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
@@ -53,9 +60,11 @@ export type ApiComparisonTrendProps = {
   loading: boolean;
   error: boolean;
   onRetry: () => void;
+  provider: ComparisonProvider;
+  onProviderChange: (provider: ComparisonProvider) => void;
 };
 
-export function ApiComparisonTrend({ data, loading, error, onRetry }: ApiComparisonTrendProps) {
+export function ApiComparisonTrend({ data, loading, error, onRetry, provider, onProviderChange }: ApiComparisonTrendProps) {
   const { t } = useTranslation();
   const [metric, setMetric] = useState<ComparisonMetric>("cost");
   const [mode, setMode] = useState<ComparisonMode>("hourly");
@@ -101,6 +110,17 @@ export function ApiComparisonTrend({ data, loading, error, onRetry }: ApiCompari
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ChartToggle<ComparisonProvider>
+            label={t("apiKeys.trend.provider")}
+            value={provider}
+            options={[
+              { value: "all", label: t("apiKeys.trend.allProviders") },
+              { value: "codex", label: t("apiKeys.trend.codex"), icon: <ProviderLogo provider="codex" /> },
+              { value: "claude", label: t("apiKeys.trend.claude"), icon: <ProviderLogo provider="claude" /> },
+              { value: "openrouter", label: t("apiKeys.trend.openrouter"), icon: <ProviderLogo provider="openrouter" /> },
+            ]}
+            onChange={onProviderChange}
+          />
           <ChartToggle<ComparisonMetric>
             label={t("apiKeys.trend.metric")}
             value={metric}

@@ -14,6 +14,7 @@ import type {
   ApiKeyUpdateRequest,
 } from "@/features/api-keys/schemas";
 import { getApiKeysTrends, getApiKeyTrends, getApiKeyUsage7Day } from "@/features/apis/api";
+import type { ComparisonProvider } from "@/features/apis/comparison-trends";
 
 export type ApiKeyQueryOptions = {
   /** Set false for principals the backend would answer with 403 (read-only guests). */
@@ -103,10 +104,10 @@ export function useApiKeyTrends(keyId: string | null, { enabled = true }: ApiKey
   });
 }
 
-export function useApiKeysTrends({ enabled = true }: ApiKeyQueryOptions = {}) {
+export function useApiKeysTrends(provider: ComparisonProvider, { enabled = true }: ApiKeyQueryOptions = {}) {
   return useQuery({
-    queryKey: ["api-keys", "trends", "overview"],
-    queryFn: getApiKeysTrends,
+    queryKey: ["api-keys", "trends", "overview", provider],
+    queryFn: () => getApiKeysTrends(provider),
     enabled,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,

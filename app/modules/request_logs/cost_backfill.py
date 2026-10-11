@@ -139,6 +139,7 @@ async def _mirror_cost(session: AsyncSession, state: AccountUsageRollupState, lo
                 RequestUsageHourlyRollup.service_tier == to_dimension(log.service_tier),
                 RequestUsageHourlyRollup.request_kind == log.request_kind,
                 RequestUsageHourlyRollup.is_deleted == (log.deleted_at is not None),
+                RequestUsageHourlyRollup.model_source_kind == to_dimension(log.model_source_kind),
             )
             .values(
                 cost_usd=RequestUsageHourlyRollup.cost_usd + cost,
