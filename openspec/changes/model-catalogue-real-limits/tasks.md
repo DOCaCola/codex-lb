@@ -19,4 +19,4 @@
 
 - [x] 3.1 Unit, integration and frontend tests for catalog projection,
   override validation, migration and settings UI.
-- [ ] 3.2 Deploy and set 350000 overrides for active Claude models.
+- [x] 3.2 Deploy and set 350000 overrides for active Claude models.
