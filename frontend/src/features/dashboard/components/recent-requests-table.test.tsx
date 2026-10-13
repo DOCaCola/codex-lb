@@ -574,6 +574,10 @@ describe("RecentRequestsTable", () => {
              errorCode: "rate_limit_exceeded",
              errorMessage: longError,
             ...NULL_FAILURE_METADATA,
+            failurePhase: "upstream",
+            failureDetail: "owner_account_unavailable",
+            upstreamStatusCode: 429,
+            upstreamErrorCode: "usage_limit_reached",
             ...NULL_USERAGENT_METADATA,
             upstreamTransport: "auto",
             upstreamProxyRouteMode: "account_bound",
@@ -621,6 +625,12 @@ describe("RecentRequestsTable", () => {
     expect(within(dialog).getByText("req-1")).toBeInTheDocument();
     expect(within(dialog).getByTestId("request-archive-panel")).toHaveTextContent("Archive for archive-req-1");
     expect(within(dialog).getByText("rate_limit_exceeded")).toBeInTheDocument();
+    expect(within(dialog).getByText("Upstream error code")).toBeInTheDocument();
+    expect(within(dialog).getByText("usage_limit_reached")).toBeInTheDocument();
+    expect(within(dialog).getByText("Upstream status")).toBeInTheDocument();
+    expect(within(dialog).getByText("429")).toBeInTheDocument();
+    expect(within(dialog).getByText("Failure stage")).toBeInTheDocument();
+    expect(within(dialog).getByText("upstream: owner_account_unavailable")).toBeInTheDocument();
     expect(dialog.textContent).toContain("Rate limit reached while processing this request");
     expect(within(dialog).getByText("1.0 s")).toBeInTheDocument();
     expect(within(dialog).getByText("Route mode")).toBeInTheDocument();

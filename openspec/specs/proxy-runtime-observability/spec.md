@@ -3,7 +3,9 @@
 ## Purpose
 
 Define proxy observability contracts so runtime failures, routing decisions, and admission rejections remain diagnosable.
+
 ## Requirements
+
 ### Requirement: Proxy 4xx/5xx responses are logged with error detail
 When the proxy returns a 4xx or 5xx response for a proxied request, the system MUST log the request id, method, path, status code, error code, and error message to the console. For local admission rejections, the log MUST also include the rejection stage or lane.
 
@@ -25,6 +27,15 @@ When the proxy resolves or fails closed a continuity-sensitive follow-up request
 - **WHEN** the proxy rewrites or returns a retryable continuity error because owner metadata is unavailable, continuity state is lost, or the pinned owner account is unavailable
 - **THEN** the system emits a structured diagnostic describing the continuity surface and fail-closed reason
 - **AND** Prometheus counters record the low-cardinality source or reason labels for that decision
+
+#### Scenario: masked owner rejection keeps its upstream cause
+- **WHEN** the pinned owner account rejects a previous-response follow-up with a quota, rate-limit or overload error
+- **AND** the proxy cannot move the turn to another account and masks the rejection as a retryable owner-unavailable error
+- **THEN** the error returned to the client keeps its retryable code and type
+- **AND** its message does not expose the owner's quota details
+- **AND** the request log row records that upstream error code with failure phase `upstream`
+- **AND** the fail-closed diagnostic includes that upstream error code
+- **AND** the dashboard request details show the recorded upstream error code
 
 ### Requirement: Full upstream conversation archive
 

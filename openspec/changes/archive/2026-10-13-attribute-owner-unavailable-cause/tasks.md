@@ -1,0 +1,3 @@
+- [x] 1. Record the upstream error code, failure phase, failure detail and fail-closed diagnostic in the websocket, HTTP bridge and HTTP stream masks, keeping the client message generic.
+- [x] 2. Show the upstream error code, upstream status and failure stage in the dashboard request details.
+- [x] 3. Cover the masks and the request details in tests.

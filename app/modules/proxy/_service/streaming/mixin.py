@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import replace
 from typing import Any, AsyncIterator, Mapping, cast
 
 import aiohttp
@@ -676,6 +677,12 @@ class _StreamingMixin(_StreamingRetryMixin):
                     )
                     error_code = rewritten_code
                     error_message = rewritten_message
+                    if upstream_error_code is not None:
+                        failure_metadata = _RequestLogFailureMetadata(
+                            failure_phase="upstream",
+                            failure_detail="owner_account_unavailable",
+                            upstream_error_code=upstream_error_code,
+                        )
                     await _record_or_defer_owner_recovery_health(upstream_error, upstream_error_code)
                     upstream_error = cast(
                         UpstreamError, {"message": rewritten_message, "type": "upstream_error", "code": rewritten_code}
@@ -842,6 +849,12 @@ class _StreamingMixin(_StreamingRetryMixin):
                             )
                             error_code = rewritten_code
                             error_message = rewritten_message
+                            if upstream_error_code is not None:
+                                failure_metadata = _RequestLogFailureMetadata(
+                                    failure_phase="upstream",
+                                    failure_detail="owner_account_unavailable",
+                                    upstream_error_code=upstream_error_code,
+                                )
                             settlement.error = _upstream_error_from_openai(error)
                             settlement.record_success = False
                             await _record_or_defer_owner_recovery_health(
@@ -957,6 +970,12 @@ class _StreamingMixin(_StreamingRetryMixin):
                 status = "error"
                 error_code = rewritten_code
                 error_message = rewritten_message
+                if upstream_error_code is not None:
+                    failure_metadata = replace(
+                        failure_metadata,
+                        failure_detail="owner_account_unavailable",
+                        upstream_error_code=upstream_error_code,
+                    )
                 settlement.record_success = False
                 settlement.error = _upstream_error_from_openai(error)
                 await _record_or_defer_owner_recovery_health(_upstream_error_from_openai(error), upstream_error_code)

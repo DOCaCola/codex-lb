@@ -1657,12 +1657,17 @@ def _rewrite_websocket_continuity_corruption_event(
 def _rewrite_websocket_previous_response_owner_unavailable_event(
     *,
     request_state: _WebSocketRequestState,
+    upstream_error_code: str,
 ) -> tuple[OpenAIEvent | None, dict[str, JsonValue] | None, str | None, str]:
+    request_state.failure_phase_override = "upstream"
+    request_state.failure_detail_override = "owner_account_unavailable"
+    request_state.upstream_error_code_override = upstream_error_code
     _record_continuity_fail_closed(
         surface="websocket_stream",
         reason="owner_account_unavailable",
         previous_response_id=request_state.previous_response_id,
         session_id=request_state.session_id,
+        upstream_error_code=upstream_error_code,
     )
     rewritten_event_payload = response_failed_event(
         "upstream_unavailable",

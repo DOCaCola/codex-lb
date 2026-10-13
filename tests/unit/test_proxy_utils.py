@@ -33121,6 +33121,9 @@ async def test_process_upstream_websocket_text_maps_previous_response_usage_limi
     error_payload = cast(dict[str, JsonValue], response_payload["error"])
     assert error_payload["code"] == "upstream_unavailable"
     assert error_payload["message"] == "Previous response owner account is unavailable; retry later."
+    assert pending_request.upstream_error_code_override == "usage_limit_reached"
+    assert pending_request.failure_phase_override == "upstream"
+    assert pending_request.failure_detail_override == "owner_account_unavailable"
     assert upstream_control.reconnect_requested is False
     assert upstream_control.suppress_downstream_event is False
     assert upstream_control.replay_request_state is None
@@ -41886,6 +41889,7 @@ async def test_stream_previous_response_owner_usage_limit_fails_closed(monkeypat
     assert request_logs.lookup_calls == [("resp_prev_anchor", None, "sid-stream")]
     assert await service.drain_persistence_tasks(timeout_seconds=1)
     assert request_logs.calls[0]["error_code"] == "previous_response_owner_unavailable"
+    assert request_logs.calls[0]["upstream_error_code"] == "usage_limit_reached"
     assert request_logs.calls[0]["account_id"] == account_owner.id
     assert len(select_account_calls) == 1
     assert select_account_calls[0]["account_ids"] is None

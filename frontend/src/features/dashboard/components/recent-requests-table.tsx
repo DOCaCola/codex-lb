@@ -698,6 +698,25 @@ export function RecentRequestsTable({
                 <RequestDetailField label={t("dashboard.requests.columns.time")} value={selectedRequest ? formatDateTimeInline(selectedRequest.requestedAt, dateDisplayFormat) : "—"} />
                 <RequestDetailField label={t("dashboard.requestDetails.errorCode")} value={selectedRequest?.errorCode ?? "—"} mono />
               </div>
+              {selectedRequest?.upstreamErrorCode ||
+              selectedRequest?.upstreamStatusCode != null ||
+              selectedRequest?.failureDetail ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {selectedRequest.upstreamErrorCode ? (
+                    <RequestDetailField label={t("dashboard.requestDetails.upstreamErrorCode")} value={selectedRequest.upstreamErrorCode} mono />
+                  ) : null}
+                  {selectedRequest.upstreamStatusCode != null ? (
+                    <RequestDetailField label={t("dashboard.requestDetails.upstreamStatus")} value={String(selectedRequest.upstreamStatusCode)} mono />
+                  ) : null}
+                  {selectedRequest.failureDetail ? (
+                    <RequestDetailField
+                      label={t("dashboard.requestDetails.failureDetail")}
+                      value={selectedRequest.failurePhase ? `${selectedRequest.failurePhase}: ${selectedRequest.failureDetail}` : selectedRequest.failureDetail}
+                      mono
+                    />
+                  ) : null}
+                </div>
+              ) : null}
               {selectedRequest?.upstreamProxyRouteMode ||
               selectedRequest?.upstreamProxyPoolId ||
               selectedRequest?.upstreamProxyEndpointId ||

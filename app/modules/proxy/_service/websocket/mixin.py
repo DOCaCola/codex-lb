@@ -6273,9 +6273,13 @@ class _WebSocketMixin:
             and request_state.response_id is not None
             and not request_state.awaiting_response_created
         )
+        owner_rejection_code = (
+            retry_error_code
+            if not accepted_lifecycle_replay and retry_error_code in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES
+            else None
+        )
         retry_safe_owner_replay = bool(
-            not accepted_lifecycle_replay
-            and retry_error_code in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES
+            owner_rejection_code is not None
             and request_state.previous_response_id is not None
             and request_state.preferred_account_id is not None
             and request_state.proxy_injected_previous_response_id
@@ -6283,8 +6287,7 @@ class _WebSocketMixin:
             and request_state.fresh_upstream_request_text
         )
         if (
-            not accepted_lifecycle_replay
-            and retry_error_code in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES
+            owner_rejection_code is not None
             and request_state.previous_response_id is not None
             and request_state.preferred_account_id is not None
             and not retry_safe_previous_response_not_found
@@ -6293,23 +6296,25 @@ class _WebSocketMixin:
             await proxy._handle_stream_error(
                 account,
                 {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},
-                retry_error_code,
+                owner_rejection_code,
             )
             event, payload, event_type, downstream_text = _rewrite_websocket_previous_response_owner_unavailable_event(
                 request_state=request_state,
+                upstream_error_code=owner_rejection_code,
             )
             retry_error_code = None
-        if retry_safe_owner_replay and not retry_safe_previous_response_not_found:
+        if owner_rejection_code is not None and retry_safe_owner_replay and not retry_safe_previous_response_not_found:
             safe_request_text = _prepare_websocket_request_state_for_account_switch(request_state)
             if safe_request_text is None:
                 await proxy._handle_stream_error(
                     account,
                     {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},
-                    retry_error_code,
+                    owner_rejection_code,
                 )
                 event, payload, event_type, downstream_text = (
                     _rewrite_websocket_previous_response_owner_unavailable_event(
                         request_state=request_state,
+                        upstream_error_code=owner_rejection_code,
                     )
                 )
                 retry_error_code = None

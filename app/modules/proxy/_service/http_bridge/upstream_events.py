@@ -3616,6 +3616,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                     event, payload, event_type, rewritten_text = (
                         _rewrite_websocket_previous_response_owner_unavailable_event(
                             request_state=status_request_state,
+                            upstream_error_code=owner_pinned_quota_error,
                         )
                     )
                     event_block = f"data: {rewritten_text}\n\n"
