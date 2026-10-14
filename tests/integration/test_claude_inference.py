@@ -1450,8 +1450,9 @@ async def test_codex_tool_search_defers_loaded_tools_upstream(async_client, pool
     body, headers = captured[0][2], captured[0][3]
     assert "advanced-tool-use-2025-11-20" in headers["anthropic-beta"].split(",")
     deferred = [tool for tool in body["tools"] if tool.get("defer_loading")]
-    assert len(deferred) == 1
-    assert "cache_control" not in deferred[0]
+    assert [tool["name"] for tool in deferred][0] == "tool_search_deferred_anchor"
+    assert len(deferred) == 2
+    assert not any("cache_control" in tool for tool in deferred)
     results = [
         block
         for message in body["messages"]
@@ -1459,7 +1460,7 @@ async def test_codex_tool_search_defers_loaded_tools_upstream(async_client, pool
         for block in message["content"]
         if block["type"] == "tool_result"
     ]
-    assert results[0]["content"] == [{"type": "tool_reference", "tool_name": deferred[0]["name"]}]
+    assert results[0]["content"] == [{"type": "tool_reference", "tool_name": deferred[1]["name"]}]
 
 
 async def test_codex_code_mode_reaches_claude_with_its_contract(async_client, pool, monkeypatch):

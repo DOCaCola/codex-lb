@@ -32,6 +32,21 @@ _WIRE_CALL_ID = re.compile(r"[A-Za-z0-9_-]+")
 _ENCODED_CALL_ID_PREFIX = "cxlb_tid_v1_"
 # Claude Code sends this beta while tool search defers tools (CLIProxyAPI claudeBodyUsesAdvancedToolUse).
 ADVANCED_TOOL_USE_BETA = "advanced-tool-use-2025-11-20"
+# Anthropic keeps the prompt cache when deferred tools are added, but not when a request goes from no
+# deferred tool to one, and the advanced-tool-use beta follows the first deferred tool. A search-capable
+# request therefore declares this never-referenced deferred tool from its first turn, so each discovery
+# only appends (CLIProxyAPI responsesDeferredAnchorJSON). Client tools never take a lower snake_case
+# wire name (see tool_names.claude_code_name), so it cannot collide with one.
+DEFERRED_ANCHOR_NAME = "tool_search_deferred_anchor"
+
+
+def _deferred_anchor() -> dict[str, JsonValue]:
+    return {
+        "name": DEFERRED_ANCHOR_NAME,
+        "description": "Placeholder that is never loaded; tool search returns the real tools.",
+        "input_schema": {"type": "object", "properties": {}},
+        "defer_loading": True,
+    }
 
 
 def defers_tools(body: dict[str, JsonValue]) -> bool:
@@ -303,6 +318,8 @@ def project_responses(
     searchable = any(isinstance(tool, dict) and tool.get("type") == "tool_search" for tool in raw_tools)
     for index, tool in enumerate(raw_tools):
         declare(tool, param=f"tools[{index}]")
+    if searchable:
+        declarations.append(_deferred_anchor())
     contract = code_mode_contract(tools)
     if contract is not None:
         system.append({"type": "text", "text": contract})

@@ -12,7 +12,7 @@ from app.modules.claude.cache_lineage import CacheLineage
 from app.modules.claude.caching import cache_translated
 from app.modules.claude.capabilities import reasoning_spec
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
-from app.modules.claude.protocol import defers_tools, project_responses
+from app.modules.claude.protocol import DEFERRED_ANCHOR_NAME, defers_tools, project_responses
 from app.modules.claude.responses import ResponsesProjection
 from tests.claude_json_helpers import at
 
@@ -85,11 +85,17 @@ def test_search_tool_is_a_cached_declaration_and_loaded_tools_are_deferred_refer
 
     tools = after.body["tools"]
     assert isinstance(tools, list)
-    # The cached prefix (non-deferred tools) is identical before and after the load.
-    assert [tool for tool in tools if isinstance(tool, dict) and not tool.get("defer_loading")] == before.body["tools"]
+    # The first discovery only appends a deferred tool: the anchor already deferred tools before it.
+    assert tools[:-1] == before.body["tools"]
+    assert at(before.body, "tools", 2) == {
+        "name": DEFERRED_ANCHOR_NAME,
+        "description": "Placeholder that is never loaded; tool search returns the real tools.",
+        "input_schema": {"type": "object", "properties": {}},
+        "defer_loading": True,
+    }
     assert at(before.body, "tools", 1, "name") == "ToolSearch"
     assert at(before.body, "tools", 1, "input_schema", "required") == ["query"]
-    loaded = at(after.body, "tools", 2)
+    loaded = at(after.body, "tools", 3)
     assert isinstance(loaded, dict)
     assert loaded["defer_loading"] is True
     assert after.tools.by_wire[str(loaded["name"])].namespace == "mcp__codex_app__"
@@ -103,15 +109,15 @@ def test_search_tool_is_a_cached_declaration_and_loaded_tools_are_deferred_refer
             "content": [{"type": "tool_reference", "tool_name": loaded["name"]}],
         }
     ]
-    assert defers_tools(after.body) and not defers_tools(before.body)
+    assert defers_tools(after.body) and defers_tools(before.body)
 
 
 def test_repeated_loads_declare_each_tool_once_and_reference_it_every_time():
     items = [USER, search_call("s1"), search_output([CANVAS], "s1"), search_call("s2"), search_output([CANVAS], "s2")]
     projected = project(request([SEARCH_TOOL], items))
     tools = projected.body["tools"]
-    assert isinstance(tools, list) and len(tools) == 2
-    name = at(projected.body, "tools", 1, "name")
+    assert isinstance(tools, list) and len(tools) == 3
+    name = at(projected.body, "tools", 2, "name")
     for index in (2, 4):
         assert at(projected.body, "messages", index, "content", 0, "content") == [
             {"type": "tool_reference", "tool_name": name}
@@ -137,7 +143,7 @@ def test_empty_and_standalone_search_results_are_text():
     content = at(standalone.body, "messages", 0, "content")
     assert isinstance(content, list)
     assert not any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
-    assert content[-1] == {"type": "text", "text": f"Loaded tools: {at(standalone.body, 'tools', 1, 'name')}"}
+    assert content[-1] == {"type": "text", "text": f"Loaded tools: {at(standalone.body, 'tools', 2, 'name')}"}
 
 
 @pytest.mark.parametrize(

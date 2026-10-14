@@ -1,0 +1,2 @@
+- [x] 1. Declare the constant deferred anchor in search-capable Claude projections, between request tools and loaded tools.
+- [x] 2. Cover the anchor, its position, the constant beta and its absence without tool search in tests.
