@@ -281,6 +281,22 @@ describe("Claude subscription snapshots", () => {
   });
 });
 
+describe("native generation speed", () => {
+  it("ends the generation window at the upstream terminal, not the log write", () => {
+    expect(formatGenerationSpeed({
+      ...LAYOUT_REQUEST, modelSourceKind: null,
+      latencyMs: 4500, latencyFirstTokenMs: 500, latencyUpstreamTerminalMs: 1500, outputTokensRaw: 140, reasoningTokens: 40,
+    })).toBe("100.0");
+  });
+
+  it("keeps the only recorded end for rows logged before the terminal was stored", () => {
+    expect(formatGenerationSpeed({
+      ...LAYOUT_REQUEST, modelSourceKind: null,
+      latencyMs: 4500, latencyFirstTokenMs: 500, latencyUpstreamTerminalMs: null, outputTokensRaw: 140, reasoningTokens: 40,
+    })).toBe("25.0");
+  });
+});
+
 describe.each(["openrouter", "claude"] as const)("%s gateway metrics", (sourceKind) => {
   it.each([null, 40])("uses total output and marks generation TPS estimated with reasoning %s", (reasoningTokens) => {
     expect(formatGenerationSpeed({

@@ -95,6 +95,7 @@ def usage_tokens_from_log(log: RequestLogLike) -> UsageTokens | None:
         input_tokens=float(input_tokens),
         output_tokens=float(output_tokens),
         cached_input_tokens=float(cached_tokens),
+        cache_write_input_tokens=float(log.cache_creation_tokens or 0),
     )
 
 
@@ -155,6 +156,7 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
     full_breakdown: UsageCostBreakdown | None = None
     input_usd: float | None = None
     cached_input_usd: float | None = None
+    cache_write_usd: float | None = None
     output_usd: float | None = None
     raw_total_usd: float | None = None
     total_usd: float | None = None
@@ -184,6 +186,7 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
                         input_tokens=float(input_tokens),
                         output_tokens=0.0,
                         cached_input_tokens=float(cached_tokens),
+                        cache_write_input_tokens=float(log.cache_creation_tokens or 0),
                     ),
                     price,
                     service_tier=log.service_tier,
@@ -192,6 +195,9 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
                 if input_breakdown is not None:
                     input_usd = input_breakdown.input_usd
                     cached_input_usd = input_breakdown.cached_input_usd
+                    # Rows without a recorded write count leave write cost unknown, not zero.
+                    if log.cache_creation_tokens is not None:
+                        cache_write_usd = input_breakdown.cache_write_usd
             if output_tokens is not None:
                 output_breakdown = calculate_cost_breakdown_from_usage(
                     UsageTokens(
@@ -221,6 +227,7 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
             cached_input_usd=cached_input_usd,
             output_usd=output_usd,
             total_usd=persisted_cost,
+            cache_write_usd=cache_write_usd,
         )
     if full_breakdown is not None:
         return UsageCostBreakdown(
@@ -228,12 +235,14 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
             cached_input_usd=cached_input_usd,
             output_usd=output_usd,
             total_usd=total_usd,
+            cache_write_usd=cache_write_usd,
         )
     return UsageCostBreakdown(
         input_usd=input_usd,
         cached_input_usd=cached_input_usd,
         output_usd=output_usd,
         total_usd=None,
+        cache_write_usd=cache_write_usd,
     )
 
 

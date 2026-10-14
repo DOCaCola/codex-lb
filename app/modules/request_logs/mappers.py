@@ -114,5 +114,6 @@ def to_request_log_entry(
         cost_breakdown=RequestLogCostBreakdown(**cost_breakdown.__dict__),
         latency_ms=log.latency_ms,
         latency_first_token_ms=log.latency_first_token_ms,
+        latency_upstream_terminal_ms=log.latency_upstream_terminal_ms,
         latency_queue_ms=log.latency_queue_ms,
     )

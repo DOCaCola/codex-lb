@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from pydantic import ValidationError
 
 from app.core.openai.models import ResponseUsage, ResponseUsageDetails
+from app.core.usage.logs import calculated_cost_from_log, cost_breakdown_from_log
 from app.core.usage.pricing import (
     DEFAULT_MODEL_ALIASES,
     DEFAULT_PRICING_MODELS,
@@ -133,6 +137,127 @@ def test_calculate_cost_from_usage_cached_tokens():
     cost = calculate_cost_from_usage(usage, price)
     expected = (800 / 1_000_000) * 2.0 + (200 / 1_000_000) * 0.5 + (500 / 1_000_000) * 4.0
     assert cost == pytest.approx(expected)
+
+
+def test_cache_writes_replace_uncached_input_in_cost_breakdown():
+    usage = ResponseUsage(
+        input_tokens=100_000,
+        output_tokens=1000,
+        input_tokens_details=ResponseUsageDetails(cached_tokens=20_000, cache_write_tokens=50_000),
+    )
+    price = ModelPrice(10, 50, 1, cache_write_input_per_1m=12.5)
+    breakdown = calculate_cost_breakdown_from_usage(usage, price)
+    assert breakdown is not None
+    assert breakdown.input_usd == pytest.approx(0.30)
+    assert breakdown.cache_write_usd == pytest.approx(0.625)
+    assert breakdown.cached_input_usd == pytest.approx(0.02)
+    assert breakdown.output_usd == pytest.approx(0.05)
+    assert breakdown.total_usd == pytest.approx(0.995)
+
+
+@pytest.mark.parametrize(("writes", "expected"), [(None, 0.87), (0, 0.87), (-5, 0.87), (200_000, 1.07)])
+def test_cache_write_count_is_limited_to_remaining_input(writes, expected):
+    usage = ResponseUsage(
+        input_tokens=100_000,
+        output_tokens=1000,
+        input_tokens_details=ResponseUsageDetails(cached_tokens=20_000, cache_write_tokens=writes),
+    )
+    price = ModelPrice(10, 50, 1, cache_write_input_per_1m=12.5)
+    assert calculate_cost_from_usage(usage, price) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("tokens", "tier", "expected"),
+    [
+        (272_000, None, 3.45),
+        (272_001, None, 6.875025),
+        (272_000, "priority", 6.90),
+        (272_001, "priority", 13.75005),
+        (272_000, "fast", 6.90),
+        (272_001, "fast", 13.75005),
+        (272_000, "flex", 1.725),
+        (272_001, "flex", 3.4375125),
+    ],
+)
+def test_cache_writes_follow_service_tier_and_context(tokens, tier, expected):
+    price = ModelPrice(
+        input_per_1m=10,
+        output_per_1m=50,
+        cached_input_per_1m=1,
+        cache_write_input_per_1m=12.5,
+        priority_input_per_1m=20,
+        priority_output_per_1m=100,
+        priority_cache_write_input_per_1m=25,
+        flex_input_per_1m=5,
+        flex_output_per_1m=25,
+        flex_cache_write_input_per_1m=6.25,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=20,
+        long_context_output_per_1m=75,
+        long_context_cache_write_input_per_1m=25,
+        priority_long_context_input_per_1m=40,
+        priority_long_context_output_per_1m=150,
+        priority_long_context_cache_write_input_per_1m=50,
+        flex_long_context_input_per_1m=10,
+        flex_long_context_output_per_1m=37.5,
+        flex_long_context_cache_write_input_per_1m=12.5,
+    )
+    usage = UsageTokens(tokens, 1000, cache_write_input_tokens=tokens)
+    assert calculate_cost_from_usage(usage, price, service_tier=tier) == pytest.approx(expected)
+
+
+def test_missing_write_price_preserves_input_charge():
+    usage = UsageTokens(100_000, 1000, 20_000, 50_000)
+    assert calculate_cost_from_usage(usage, ModelPrice(10, 50, 1)) == pytest.approx(0.87)
+
+
+@pytest.mark.parametrize("value", [True, "100", "invalid"])
+def test_cache_write_count_uses_strict_usage_contract(value):
+    with pytest.raises(ValidationError):
+        ResponseUsage.model_validate(
+            {"input_tokens": 100, "output_tokens": 1, "input_tokens_details": {"cache_write_tokens": value}}
+        )
+
+
+def _native_log(**overrides):
+    values = {
+        "model_source_kind": None,
+        "model": "gpt-test",
+        "service_tier": None,
+        "input_tokens": 100_000,
+        "output_tokens": 1000,
+        "cached_input_tokens": 20_000,
+        "cache_creation_tokens": 50_000,
+        "cache_creation_5m_tokens": None,
+        "cache_creation_1h_tokens": None,
+        "reasoning_tokens": None,
+        "cost_usd": None,
+        "cost_provenance": None,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_native_log_cost_prices_stored_cache_writes(monkeypatch):
+    from app.core.usage import pricing_catalog
+
+    monkeypatch.setattr(pricing_catalog, "_prices", {"gpt-test": ModelPrice(10, 50, 1, cache_write_input_per_1m=12.5)})
+    log = _native_log()
+    total = calculated_cost_from_log(log)
+    assert total == pytest.approx(0.995)
+    breakdown = cost_breakdown_from_log(_native_log(cost_usd=total))
+    assert breakdown.input_usd == pytest.approx(0.30)
+    assert breakdown.cache_write_usd == pytest.approx(0.625)
+    assert breakdown.cached_input_usd == pytest.approx(0.02)
+    assert breakdown.output_usd == pytest.approx(0.05)
+    assert breakdown.total_usd == pytest.approx(0.995)
+
+
+def test_native_log_without_write_count_keeps_historical_cost(monkeypatch):
+    from app.core.usage import pricing_catalog
+
+    monkeypatch.setattr(pricing_catalog, "_prices", {"gpt-test": ModelPrice(10, 50, 1, cache_write_input_per_1m=12.5)})
+    assert calculated_cost_from_log(_native_log(cache_creation_tokens=None)) == pytest.approx(0.87)
 
 
 def test_calculate_cost_breakdown_from_usage_cached_tokens():

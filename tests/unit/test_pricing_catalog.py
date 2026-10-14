@@ -107,6 +107,107 @@ def test_invalid_source_cannot_install_prices(bad):
         catalog.parse_models_dev(models_dev({"input": bad, "output": 50}))
 
 
+@pytest.mark.parametrize("source", ["models_dev", "litellm"])
+def test_openai_cache_write_prices_survive_catalog_snapshot_roundtrip(source):
+    if source == "models_dev":
+        data = models_dev(
+            {
+                "input": 10,
+                "output": 50,
+                "cache_read": 1,
+                "cache_write": 12.5,
+                "tiers": [
+                    {
+                        "tier": {"type": "context", "size": 272000},
+                        "input": 20,
+                        "output": 75,
+                        "cache_read": 2,
+                        "cache_write": 25,
+                    }
+                ],
+            }
+        )
+        prices = catalog.parse_models_dev(data)
+    else:
+        prices = catalog.parse_litellm(
+            {
+                "gpt-test": {
+                    "litellm_provider": "openai",
+                    "mode": "chat",
+                    "input_cost_per_token": 1e-5,
+                    "output_cost_per_token": 5e-5,
+                    "cache_read_input_token_cost": 1e-6,
+                    "cache_creation_input_token_cost": 1.25e-5,
+                    "input_cost_per_token_above_272k_tokens": 2e-5,
+                    "output_cost_per_token_above_272k_tokens": 7.5e-5,
+                    "cache_creation_input_token_cost_above_272k_tokens": 2.5e-5,
+                }
+            }
+        )
+    restored = catalog.decode_snapshot(json.loads(catalog.encode_snapshot(prices)))["gpt-test"]
+    assert restored.cache_write_input_per_1m == pytest.approx(12.5)
+    assert restored.long_context_cache_write_input_per_1m == pytest.approx(25)
+    usage = UsageTokens(100_000, 1000, 20_000, 50_000)
+    assert calculate_cost_from_usage(usage, restored) == pytest.approx(0.995)
+
+
+def test_litellm_priority_and_flex_cache_write_prices():
+    price = catalog.parse_litellm(
+        {
+            "gpt-test": {
+                "litellm_provider": "openai",
+                "mode": "chat",
+                "input_cost_per_token": 1e-5,
+                "output_cost_per_token": 5e-5,
+                "cache_creation_input_token_cost": 1.25e-5,
+                "input_cost_per_token_priority": 2e-5,
+                "output_cost_per_token_priority": 1e-4,
+                "cache_creation_input_token_cost_priority": 2.5e-5,
+                "input_cost_per_token_flex": 5e-6,
+                "output_cost_per_token_flex": 2.5e-5,
+                "cache_creation_input_token_cost_flex": 6.25e-6,
+            }
+        }
+    )["gpt-test"]
+    assert price.priority_cache_write_input_per_1m == pytest.approx(25)
+    assert price.flex_cache_write_input_per_1m == pytest.approx(6.25)
+
+
+def test_anthropic_cache_write_prices_keep_ttl_fields():
+    data = {
+        "anthropic": {
+            "models": {
+                "claude-test": {
+                    "modalities": {"output": ["text"]},
+                    "cost": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75},
+                }
+            }
+        }
+    }
+    price = catalog.parse_models_dev(data)["claude-test"]
+    assert price.cache_write_5m_per_1m == pytest.approx(3.75)
+    assert price.cache_write_input_per_1m is None
+    litellm = catalog.parse_litellm(
+        {
+            "claude-test": {
+                "litellm_provider": "anthropic",
+                "mode": "chat",
+                "input_cost_per_token": 3e-6,
+                "output_cost_per_token": 1.5e-5,
+                "cache_creation_input_token_cost": 3.75e-6,
+            }
+        }
+    )["claude-test"]
+    assert litellm.cache_write_5m_per_1m == pytest.approx(3.75)
+    assert litellm.cache_write_input_per_1m is None
+
+
+@pytest.mark.parametrize("bad", [-1, float("nan"), float("inf"), True, "12.5"])
+def test_invalid_cache_write_price_rejects_model(bad):
+    with pytest.raises(ValueError):
+        catalog.parse_models_dev(models_dev({"input": 10, "output": 50, "cache_write": bad}))
+
+
 def test_litellm_units_and_non_openai_filter():
     entry = {
         "litellm_provider": "openai",

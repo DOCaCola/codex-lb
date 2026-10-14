@@ -11,7 +11,9 @@ export function formatGenerationSpeed(request: RequestLog): string | null {
 
   const gatewayMeasured = isGatewayMeasuredSpeed(request);
   const outputCount = request.outputTokensRaw - (gatewayMeasured ? 0 : (request.reasoningTokens ?? 0));
-  const generationMs = request.latencyMs - request.latencyFirstTokenMs;
+  // Generation ends at the upstream terminal; latencyMs also spans delivery and
+  // settlement. Rows logged before the terminal was stored only have latencyMs.
+  const generationMs = (request.latencyUpstreamTerminalMs ?? request.latencyMs) - request.latencyFirstTokenMs;
   if (outputCount <= 0 || generationMs <= 0) {
     return null;
   }

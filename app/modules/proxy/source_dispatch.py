@@ -601,6 +601,8 @@ class SourceDispatch:
                     preserve_unknown_cost=True,
                     latency_ms=timings.latency_ms if timings is not None else None,
                     latency_first_token_ms=timings.latency_first_token_ms if timings is not None else None,
+                    # A source's timing already ends at its own generation end.
+                    latency_upstream_terminal_ms=timings.latency_ms if timings is not None else None,
                     status=status,
                     error_code=error_code,
                     error_message=error_message,

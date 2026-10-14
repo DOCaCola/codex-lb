@@ -176,6 +176,9 @@ class _RequestLogMixin:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        # Responses ``input_tokens_details.cache_write_tokens``; stored in the
+        # shared cache-creation column (a subset of ``input_tokens``).
+        cache_write_input_tokens: int | None = None,
         reasoning_tokens: int | None = None,
         reasoning_effort: str | None = None,
         transport: str | None = None,
@@ -216,9 +219,11 @@ class _RequestLogMixin:
         latency_upstream_send_ms: int | None = None,
         # Start-to-upstream-terminal latency stamped when the terminal frame was
         # parsed, before downstream delivery, terminal bookkeeping, settlement
-        # and cleanup. Not persisted; it is the end of the throughput sample's
-        # span. ``None`` (no terminal frame was parsed) falls back to
-        # ``latency_ms``; such rows are error rows and are not sampled.
+        # and cleanup. Persisted as the end of the row's generation window for
+        # dashboard/report throughput, and the end of the routing throughput
+        # sample's span. ``None`` (no terminal frame was parsed) leaves the
+        # routing sample on ``latency_ms``; such rows are error rows and are
+        # not sampled.
         latency_upstream_terminal_ms: int | None = None,
     ) -> None:
         task = scheduler_for(self).create_task(
@@ -245,6 +250,7 @@ class _RequestLogMixin:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cached_input_tokens=cached_input_tokens,
+                cache_write_input_tokens=cache_write_input_tokens,
                 reasoning_tokens=reasoning_tokens,
                 reasoning_effort=reasoning_effort,
                 transport=transport,
@@ -271,6 +277,7 @@ class _RequestLogMixin:
                 useragent_group=useragent_group,
                 conversation_id=conversation_id,
                 client_ip=client_ip,
+                latency_upstream_terminal_ms=latency_upstream_terminal_ms,
             ),
             name=f"proxy-request-log-{request_id}",
         )
@@ -456,6 +463,7 @@ class _RequestLogMixin:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        cache_write_input_tokens: int | None = None,
         reasoning_tokens: int | None = None,
         reasoning_effort: str | None = None,
         transport: str | None = None,
@@ -482,6 +490,7 @@ class _RequestLogMixin:
         useragent_group: str | None = None,
         conversation_id: str | None = None,
         client_ip: str | None = None,
+        latency_upstream_terminal_ms: int | None = None,
     ) -> None:
         proxy = cast(_RequestLogServiceProtocol, self)
         try:
@@ -499,6 +508,7 @@ class _RequestLogMixin:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cached_input_tokens=cached_input_tokens,
+                    cache_creation_tokens=cache_write_input_tokens,
                     reasoning_tokens=reasoning_tokens,
                     reasoning_effort=reasoning_effort,
                     transport=transport,
@@ -511,6 +521,7 @@ class _RequestLogMixin:
                     request_operation=request_operation,
                     latency_ms=latency_ms,
                     latency_first_token_ms=latency_first_token_ms,
+                    latency_upstream_terminal_ms=latency_upstream_terminal_ms,
                     latency_queue_ms=latency_queue_ms,
                     latency_response_created_ms=latency_response_created_ms,
                     latency_first_upstream_event_ms=latency_first_upstream_event_ms,

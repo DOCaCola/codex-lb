@@ -2493,7 +2493,7 @@ async def test_proxy_stream_records_cached_and_reasoning_tokens(async_client, mo
         usage = {
             "input_tokens": 10,
             "output_tokens": 5,
-            "input_tokens_details": {"cached_tokens": 3},
+            "input_tokens_details": {"cached_tokens": 3, "cache_write_tokens": 4},
             "output_tokens_details": {"reasoning_tokens": 2},
         }
         event = {"type": "response.completed", "response": {"id": "resp_1", "usage": usage}}
@@ -2527,6 +2527,7 @@ async def test_proxy_stream_records_cached_and_reasoning_tokens(async_client, mo
         assert log.input_tokens == 10
         assert log.output_tokens == 5
         assert log.cached_input_tokens == 3
+        assert log.cache_creation_tokens == 4
         assert log.reasoning_tokens == 2
         assert log.status == "success"
 

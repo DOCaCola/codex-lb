@@ -9,7 +9,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from hashlib import sha256
 from typing import Any, Literal, NoReturn, Protocol, cast
@@ -895,6 +895,7 @@ class _StreamSettlement:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cached_input_tokens: int | None = None
+    cache_write_input_tokens: int | None = None
     error_code: str | None = None
     error_message: str | None = None
     error: UpstreamError | None = None
@@ -945,6 +946,17 @@ class _RequestLogFailureMetadata:
     upstream_status_code: int | None = None
     upstream_error_code: str | None = None
     bridge_stage: str | None = None
+
+    def with_owner_rejection_cause(self, upstream_error_code: str | None) -> _RequestLogFailureMetadata:
+        """Attribute a masked owner rejection to the upstream error it hides."""
+        if upstream_error_code is None:
+            return self
+        return replace(
+            self,
+            failure_phase="upstream",
+            failure_detail="owner_account_unavailable",
+            upstream_error_code=upstream_error_code,
+        )
 
 
 @dataclass(slots=True)

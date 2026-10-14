@@ -344,6 +344,7 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
                                     "input_tokens": 3,
                                     "output_tokens": 2,
                                     "total_tokens": 5,
+                                    "input_tokens_details": {"cache_write_tokens": 2},
                                 },
                             },
                         },
@@ -396,6 +397,7 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
         return reservation
 
     original_finalize_usage_reservation = ApiKeysService.finalize_usage_reservation
+    settled_cache_writes: list[int] = []
 
     async def gated_finalize_usage_reservation(
         self: ApiKeysService,
@@ -405,10 +407,12 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
         input_tokens: int,
         output_tokens: int,
         cached_input_tokens: int = 0,
+        cache_write_input_tokens: int = 0,
         service_tier: str | None = None,
         cost_microdollars: int | None = None,
     ) -> None:
         settlement_started.set()
+        settled_cache_writes.append(cache_write_input_tokens)
         await asyncio.to_thread(settlement_release.wait)
         await original_finalize_usage_reservation(
             self,
@@ -417,6 +421,7 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cached_input_tokens=cached_input_tokens,
+            cache_write_input_tokens=cache_write_input_tokens,
             service_tier=service_tier,
             cost_microdollars=cost_microdollars,
         )
@@ -568,6 +573,8 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
     assert persisted_log.transport == "websocket"
     assert persisted_log.input_tokens == 3
     assert persisted_log.output_tokens == 2
+    assert persisted_log.cache_creation_tokens == 2
+    assert settled_cache_writes == [2]
 
 
 def test_responses_websocket_route_drain_interrupts_blocked_idle_receive(

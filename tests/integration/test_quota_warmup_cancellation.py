@@ -47,10 +47,11 @@ async def test_cancelled_warmup_settles_known_usage(
             input_tokens: int,
             output_tokens: int,
             cached_input_tokens: int = 0,
+            cache_write_input_tokens: int = 0,
             service_tier: str | None = None,
             cost_microdollars: int | None = None,
         ) -> None:
-            del service_tier, cost_microdollars
+            del cache_write_input_tokens, service_tier, cost_microdollars
             finalization_started.set()
             await allow_finalization.wait()
             settlements.append(

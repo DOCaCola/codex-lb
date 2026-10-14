@@ -2179,12 +2179,9 @@ class _CompactMixin:
                 error_message=log_error_message,
                 input_tokens=usage.input_tokens if usage else None,
                 output_tokens=usage.output_tokens if usage else None,
-                cached_input_tokens=(
-                    usage.input_tokens_details.cached_tokens if usage and usage.input_tokens_details else None
-                ),
-                reasoning_tokens=(
-                    usage.output_tokens_details.reasoning_tokens if usage and usage.output_tokens_details else None
-                ),
+                cached_input_tokens=usage.cached_input_tokens if usage else None,
+                cache_write_input_tokens=usage.cache_write_input_tokens if usage else None,
+                reasoning_tokens=usage.reasoning_output_tokens if usage else None,
                 reasoning_effort=reasoning_effort,
                 transport=_REQUEST_TRANSPORT_HTTP,
                 service_tier=billable_service_tier(request_service_tier, actual_service_tier),

@@ -17,7 +17,11 @@ def request_tps_expr() -> ColumnElement[float]:
         (gateway, RequestLog.output_tokens),
         else_=RequestLog.output_tokens - func.coalesce(RequestLog.reasoning_tokens, 0),
     )
-    elapsed = RequestLog.latency_ms - RequestLog.latency_first_token_ms
+    # Generation ends at the upstream terminal, not at the log write that closes
+    # ``latency_ms``. Rows logged before the terminal was stored only have
+    # ``latency_ms``; it is their sole recorded end.
+    generation_end = func.coalesce(RequestLog.latency_upstream_terminal_ms, RequestLog.latency_ms)
+    elapsed = generation_end - RequestLog.latency_first_token_ms
     return case(
         (
             and_(

@@ -46,7 +46,7 @@ def _price(values: dict[str, float]) -> ModelPrice:
         raise ValueError("Incomplete base prices")
     for prefix in ("priority_", "flex_", "long_context_", "priority_long_context_", "flex_long_context_"):
         group = {prefix + part + "_per_1m" for part in ("input", "output")}
-        present = (group | {prefix + "cached_input_per_1m"}) & values.keys()
+        present = (group | {prefix + "cached_input_per_1m", prefix + "cache_write_input_per_1m"}) & values.keys()
         if present and not group <= values.keys():
             raise ValueError("Incomplete tier prices")
         if present and "long_context_" in prefix and values.get("long_context_threshold_tokens", 0) <= 0:
@@ -56,8 +56,10 @@ def _price(values: dict[str, float]) -> ModelPrice:
 
 def parse_models_dev(payload: JsonValue) -> dict[str, ModelPrice]:
     result: dict[str, ModelPrice] = {}
-    names = {"input": "input_per_1m", "output": "output_per_1m", "cache_read": "cached_input_per_1m"}
+    base_names = {"input": "input_per_1m", "output": "output_per_1m", "cache_read": "cached_input_per_1m"}
     for provider in ("openai", "anthropic"):
+        # Anthropic cache writes carry a TTL and are mapped to the 5m/1h fields below.
+        names = base_names if provider == "anthropic" else {**base_names, "cache_write": "cache_write_input_per_1m"}
         models = _object(_object(_object(payload).get(provider)).get("models"))
         for model, raw in models.items():
             entry = _object(raw)
@@ -119,7 +121,7 @@ def parse_models_dev(payload: JsonValue) -> dict[str, ModelPrice]:
 
 def parse_litellm(payload: JsonValue) -> dict[str, ModelPrice]:
     result: dict[str, ModelPrice] = {}
-    base = {
+    shared_base = {
         "input_cost_per_token": "input_per_1m",
         "output_cost_per_token": "output_per_1m",
         "cache_read_input_token_cost": "cached_input_per_1m",
@@ -130,6 +132,12 @@ def parse_litellm(payload: JsonValue) -> dict[str, ModelPrice]:
             continue
         if any(word in model for word in ("audio", "realtime")) or model == "gpt-5.6":
             continue
+        # Anthropic cache writes carry a TTL and are mapped to the 5m/1h fields below.
+        base = (
+            shared_base
+            if entry.get("litellm_provider") == "anthropic"
+            else {**shared_base, "cache_creation_input_token_cost": "cache_write_input_per_1m"}
+        )
         try:
             values = _rates(entry, base, 1_000_000)
             if entry.get("litellm_provider") == "anthropic":

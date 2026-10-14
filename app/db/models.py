@@ -605,6 +605,11 @@ class RequestLog(Base):
     upstream_thinking_budget_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_first_token_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Start-to-upstream-terminal frame (or a model source's own generation end),
+    # excluding downstream delivery and settlement that ``latency_ms`` includes.
+    # Throughput spans ``latency_first_token_ms``..this instant. NULL on rows
+    # logged before it was stored and on paths that never stream a generation.
+    latency_upstream_terminal_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Pre-attempt wait (account selection, admission waits, failed failover
     # attempts) — kept out of latency_ms/latency_first_token_ms so those two
     # always share the successful attempt's anchor.

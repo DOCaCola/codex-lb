@@ -80,6 +80,29 @@ async def test_gateway_tps_includes_one_second_boundary(async_session, source_ki
     assert rows[0].median_tps == 100
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("terminal_ms", "expected_tps"), [(1500, 100), (None, 25)])
+async def test_native_tps_ends_at_upstream_terminal_not_log_write(async_session, terminal_ms, expected_tps):
+    # 4.5 s of settlement after the terminal frame must not dilute throughput;
+    # a row logged before the terminal was stored keeps its only recorded end.
+    async_session.add(
+        RequestLog(
+            request_id="native-terminal",
+            requested_at=datetime(2026, 6, 1, 9),
+            model="gpt-test",
+            status="success",
+            output_tokens=140,
+            reasoning_tokens=40,
+            latency_ms=4500,
+            latency_first_token_ms=500,
+            latency_upstream_terminal_ms=terminal_ms,
+        )
+    )
+    await async_session.commit()
+    rows = await ReportsRepository(async_session).aggregate_daily_rows(date(2026, 6, 1), date(2026, 6, 1), timezone.utc)
+    assert rows[0].median_tps == expected_tps
+
+
 class ReportAggregateFilters(TypedDict, total=False):
     account_ids: list[str]
     model: str

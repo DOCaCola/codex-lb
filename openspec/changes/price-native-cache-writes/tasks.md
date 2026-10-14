@@ -1,0 +1,5 @@
+- [x] 1. Parse native `cache_write_tokens` and carry it through settlement and request-log writes into `cache_creation_tokens`.
+- [x] 2. Add OpenAI cache-write rates per tier to the pricing model and bill writes separately from uncached input.
+- [x] 3. Parse write rates from models.dev and LiteLLM without changing Anthropic TTL write fields.
+- [x] 4. Pass the write count to API-key reservation settlement.
+- [x] 5. Cover pricing, catalog parsing, request-log cost and settlement in tests.

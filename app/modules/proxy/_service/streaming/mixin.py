@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from dataclasses import replace
 from typing import Any, AsyncIterator, Mapping, cast
 
 import aiohttp
@@ -677,12 +676,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                     )
                     error_code = rewritten_code
                     error_message = rewritten_message
-                    if upstream_error_code is not None:
-                        failure_metadata = _RequestLogFailureMetadata(
-                            failure_phase="upstream",
-                            failure_detail="owner_account_unavailable",
-                            upstream_error_code=upstream_error_code,
-                        )
+                    failure_metadata = failure_metadata.with_owner_rejection_cause(upstream_error_code)
                     await _record_or_defer_owner_recovery_health(upstream_error, upstream_error_code)
                     upstream_error = cast(
                         UpstreamError, {"message": rewritten_message, "type": "upstream_error", "code": rewritten_code}
@@ -849,12 +843,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                             )
                             error_code = rewritten_code
                             error_message = rewritten_message
-                            if upstream_error_code is not None:
-                                failure_metadata = _RequestLogFailureMetadata(
-                                    failure_phase="upstream",
-                                    failure_detail="owner_account_unavailable",
-                                    upstream_error_code=upstream_error_code,
-                                )
+                            failure_metadata = failure_metadata.with_owner_rejection_cause(upstream_error_code)
                             settlement.error = _upstream_error_from_openai(error)
                             settlement.record_success = False
                             await _record_or_defer_owner_recovery_health(
@@ -970,12 +959,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 status = "error"
                 error_code = rewritten_code
                 error_message = rewritten_message
-                if upstream_error_code is not None:
-                    failure_metadata = replace(
-                        failure_metadata,
-                        failure_detail="owner_account_unavailable",
-                        upstream_error_code=upstream_error_code,
-                    )
+                failure_metadata = failure_metadata.with_owner_rejection_cause(upstream_error_code)
                 settlement.record_success = False
                 settlement.error = _upstream_error_from_openai(error)
                 await _record_or_defer_owner_recovery_health(_upstream_error_from_openai(error), upstream_error_code)
@@ -1035,12 +1019,9 @@ class _StreamingMixin(_StreamingRetryMixin):
             await proxy._load_balancer.release_account_lease(account_response_create_lease)
             input_tokens = usage.input_tokens if usage else None
             output_tokens = usage.output_tokens if usage else None
-            cached_input_tokens = (
-                usage.input_tokens_details.cached_tokens if usage and usage.input_tokens_details else None
-            )
-            reasoning_tokens = (
-                usage.output_tokens_details.reasoning_tokens if usage and usage.output_tokens_details else None
-            )
+            cached_input_tokens = usage.cached_input_tokens if usage else None
+            cache_write_input_tokens = usage.cache_write_input_tokens if usage else None
+            reasoning_tokens = usage.reasoning_output_tokens if usage else None
             if latency_first_token_ms is None:
                 latency_first_token_ms = _finalize_ttft_latency_ms(
                     ttft_reasoning_deltas, attempt_started_at, now=clock.monotonic()
@@ -1051,6 +1032,7 @@ class _StreamingMixin(_StreamingRetryMixin):
             settlement.input_tokens = input_tokens
             settlement.output_tokens = output_tokens
             settlement.cached_input_tokens = cached_input_tokens
+            settlement.cache_write_input_tokens = cache_write_input_tokens
             if settlement.error_code is None:
                 settlement.error_code = error_code
             settlement.error_message = error_message
@@ -1068,6 +1050,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cached_input_tokens=cached_input_tokens,
+                cache_write_input_tokens=cache_write_input_tokens,
                 reasoning_tokens=reasoning_tokens,
                 reasoning_effort=reasoning_effort,
                 transport=request_transport,

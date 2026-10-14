@@ -66,6 +66,10 @@ class ResponseUsageDetails(BaseModel):
 
     cached_tokens: StrictInt | None = None
     cache_creation_tokens: StrictInt | None = None
+    # Responses API prompt-cache writes, a subset of uncached input billed at the
+    # model's cache-write rate. Distinct from Chat Completions'
+    # ``cache_creation_tokens`` reported by OpenAI-compatible model sources.
+    cache_write_tokens: StrictInt | None = None
     reasoning_tokens: StrictInt | None = None
 
 
@@ -77,6 +81,18 @@ class ResponseUsage(BaseModel):
     total_tokens: StrictInt | None = None
     input_tokens_details: ResponseUsageDetails | None = None
     output_tokens_details: ResponseUsageDetails | None = None
+
+    @property
+    def cached_input_tokens(self) -> int | None:
+        return self.input_tokens_details.cached_tokens if self.input_tokens_details else None
+
+    @property
+    def cache_write_input_tokens(self) -> int | None:
+        return self.input_tokens_details.cache_write_tokens if self.input_tokens_details else None
+
+    @property
+    def reasoning_output_tokens(self) -> int | None:
+        return self.output_tokens_details.reasoning_tokens if self.output_tokens_details else None
 
 
 class OpenAIResponse(BaseModel):

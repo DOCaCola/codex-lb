@@ -1,0 +1,5 @@
+- [x] 1. Add the nullable `latency_upstream_terminal_ms` column with a migration.
+- [x] 2. Persist the upstream-terminal latency from the WebSocket, HTTP stream and model-source paths.
+- [x] 3. End the TPS generation window at the upstream terminal in aggregate and per-request speed.
+- [x] 4. Expose the field in the request-log API and use it in the dashboard.
+- [x] 5. Cover aggregate and per-request speed in tests.
