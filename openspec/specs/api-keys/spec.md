@@ -2037,9 +2037,9 @@ million tokens MUST be:
 The `priority` and `fast` service-tier aliases MUST use the Fast rates. Standard
 long-context rates MUST apply only when input tokens exceed 272,000. Flex
 long-context pricing MUST use the existing Flex long-context multipliers.
-Cache-write, Batch, and regional-processing pricing MUST remain outside this
-contract because the existing codex-lb usage model does not account for those
-dimensions.
+Cache-write tokens MUST be priced by the native prompt-cache write requirement.
+Batch and regional-processing pricing MUST remain outside this contract because
+the existing codex-lb usage model does not account for those dimensions.
 
 #### Scenario: Astra Standard usage uses published rates
 
@@ -2066,3 +2066,21 @@ dimensions.
 
 - **WHEN** cost accounting receives `gpt-6-astra-2026-09-04`
 - **THEN** it resolves to the `gpt-6-astra` pricing entry
+
+### Requirement: Native prompt-cache writes are recorded and priced
+When native Responses usage reports `input_tokens_details.cache_write_tokens`, the system MUST record the count in the request log's cache-creation tokens and MUST price those tokens at the model's cache-write rate for the effective service tier and context length. Cache writes MUST be treated as a subset of uncached input: they MUST be clamped to input tokens minus cached tokens and MUST NOT also be billed as ordinary input. When the active catalog has no cache-write price for the effective tier, writes MUST be billed at that tier's input rate. API-key usage settlement MUST use the same cache-write count as the request log.
+
+#### Scenario: Astra write tokens use the write rate
+- **GIVEN** the active catalog specifies Astra standard input, cached-input, cache-write and output rates of `10 / 1 / 12.5 / 50` USD per million tokens
+- **WHEN** a standard Astra request reports 200,000 input tokens, including 100,000 cached tokens and 20,000 cache-write tokens, and no output
+- **THEN** its cost is `$1.15`
+- **AND** the request log records 20,000 cache-creation tokens
+
+#### Scenario: Missing write price bills writes as input
+- **GIVEN** a model whose catalog entry has no cache-write price
+- **WHEN** a request reports cache-write tokens
+- **THEN** the total cost equals the cost of the same usage without a cache-write count
+
+#### Scenario: Overstated write count is clamped
+- **WHEN** a request reports more cache-write tokens than its uncached input
+- **THEN** only the uncached input is billed as cache writes
