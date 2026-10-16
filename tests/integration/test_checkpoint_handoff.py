@@ -1,4 +1,4 @@
-"""Public native compact -> on-demand owner-pinned handoff -> source paths."""
+"""Public native compact -> on-demand handoff on any eligible account -> source paths."""
 
 import asyncio
 import json
@@ -12,7 +12,7 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
 from app.core.errors import openai_error
 from app.core.usage.request_operation import get_request_operation
-from app.db.models import Account, ApiKeyUsageReservation, RequestLog
+from app.db.models import Account, AccountStatus, ApiKeyUsageReservation, RequestLog
 from app.db.session import get_background_session
 from app.modules.proxy import service as proxy_service
 from tests.integration import test_checkpoint_history_routing as recovery_fixtures
@@ -61,9 +61,11 @@ async def handoff_env(recovery_env, monkeypatch):
                 "usage": {"input_tokens": 101, "output_tokens": 20, "total_tokens": 121},
             }
             if "error" in outcome:
-                status = outcome.get("error_status", 400)
-                code = "upstream_error" if status >= 500 else "invalid_encrypted_content"
-                raise ProxyResponseError(status, openai_error(code, "Native handoff rejected"))
+                failing = outcome.get("error_accounts")
+                if failing is None or kwargs.get("codex_lb_account_id") in failing:
+                    status = outcome.get("error_status", 400)
+                    code = "upstream_error" if status >= 500 else "invalid_encrypted_content"
+                    raise ProxyResponseError(status, openai_error(code, "Native handoff rejected"))
             if outcome.get("refusal"):
                 response["output"][0]["content"].append({"type": "refusal", "refusal": "Cannot summarize"})
             if outcome.get("tool"):
@@ -177,52 +179,88 @@ async def test_successful_compact_over_old_opaque_input_establishes_provenance(a
     assert len(generated) == 1 and outcome["text"] in json.dumps(captured[0][2])
 
 
-async def test_paused_owner_is_not_replaced(async_client, handoff_env):
+async def _producer_id() -> str:
+    async with get_background_session() as session:
+        return (
+            await session.execute(select(Account.id).where(Account.chatgpt_account_id == "affinity-test-account"))
+        ).scalar_one()
+
+
+@pytest.mark.parametrize("status", [AccountStatus.PAUSED, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED])
+async def test_unavailable_producer_hands_off_on_another_account(async_client, handoff_env, status):
+    from tests.integration.test_proxy_compact import _import_account, _mark_account_status
+
     headers, generated, finished, captured, directory, outcome = handoff_env
     await observe_compact(async_client, headers, directory)
-    from tests.integration.test_proxy_compact import _import_account
-
-    await _import_account(async_client, email="backup@example.invalid", raw_account_id="backup-owner")
-    async with get_background_session() as session:
-        account = (
-            (await session.execute(select(Account).where(Account.chatgpt_account_id == "affinity-test-account")))
-            .scalars()
-            .one()
-        )
-        account.status = "paused"
-        await session.commit()
-    from app.modules.proxy.account_cache import get_account_selection_cache
-
-    get_account_selection_cache().invalidate()
+    backup = await _import_account(async_client, email="backup@example.invalid", raw_account_id="backup-owner")
+    await _mark_account_status(await _producer_id(), status)
     result = await async_client.post(
         PATHS[1],
         headers=headers,
         json={"model": MODEL, "input": [checkpoint()], "stream": False},
     )
-    assert result.status_code >= 400, result.text
-    assert not generated and not captured
+    assert result.status_code == 200, result.text
+    assert [kwargs["codex_lb_account_id"] for _, kwargs in generated] == [backup]
+    assert generated[0][0]["input"][0] == checkpoint()
+    assert outcome["text"] in json.dumps(captured[0][2])
 
 
-async def test_transient_native_failure_never_sends_checkpoint_to_backup(async_client, handoff_env, monkeypatch):
-    from tests.integration.test_proxy_compact import _import_account
+async def test_exhausted_pool_reports_the_ordinary_selection_error(async_client, handoff_env):
+    from tests.integration.test_proxy_compact import _mark_account_status
 
     headers, generated, finished, captured, directory, outcome = handoff_env
     await observe_compact(async_client, headers, directory)
-    backup = await _import_account(async_client, email="healthy@example.invalid", raw_account_id="healthy-backup")
-    monkeypatch.setattr(proxy_service, "_MAX_TRANSIENT_SAME_ACCOUNT_RETRIES", 0)
-    outcome.update(error=True, error_status=503)
-    async with get_background_session() as session:
-        owner = (
-            await session.execute(select(Account.id).where(Account.chatgpt_account_id == "affinity-test-account"))
-        ).scalar_one()
+    await _mark_account_status(await _producer_id(), AccountStatus.RATE_LIMITED)
+    ordinary = await async_client.post(
+        "/backend-api/codex/responses", headers=headers, json={"model": "gpt-5.1", "input": "hi", "stream": False}
+    )
+    result = await async_client.post(
+        PATHS[1], headers=headers, json={"model": MODEL, "input": [checkpoint()], "stream": False}
+    )
+    assert (result.status_code, result.json()["error"]["code"]) == (
+        ordinary.status_code,
+        ordinary.json()["error"]["code"],
+    ), result.text
+    assert result.json()["error"]["code"] != "previous_response_owner_unavailable"
+    assert not generated and not captured
+
+
+async def test_replacement_rejecting_checkpoint_surfaces_without_health_penalty(async_client, handoff_env):
+    from app.dependencies import get_proxy_service_for_app
+    from tests.integration.test_proxy_compact import _import_account, _mark_account_status
+
+    headers, generated, finished, captured, directory, outcome = handoff_env
+    await observe_compact(async_client, headers, directory)
+    backup = await _import_account(async_client, email="reject@example.invalid", raw_account_id="reject-backup")
+    await _mark_account_status(await _producer_id(), AccountStatus.PAUSED)
+    outcome.update(error=True, error_status=400, error_accounts={backup})
     response = await async_client.post(
         PATHS[1], headers=headers, json={"model": MODEL, "input": [checkpoint()], "stream": False}
     )
-    assert response.status_code >= 400, response.text
-    assert generated and len(generated) == len(finished) and not captured
-    assert all(
-        kwargs["codex_lb_account_id"] == owner and kwargs["codex_lb_account_id"] != backup for _, kwargs in generated
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "invalid_encrypted_content"
+    assert len(generated) == 1 and not captured
+    assert not list((directory / "handoffs").glob("*.replay"))
+    runtime = get_proxy_service_for_app(async_client._transport.app)._load_balancer._runtime.get(backup)
+    assert runtime is None or (runtime.error_count == 0 and runtime.last_error_at is None)
+
+
+async def test_handoff_log_names_the_switching_conversation(async_client, handoff_env):
+    headers, generated, finished, captured, directory, outcome = handoff_env
+    await observe_compact(async_client, headers, directory)
+    client_headers = {**headers, "user-agent": "codex_cli_rs/0.163.0", "thread-id": "thread-switching"}
+    result = await async_client.post(
+        PATHS[1], headers=client_headers, json={"model": MODEL, "input": [checkpoint()], "stream": False}
     )
+    assert result.status_code == 200, result.text
+    assert "thread-id" not in json.dumps(generated[0][1].get("headers", {}))
+    async with get_background_session() as session:
+        conversation_id = (
+            await session.execute(
+                select(RequestLog.conversation_id).where(RequestLog.request_operation == "checkpoint_handoff")
+            )
+        ).scalar_one()
+    assert conversation_id == "thread-switching"
 
 
 async def test_no_handoff_for_readable_or_portable_context(async_client, handoff_env):
@@ -461,10 +499,7 @@ async def test_cancelled_handoff_closes_native_work_and_releases_claim(async_cli
 
 
 @pytest.mark.parametrize("cached", [False, True])
-@pytest.mark.parametrize("restriction", ["model", "account"])
-async def test_current_key_permissions_block_handoff(async_client, handoff_env, cached, restriction):
-    from tests.integration.test_proxy_compact import _import_account
-
+async def test_current_key_model_permission_blocks_handoff(async_client, handoff_env, cached):
     headers, generated, finished, captured, directory, outcome = handoff_env
     await observe_compact(async_client, headers, directory)
     body = {"model": MODEL, "input": [checkpoint()], "stream": False}
@@ -472,17 +507,28 @@ async def test_current_key_permissions_block_handoff(async_client, handoff_env, 
         response = await async_client.post(PATHS[1], headers=headers, json=body)
         assert response.status_code == 200, response.text
     key_id = (await async_client.get("/api/api-keys/")).json()[0]["id"]
-    if restriction == "model":
-        settings = {"allowedModels": [MODEL]}
-    else:
-        backup = await _import_account(async_client, email="scope@example.invalid", raw_account_id="scope-owner")
-        settings = {"assignedAccountIds": [backup]}
-    configured = await async_client.patch(f"/api/api-keys/{key_id}", json=settings)
+    configured = await async_client.patch(f"/api/api-keys/{key_id}", json={"allowedModels": [MODEL]})
     assert configured.status_code == 200, configured.text
     initial_generations, initial_dispatches = len(generated), len(captured)
     response = await async_client.post(PATHS[1], headers=headers, json=body)
     assert response.status_code == 403, response.text
     assert len(generated) == initial_generations and len(captured) == initial_dispatches
+
+
+async def test_account_scoped_key_hands_off_on_its_permitted_account(async_client, handoff_env):
+    from tests.integration.test_proxy_compact import _import_account
+
+    headers, generated, finished, captured, directory, outcome = handoff_env
+    await observe_compact(async_client, headers, directory)
+    scoped = await _import_account(async_client, email="scope@example.invalid", raw_account_id="scope-owner")
+    key_id = (await async_client.get("/api/api-keys/")).json()[0]["id"]
+    configured = await async_client.patch(f"/api/api-keys/{key_id}", json={"assignedAccountIds": [scoped]})
+    assert configured.status_code == 200, configured.text
+    response = await async_client.post(
+        PATHS[1], headers=headers, json={"model": MODEL, "input": [checkpoint()], "stream": False}
+    )
+    assert response.status_code == 200, response.text
+    assert [kwargs["codex_lb_account_id"] for _, kwargs in generated] == [scoped]
 
 
 async def test_destination_enforcement_never_rewrites_native_origin_and_handoff_settles(async_client, handoff_env):

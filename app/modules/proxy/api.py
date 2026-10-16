@@ -7674,11 +7674,12 @@ def _source_checkpoint_resolver(
 
         native_context = context if context is not None else get_proxy_context(request)
         # Mutable client affinity/continuation headers belong to the destination
-        # turn, not this auxiliary native request. Ownership comes only from
-        # verified checkpoint provenance and cannot be softened by sticky routing.
+        # turn, not this auxiliary native request. Native checkpoints are not
+        # bound to their producing account, so ordinary selection routes it.
         native_request = Request(
             {**request.scope, "headers": [(b"content-type", b"application/json")]}, receive=request.receive
         )
+        _, _, conversation_id = _request_log_client_fields(request.headers)
         native_payload = ResponsesRequest.model_validate(
             {
                 "model": origin.model,
@@ -7708,7 +7709,7 @@ def _source_checkpoint_resolver(
                         native_context,
                         api_key,
                         api_key_policy_already_applied=True,
-                        required_account_id=origin.account_id,
+                        request_log_conversation_id=conversation_id,
                     ),
                     timeout=HANDOFF_TIMEOUT_SECONDS,
                 )
@@ -7717,7 +7718,7 @@ def _source_checkpoint_resolver(
                     504,
                     openai_error(
                         "compaction_handoff_timeout",
-                        "The original provider did not complete checkpoint handoff in time.",
+                        "The native provider did not complete checkpoint handoff in time.",
                     ),
                 ) from exc
             body = json.loads(bytes(result.body))
@@ -7748,7 +7749,7 @@ async def _collect_responses(
     api_key_policy_already_applied: bool = False,
     preserve_upstream_stream_mode: bool = False,
     prohibit_fast_mode: bool = False,
-    required_account_id: str | None = None,
+    request_log_conversation_id: str | None = None,
 ) -> Response:
     service_tier_was_enforced = False
     if not api_key_policy_already_applied:
@@ -7789,7 +7790,7 @@ async def _collect_responses(
         reservation,
         reservation_cleanup=reservation_cleanup,
     )
-    bridge_active = required_account_id is None and await _http_bridge_active_for_request(
+    bridge_active = await _http_bridge_active_for_request(
         payload,
         request.headers,
         api_key,
@@ -7832,7 +7833,7 @@ async def _collect_responses(
             api_key_reservation=reservation,
             suppress_text_done_events=suppress_text_done_events,
             client_ip=client_ip,
-            **({"required_account_id": required_account_id} if required_account_id is not None else {}),
+            request_log_conversation_id=request_log_conversation_id,
         )
     captured_turn_state_headers: dict[str, str] = {}
     responses_owner_forward_dispatched_token = _bind_propagated_responses_owner_forward_dispatched(

@@ -3,6 +3,10 @@
 Records are addressed by API key and checkpoint digest. The digest names a
 ciphertext only that key's client history carries, so forked conversations,
 which replay the same checkpoint under a new conversation ID, share them.
+
+Native checkpoints are readable by every OpenAI account, as ordinary native
+turns that move between accounts show. Provenance therefore records the
+producing model and account, but generation uses ordinary account selection.
 """
 
 from __future__ import annotations
@@ -151,18 +155,12 @@ class CheckpointHandoff:
         self.api_key = api_key
         self.generate = generate
 
-    def _validate_access(self, scope: ApiKeyScope, model: str, account_id: str) -> None:
+    def _validate_access(self, scope: ApiKeyScope, model: str) -> None:
         validate_model_access(self.api_key, model)
-        if (
-            self.api_key is None
-            or self.api_key.id != scope.api_key_id
-            or (self.api_key.account_assignment_scope_enabled and account_id not in self.api_key.assigned_account_ids)
-        ):
+        if self.api_key is None or self.api_key.id != scope.api_key_id:
             raise ProxyResponseError(
                 403,
-                openai_error(
-                    "compaction_handoff_forbidden", "The original checkpoint account is outside this key's scope."
-                ),
+                openai_error("compaction_handoff_forbidden", "The checkpoint belongs to another API key."),
             )
 
     async def resolve(self, scope: ApiKeyScope, item: dict[str, JsonValue]) -> list[JsonValue] | None:
@@ -172,13 +170,13 @@ class CheckpointHandoff:
         summaries = handoff_store()
         cached = await summaries.load(scope, digest)
         if cached is not None:
-            self._validate_access(scope, cached.model, cached.account_id)
+            self._validate_access(scope, cached.model)
             return cached.input
         provenance = await origin_store().load(scope, digest)
         if provenance is None or len(provenance.output) != 1 or not isinstance(provenance.output[0], dict):
             return None
         origin = NativeCheckpointOrigin(provenance.model, provenance.account_id, provenance.output[0])
-        self._validate_access(scope, origin.model, origin.account_id)
+        self._validate_access(scope, origin.model)
         claims = HandoffClaims(summaries.directory)
         claim = await claims.acquire(scope, digest)
         if claim is None:
@@ -192,7 +190,7 @@ class CheckpointHandoff:
             # Another worker can publish between our initial lookup and claim.
             cached = await summaries.load(scope, digest)
             if cached is not None:
-                self._validate_access(scope, cached.model, cached.account_id)
+                self._validate_access(scope, cached.model)
                 return cached.input
             logger.info("compaction_handoff_started request_id=%s", get_request_id())
             result = await self.generate(origin, {**origin.item, "encrypted_content": ciphertext})

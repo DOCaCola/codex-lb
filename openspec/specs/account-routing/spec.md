@@ -292,7 +292,7 @@ When a fresh applicable exhausted sample omits reset metadata, an elapsed fallba
 
 ### Requirement: Upstream rejections of the request payload are account neutral
 
-When upstream rejects a request because of the request payload itself, the proxy MUST NOT mutate the selected account's health: it MUST NOT record a transient account error, a rate-limit penalty, a quota penalty, or a permanent failure for that account. An upstream failure qualifies as a payload rejection only when it would reproduce identically on every account. The proxy MUST decide membership from the classified upstream message, never from the `invalid_request_error` code alone, and MUST require the upstream HTTP status to be 400 whenever a status is known. An upstream missing-tool-output rejection — the `invalid_request_error` whose message identifies a tool call with no matching tool output — MUST qualify. The proxy MUST also leave account health untouched for the model-entitlement rejection `The '<model>' model is not supported when using Codex with a ChatGPT account.`: that rejection is scoped to the named model and is not evidence about the account's ability to serve the models it is entitled to. Because upstream delivers that rejection on the streaming path with neither an error `code` nor an error `type`, which normalizes to the `upstream_error` fallback, the proxy MUST decide it from the message and the 400 status alone and MUST NOT require a particular normalized error code. Skipping the penalty MUST be logged so the decision is observable, and MUST NOT change the failure classification, the failover decision, or the status and body returned to the client.
+When upstream rejects a request because of the request payload itself, the proxy MUST NOT mutate the selected account's health: it MUST NOT record a transient account error, a rate-limit penalty, a quota penalty, or a permanent failure for that account. An upstream failure qualifies as a payload rejection only when it would reproduce identically on every account. The proxy MUST decide membership from the classified upstream message, never from the `invalid_request_error` code alone, and MUST require the upstream HTTP status to be 400 whenever a status is known. An upstream missing-tool-output rejection — the `invalid_request_error` whose message identifies a tool call with no matching tool output — MUST qualify. An upstream `invalid_encrypted_content` rejection of replayed ciphertext MUST also qualify; it is decided from that specific code, not from `invalid_request_error`. The proxy MUST also leave account health untouched for the model-entitlement rejection `The '<model>' model is not supported when using Codex with a ChatGPT account.`: that rejection is scoped to the named model and is not evidence about the account's ability to serve the models it is entitled to. Because upstream delivers that rejection on the streaming path with neither an error `code` nor an error `type`, which normalizes to the `upstream_error` fallback, the proxy MUST decide it from the message and the 400 status alone and MUST NOT require a particular normalized error code. Skipping the penalty MUST be logged so the decision is observable, and MUST NOT change the failure classification, the failover decision, or the status and body returned to the client.
 
 #### Scenario: Missing-tool-output rejection leaves account health untouched
 
@@ -340,6 +340,13 @@ When upstream rejects a request because of the request payload itself, the proxy
 - **GIVEN** account A is selected for a request
 - **WHEN** upstream fails with an `upstream_error` whose message is not the model-entitlement rejection
 - **THEN** the proxy records the account-health penalty for account A as before
+
+#### Scenario: Encrypted-content rejection leaves account health untouched
+
+- **GIVEN** account A is selected for a request whose input replays encrypted reasoning or a compaction checkpoint
+- **WHEN** upstream rejects it with HTTP 400 `invalid_encrypted_content`
+- **THEN** the proxy does not increment account A's transient error count and does not mark it rate-limited, quota-exceeded, or permanently failed
+- **AND** the rejection reaches the client unchanged without another replay
 
 ### Requirement: Stale in-memory account sessions must not stay routable
 

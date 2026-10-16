@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.clients.proxy import ProxyResponseError
+from app.core.exceptions import ProxyModelNotAllowed
 from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
 from app.modules.api_keys.service import ApiKeyData
@@ -151,19 +152,27 @@ async def test_generation_failure_releases_claim(env, failure):
     assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
 
 
-@pytest.mark.parametrize("restricted", ["model", "account"])
-async def test_cached_handoff_rechecks_permissions(env, restricted):
+async def test_cached_handoff_rechecks_model_permission(env):
     scope, origins, summaries, calls, generate = env
     await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
-    key = (
-        replace(api_key(), allowed_models=["anthropic/claude-opus-5-5"])
-        if restricted == "model"
-        else replace(api_key(), account_assignment_scope_enabled=True, assigned_account_ids=["other-owner"])
-    )
+    key = replace(api_key(), allowed_models=["anthropic/claude-opus-5-5"])
     with pytest.raises(Exception) as error:
         await handoff.CheckpointHandoff(key, generate).resolve(scope, checkpoint())
-    assert "access" in str(error.value).lower() or "scope" in json.dumps(getattr(error.value, "payload", {}))
+    assert "access" in str(error.value).lower()
     assert len(calls) == 1
+
+
+async def test_account_scope_never_blocks_handoff_from_another_producer(env):
+    # Checkpoints are readable by every OpenAI account: an account-scoped key
+    # reuses the summary and regenerates through its own permitted accounts.
+    scope, origins, summaries, calls, generate = env
+    first = await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    scoped = replace(api_key(), account_assignment_scope_enabled=True, assigned_account_ids=["other-owner"])
+    assert await handoff.CheckpointHandoff(scoped, generate).resolve(scope, checkpoint()) == first
+    for path in summaries.directory.glob("*.replay"):
+        path.unlink()
+    assert await handoff.CheckpointHandoff(scoped, generate).resolve(scope, checkpoint()) == first
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("state", ["expired", "corrupt", "oversize"])
@@ -196,10 +205,10 @@ async def test_summary_survives_origin_expiry_and_still_checks_access(env):
     os.utime(path, (stamp, stamp))
     assert await origins.load(scope, handoff.checkpoint_digest("PRIVATE_NATIVE")) is None
     assert await resolver.resolve(scope, checkpoint()) == first
-    restricted = replace(api_key(), account_assignment_scope_enabled=True, assigned_account_ids=["other-owner"])
-    with pytest.raises(ProxyResponseError) as error:
+    restricted = replace(api_key(), allowed_models=["anthropic/claude-opus-5-5"])
+    with pytest.raises(ProxyModelNotAllowed):
         await handoff.CheckpointHandoff(restricted, generate).resolve(scope, checkpoint())
-    assert error.value.status_code == 403 and len(calls) == 1
+    assert len(calls) == 1
 
 
 async def test_task_cancellation_releases_claim(env):

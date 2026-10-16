@@ -1075,10 +1075,16 @@ def _is_account_neutral_request_rejection(
     ``_is_model_scoped_rejection`` below, which likewise keeps the account's
     health untouched but still lets failover try accounts whose entitlements
     may differ.
+
+    ``invalid_encrypted_content`` rejects ciphertext the client replayed. It
+    says nothing about the serving account's ability to handle other
+    requests, so it surfaces unchanged without a health write or replay.
     """
     if http_status is not None and http_status != 400:
         return False
     if is_account_neutral_safety_policy_rejection(code=code, http_status=http_status, message=message):
+        return True
+    if code == "invalid_encrypted_content":
         return True
     return code == "invalid_request_error" and bool(_facade()._is_missing_tool_output_message(message))
 

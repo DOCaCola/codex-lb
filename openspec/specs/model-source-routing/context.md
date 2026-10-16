@@ -57,12 +57,22 @@ provenance because the native backend has processed it successfully.
 
 Only a source switch that actually needs unreadable checkpoint context requests
 a portable summary. Recovery order is an existing valid readable snapshot, a
-valid cached handoff, then generation on the verified original native account and
-model. Generation uses that exact checkpoint and a task-state handoff prompt,
+valid cached handoff, then generation with the verified original native model.
+Generation uses that exact checkpoint and a task-state handoff prompt,
 without tools, truncation, destination continuation/affinity headers or unrelated
-visible suffix. Current API-key model/account restrictions are rechecked even for
-cache hits. Original account loss or native checkpoint rejection stops generation;
-there is no cross-account failover, placeholder or shortened-history retry.
+visible suffix. The current API-key model restriction is rechecked even for cache
+hits.
+
+Native checkpoints are not bound to the producing account: ordinary native turns
+routinely carry them to other OpenAI accounts (2026-10-16: 22 compacted
+conversations, 17,613 later turns on another account, no decryption rejection).
+Generation therefore uses ordinary account selection under the key's account
+scope, with ordinary failover; an exhausted producer no longer blocks a provider
+switch. Provenance still records the producing account for diagnostics. A native
+checkpoint rejection (`invalid_encrypted_content`) surfaces unchanged without an
+account-health write; there is no placeholder or shortened-history retry. A
+failed selection returns the ordinary native selection error. The handoff log
+names the destination turn's conversation without forwarding its headers.
 
 The native auxiliary request has its own handoff request ID, normal reservation,
 admission, usage settlement and request log. It uses the existing tracked detached
@@ -76,7 +86,7 @@ Private integrity-checked stores retain provenance for 30 days (10,000 entries,
 32 KiB per entry, 16 MiB total) and generated summaries for 30 days (1,000 entries,
 512 KiB per entry, 64 MiB total). Reads do not extend expiry; oldest records can be
 evicted earlier under those bounds. A valid summary can outlive its provenance
-and does not need the old account to generate again. Cross-worker SQLite claims
+and does not need generation again. Cross-worker SQLite claims
 prevent simultaneous duplicate generation. Generation has a 300-second budget;
 claims expire after 330 seconds, and are released on success, error or cancellation.
 A concurrent caller receives 503 compaction_handoff_in_progress with Retry-After2.
@@ -91,7 +101,7 @@ by existing periodic replay maintenance.
 
 For example, compact [user(task), tool-call, tool-result] natively: only provenance
 is recorded. Later switch to Claude with [checkpoint, user(continue)]: the original
-native account generates one metered handoff, and Claude receives that summary
+native model generates one metered handoff on an eligible account, and Claude receives that summary
 plus user(continue). Repeated source turns reuse the summary; source continuation
 retains the already-readable logical input. Remaining with native OpenAI never
 generates a handoff. Unobserved legacy checkpoints without readable recovery or
