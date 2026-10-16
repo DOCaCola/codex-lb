@@ -1,4 +1,4 @@
-"""Authenticated, account/model/client-bound Claude reasoning and search state."""
+"""Authenticated, client-bound Claude reasoning and search state with account/model provenance."""
 
 from __future__ import annotations
 
@@ -43,21 +43,23 @@ class ClaudeOpaqueState:
         )
         return PREFIX + self.encryptor.encrypt(envelope.model_dump_json()).decode("ascii")
 
-    def decode(self, token: str, *, model: str, client_scope: str) -> SignedBlock:
-        envelope = self.authenticate(token, client_scope=client_scope)
-        if envelope.model != model:
-            raise ClientPayloadError("Claude reasoning state belongs to another model", param="input")
-        return envelope
-
     def authenticate(self, token: str, *, client_scope: str) -> SignedBlock:
         if not token.startswith(PREFIX):
-            raise ClientPayloadError("Reasoning belongs to another provider; resend portable context", param="input")
+            raise ClientPayloadError(
+                "Reasoning belongs to another provider; resend portable context",
+                param="input",
+                code="nonportable_provider_history",
+            )
         try:
             envelope = SignedBlock.model_validate_json(self.encryptor.decrypt(token[len(PREFIX) :].encode("ascii")))
         except (InvalidToken, ValidationError, ValueError, UnicodeError) as exc:
-            raise ClientPayloadError("Invalid Claude reasoning state", param="input") from exc
+            raise ClientPayloadError(
+                "Invalid Claude reasoning state", param="input", code="invalid_provider_history"
+            ) from exc
         if envelope.client_scope != client_scope:
-            raise ClientPayloadError("Claude reasoning state belongs to another client", param="input")
+            raise ClientPayloadError(
+                "Claude reasoning state belongs to another client", param="input", code="invalid_provider_history"
+            )
         if envelope.block.get("type") not in ("thinking", "redacted_thinking", "web_search"):
-            raise ClientPayloadError("Invalid Claude reasoning block", param="input")
+            raise ClientPayloadError("Invalid Claude reasoning block", param="input", code="invalid_provider_history")
         return envelope

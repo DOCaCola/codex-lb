@@ -175,15 +175,15 @@ parallel_tool_calls unchanged so its prompt prefix matches ordinary turns; other
 sources SHALL summarize without tool declarations. The summarization instruction
 SHALL forbid tool calls, and tool, custom-tool or hosted-search output MUST fail
 compaction without a checkpoint or replacement of retained original history.
-Claude compaction MUST authenticate signed history and SHALL prefer its original
-account and model, replaying signed blocks verbatim there. Completed signed
-thinking that cannot keep its signature on the selected account or model, or
-whose historical signature the upstream rejects, SHALL reach the summarizer as
-readable historical assistant text in original order without fabricated
-signatures; completed redacted thinking, which has no readable content, SHALL
-produce no wire block. Signed state in the active turn of the client-supplied
-history and hosted search state MUST remain bound to their original account and
-model or fail explicitly.
+Claude compaction MUST authenticate signed history and SHALL prefer the account
+that produced its latest signed block. Completed signed thinking produced on
+another account or model, or whose historical signature the upstream rejects,
+SHALL reach the summarizer as readable historical assistant text in original
+order without fabricated signatures; completed redacted thinking, which has no
+readable content, SHALL produce no wire block. All other signed thinking,
+including the active turn of the client-supplied history, SHALL be forwarded
+verbatim on any Claude route. Active hosted search state MUST remain bound to
+its original account and model or fail explicitly.
 
 #### Scenario: Unresolved compact continuation
 - **WHEN** source compaction includes a previous-response handle whose history cannot be resolved
@@ -221,8 +221,12 @@ model or fail explicitly.
 - **WHEN** compaction runs on another account or model than completed signed thinking, its owner is unavailable, completed owners differ or the upstream rejects a historical signature
 - **THEN** the summarizer receives that thinking as readable assistant text with all other history unchanged, without signatures from another route
 
+#### Scenario: Active signed thinking on another route
+- **WHEN** compaction runs on another account or model than signed thinking in the active turn of the client-supplied history
+- **THEN** the summarizer receives that thinking verbatim with its signature
+
 #### Scenario: Signed Claude history cannot be preserved
-- **WHEN** compaction contains active-turn signed state or hosted search state whose owner or model is unavailable or conflicting
+- **WHEN** compaction contains active hosted search state whose owner or model is unavailable or conflicting
 - **THEN** it returns an error without dispatching or dropping that state
 
 #### Scenario: Conflicting model overrides

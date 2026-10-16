@@ -58,32 +58,33 @@ def search_history(opaque, *, completed=True):
 
 
 @pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
-def test_completed_history_is_soft_and_projection_is_immutable(kind):
+@pytest.mark.parametrize("completed", [True, False], ids=["completed", "active"])
+def test_signed_thinking_moves_unchanged_and_projection_is_immutable(kind, completed):
     opaque = codec()
-    payload = history(opaque, kind=kind)
+    payload = history(opaque, kind=kind, completed=completed)
     original = deepcopy(payload)
     replay = read(payload, opaque)
     assert replay.owner_source_id is None
     assert replay.preferred_source_id == "source-a"
     assert replay.project(payload, source_id="source-a", model=scope().model) == payload
-    assert replay.project(payload, source_id="source-b", model=scope().model)["input"] == payload["input"][1:]
-    assert (
-        read(payload, opaque, model="other").project(payload, source_id="source-a", model="other")["input"]
-        == payload["input"][1:]
-    )
+    assert replay.project(payload, source_id="source-b", model=scope().model) == payload
+    switched = read(payload, opaque, model="other")
+    assert switched.preferred_source_id == "source-a"
+    assert switched.project(payload, source_id="source-b", model="other") == payload
     assert payload == original
 
 
-@pytest.mark.parametrize("kind", ["thinking", "web_search"])
-def test_active_history_cannot_move(kind):
+def test_active_search_cannot_move():
     opaque = codec()
-    payload = search_history(opaque, completed=False) if kind == "web_search" else history(opaque, completed=False)
+    payload = search_history(opaque, completed=False)
     replay = read(payload, opaque)
     assert replay.owner_source_id == "source-a"
-    with pytest.raises(ClientPayloadError):
+    with pytest.raises(ClientPayloadError, match="original account and model") as moved:
         replay.project(payload, source_id="source-b", model=scope().model)
-    with pytest.raises(ClientPayloadError):
+    assert (moved.value.code, moved.value.param) == ("nonportable_provider_history", "input[1]")
+    with pytest.raises(ClientPayloadError, match="original model") as switched:
         read(payload, opaque, model="other")
+    assert (switched.value.code, switched.value.param) == ("nonportable_provider_history", "input[1]")
 
 
 @pytest.mark.parametrize("compaction", [False, True])
@@ -127,17 +128,11 @@ def test_moved_search_state_without_its_call_fails():
         read(payload, opaque).project(payload, source_id="source-b", model=scope().model)
 
 
-def test_tool_output_does_not_complete_thinking():
-    opaque = codec()
-    payload = history(opaque, completed=False)
-    payload["input"].append({"type": "function_call_output", "call_id": "call", "output": "ok"})
-    assert read(payload, opaque).owner_source_id == "source-a"
-
-
 def test_authentication_precedes_omission():
     opaque = codec()
-    with pytest.raises(ClientPayloadError):
+    with pytest.raises(ClientPayloadError, match="another client") as rejected:
         read(history(opaque), opaque, client_scope="other")
+    assert (rejected.value.code, rejected.value.param) == ("invalid_provider_history", "input[0]")
 
 
 def test_mixed_completed_owners_are_not_conflicting():
@@ -148,7 +143,7 @@ def test_mixed_completed_owners_are_not_conflicting():
     replay = read(payload, opaque)
     assert replay.owner_source_id is None
     assert replay.preferred_source_id == "source-b"
-    assert len(replay.project(payload, source_id="source-b", model=scope().model)["input"]) == 3
+    assert replay.project(payload, source_id="source-b", model=scope().model) == payload
 
 
 def test_tampered_completed_state_is_not_discarded():
@@ -159,13 +154,25 @@ def test_tampered_completed_state_is_not_discarded():
         read(payload, opaque, model="other")
 
 
-def test_conflicting_active_owners_fail():
+def test_conflicting_active_search_owners_fail():
+    opaque = codec()
+    payload = search_history(opaque, completed=False)
+    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a"), {"type": "web_search", "item_id": "x"})
+    payload["input"].append({"type": "reasoning", "encrypted_content": other})
+    with pytest.raises(ClientPayloadError, match="conflicting account owners") as rejected:
+        read(payload, opaque)
+    assert rejected.value.code == "invalid_provider_history"
+
+
+def test_active_thinking_does_not_bind_its_account():
     opaque = codec()
     payload = history(opaque, completed=False)
-    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a"), {"type": "thinking"})
+    other = opaque.encode(OpaqueScope("source-b", "other", "key-a"), {"type": "thinking", "signature": "s"})
     payload["input"].append({"type": "reasoning", "encrypted_content": other})
-    with pytest.raises(ClientPayloadError):
-        read(payload, opaque)
+    replay = read(payload, opaque)
+    assert replay.owner_source_id is None
+    assert replay.preferred_source_id == "source-b"
+    assert replay.project(payload, source_id="source-c", model=scope().model) == payload
 
 
 @pytest.mark.parametrize("completed", [True, False], ids=["new_user_turn", "closed_assistant_turn"])
@@ -208,29 +215,29 @@ def test_compaction_reads_conflicting_completed_owners():
     assert projected[:2] == [READABLE, payload["input"][1]]
 
 
-def test_compaction_keeps_active_state_strict():
+def test_compaction_forwards_active_thinking_signed():
     opaque = codec()
     payload = history(opaque, completed=False)
     payload["input"][1] = {"type": "function_call", "name": "read", "call_id": "call", "arguments": "{}"}
     payload["input"].append({"type": "function_call_output", "call_id": "call", "output": "ok"})
     payload = compact(payload)
     replay = read(payload, opaque, require_complete_history=True)
-    assert replay.owner_source_id == "source-a"
-    with pytest.raises(ClientPayloadError, match="original account/model"):
-        replay.project(payload, source_id="source-b", model=scope().model)
-    with pytest.raises(ClientPayloadError, match="original model"):
-        read(payload, opaque, model="other", require_complete_history=True)
+    assert replay.owner_source_id is None
+    assert replay.project(payload, source_id="source-b", model=scope().model) == payload
+    switched = read(payload, opaque, model="other", require_complete_history=True)
+    assert switched.project(payload, source_id="source-a", model="other") == payload
 
 
 @pytest.mark.parametrize("pairing", [{}, {"call_id": None}, {"call_id": ""}, {"call_id": " \t"}])
-def test_external_task_completes_prior_thinking_without_mutating_replay(pairing):
+def test_external_task_completes_prior_thinking_for_compaction(pairing):
     opaque = codec()
     payload = history(opaque, completed=False)
     payload["input"].append({**TASK_INPUT, **pairing})
+    payload = compact(payload)
     original = deepcopy(payload)
-    replay = read(payload, opaque, model="other")
+    replay = read(payload, opaque, model="other", require_complete_history=True)
     assert replay.owner_source_id is None
-    assert replay.project(payload, source_id="source-b", model="other")["input"] == payload["input"][1:]
+    assert replay.project(payload, source_id="source-b", model="other")["input"] == [READABLE, *payload["input"][1:]]
     assert payload == original
 
 
@@ -239,9 +246,9 @@ def test_unrecognized_task_does_not_complete_thinking(overrides):
     opaque = codec()
     payload = history(opaque, completed=False)
     payload["input"].append({**TASK_INPUT, **overrides})
-    assert read(payload, opaque).owner_source_id == "source-a"
-    with pytest.raises(ClientPayloadError):
-        read(payload, opaque, model="other")
+    payload = compact(payload)
+    replay = read(payload, opaque, model="other", require_complete_history=True)
+    assert replay.project(payload, source_id="source-b", model="other") == payload
 
 
 def test_external_task_completes_search_without_moving_its_state():

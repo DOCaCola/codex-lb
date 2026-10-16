@@ -114,13 +114,7 @@ def test_search_lifecycle_citations_and_authenticated_replay():
     replay = project(
         request(input=[{"role": "user", "content": "Search"}, *output]),
         max_output_tokens=8192,
-        restore_reasoning=lambda token: (
-            opaque.decode(
-                token,
-                model=scope().model,
-                client_scope=scope().client_scope,
-            ).block
-        ),
+        restore_reasoning=lambda token: opaque.authenticate(token, client_scope=scope().client_scope).block,
     )
     restored = at(replay.body, "messages", 1, "content")
     assert isinstance(restored, list)
@@ -172,7 +166,7 @@ def test_stream_search_json_and_citation_deltas():
     assert "upstream-owned-opaque-data" not in json.dumps(events)
 
 
-@pytest.mark.parametrize("changed", ["model", "client_scope", "token"])
+@pytest.mark.parametrize("changed", ["client_scope", "token"])
 def test_search_state_rejects_changed_scope_or_tampering(changed):
     opaque = codec()
     response = ResponsesProjection(scope(), ClaudeToolNames(), opaque, search_enabled=True).complete(
@@ -180,16 +174,13 @@ def test_search_state_rejects_changed_scope_or_tampering(changed):
     )
     token = at(response, "output", 1, "encrypted_content")
     assert isinstance(token, str)
-    arguments = {
-        "model": scope().model,
-        "client_scope": scope().client_scope,
-    }
+    client_scope = scope().client_scope
     if changed == "token":
         token = token[:30] + ("A" if token[30] != "A" else "B") + token[31:]
     else:
-        arguments[changed] = "other"
+        client_scope = "other"
     with pytest.raises(ClientPayloadError):
-        opaque.decode(token, **arguments)
+        opaque.authenticate(token, client_scope=client_scope)
 
 
 @pytest.mark.parametrize(

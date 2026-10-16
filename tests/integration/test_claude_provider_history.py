@@ -174,7 +174,8 @@ async def test_forked_conversation_replays_parent_signed_state(async_client, opu
     blocks = [block for message in captured[0][2]["messages"] for block in message["content"]]
     assert signed in blocks
     ownership = selection.await_args.kwargs
-    assert ownership["owner_source_id" if active else "preferred_source_id"] == opus_pool
+    assert ownership["owner_source_id"] is None
+    assert ownership["preferred_source_id"] == opus_pool
 
 
 @pytest.mark.parametrize("path", ["/v1/responses/compact", "/backend-api/codex/responses/compact"])

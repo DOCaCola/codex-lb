@@ -200,7 +200,8 @@ def test_genuine_empty_display_signed_blocks_remain_verbatim(kind):
     assert project_foreign_replay(payload) is payload
     replay = authenticate_replay(payload, opaque, model=scope().model, client_scope="key-a")
     assert replay.blocks[0].envelope.block == block
-    assert replay.owner_source_id == "source-a"
+    assert replay.preferred_source_id == "source-a"
+    assert replay.project(payload, source_id="source-b", model="other") == payload
 
 
 @pytest.mark.parametrize("scope_field", ["client_scope", "tampering"])
@@ -234,7 +235,7 @@ def test_opus_sol_opus_mixed_history_keeps_original_signed_state(readable):
         projected,
         max_output_tokens=64000,
         reasoning=None,
-        restore_reasoning=lambda value: opaque.decode(value, model=scope().model, client_scope="key-a").block,
+        restore_reasoning=lambda value: opaque.authenticate(value, client_scope="key-a").block,
     ).body
     assert at(body["messages"], 0, "content") == [signed]
     assert ("Sol context" in str(body)) is readable

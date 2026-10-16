@@ -346,7 +346,9 @@ async def plan_chat_replay(
                 continue
             if any(isinstance(item, dict) and item.get("type") == "web_search_call" for item in retained.output):
                 raise ClientPayloadError(
-                    "Claude search state cannot be reconstructed from Chat history", param="messages"
+                    "Claude search state cannot be reconstructed from Chat history",
+                    param="messages",
+                    code="nonportable_provider_history",
                 )
             owner: str | None = None
             for item in retained.output:
@@ -358,10 +360,14 @@ async def plan_chat_replay(
                 envelope = opaque.authenticate(token, client_scope=client_scope)
                 if envelope.block.get("type") == "web_search":
                     raise ClientPayloadError(
-                        "Claude search state cannot be reconstructed from Chat history", param="messages"
+                        "Claude search state cannot be reconstructed from Chat history",
+                        param="messages",
+                        code="nonportable_provider_history",
                     )
                 if (envelope.model, envelope.source_id) != (model, retained.account_id):
-                    raise ClientPayloadError("Claude Chat replay owner or model mismatch", param="messages")
+                    raise ClientPayloadError(
+                        "Claude Chat replay owner or model mismatch", param="messages", code="invalid_provider_history"
+                    )
                 owner = envelope.source_id
             candidates.append(CycleMatch(retained, owner))
         if len(candidates) == 1:

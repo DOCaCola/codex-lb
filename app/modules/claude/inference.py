@@ -144,7 +144,7 @@ async def prepare_responses(
             projected,
             max_output_tokens=selected.max_output_tokens,
             reasoning=catalog_reasoning(AccountState.model_validate_json(account.state_json), model),
-            restore_reasoning=lambda token: opaque.decode(token, model=model, client_scope=client_scope).block,
+            restore_reasoning=lambda token: opaque.authenticate(token, client_scope=client_scope).block,
         )
         prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
             projection.body,

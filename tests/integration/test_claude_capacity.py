@@ -73,24 +73,13 @@ async def test_atomic_rejection_reselects_without_send(async_client, pool, monke
     assert all(bulkhead.in_flight(source_id) == 0 for source_id in pool)
 
 
-@pytest.mark.parametrize("search", [False, True])
-async def test_owned_history_cannot_escape_capacity(async_client, pool, monkeypatch, bulkhead, search):
+async def test_owned_search_cannot_escape_capacity(async_client, pool, monkeypatch, bulkhead):
     from tests.unit.test_claude_search import search_content
 
     await configure(async_client, pool)
-    captured, _ = install_upstream(
-        monkeypatch,
-        content=search_content()
-        if search
-        else [
-            {"type": "thinking", "thinking": "reason", "signature": "signed"},
-            {"type": "text", "text": "answer"},
-        ],
-    )
+    captured, _ = install_upstream(monkeypatch, content=search_content())
     headers = {"session_id": "capacity-owner"}
-    body = {"model": MODEL, "input": "Hello", "stream": False}
-    if search:
-        body["tools"] = [{"type": "web_search"}]
+    body = {"model": MODEL, "input": "Hello", "stream": False, "tools": [{"type": "web_search"}]}
     first = await async_client.post("/v1/responses", headers=headers, json=body)
     assert first.status_code == 200, first.text
     slot = bulkhead.try_acquire(captured[0][0], 1)

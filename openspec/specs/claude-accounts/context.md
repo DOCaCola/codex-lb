@@ -898,6 +898,20 @@ makes completed thinking active. Active signed state and search stay hard owners
 For example, Opus 5 thinking "use the cached index" followed by `/compact` on
 Sonnet 5 sends that sentence as an assistant text block.
 
+Superseded on 2026-10-16 for normal turns and active thinking: Anthropic's
+preserved-thinking guide (read 2026-10-16) says to keep sending every thinking
+block across model and account switches. The API drops blocks the target cannot
+read without error or billing; Sonnet 5.5 and Haiku 5.5 blocks are dropped on a
+foreign account, not rejected. Omission was harmful: switching back re-inserted
+blocks omitted earlier, which the prefix check rejects for every later block.
+Thinking is now forwarded verbatim on any Claude route and only prefers its
+producer. A stopped Opus tool loop resumed on Sonnet (2026-10-16 12:32:46 UTC)
+had failed with a generic payload error because the interrupt marker is a
+developer message and the thinking stayed active. Only active hosted search
+remains a hard owner; compaction keeps the text conversion above for completed
+thinking from another route. CLIProxyAPI (`claudeCompatibleSignatureReason`) and
+OmniRoute treat a Claude signature as valid for any Claude target.
+
 Manual budget thinking (Haiku 4.5, Sonnet 4.5) requires the final assistant turn
 of a thinking-enabled request to begin with a thinking block; adaptive mode drops
 that requirement, and one turn runs in a single thinking mode (Anthropic thinking

@@ -17,6 +17,7 @@ from tests.integration.test_claude_pool_exhaustion import exhaust
 from tests.integration.test_claude_resources import blocks
 from tests.integration.test_claude_routing import MODEL
 from tests.integration.test_claude_routing import pool as pool
+from tests.unit.test_claude_search import search_content
 
 pytestmark = pytest.mark.integration
 CONVERSATION = "claude-quota-owner"
@@ -24,12 +25,14 @@ HEADERS = {"user-agent": "codex_cli_rs/0.157.0", "session_id": CONVERSATION}
 
 
 def owned_history(source):
+    # Active hosted search binds its account; signed thinking alone would not.
     token = ClaudeOpaqueState(TokenEncryptor()).encode(
         OpaqueScope(source, MODEL, "anonymous"),
-        {"type": "thinking", "thinking": "private reasoning", "signature": "private signature"},
+        {"type": "web_search", "item_id": "ws_owner", "blocks": search_content()[:2]},
     )
     return [
         {"role": "user", "content": "Work"},
+        {"type": "web_search_call", "id": "ws_owner", "status": "completed", "action": {"type": "search"}},
         {"type": "reasoning", "encrypted_content": token, "summary": []},
         {"type": "function_call", "id": "fc_owner", "call_id": "call_owner", "name": "work", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "call_owner", "output": "done"},
@@ -42,7 +45,7 @@ def assert_quota_detail(error, deadline, *, native=False):
     assert "plan_type" not in error
     assert "quota-exhausted" in error["message"]
     assert "five_hour" in error["message"]
-    assert "private" not in json.dumps(error)
+    assert "upstream-owned-opaque-data" not in json.dumps(error)
     if deadline is None:
         assert "resets_at" not in error
         assert "resets_in_seconds" not in error
@@ -66,9 +69,9 @@ async def test_http_owned_quota_preserves_history_without_dispatch(
     scope = ReplayScope(None, CONVERSATION)
     if retained:
         await store.remember(
-            scope, "resp_owner", json.dumps({"model": MODEL, "input": history[:1]}), history[1:3], pool[0]
+            scope, "resp_owner", json.dumps({"model": MODEL, "input": history[:1]}), history[1:4], pool[0]
         )
-        payload = {"model": MODEL, "previous_response_id": "resp_owner", "input": history[3:]}
+        payload = {"model": MODEL, "previous_response_id": "resp_owner", "input": history[4:]}
     else:
         payload = {"model": MODEL, "input": history}
     response = await async_client.post(path, headers=HEADERS, json=payload)
@@ -80,12 +83,12 @@ async def test_http_owned_quota_preserves_history_without_dispatch(
         assert "retry-after" not in response.headers
     else:
         assert abs(int(response.headers["retry-after"]) - error["resets_in_seconds"]) <= 1
-    assert captured == []  # The healthy alternate must not receive active signed history.
+    assert captured == []  # The healthy alternate must not receive active search state.
     assert history == original
     if retained:
         saved = await store.load(scope, "resp_owner")
         assert saved is not None and saved.account_id == pool[0]
-        assert saved.input + saved.output == original[:3]
+        assert saved.input + saved.output == original[:4]
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])

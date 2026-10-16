@@ -148,7 +148,7 @@ def project_native_replay(
         try:
             envelope = opaque.authenticate(token, client_scope=client_scope)
         except ClientPayloadError as exc:
-            raise ClientPayloadError(str(exc), param=param, code="invalid_provider_history") from exc
+            raise ClientPayloadError(str(exc), param=param, code=exc.code) from exc
         assert isinstance(item, dict)
         if item.get("type") != "reasoning":
             raise ClientPayloadError(
@@ -195,12 +195,14 @@ def project_native_replay(
 class ReplayBlock:
     index: int
     envelope: SignedBlock
+    # Belongs to the turn Claude continues.
     strict: bool
 
 
 @dataclass(frozen=True)
 class ClaudeReplay:
     blocks: tuple[ReplayBlock, ...]
+    # Only active server search binds the account; signed thinking is portable.
     owner_source_id: str | None
     preferred_source_id: str | None
     # Summarization reads completed thinking that cannot keep its signature.
@@ -217,23 +219,29 @@ class ClaudeReplay:
         foreign_searches: dict[str, str] = {}
         for block in self.blocks:
             envelope = block.envelope
-            search = envelope.block["type"] == "web_search"
-            if (envelope.source_id, envelope.model) == (source_id, model):
-                if search:
+            native = (envelope.source_id, envelope.model) == (source_id, model)
+            if envelope.block["type"] == "web_search":
+                if native:
                     native_searches.add(search_replay(envelope.block)[0])
-                continue
-            if block.strict:
-                raise ClientPayloadError(
-                    "Active Claude reasoning or search requires its original account/model", param="input"
-                )
-            if search:
+                    continue
+                if block.strict:
+                    raise ClientPayloadError(
+                        "Active Claude search requires its original account and model",
+                        param=f"input[{block.index}]",
+                        code="nonportable_provider_history",
+                    )
                 item_id, blocks = search_replay(envelope.block)
                 foreign_searches[item_id] = claude_search_text(blocks)
                 replaced[block.index] = None
                 continue
+            # Anthropic accepts signed thinking from any Claude model or account and drops
+            # blocks the target cannot read, so forwarding it keeps the history append-only.
+            # Only a summarizer must read completed thinking another route produced.
+            if native or block.strict or not self.readable_history:
+                continue
             text = envelope.block.get("thinking") if envelope.block["type"] == "thinking" else None
             assert text is None or isinstance(text, str)
-            if self.readable_history and text:
+            if text:
                 replaced[block.index] = assistant_history_message(text)
                 converted += 1
             else:
@@ -254,7 +262,9 @@ class ClaudeReplay:
             replaced[index] = assistant_history_message(text)
             searched += 1
         if foreign_searches:
-            raise ClientPayloadError("Claude search state has no matching search item", param="input")
+            raise ClientPayloadError(
+                "Claude search state has no matching search item", param="input", code="invalid_provider_history"
+            )
         if not replaced:
             return payload
         logger.info(
@@ -296,15 +306,24 @@ def authenticate_replay(
         try:
             envelope = opaque.authenticate(token, client_scope=client_scope)
         except ClientPayloadError as exc:
-            raise ClientPayloadError(str(exc), param=f"input[{index}]", code="invalid_provider_history") from exc
+            raise ClientPayloadError(str(exc), param=f"input[{index}]", code=exc.code) from exc
         strict = index >= active_start
-        if strict:
+        if strict and envelope.block["type"] == "web_search":
             if envelope.model != model:
-                raise ClientPayloadError("Active Claude reasoning or search requires its original model", param="input")
+                raise ClientPayloadError(
+                    "Active Claude search requires its original model",
+                    param=f"input[{index}]",
+                    code="nonportable_provider_history",
+                )
             if owner is not None and owner != envelope.source_id:
-                raise ClientPayloadError("Active Claude history contains conflicting account owners", param="input")
+                raise ClientPayloadError(
+                    "Active Claude search contains conflicting account owners",
+                    param=f"input[{index}]",
+                    code="invalid_provider_history",
+                )
             owner = envelope.source_id
-        elif envelope.model == model:
+        else:
+            # Sonnet and Haiku 5.5 thinking is readable only on its own account; it also holds the cache.
             preferred = envelope.source_id
         blocks.append(ReplayBlock(index, envelope, strict))
     return ClaudeReplay(tuple(blocks), owner, preferred, require_complete_history)

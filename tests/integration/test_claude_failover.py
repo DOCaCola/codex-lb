@@ -283,9 +283,8 @@ async def test_disconnect_between_attempts_stops_recovery(async_client, pool, mo
     assert len(sent) == 1
 
 
-@pytest.mark.parametrize("search", [False, True])
 @pytest.mark.parametrize("status", [401, 429])
-async def test_bound_history_preserves_original_refusal(async_client, pool, monkeypatch, search, status):
+async def test_bound_search_preserves_original_refusal(async_client, pool, monkeypatch, status):
     from unittest.mock import AsyncMock
 
     from app.modules.claude import transport
@@ -295,19 +294,9 @@ async def test_bound_history_preserves_original_refusal(async_client, pool, monk
 
     monkeypatch.setattr(ClaudeClient, "refresh", AsyncMock(side_effect=rotated))
 
-    captured, _ = install_upstream(
-        monkeypatch,
-        content=search_content()
-        if search
-        else [
-            {"type": "thinking", "thinking": "reason", "signature": "signed"},
-            {"type": "text", "text": "answer"},
-        ],
-    )
+    captured, _ = install_upstream(monkeypatch, content=search_content())
     headers = {"session_id": "strict-failover"}
-    first_body = {"model": MODEL, "input": "Hello", "stream": False}
-    if search:
-        first_body["tools"] = [{"type": "web_search"}]
+    first_body = {"model": MODEL, "input": "Hello", "stream": False, "tools": [{"type": "web_search"}]}
     first = await async_client.post("/v1/responses", headers=headers, json=first_body)
     assert first.status_code == 200, first.text
     sent = []
@@ -322,9 +311,7 @@ async def test_bound_history_preserves_original_refusal(async_client, pool, monk
         )
 
     monkeypatch.setattr(transport, "_open_source_stream", refuse)
-    body = {"model": MODEL, "input": first.json()["output"], "stream": True}
-    if search:
-        body["tools"] = [{"type": "web_search"}]
+    body = {"model": MODEL, "input": first.json()["output"], "stream": True, "tools": [{"type": "web_search"}]}
     result = await async_client.post("/v1/responses", headers=headers, json=body)
     assert result.status_code == status, result.text
     assert result.headers["retry-after"] == "123"

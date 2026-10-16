@@ -1522,7 +1522,7 @@ async def test_codex_code_mode_reaches_claude_with_its_contract(async_client, po
         ],
     ],
 )
-async def test_completed_thinking_recovery_through_responses(async_client, pool, monkeypatch, switch, user_input):
+async def test_completed_thinking_forwarded_across_switches(async_client, pool, monkeypatch, switch, user_input):
     captured, _ = install_upstream(
         monkeypatch,
         content=[
@@ -1558,7 +1558,7 @@ async def test_completed_thinking_recovery_through_responses(async_client, pool,
     body = captured[1][2]
     blocks = [block for message in body["messages"] for block in message["content"]]
     assert any(block.get("text") == "visible answer" for block in blocks)
-    assert any(block.get("type") == "thinking" for block in blocks) == (switch == "none")
+    assert {"type": "thinking", "thinking": "reason", "signature": "signed"} in blocks
     if switch == "account":
         assert captured[1][0] != original_source
 
@@ -1585,21 +1585,7 @@ async def test_claude_continuation_replayed_from_persisted_response(async_client
     assert captured[1][2]["messages"][1]["content"][0]["text"] == "Hello from Claude"
 
 
-async def test_active_thinking_model_switch_rejected_before_dispatch(async_client, pool, monkeypatch):
-    from app.core.openai.exceptions import ClientPayloadError
-    from app.modules.claude import inference
-
-    rejected = []
-    authenticate = inference.authenticate_replay
-
-    def observe(*args, **kwargs):
-        try:
-            return authenticate(*args, **kwargs)
-        except ClientPayloadError as exc:
-            rejected.append(str(exc))
-            raise
-
-    monkeypatch.setattr(inference, "authenticate_replay", observe)
+async def test_active_thinking_model_switch_forwards_signed_thinking(async_client, pool, monkeypatch):
     captured, _ = install_upstream(
         monkeypatch,
         content=[
@@ -1617,9 +1603,10 @@ async def test_active_thinking_model_switch_rejected_before_dispatch(async_clien
         headers=headers,
         json={"model": "anthropic/claude-sonnet-5", "input": first.json()["output"], "stream": False},
     )
-    assert second.status_code == 400, second.text
-    assert rejected == ["Active Claude reasoning or search requires its original model"]
-    assert len(captured) == 1
+    assert second.status_code == 200, second.text
+    assert captured[1][2]["model"] == "claude-sonnet-5"
+    [assistant] = [message for message in captured[1][2]["messages"] if message["role"] == "assistant"]
+    assert assistant["content"][0] == {"type": "thinking", "thinking": "reason", "signature": "signed"}
 
 
 async def test_completed_search_switches_model_as_readable_history(async_client, pool, monkeypatch):

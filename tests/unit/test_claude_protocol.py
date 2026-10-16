@@ -438,9 +438,7 @@ def test_assistant_tail_preserves_history_and_appends_wire_only_continuation(sig
     projected = project(
         payload,
         max_output_tokens=8192,
-        restore_reasoning=lambda token: (
-            opaque.decode(token, model=scope().model, client_scope=scope().client_scope).block
-        ),
+        restore_reasoning=lambda token: opaque.authenticate(token, client_scope=scope().client_scope).block,
     )
     assert projected.body["messages"] == [
         {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
@@ -609,9 +607,7 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
     replay = project(
         request(tools=payload["tools"], input=history),
         max_output_tokens=8192,
-        restore_reasoning=lambda token: (
-            opaque.decode(token, model=scope().model, client_scope=scope().client_scope).block
-        ),
+        restore_reasoning=lambda token: opaque.authenticate(token, client_scope=scope().client_scope).block,
     )
     assert at(replay.body, "messages", 1, "content") == [
         {"type": "thinking", "thinking": "preserve", "signature": "signed"},
@@ -621,17 +617,12 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
     assert at(replay.body, "messages", 2, "content", 0, "tool_use_id") == "call1"
 
 
-@pytest.mark.parametrize("field,value", [("model", "anthropic/claude-sonnet-5"), ("client_scope", "key-b")])
-def test_opaque_state_cannot_cross_scope(field, value):
+def test_opaque_state_cannot_cross_client_scope():
     opaque = codec()
     token = opaque.encode(scope(), {"type": "redacted_thinking", "data": "opaque"})
-    args = {
-        "model": scope().model,
-        "client_scope": scope().client_scope,
-        field: value,
-    }
-    with pytest.raises(ClientPayloadError):
-        opaque.decode(token, **args)
+    with pytest.raises(ClientPayloadError, match="another client") as rejected:
+        opaque.authenticate(token, client_scope="key-b")
+    assert rejected.value.code == "invalid_provider_history"
 
 
 COLLABORATION_TOOLS: list[JsonValue] = [
