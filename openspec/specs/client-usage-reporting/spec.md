@@ -1,7 +1,8 @@
 # client-usage-reporting Specification
 
 ## Purpose
-TBD - created by archiving change report-pool-usage-to-codex-clients. Update Purpose after archive.
+Define the subscription usage codex-lb reports to Codex clients: the routable capacity of the provider pool that serves
+a turn, rather than the usage of whichever account was selected for it.
 
 ## Requirements
 
