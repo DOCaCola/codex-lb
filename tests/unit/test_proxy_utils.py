@@ -2300,26 +2300,6 @@ def _client_connector_certificate_error() -> ClientConnectorCertificateError:
     )
 
 
-def test_trim_websocket_previous_response_input_items_accepts_untyped_assistant_replay() -> None:
-    items: list[JsonValue] = [
-        {"role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
-        {"type": "custom_tool_call", "call_id": "call_custom", "name": "shell", "input": "pwd"},
-        {"type": "custom_tool_call_output", "call_id": "call_custom", "output": "/tmp"},
-        {"role": "user", "content": [{"type": "input_text", "text": "next"}]},
-    ]
-
-    assert proxy_service._trim_websocket_previous_response_input_items(items) == items[2:]
-
-
-def test_trim_websocket_previous_response_input_items_keeps_non_replay_prefix() -> None:
-    items: list[JsonValue] = [
-        {"role": "system", "content": [{"type": "input_text", "text": "local context"}]},
-        {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
-    ]
-
-    assert proxy_service._trim_websocket_previous_response_input_items(items) == items
-
-
 def test_filter_inbound_headers_strips_auth_and_account():
     headers = {
         "Authorization": "Bearer x",
@@ -48718,19 +48698,6 @@ def test_prepare_response_bridge_request_state_dedupes_replayed_previous_respons
     assert upstream_input[1]["output"] == "Process running with session ID 75180"
     assert upstream_input[2]["role"] == "assistant"
     assert upstream_input[2]["content"] == [{"type": "output_text", "text": "Process exited with code 0"}]
-
-
-def test_trim_websocket_previous_response_input_items_handles_apply_patch_replay():
-    input_items: list[JsonValue] = [
-        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "patching"}]},
-        {"type": "apply_patch_call", "call_id": "patch_1", "input": "*** Begin Patch\n*** End Patch\n"},
-        {"type": "apply_patch_call_output", "call_id": "patch_1", "output": "Success"},
-        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
-    ]
-
-    trimmed = proxy_service._trim_websocket_previous_response_input_items(input_items)
-
-    assert trimmed == input_items[2:]
 
 
 def test_prepare_response_bridge_request_state_keeps_unconfirmed_missing_tool_output_history():

@@ -8434,65 +8434,6 @@ def test_pop_terminal_websocket_request_state_precreated_completed_does_not_gues
     assert visible.response_id is None
 
 
-def test_trim_http_bridge_previous_response_input_items_preserves_context_assistant_message() -> None:
-    items: list[proxy_service.JsonValue] = [
-        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "local context"}]},
-        {"role": "user", "content": [{"type": "input_text", "text": "next"}]},
-    ]
-
-    assert proxy_service._trim_http_bridge_previous_response_input_items(items) == items
-
-
-def test_trim_http_bridge_previous_response_input_items_trims_marked_replay_outputs() -> None:
-    items: list[proxy_service.JsonValue] = [
-        {"id": "rs_replay", "type": "reasoning", "summary": []},
-        {
-            "id": "msg_replay",
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "content": [{"type": "output_text", "text": "prior"}],
-        },
-        {
-            "id": "fc_replay",
-            "type": "function_call",
-            "call_id": "call_1",
-            "name": "lookup",
-            "arguments": "{}",
-        },
-        {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
-        {"role": "user", "content": [{"type": "input_text", "text": "next"}]},
-    ]
-
-    assert proxy_service._trim_http_bridge_previous_response_input_items(items) == items[3:]
-
-
-def test_trim_http_bridge_previous_response_input_items_trims_marked_apply_patch_replay_outputs() -> None:
-    items: list[proxy_service.JsonValue] = [
-        {
-            "id": "apc_replay",
-            "type": "apply_patch_call",
-            "status": "completed",
-            "call_id": "call_patch_1",
-        },
-        {"type": "apply_patch_call_output", "call_id": "call_patch_1", "status": "completed", "output": "patched"},
-        {"role": "user", "content": [{"type": "input_text", "text": "next"}]},
-    ]
-
-    assert proxy_service._trim_http_bridge_previous_response_input_items(items) == items[1:]
-
-
-def test_trim_http_bridge_previous_response_input_items_preserves_unmarked_call_context() -> None:
-    items: list[proxy_service.JsonValue] = [
-        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "local context"}]},
-        {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
-        {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
-        {"role": "user", "content": [{"type": "input_text", "text": "next"}]},
-    ]
-
-    assert proxy_service._trim_http_bridge_previous_response_input_items(items) == items
-
-
 @pytest.mark.asyncio
 async def test_http_bridge_stream_masks_single_top_level_previous_response_error(
     monkeypatch: pytest.MonkeyPatch,
@@ -14630,9 +14571,11 @@ async def test_stream_via_http_bridge_fails_closed_for_delta_on_fresh_connection
 
 
 @pytest.mark.asyncio
-async def test_stream_via_http_bridge_trims_replayed_tool_call_items_with_previous_response_id(
+async def test_stream_via_http_bridge_forwards_replayed_items_without_a_durable_call_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Without the anchored response's recorded calls nothing proves which
+    # leading calls upstream already holds, so the input is forwarded intact.
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     payload = proxy_service.ResponsesRequest.model_validate(
         {
@@ -14756,13 +14699,7 @@ async def test_stream_via_http_bridge_trims_replayed_tool_call_items_with_previo
     ]
 
     assert chunks == []
-    assert captured_input == [
-        {
-            "type": "function_call_output",
-            "call_id": "call_repeat",
-            "output": "Wed May 6 16:00:00 UTC 2026",
-        }
-    ]
+    assert captured_input == payload.input
 
 
 @pytest.mark.asyncio

@@ -108,9 +108,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _forwarded_http_bridge_session_key as _forwarded_http_bridge_session_key,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _has_http_bridge_response_output_marker as _has_http_bridge_response_output_marker,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_allow_durable_takeover as _http_bridge_allow_durable_takeover,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -133,9 +130,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_has_durable_recovery_anchor as _http_bridge_has_durable_recovery_anchor,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_input_item_type as _http_bridge_input_item_type,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_is_context_overflow_error as _http_bridge_is_context_overflow_error,
@@ -219,9 +213,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_turn_state_alias_key as _http_bridge_turn_state_alias_key,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _is_http_bridge_previous_response_output_item as _is_http_bridge_previous_response_output_item,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _is_missing_durable_bridge_table_error as _is_missing_durable_bridge_table_error,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -250,9 +241,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _record_bridge_reattach as _record_bridge_reattach,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _trim_http_bridge_previous_response_input_items as _trim_http_bridge_previous_response_input_items,
 )
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
@@ -2381,35 +2369,6 @@ def _wrapped_websocket_error_event(
 
 def _serialize_websocket_error_event(payload: dict[str, JsonValue]) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-
-
-def _trim_websocket_previous_response_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
-    first_output_index = next(
-        (
-            index
-            for index, item in enumerate(input_items)
-            if _websocket_input_item_type(item)
-            in {"function_call_output", "custom_tool_call_output", "apply_patch_call_output"}
-        ),
-        None,
-    )
-    if first_output_index is None or first_output_index == 0:
-        return input_items
-    prefix = input_items[:first_output_index]
-    if not all(_is_websocket_previous_response_output_item(item) for item in prefix):
-        return input_items
-    return input_items[first_output_index:]
-
-
-def _is_websocket_previous_response_output_item(item: JsonValue) -> bool:
-    if isinstance(item, dict) and _websocket_input_item_type(item) is None and item.get("role") == "assistant":
-        return True
-    item_type = _websocket_input_item_type(item)
-    if item_type in {"reasoning", "function_call", "custom_tool_call", "apply_patch_call"}:
-        return True
-    if item_type != "message" or not isinstance(item, dict):
-        return False
-    return item.get("role") == "assistant"
 
 
 def _websocket_input_item_type(item: JsonValue) -> str | None:

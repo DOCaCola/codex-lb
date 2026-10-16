@@ -4125,7 +4125,7 @@ The service MUST track tool-call items completed by a streamed response that may
 - **THEN** the synthetic interrupted outputs are re-injected from the failed session's pending tool-call state, so the recovered submit does not reintroduce the upstream missing-tool-output failure
 
 #### Scenario: replayed apply_patch prefix is trimmed on anchored bridge follow-ups
-- **GIVEN** an HTTP bridge follow-up that anchors via `previous_response_id` and replays a prior `apply_patch_call` item (marked as response output) followed by its `apply_patch_call_output`
+- **GIVEN** an HTTP bridge follow-up that anchors via `previous_response_id` on the bridge's latest durable response and replays the `apply_patch_call` that response produced, followed by its `apply_patch_call_output`
 - **WHEN** the bridge trims the previous-response prefix already covered by the anchor
 - **THEN** `apply_patch_call` and `apply_patch_call_output` items are recognized by the trim exactly like the `function_call` and `custom_tool_call` variants, matching the WebSocket route's replay trim
 
@@ -11424,3 +11424,21 @@ Cancelled request logs with any other error code SHALL NOT anchor a follow-up.
 - **GIVEN** a response interrupted by the client
 - **WHEN** the client's next turn sets `previous_response_id` to that response
 - **THEN** the owner lookup returns the interrupted response's account
+
+### Requirement: Anchored follow-ups trim only the anchored response's own output
+When a `response.create` carries `previous_response_id` and its input starts with an echo of the anchored response's output, the service MAY drop that echo before forwarding, but only through the last tool call (`function_call`, `custom_tool_call` or `apply_patch_call`) that the anchored response itself produced, matched by `call_id` and call type. Reasoning items and assistant messages before that call belong to the echo. The first tool call the anchored response did not produce, or any other item, MUST end the trim, and the service MUST NOT trim when no produced call is found or no tool output follows the cut. The direct WebSocket route MUST trim only when `previous_response_id` is the continuity state's last completed response and MUST use the call types recorded for it. The HTTP bridge MUST trim only when `previous_response_id` is the durable bridge row's latest response and that row holds a verified call manifest. In every other case the input MUST be forwarded unchanged.
+
+#### Scenario: client-authored tool exchange survives an anchored follow-up
+- **GIVEN** a WebSocket response completed with tool call `call_repeat`
+- **WHEN** the anchored follow-up carries a `function_call` the response did not produce, its output, and the output for `call_repeat`
+- **THEN** the upstream input contains the client-authored call, its output and the `call_repeat` output unchanged
+
+#### Scenario: mixed prefix is trimmed through the recorded call only
+- **GIVEN** a WebSocket response completed with tool call `call_repeat`
+- **WHEN** the anchored follow-up starts with the echoed reasoning and `call_repeat`, followed by a client-authored call and both outputs
+- **THEN** the upstream input starts at the client-authored call
+
+#### Scenario: unattributable echo is forwarded whole
+- **GIVEN** an anchored follow-up whose `previous_response_id` is not the last completed response known to the route, or an HTTP bridge row without a verified call manifest
+- **WHEN** the input starts with call-shaped items and tool outputs
+- **THEN** the service forwards the input unchanged

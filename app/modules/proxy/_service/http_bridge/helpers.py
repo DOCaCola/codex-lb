@@ -1151,51 +1151,6 @@ def _http_bridge_precreated_retry_failure_error(
     return 502, "upstream_unavailable", message, "server_error", None
 
 
-def _trim_http_bridge_previous_response_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
-    first_output_index = next(
-        (
-            index
-            for index, item in enumerate(input_items)
-            if _http_bridge_input_item_type(item)
-            in {"function_call_output", "custom_tool_call_output", "apply_patch_call_output"}
-        ),
-        None,
-    )
-    if first_output_index is None or first_output_index == 0:
-        return input_items
-    prefix = input_items[:first_output_index]
-    if not all(_is_http_bridge_previous_response_output_item(item) for item in prefix):
-        return input_items
-    return input_items[first_output_index:]
-
-
-def _is_http_bridge_previous_response_output_item(item: JsonValue) -> bool:
-    item_type = _http_bridge_input_item_type(item)
-    if item_type in {"reasoning", "function_call", "custom_tool_call", "apply_patch_call"}:
-        return _has_http_bridge_response_output_marker(item)
-    if item_type != "message" or not isinstance(item, dict):
-        return False
-    role = item.get("role")
-    return role == "assistant" and _has_http_bridge_response_output_marker(item)
-
-
-def _has_http_bridge_response_output_marker(item: JsonValue) -> bool:
-    if not isinstance(item, dict):
-        return False
-    item_id = item.get("id")
-    if isinstance(item_id, str) and item_id.strip():
-        return True
-    status = item.get("status")
-    return status in {"completed", "in_progress"}
-
-
-def _http_bridge_input_item_type(item: JsonValue) -> str | None:
-    if not isinstance(item, dict):
-        return None
-    item_type = item.get("type")
-    return item_type if isinstance(item_type, str) else None
-
-
 def _normalize_http_bridge_error_event(
     *,
     event: OpenAIEvent | None,
@@ -3922,10 +3877,6 @@ for _helper_name in (
     "_http_bridge_startup_wait_timeout_error",
     "_log_http_bridge_startup_wait_timeout",
     "_http_bridge_precreated_retry_failure_error",
-    "_trim_http_bridge_previous_response_input_items",
-    "_is_http_bridge_previous_response_output_item",
-    "_has_http_bridge_response_output_marker",
-    "_http_bridge_input_item_type",
     "_normalize_http_bridge_error_event",
     "_http_bridge_request_counts_against_queue",
     "_http_bridge_session_has_visible_requests",

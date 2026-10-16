@@ -444,6 +444,42 @@ def responses_input_suffix_matches_pending_tool_calls(
     return suffix_calls == expected and suffix_outputs == expected
 
 
+def trim_replayed_previous_response_output(
+    input_items: list[JsonValue],
+    *,
+    response_tool_calls: Mapping[str, str],
+) -> list[JsonValue]:
+    """Drop the leading echo of the anchored response's own output items.
+
+    Codex clients that continue with ``previous_response_id`` may resend the
+    anchored response's reasoning, assistant text and tool calls ahead of the
+    tool outputs. Upstream already holds those items, so they are trimmed --
+    but only through the last call that the anchored response itself produced
+    (``response_tool_calls``: call_id -> call type). A call the response did
+    not produce is client-authored context (for example Codex Desktop's own
+    local tool exchanges) and ends the trim, so its output keeps its call.
+    """
+
+    cut = 0
+    for index, item in enumerate(input_items):
+        if not isinstance(item, dict):
+            break
+        item_type = item.get("type")
+        if item_type in _TOOL_CALL_TYPES:
+            if response_tool_calls.get(cast(str, item.get("call_id"))) != item_type:
+                break
+            cut = index + 1
+        elif item_type == "reasoning" or (item_type in {None, "message"} and item.get("role") == "assistant"):
+            continue
+        else:
+            break
+    if cut == 0 or not any(
+        isinstance(item, dict) and item.get("type") in _TOOL_CALL_TYPE_BY_OUTPUT_TYPE for item in input_items[cut:]
+    ):
+        return input_items
+    return input_items[cut:]
+
+
 def _direct_tool_call_prefix_state(
     input_items: list[JsonValue],
     *,

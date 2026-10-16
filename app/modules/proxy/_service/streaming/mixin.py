@@ -84,9 +84,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _forwarded_http_bridge_session_key as _forwarded_http_bridge_session_key,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _has_http_bridge_response_output_marker as _has_http_bridge_response_output_marker,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_allow_durable_takeover as _http_bridge_allow_durable_takeover,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -109,9 +106,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_has_durable_recovery_anchor as _http_bridge_has_durable_recovery_anchor,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_input_item_type as _http_bridge_input_item_type,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_is_context_overflow_error as _http_bridge_is_context_overflow_error,
@@ -195,9 +189,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_turn_state_alias_key as _http_bridge_turn_state_alias_key,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _is_http_bridge_previous_response_output_item as _is_http_bridge_previous_response_output_item,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _is_missing_durable_bridge_table_error as _is_missing_durable_bridge_table_error,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -226,9 +217,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _record_bridge_reattach as _record_bridge_reattach,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _trim_http_bridge_previous_response_input_items as _trim_http_bridge_previous_response_input_items,
 )
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
@@ -347,7 +335,6 @@ from app.modules.proxy._service.websocket.helpers import (
     _assign_websocket_response_id,  # noqa: F401
     _draining_websocket_request_states,  # noqa: F401
     _find_websocket_request_state_by_response_id,  # noqa: F401
-    _is_websocket_previous_response_output_item,  # noqa: F401
     _is_websocket_response_create,  # noqa: F401
     _match_websocket_request_state_for_anonymous_event,  # noqa: F401
     _match_websocket_request_state_for_precreated_terminal_event,  # noqa: F401
@@ -371,7 +358,6 @@ from app.modules.proxy._service.websocket.helpers import (
     _sanitize_websocket_previous_response_error,  # noqa: F401
     _sanitize_websocket_terminal_error_fields,  # noqa: F401
     _serialize_websocket_error_event,  # noqa: F401
-    _trim_websocket_previous_response_input_items,  # noqa: F401
     _upstream_websocket_disconnect_message,  # noqa: F401
     _websocket_auth_failure_permanent_code,  # noqa: F401
     _websocket_auth_failure_requires_reauth,  # noqa: F401

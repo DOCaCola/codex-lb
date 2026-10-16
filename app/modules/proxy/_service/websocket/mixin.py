@@ -160,9 +160,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _forwarded_http_bridge_session_key as _forwarded_http_bridge_session_key,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _has_http_bridge_response_output_marker as _has_http_bridge_response_output_marker,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_allow_durable_takeover as _http_bridge_allow_durable_takeover,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -185,9 +182,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_has_durable_recovery_anchor as _http_bridge_has_durable_recovery_anchor,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_input_item_type as _http_bridge_input_item_type,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_is_context_overflow_error as _http_bridge_is_context_overflow_error,
@@ -271,9 +265,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_turn_state_alias_key as _http_bridge_turn_state_alias_key,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _is_http_bridge_previous_response_output_item as _is_http_bridge_previous_response_output_item,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _is_missing_durable_bridge_table_error as _is_missing_durable_bridge_table_error,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -302,9 +293,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _record_bridge_reattach as _record_bridge_reattach,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _trim_http_bridge_previous_response_input_items as _trim_http_bridge_previous_response_input_items,
 )
 from app.modules.proxy._service.http_bridge.request_submit import (
     _text_with_account_installation_id as _text_with_account_installation_id,
@@ -452,7 +440,6 @@ from app.modules.proxy._service.websocket.helpers import (
     _sanitize_websocket_previous_response_error,
     _sanitize_websocket_terminal_error_fields,
     _serialize_websocket_error_event,
-    _trim_websocket_previous_response_input_items,
     _upstream_websocket_disconnect_message,
     _websocket_accepted_replay_can_switch_account,
     _websocket_accepted_replay_may_exclude_account,
@@ -535,6 +522,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease, effective_account_concurrency_caps
 from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.replay_safety import trim_replayed_previous_response_output
 from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
@@ -3553,7 +3541,15 @@ class _WebSocketMixin:
                 continuity_state=continuity_state,
                 input_fingerprints=client_input_fingerprints,
             )
-            trimmed_input_items = _trim_websocket_previous_response_input_items(previous_response_input_items)
+            trimmed_input_items = (
+                trim_replayed_previous_response_output(
+                    previous_response_input_items,
+                    response_tool_calls=continuity_state.last_pending_tool_call_types,
+                )
+                if continuity_state is not None
+                and continuity_state.last_completed_response_id == responses_payload.previous_response_id
+                else previous_response_input_items
+            )
             if len(trimmed_input_items) != len(previous_response_input_items):
                 assert client_input_fingerprints is not None
                 previous_response_trimmed_input_count = len(previous_response_input_items)

@@ -122,7 +122,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _release_http_bridge_unanchored_handoff,
     _release_http_bridge_unanchored_handoffs_for_request,
     _reserve_http_bridge_unanchored_handoff,
-    _trim_http_bridge_previous_response_input_items,
 )
 from app.modules.proxy._service.http_bridge.owner_forwarding import (
     _owner_forward_failure_allows_local_recovery,
@@ -275,6 +274,7 @@ from app.modules.proxy.replay_safety import (
     responses_input_suffix_matches_pending_tool_calls,
     responses_input_suffix_retains_prior_output,
     responses_payload_is_account_neutral_fresh_replay,
+    trim_replayed_previous_response_output,
 )
 from app.modules.proxy.selection_errors import USAGE_LIMIT_REACHED
 
@@ -1879,7 +1879,16 @@ class _HTTPBridgeStreamingMixin:
             )
         if effective_payload.previous_response_id is not None and isinstance(effective_payload.input, list):
             previous_response_input_items = cast(list[JsonValue], effective_payload.input)
-            trimmed_input_items = _trim_http_bridge_previous_response_input_items(previous_response_input_items)
+            trimmed_input_items = (
+                trim_replayed_previous_response_output(
+                    previous_response_input_items,
+                    response_tool_calls=durable_lookup.latest_pending_tool_calls,
+                )
+                if durable_lookup is not None
+                and durable_lookup.latest_response_id == effective_payload.previous_response_id
+                and durable_lookup.latest_pending_tool_calls is not None
+                else previous_response_input_items
+            )
             if len(trimmed_input_items) != len(previous_response_input_items):
                 previous_response_trimmed_input_count = len(previous_response_input_items)
                 previous_response_trimmed_input_fingerprint = _fingerprint_input_items(previous_response_input_items)

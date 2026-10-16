@@ -13,6 +13,7 @@ from app.modules.proxy.replay_safety import (
     responses_input_suffix_matches_pending_tool_calls,
     responses_input_suffix_retains_prior_output,
     responses_payload_is_account_neutral_fresh_replay,
+    trim_replayed_previous_response_output,
 )
 
 
@@ -2613,3 +2614,76 @@ def test_account_neutral_replay_marker_requires_tagged_existing_hard_kind() -> N
 def test_account_neutral_replay_marker_rejects_empty_nonce() -> None:
     with pytest.raises(ValueError, match="nonce"):
         make_http_bridge_account_neutral_replay_key("")
+
+
+_NEXT_USER: JsonValue = {"role": "user", "content": [{"type": "input_text", "text": "next"}]}
+
+
+def test_replayed_trim_drops_recorded_response_output_prefix() -> None:
+    items: list[JsonValue] = [
+        {"type": "reasoning", "summary": []},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "running"}]},
+        {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": "{}"},
+        {"type": "apply_patch_call", "call_id": "call_2", "operation": {"type": "delete_file", "path": "a"}},
+        {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+        {"type": "apply_patch_call_output", "call_id": "call_2", "output": "done"},
+        _NEXT_USER,
+    ]
+
+    trimmed = trim_replayed_previous_response_output(
+        items,
+        response_tool_calls={"call_1": "function_call", "call_2": "apply_patch_call"},
+    )
+
+    assert trimmed == items[4:]
+
+
+def test_replayed_trim_keeps_client_authored_tool_exchange() -> None:
+    # Codex Desktop reports its own local tool exchange after an anchored
+    # turn; the anchored response never produced that call.
+    items: list[JsonValue] = [
+        {"type": "function_call", "call_id": "visualization_state_1", "name": "visualization_state", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "visualization_state_1", "output": "{}"},
+        _NEXT_USER,
+    ]
+
+    assert trim_replayed_previous_response_output(items, response_tool_calls={}) == items
+    assert trim_replayed_previous_response_output(items, response_tool_calls={"call_other": "function_call"}) == items
+
+
+def test_replayed_trim_stops_at_first_unrecorded_call() -> None:
+    items: list[JsonValue] = [
+        {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": "{}"},
+        {"type": "function_call", "call_id": "visualization_state_1", "name": "visualization_state", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+        {"type": "function_call_output", "call_id": "visualization_state_1", "output": "{}"},
+    ]
+
+    trimmed = trim_replayed_previous_response_output(items, response_tool_calls={"call_1": "function_call"})
+
+    assert trimmed == items[1:]
+
+
+def test_replayed_trim_requires_matching_call_type() -> None:
+    items: list[JsonValue] = [
+        {"type": "custom_tool_call", "call_id": "call_1", "name": "shell", "input": "pwd"},
+        {"type": "custom_tool_call_output", "call_id": "call_1", "output": "/tmp"},
+    ]
+
+    assert trim_replayed_previous_response_output(items, response_tool_calls={"call_1": "function_call"}) == items
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        [{"role": "assistant", "content": [{"type": "output_text", "text": "context"}]}, _NEXT_USER],
+        [
+            {"role": "system", "content": [{"type": "input_text", "text": "local context"}]},
+            {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+        ],
+        [{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"}, _NEXT_USER],
+    ],
+)
+def test_replayed_trim_forwards_input_without_a_trimmable_echo(items: list[JsonValue]) -> None:
+    assert trim_replayed_previous_response_output(items, response_tool_calls={"call_1": "function_call"}) == items

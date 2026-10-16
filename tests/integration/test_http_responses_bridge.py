@@ -5990,7 +5990,39 @@ async def test_v1_responses_http_bridge_trims_replayed_apply_patch_previous_resp
         "http-bridge-apply-patch-trim@example.com",
     )
     account = await _get_account(account_id)
-    fake_upstream = _FakeBridgeUpstreamWebSocket()
+    apply_patch_call_item = {
+        "id": "apc_replay",
+        "type": "apply_patch_call",
+        "status": "completed",
+        "call_id": "call_patch_1",
+        "operation": {"type": "delete_file", "path": "obsolete.txt"},
+    }
+
+    class _ApplyPatchFirstUpstream(_FakeBridgeUpstreamWebSocket):
+        async def send_text(self, text: str) -> None:
+            if self.sent_text:
+                await super().send_text(text)
+                return
+            self.sent_text.append(text)
+            response_id = f"{self.response_id_prefix}_1"
+            for event in (
+                {"type": "response.created", "response": {"id": response_id, "status": "in_progress"}},
+                {"type": "response.output_item.added", "item": apply_patch_call_item, "output_index": 0},
+                {"type": "response.output_item.done", "item": apply_patch_call_item, "output_index": 0},
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": response_id,
+                        "object": "response",
+                        "status": "completed",
+                        "output": [apply_patch_call_item],
+                        "usage": {"input_tokens": 24, "output_tokens": 2, "total_tokens": 26},
+                    },
+                },
+            ):
+                await self._messages.put(_FakeUpstreamMessage("text", text=json.dumps(event, separators=(",", ":"))))
+
+    fake_upstream = _ApplyPatchFirstUpstream()
 
     async def fake_select_account_with_budget(
         self,
@@ -6062,12 +6094,7 @@ async def test_v1_responses_http_bridge_trims_replayed_apply_patch_previous_resp
     first_body = first.json()
     assert first_body["id"] == "resp_bridge_1"
 
-    replayed_apply_patch_call = {
-        "id": "apc_replay",
-        "type": "apply_patch_call",
-        "status": "completed",
-        "call_id": "call_patch_1",
-    }
+    replayed_apply_patch_call = apply_patch_call_item
     replayed_apply_patch_output = {
         "type": "apply_patch_call_output",
         "call_id": "call_patch_1",
