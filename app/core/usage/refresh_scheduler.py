@@ -28,8 +28,8 @@ from app.modules.limit_warmup.service import (
     usage_reset_confirmed,
 )
 from app.modules.proxy.account_cache import get_account_selection_cache, record_account_quota_status
+from app.modules.proxy.client_usage_cache import get_client_usage_cache
 from app.modules.proxy.load_balancer import background_recovery_state_from_account, effective_routing_tunables
-from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
 from app.modules.usage import updater as usage_updater_module
@@ -356,7 +356,7 @@ def _usage_refresh_slice_seconds(interval_seconds: int, account_count: int) -> f
 
 
 async def _invalidate_usage_refresh_caches() -> None:
-    await get_rate_limit_headers_cache().invalidate()
+    await get_client_usage_cache().invalidate()
     get_account_selection_cache().invalidate()
 
 

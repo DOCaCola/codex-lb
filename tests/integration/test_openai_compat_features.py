@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -294,7 +295,7 @@ async def test_v1_responses_preserves_explicit_prompt_cache_for_model_source(asy
     await _import_account(async_client, "acc_prompt_cache_source", "prompt-cache-source@example.com")
 
     seen = {}
-    source = object()
+    source = SimpleNamespace(kind="openai_compatible")
 
     async def fake_select(model, api_key, *, raw_model=None, reasoning_effort=None, require_streaming=False):
         return source, model

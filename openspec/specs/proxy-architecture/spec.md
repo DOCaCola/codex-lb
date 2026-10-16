@@ -87,11 +87,11 @@ _wait_for_websocket_continuity_gap = ["scheduler", "clock"]
 "app/modules/proxy/account_cache.py" = 2
 "app/modules/proxy/account_eligibility.py" = 1
 "app/modules/proxy/api.py" = 7
+"app/modules/proxy/client_usage_cache.py" = 2
 "app/modules/proxy/durable_bridge_repository.py" = 2
 "app/modules/proxy/images_observability.py" = 1
 "app/modules/proxy/images_service.py" = 2
 "app/modules/proxy/load_balancer.py" = 3
-"app/modules/proxy/rate_limit_cache.py" = 2
 ```
 <!-- proxy-timing-seams:end -->
 

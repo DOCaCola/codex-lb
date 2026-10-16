@@ -195,6 +195,99 @@ def capacity_for_plan(plan_type: str | None, window: str) -> float | None:
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class ClientPoolWindows:
+    primary: UsageWindowSummary | None
+    secondary: UsageWindowSummary | None
+    monthly: UsageWindowSummary | None
+
+
+def summarize_client_pool(
+    *,
+    primary_rows: Iterable[UsageWindowRow],
+    secondary_rows: Iterable[UsageWindowRow],
+    monthly_rows: Iterable[UsageWindowRow],
+    account_map: Mapping[str, Account],
+    now_epoch: int,
+) -> ClientPoolWindows:
+    """Pool usage per window as a client can route it.
+
+    An account that reports no window of a duration has no limit there; an
+    account exhausted on any window cannot serve, so it counts as fully used in
+    every window. A sample whose reset has elapsed no longer reports its
+    window. A window is reported only when some account reports it. Accounts
+    are weighted by plan capacity; when no account has a known capacity for a
+    window, they weigh equally.
+    """
+
+    reported = {
+        window: {
+            row.account_id: row
+            for row in rows
+            if row.used_percent is not None
+            and row.account_id in account_map
+            and (row.reset_at is None or row.reset_at > now_epoch)
+        }
+        for window, rows in (("primary", primary_rows), ("secondary", secondary_rows), ("monthly", monthly_rows))
+    }
+    known_accounts = {account_id for rows in reported.values() for account_id in rows}
+    exhausted = {
+        account_id
+        for window, rows in reported.items()
+        for account_id, row in rows.items()
+        if float(row.used_percent or 0.0) >= 100.0
+        and capacity_for_plan(account_map[account_id].plan_type, window) is not None
+    }
+    return ClientPoolWindows(
+        primary=_summarize_client_pool_window("primary", reported["primary"], known_accounts, exhausted, account_map),
+        secondary=_summarize_client_pool_window(
+            "secondary", reported["secondary"], known_accounts, exhausted, account_map
+        ),
+        monthly=_summarize_client_pool_window("monthly", reported["monthly"], known_accounts, exhausted, account_map),
+    )
+
+
+def _summarize_client_pool_window(
+    window: str,
+    rows: Mapping[str, UsageWindowRow],
+    known_accounts: set[str],
+    exhausted: set[str],
+    account_map: Mapping[str, Account],
+) -> UsageWindowSummary | None:
+    if not rows:
+        return None
+    capacities = {
+        account_id: capacity_for_plan(account_map[account_id].plan_type, window) for account_id in known_accounts
+    }
+    if not any(capacities.values()):
+        capacities = dict.fromkeys(known_accounts, 1.0)
+    total_capacity = 0.0
+    total_used = 0.0
+    reset_candidates: list[int] = []
+    for account_id, capacity in capacities.items():
+        if not capacity:
+            continue
+        row = rows.get(account_id)
+        row_used = float(row.used_percent or 0.0) if row is not None else 0.0
+        used = 100.0 if account_id in exhausted else row_used
+        total_capacity += capacity
+        total_used += capacity * used / 100.0
+        # The pooled figure next drops when an account with usage in this window resets.
+        if row is not None and row_used > 0.0 and row.reset_at is not None:
+            reset_candidates.append(row.reset_at)
+    window_minutes = _resolve_window_minutes(
+        window,
+        {row.window_minutes for row in rows.values() if row.window_minutes is not None and row.window_minutes > 0},
+    )
+    return UsageWindowSummary(
+        used_percent=(total_used / total_capacity) * 100.0 if total_capacity > 0 else None,
+        capacity_credits=total_capacity,
+        used_credits=total_used,
+        reset_at=min(reset_candidates) if reset_candidates else None,
+        window_minutes=window_minutes,
+    )
+
+
 def default_window_minutes(window: str) -> int | None:
     window_key = _normalize_window_key(window)
     if window_key == "primary":

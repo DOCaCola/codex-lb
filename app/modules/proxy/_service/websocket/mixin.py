@@ -522,6 +522,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease, effective_account_concurrency_caps
 from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
 from app.modules.proxy.replay_safety import trim_replayed_previous_response_output
 from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.request_policy import (
@@ -1166,6 +1167,18 @@ async def _process_and_forward_upstream_websocket_text(
     upstream_control.downstream_texts = None
     upstream_control.downstream_sequence_request_state = None
     upstream_control.downstream_sequence_number = None
+    if (
+        downstream_texts is None
+        and not suppress_downstream_event
+        and parsed_frame.event_type == RATE_LIMIT_EVENT_TYPE
+        and parsed_frame.payload is not None
+    ):
+        # The serving account's usage was ingested on receive; the client gets the pool's.
+        pool_event = await proxy.openai_rate_limit_event(parsed_frame.payload, api_key)
+        if pool_event is None:
+            suppress_downstream_event = True
+        else:
+            downstream_text = json.dumps(pool_event, ensure_ascii=True, separators=(",", ":"))
     if downstream_texts is not None:
         for emitted_text in downstream_texts:
             try:

@@ -1118,7 +1118,7 @@ async def test_fleet_refresh_uses_route_local_usage_updater_and_invalidates_on_w
     monkeypatch.setattr("app.modules.fleet.api.get_background_session", recording_background_session)
     monkeypatch.setattr("app.modules.fleet.api.UsageUpdater", FakeUsageUpdater)
     monkeypatch.setattr(
-        "app.modules.fleet.api.get_rate_limit_headers_cache",
+        "app.modules.fleet.api.get_client_usage_cache",
         lambda: FakeRateLimitHeadersCache(),
     )
     monkeypatch.setattr(
@@ -1278,7 +1278,7 @@ async def test_fleet_refresh_owns_session_until_shielded_refresh_finishes(db_set
 
     monkeypatch.setattr(fleet_api, "get_background_session", recording_background_session)
     monkeypatch.setattr(fleet_api, "UsageUpdater", FakeUsageUpdater)
-    monkeypatch.setattr(fleet_api, "get_rate_limit_headers_cache", lambda: FakeRateLimitHeadersCache())
+    monkeypatch.setattr(fleet_api, "get_client_usage_cache", lambda: FakeRateLimitHeadersCache())
     monkeypatch.setattr(fleet_api, "get_account_selection_cache", lambda: FakeAccountSelectionCache())
 
     request_task = asyncio.create_task(

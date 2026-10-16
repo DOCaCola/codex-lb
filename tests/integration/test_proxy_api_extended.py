@@ -35,6 +35,7 @@ from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._service.realtime_live import realtime_call_affinity_key
 from app.modules.proxy._service.support import _signal_propagated_capacity_startup_ready
+from app.modules.proxy.rate_limit_events import ClientUsageSnapshot
 
 pytestmark = pytest.mark.integration
 
@@ -191,6 +192,8 @@ async def _request_idle_heartbeat_stream(
         )
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    pool_usage = ClientUsageSnapshot(headers={"x-codex-secondary-used-percent": "30.5"})
+    monkeypatch.setattr(proxy_module.ProxyService, "openai_client_usage", AsyncMock(return_value=pool_usage))
 
     payload = {"model": "gpt-5.1", "input": "heartbeat", "stream": True}
     async with async_client.stream(
@@ -3245,6 +3248,7 @@ async def test_wrap_source_responses_native_codex_preserves_codex_events_and_kee
         await release_upstream.wait()
         yield (
             b'data: {"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"allowed":true}}\n\n'
+            b'data: {"type":"responsesapi.websocket_timing","latency_ms":12}\n\n'
             b'data: {"type":"response.completed","response":{"id":"resp_codex_src","output":[]}}\n\n'
         )
 
@@ -3271,7 +3275,9 @@ async def test_wrap_source_responses_native_codex_preserves_codex_events_and_kee
     release_upstream.set()
     remaining = [chunk async for chunk in iterator]
     joined = "".join(remaining)
-    assert "codex.rate_limits" in joined
+    assert "responsesapi.websocket_timing" in joined
+    # A model source's own usage never reaches the client.
+    assert "codex.rate_limits" not in joined
     assert "response.created" not in joined
     assert "resp_codex_src" in joined
 

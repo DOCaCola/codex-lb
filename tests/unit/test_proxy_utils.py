@@ -81,6 +81,7 @@ from app.modules.proxy import service as proxy_service
 from app.modules.proxy._service import compact as proxy_compact_service
 from app.modules.proxy._service import file_ops as proxy_file_ops
 from app.modules.proxy._service import observability as proxy_observability_module
+from app.modules.proxy._service import rate_limit as proxy_rate_limit_module
 from app.modules.proxy._service import support as proxy_support
 from app.modules.proxy._service import warmup as proxy_warmup_service
 from app.modules.proxy._service.http_bridge import helpers as http_bridge_helpers_module
@@ -109,6 +110,7 @@ from app.modules.proxy.load_balancer import (
     _filter_accounts_for_model,
     _mapped_model_has_registry_entry,
 )
+from app.modules.proxy.rate_limit_events import ClientUsageSnapshot
 from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.proxy.work_admission import AdmissionLease
@@ -54066,6 +54068,73 @@ async def test_process_and_forward_upstream_websocket_text_decodes_once_and_vali
     finalize_request_state.assert_awaited_once()
     assert finalize_request_state.await_args is not None
     assert finalize_request_state.await_args.kwargs["event_type"] == "response.completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hidden", [False, True])
+async def test_process_and_forward_upstream_websocket_text_reports_pool_usage(monkeypatch, hidden: bool):
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_ws_pool_usage")
+    pool_headers = {"x-codex-secondary-used-percent": "30.5", "x-codex-secondary-window-minutes": "10080"}
+    monkeypatch.setattr(service, "openai_client_usage", AsyncMock(return_value=ClientUsageSnapshot(pool_headers)))
+    monkeypatch.setattr(
+        proxy_rate_limit_module, "hide_upstream_quota_for_api_key_clients", AsyncMock(return_value=hidden)
+    )
+    sent_downstream: list[str] = []
+
+    async def record_downstream(_websocket: object, *, text: str, **_kwargs: object) -> None:
+        sent_downstream.append(text)
+
+    monkeypatch.setattr(service, "_send_downstream_websocket_text", record_downstream)
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_pool_usage",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        response_create_gate_acquired=True,
+    )
+    frame_text = json.dumps(
+        {
+            "type": "codex.rate_limits",
+            "plan_type": "plus",
+            "rate_limits": {"primary": {"used_percent": 100.0, "window_minutes": 300, "reset_at": 900}},
+        }
+    )
+
+    terminal = await websocket_mixin_module._process_and_forward_upstream_websocket_text(
+        cast(Any, service),
+        cast(Any, SimpleNamespace()),
+        cast(Any, SimpleNamespace(archive_received=lambda _message: None)),
+        message=SimpleNamespace(kind="text", text=frame_text),
+        text=frame_text,
+        account=account,
+        account_id_value=account.id,
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        client_send_lock=anyio.Lock(),
+        api_key=None,
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        response_create_gate=asyncio.Semaphore(0),
+        downstream_activity=proxy_service._DownstreamWebSocketActivity(),
+        continuity_state=None,
+        codex_session_affinity=False,
+    )
+
+    assert terminal is False
+    if hidden:
+        assert sent_downstream == []
+    else:
+        assert [json.loads(text) for text in sent_downstream] == [
+            {
+                "type": "codex.rate_limits",
+                "rate_limits": {
+                    "primary": None,
+                    "secondary": {"used_percent": 30.5, "window_minutes": 10080, "reset_at": None},
+                },
+            }
+        ]
 
 
 def test_normalize_sse_event_block_rewrites_alias_on_both_event_and_data_lines():

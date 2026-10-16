@@ -557,6 +557,14 @@ def _reset_global_state() -> None:
     except Exception:
         pass
     try:
+        # Pool usage snapshots would otherwise leak one test's accounts into the
+        # usage another test's clients receive.
+        from app.modules.proxy.client_usage_cache import get_client_usage_cache
+
+        get_client_usage_cache()._entries.clear()
+    except Exception:
+        pass
+    try:
         from app.core.shutdown import set_bridge_drain_active
 
         set_bridge_drain_active(False)

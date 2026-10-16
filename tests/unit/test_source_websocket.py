@@ -50,6 +50,50 @@ async def test_error_preserves_only_valid_retry_header(monkeypatch, native, hint
     assert event.get("headers", {}) == ({"retry-after": expected} if expected else {})
 
 
+@pytest.mark.parametrize("native", [False, True])
+async def test_native_source_turn_opens_with_the_pool_usage_event(monkeypatch, native):
+    incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+    await incoming.put({"type": "websocket.connect"})
+    websocket = WebSocket({"type": "websocket", "path": "/v1/responses", "headers": []}, incoming.get, outgoing.put)
+    await websocket.accept()
+    await outgoing.get()
+
+    async def body():
+        yield 'data: {"type":"response.completed","response":{"id":"resp_src","status":"completed"}}\n\n'
+
+    response = StreamingResponse(
+        body(),
+        headers={"x-codex-primary-used-percent": "25.0", "x-codex-primary-window-minutes": "300"},
+    )
+    source = Mock(spec=ModelSource)
+    monkeypatch.setattr(bridge, "select_responses_model_source", AsyncMock(return_value=(source, "test")))
+    monkeypatch.setattr(api, "responses" if native else "v1_responses", AsyncMock(return_value=response))
+    service = Mock(spec=ProxyService)
+    service._refresh_websocket_api_key_policy = AsyncMock(return_value=None)
+    await bridge.handle_source_frame(
+        websocket,
+        bridge.SourceWebSocketReceiver(websocket),
+        {"type": "response.create", "model": "test", "input": "Hi"},
+        service=service,
+        api_key=None,
+        send_lock=anyio.Lock(),
+        native_turn_pending=False,
+        native_codex=native,
+    )
+
+    events = [json.loads(outgoing.get_nowait()["text"]) for _ in range(outgoing.qsize())]
+    if native:
+        assert events[0] == {
+            "type": "codex.rate_limits",
+            "rate_limits": {
+                "primary": {"used_percent": 25.0, "window_minutes": 300, "reset_at": None},
+                "secondary": None,
+            },
+        }
+        events = events[1:]
+    assert [event["type"] for event in events] == ["response.completed"]
+
+
 @pytest.mark.parametrize("external_cancel", [False, True])
 async def test_disconnect_closes_owned_stream_and_preserves_outer_cancellation(monkeypatch, external_cancel):
     incoming = asyncio.Queue()

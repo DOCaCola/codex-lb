@@ -13,6 +13,7 @@ from app.db.models import Account, AccountCreditPolicy, AccountStatus, UsageHist
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.proxy._service.rate_limit import _RateLimitMixin
+from app.modules.proxy.client_usage_cache import get_client_usage_cache
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.quota_planner.repository import QuotaPlannerRepository
@@ -24,6 +25,24 @@ pytestmark = pytest.mark.unit
 
 _NOW_EPOCH = 1_700_000_000
 _T = TypeVar("_T")
+# Plus reports 40% weekly; the free account reports only a monthly window, so
+# it is unconstrained (0%) in the weekly window at its weekly capacity.
+_POOLED_SECONDARY_PERCENT = (7560.0 * 40.0 / 100.0) / (7560.0 + 1134.0) * 100.0
+
+
+@pytest.fixture(autouse=True)
+async def _isolated_client_usage(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    async def no_claude_accounts(windows: object) -> dict[str, str]:
+        del windows
+        return {}
+
+    monkeypatch.setattr(
+        "app.modules.proxy._service.rate_limit.load_claude_pool_rate_limit_headers",
+        no_claude_accounts,
+    )
+    await get_client_usage_cache().invalidate()
+    yield
+    await get_client_usage_cache().invalidate()
 
 
 class _SharedSessionGuard:
@@ -216,7 +235,7 @@ async def test_rate_limit_headers_serialize_usage_reads(monkeypatch: pytest.Monk
     monkeypatch.setattr("app.modules.proxy._service.rate_limit.time.time", lambda: _NOW_EPOCH)
     service, guard = _service_and_guard()
 
-    headers = await service._compute_rate_limit_headers()
+    headers = (await service._compute_openai_client_usage()).headers
 
     assert guard.max_in_flight == 1
     assert guard.calls == [
@@ -225,12 +244,13 @@ async def test_rate_limit_headers_serialize_usage_reads(monkeypatch: pytest.Monk
         "usage:secondary",
         "usage:monthly",
         "usage:credits",
+        "additional:list_limit_names",
     ]
     assert headers == {
         "x-codex-primary-used-percent": "20.0",
         "x-codex-primary-window-minutes": "300",
         "x-codex-primary-reset-at": str(_NOW_EPOCH + 300),
-        "x-codex-secondary-used-percent": "40.0",
+        "x-codex-secondary-used-percent": str(_POOLED_SECONDARY_PERCENT),
         "x-codex-secondary-window-minutes": "10080",
         "x-codex-secondary-reset-at": str(_NOW_EPOCH + 604_800),
         "x-codex-monthly-used-percent": "60.0",
@@ -269,7 +289,7 @@ async def test_rate_limit_payload_serializes_usage_reads(monkeypatch: pytest.Mon
     assert payload.rate_limit.primary_window.used_percent == 20
     assert payload.rate_limit.primary_window.reset_at == _NOW_EPOCH + 300
     assert payload.rate_limit.secondary_window is not None
-    assert payload.rate_limit.secondary_window.used_percent == 40
+    assert payload.rate_limit.secondary_window.used_percent == int(_POOLED_SECONDARY_PERCENT)
     assert payload.rate_limit.secondary_window.reset_at == _NOW_EPOCH + 604_800
     assert payload.rate_limit.monthly_window is not None
     assert payload.rate_limit.monthly_window.used_percent == 60
@@ -298,7 +318,7 @@ async def test_rate_limit_credits_exclude_accounts_that_never_spend_credits(
     monkeypatch.setattr("app.modules.proxy._service.rate_limit.time.time", lambda: _NOW_EPOCH)
     service, _ = _service_and_guard(credit_holder_policy=AccountCreditPolicy.NEVER)
 
-    headers = await service._compute_rate_limit_headers()
+    headers = (await service._compute_openai_client_usage()).headers
     payload = await service.get_rate_limit_payload()
 
     # Only the plus account's empty credit state remains in the pool.

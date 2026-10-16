@@ -13,7 +13,7 @@ _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 ADDITIONAL_QUOTA_ROUTING_POLICIES = frozenset({"inherit", "burn_first", "normal", "preserve"})
 
 
-def _normalize_identifier(value: str | None) -> str | None:
+def normalize_quota_identifier(value: str | None) -> str | None:
     if value is None:
         return None
     normalized = _NORMALIZE_PATTERN.sub("_", value.strip().lower()).strip("_")
@@ -76,7 +76,7 @@ def _normalize_routing_policy(value: str | None) -> str:
 
 def _definition_from_json(item: AdditionalQuotaRegistryEntry) -> AdditionalQuotaDefinition:
     raw_quota_key = str(item["quota_key"]).strip()
-    quota_key = _normalize_identifier(raw_quota_key)
+    quota_key = normalize_quota_identifier(raw_quota_key)
     if quota_key is None:
         raise ValueError(f"invalid additional quota_key in registry: {raw_quota_key!r}")
     display_label = str(item["display_label"]).strip()
@@ -88,7 +88,7 @@ def _definition_from_json(item: AdditionalQuotaRegistryEntry) -> AdditionalQuota
     )
     model_ids = frozenset(
         normalized
-        for normalized in (_normalize_identifier(str(value)) for value in item.get("model_ids", []))
+        for normalized in (normalize_quota_identifier(str(value)) for value in item.get("model_ids", []))
         if normalized is not None
     )
     raw_applies_to_plans = item.get("applies_to_plans")
@@ -96,22 +96,22 @@ def _definition_from_json(item: AdditionalQuotaRegistryEntry) -> AdditionalQuota
     if raw_applies_to_plans is not None:
         applies_to_plans = frozenset(
             normalized
-            for normalized in (_normalize_identifier(str(value)) for value in raw_applies_to_plans)
+            for normalized in (normalize_quota_identifier(str(value)) for value in raw_applies_to_plans)
             if normalized is not None
         )
     quota_key_aliases = frozenset(
         normalized
-        for normalized in (_normalize_identifier(str(value)) for value in item.get("quota_key_aliases", []))
+        for normalized in (normalize_quota_identifier(str(value)) for value in item.get("quota_key_aliases", []))
         if normalized is not None and normalized != quota_key
     )
     limit_name_aliases = frozenset(
         normalized
-        for normalized in (_normalize_identifier(str(value)) for value in item.get("limit_name_aliases", []))
+        for normalized in (normalize_quota_identifier(str(value)) for value in item.get("limit_name_aliases", []))
         if normalized is not None
     )
     metered_feature_aliases = frozenset(
         normalized
-        for normalized in (_normalize_identifier(str(value)) for value in item.get("metered_feature_aliases", []))
+        for normalized in (normalize_quota_identifier(str(value)) for value in item.get("metered_feature_aliases", []))
         if normalized is not None
     )
     return AdditionalQuotaDefinition(
@@ -227,7 +227,7 @@ def get_additional_quota_definition_for_key(quota_key: str | None) -> Additional
     )
     resolved_key = canonicalize_additional_quota_key(quota_key=quota_key)
     if resolved_key is None or resolved_key not in by_quota_key:
-        normalized_quota_key = _normalize_identifier(quota_key)
+        normalized_quota_key = normalize_quota_identifier(quota_key)
         resolved_key = (
             alias_to_quota_key.get(normalized_quota_key, resolved_key)
             if normalized_quota_key is not None
@@ -243,7 +243,7 @@ def normalize_additional_quota_routing_policy(value: str | None) -> str:
 
 
 def canonicalize_additional_quota_routing_policy(value: str | None) -> str | None:
-    normalized = _normalize_identifier(value)
+    normalized = normalize_quota_identifier(value)
     if normalized in ADDITIONAL_QUOTA_ROUTING_POLICIES:
         return normalized
     return None
@@ -284,27 +284,27 @@ def canonicalize_additional_quota_key(
         str(_registry_path())
     )
 
-    model_key = _normalize_identifier(model)
+    model_key = normalize_quota_identifier(model)
     if model_key is not None:
         resolved = model_to_quota_key.get(model_key)
         if resolved is not None:
             return resolved
 
-    normalized_quota_key = _normalize_identifier(quota_key)
+    normalized_quota_key = normalize_quota_identifier(quota_key)
     if normalized_quota_key is not None:
         resolved = quota_key_alias_to_quota_key.get(normalized_quota_key)
         if resolved is not None:
             return resolved
 
     for candidate in (limit_name, metered_feature):
-        normalized = _normalize_identifier(candidate)
+        normalized = normalize_quota_identifier(candidate)
         if normalized is None:
             continue
         resolved = alias_to_quota_key.get(normalized)
         if resolved is not None:
             return resolved
 
-    return _normalize_identifier(limit_name) or _normalize_identifier(metered_feature) or normalized_quota_key
+    return normalize_quota_identifier(limit_name) or normalize_quota_identifier(metered_feature) or normalized_quota_key
 
 
 def get_additional_quota_key_for_model(model: str | None) -> str | None:
@@ -313,7 +313,7 @@ def get_additional_quota_key_for_model(model: str | None) -> str | None:
 
 def get_additional_quota_definition_for_model(model: str | None) -> AdditionalQuotaDefinition | None:
     _, _, model_to_definition, _, _ = _definition_maps_for_path(str(_registry_path()))
-    normalized = _normalize_identifier(model)
+    normalized = normalize_quota_identifier(model)
     if normalized is None:
         return None
     return model_to_definition.get(normalized)

@@ -192,6 +192,7 @@ from app.core.runtime_logging import log_error_response
 from app.core.socket_peer import raw_socket_peer_host
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
+from app.core.usage.live_snapshots import EVENT_MARKER
 from app.core.usage.request_operation import (
     RequestOperation,
     get_request_operation,
@@ -329,6 +330,10 @@ from app.modules.proxy.images_observability import (
     IMAGE_ROUTE_STARTED_AT_STATE,
     IMAGE_ROUTE_STREAM_STATE,
     record_images_route_observability,
+)
+from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
+from app.modules.proxy.rate_limit_events import (
+    hide_upstream_quota_for_api_key_clients as _hide_upstream_quota_for_api_key_clients,
 )
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
@@ -1285,7 +1290,7 @@ async def responses(
         # Opportunistic admission gates subscription *account* capacity;
         # source-routed requests use no account, so a closed/empty pool must
         # not reject them.
-        rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
+        rate_limit_headers = await _rate_limit_headers_for_source(context, api_key, source, responses_payload.model)
         if terminal_compaction:
             return await _source_synthetic_compaction_response(
                 request,
@@ -1517,7 +1522,7 @@ async def v1_responses(
         # Opportunistic admission gates subscription *account* capacity;
         # source-routed requests use no account, so a closed/empty pool must
         # not reject them.
-        rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
+        rate_limit_headers = await _rate_limit_headers_for_source(context, api_key, source, responses_payload.model)
         if terminal_compaction:
             return await _source_synthetic_compaction_response(
                 request,
@@ -2402,13 +2407,6 @@ async def _build_codex_usage_payload_for_api_key(api_key: ApiKeyData) -> RateLim
     )
 
 
-async def _hide_upstream_quota_for_api_key_clients(api_key: ApiKeyData | None) -> bool:
-    if api_key is None:
-        return False
-    settings = await get_settings_cache().get()
-    return bool(getattr(settings, "hide_upstream_quota_from_api_keys", False))
-
-
 async def _apply_api_key_enforcement_with_fast_mode_policy(
     payload: ResponsesRequest | ResponsesCompactRequest,
     api_key: ApiKeyData | None,
@@ -2442,6 +2440,19 @@ async def _rate_limit_headers_for_request(
     if await _hide_upstream_quota_for_api_key_clients(api_key):
         return {}
     return await context.service.rate_limit_headers()
+
+
+async def _rate_limit_headers_for_source(
+    context: ProxyContext,
+    api_key: ApiKeyData | None,
+    source: ModelSource,
+    model: str,
+) -> dict[str, str]:
+    """A source turn reports its provider's subscription pool; sources without one report nothing."""
+
+    if source.kind != "claude" or await _hide_upstream_quota_for_api_key_clients(api_key):
+        return {}
+    return await context.service.claude_rate_limit_headers(model)
 
 
 async def _release_reservation_deferring_cancellation(
@@ -7038,6 +7049,29 @@ async def _iter_source_sse_event_blocks(
                 await _aclose_stream(stream)
 
 
+async def _replace_rate_limit_events(
+    stream: AsyncIterator[str],
+    rate_limit_event: Callable[[dict[str, JsonValue]], Awaitable[dict[str, JsonValue] | None]],
+) -> AsyncIterator[str]:
+    """Swap each upstream ``codex.rate_limits`` event for the pool's, or withhold it."""
+
+    async for event_block in stream:
+        if EVENT_MARKER in event_block:
+            payload = _parse_sse_payload(event_block)
+            if payload is not None and payload.get("type") == RATE_LIMIT_EVENT_TYPE:
+                pool_event = await rate_limit_event(payload)
+                if pool_event is not None:
+                    yield format_sse_event(pool_event)
+                continue
+        yield event_block
+
+
+async def _withhold_source_rate_limit_event(_payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+    """Model sources report pool usage through response headers, never upstream events."""
+
+    return None
+
+
 async def _wrap_source_responses_public_stream(
     stream: AsyncIterable[bytes | str | memoryview[int]],
     *,
@@ -7060,7 +7094,7 @@ async def _wrap_source_responses_public_stream(
     settings = with_dashboard_overrides(get_settings())
     event_blocks = _iter_source_sse_event_blocks(stream)
     normalized = _normalize_public_responses_stream(
-        event_blocks,
+        _replace_rate_limit_events(event_blocks, _withhold_source_rate_limit_event),
         enforce_openai_sdk_contract=enforce_openai_sdk_contract,
         forward_unparseable_data=True,
         preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
@@ -7521,15 +7555,18 @@ async def _stream_responses(
                 },
             )
     stream = _normalize_public_responses_stream(
-        _stream_response_error_events(
-            stream,
-            owns_reservation=owns_reservation,
-            reservation=reservation,
-            reservation_cleanup=reservation_cleanup,
-            responses_service_cleanup_ready_event=responses_service_cleanup_ready_event,
-            responses_owner_forward_dispatched_event=responses_owner_forward_dispatched_event,
-            responses_owner_forward_rejected_event=responses_owner_forward_rejected_event,
-            preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
+        _replace_rate_limit_events(
+            _stream_response_error_events(
+                stream,
+                owns_reservation=owns_reservation,
+                reservation=reservation,
+                reservation_cleanup=reservation_cleanup,
+                responses_service_cleanup_ready_event=responses_service_cleanup_ready_event,
+                responses_owner_forward_dispatched_event=responses_owner_forward_dispatched_event,
+                responses_owner_forward_rejected_event=responses_owner_forward_rejected_event,
+                preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,
+            ),
+            lambda event: context.service.openai_rate_limit_event(event, api_key),
         ),
         enforce_openai_sdk_contract=enforce_openai_sdk_contract,
         preserve_native_failure_lifecycle=preserve_native_failure_lifecycle,

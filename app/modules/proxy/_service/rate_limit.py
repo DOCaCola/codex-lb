@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Protocol, cast
 
 from app.core import usage as usage_core
+from app.core.types import JsonValue
+from app.core.usage.live_snapshots import LiveUsageWindow, parse_rate_limit_headers
 from app.core.usage.quota import account_credit_policy
 from app.core.usage.types import UsageWindowRow
 from app.db.models import Account, AccountCreditPolicy, UsageHistory
 from app.db.session import detach_session_objects
 from app.modules.accounts.background_repository import BackgroundAccountsRepository
+from app.modules.api_keys.service import ApiKeyData
+from app.modules.claude.client_usage import BASE_WINDOWS, load_claude_pool_rate_limit_headers
+from app.modules.claude.quota import applicable_windows
+from app.modules.claude.schemas import WindowName
+from app.modules.proxy.client_usage_cache import get_client_usage_cache
 from app.modules.proxy.helpers import (
     _credits_headers,
     _credits_snapshot,
@@ -17,10 +24,14 @@ from app.modules.proxy.helpers import (
     _rate_limit_details,
     _rate_limit_headers,
     _select_accounts_for_limits,
-    _summarize_window,
     _window_snapshot,
 )
-from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
+from app.modules.proxy.rate_limit_events import (
+    ClientUsageSnapshot,
+    additional_rate_limit_events,
+    hide_upstream_quota_for_api_key_clients,
+    project_rate_limit_event,
+)
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.types import (
     AdditionalRateLimitData,
@@ -35,6 +46,12 @@ from app.modules.usage.updater import UsageUpdater
 
 if TYPE_CHECKING:
     from app.modules.proxy.load_balancer import LoadBalancer
+
+_OPENAI_POOL = "openai"
+_CLAUDE_POOL = "claude"
+# Identifies the Claude pool in the Codex usage payload's additional limits.
+_CLAUDE_LIMIT_ID = "claude"
+_CLAUDE_LIMIT_NAME = "Claude"
 
 
 class _RateLimitServiceProtocol(Protocol):
@@ -92,43 +109,58 @@ class _RateLimitMixin:
         )
 
     async def rate_limit_headers(self) -> dict[str, str]:
-        return await get_rate_limit_headers_cache().get(self._compute_rate_limit_headers)
+        return (await self.openai_client_usage()).headers
 
-    async def _compute_rate_limit_headers(self) -> dict[str, str]:
+    async def claude_rate_limit_headers(self, model: str) -> dict[str, str]:
+        return (await self.claude_client_usage(applicable_windows(model))).headers
+
+    async def openai_client_usage(self) -> ClientUsageSnapshot:
+        return await get_client_usage_cache().get(_OPENAI_POOL, self._compute_openai_client_usage)
+
+    async def claude_client_usage(self, windows: Collection[WindowName]) -> ClientUsageSnapshot:
+        async def compute() -> ClientUsageSnapshot:
+            return ClientUsageSnapshot(headers=await load_claude_pool_rate_limit_headers(windows))
+
+        return await get_client_usage_cache().get((_CLAUDE_POOL, tuple(sorted(windows))), compute)
+
+    async def openai_rate_limit_event(
+        self,
+        payload: Mapping[str, JsonValue],
+        api_key: ApiKeyData | None,
+    ) -> dict[str, JsonValue] | None:
+        """The OpenAI pool's replacement for an upstream ``codex.rate_limits`` event."""
+
+        if await hide_upstream_quota_for_api_key_clients(api_key):
+            return None
+        return project_rate_limit_event(payload, await self.openai_client_usage())
+
+    async def _compute_openai_client_usage(self) -> ClientUsageSnapshot:
         headers: dict[str, str] = {}
         proxy = cast(_RateLimitServiceProtocol, self)
         async with proxy._repo_factory() as repos:
             accounts = await repos.accounts.list_accounts()
             selected_accounts = _select_accounts_for_limits(accounts)
             if not selected_accounts:
-                return headers
+                return ClientUsageSnapshot(headers=headers)
 
             account_map = {account.id: account for account in selected_accounts}
-            primary_rows_raw = await self._latest_usage_rows(repos, account_map, "primary")
-            secondary_rows_raw = await self._latest_usage_rows(repos, account_map, "secondary")
-            monthly_rows = await self._latest_usage_rows(repos, account_map, "monthly")
-            primary_rows, secondary_rows = usage_core.normalize_weekly_only_rows(
-                primary_rows_raw,
-                secondary_rows_raw,
+            primary_rows, secondary_rows, monthly_rows, now_epoch = await self._client_pool_rows(repos, account_map)
+            pool = usage_core.summarize_client_pool(
+                primary_rows=primary_rows,
+                secondary_rows=secondary_rows,
+                monthly_rows=monthly_rows,
+                account_map=account_map,
+                now_epoch=now_epoch,
             )
-            now_epoch = int(time.time())
-            primary_rows = usage_core.expire_elapsed_window_rows(primary_rows, now_epoch=now_epoch)
-            secondary_rows = usage_core.expire_elapsed_window_rows(secondary_rows, now_epoch=now_epoch)
-            monthly_rows = usage_core.expire_elapsed_window_rows(monthly_rows, now_epoch=now_epoch)
-
-            primary_summary = _summarize_window(primary_rows, account_map, "primary")
-            if primary_summary is not None:
-                headers.update(_rate_limit_headers("primary", primary_summary))
-
-            secondary_summary = _summarize_window(secondary_rows, account_map, "secondary")
-            if secondary_summary is not None:
-                headers.update(_rate_limit_headers("secondary", secondary_summary))
-            monthly_summary = _summarize_window(monthly_rows, account_map, "monthly")
-            if monthly_summary is not None:
-                headers.update(_rate_limit_headers("monthly", monthly_summary))
+            for label, summary in (("primary", pool.primary), ("secondary", pool.secondary), ("monthly", pool.monthly)):
+                if summary is not None:
+                    headers.update(_rate_limit_headers(label, summary))
 
             headers.update(_credits_headers(await self._spendable_credit_usage_entries(repos, account_map)))
-        return headers
+            additional = additional_rate_limit_events(
+                await self._build_additional_rate_limits(repos, account_map, now_epoch)
+            )
+        return ClientUsageSnapshot(headers=headers, additional=additional)
 
     async def get_rate_limit_payload(self) -> RateLimitStatusPayloadData:
         proxy = cast(_RateLimitServiceProtocol, self)
@@ -141,40 +173,39 @@ class _RateLimitMixin:
         # Do not hold the request session while an owned refresh checks out its
         # background session; pool_size=1 must still make progress.
         await self._refresh_usage(accounts, latest_usage)
+        claude_limit = _claude_additional_rate_limit((await self.claude_client_usage(BASE_WINDOWS)).headers)
 
         async with proxy._repo_factory() as repos:
             accounts = await repos.accounts.list_accounts()
             selected_accounts = _select_accounts_for_limits(accounts)
             if not selected_accounts:
-                return RateLimitStatusPayloadData(plan_type="guest")
+                return RateLimitStatusPayloadData(
+                    plan_type="guest",
+                    additional_rate_limits=[claude_limit] if claude_limit is not None else [],
+                )
             account_map = {account.id: account for account in selected_accounts}
-            primary_rows_raw = await self._latest_usage_rows(repos, account_map, "primary")
-            secondary_rows_raw = await self._latest_usage_rows(repos, account_map, "secondary")
-            monthly_rows = await self._latest_usage_rows(repos, account_map, "monthly")
-            primary_rows, secondary_rows = usage_core.normalize_weekly_only_rows(
-                primary_rows_raw,
-                secondary_rows_raw,
-            )
-            now_epoch = int(time.time())
-            primary_rows = usage_core.expire_elapsed_window_rows(primary_rows, now_epoch=now_epoch)
-            secondary_rows = usage_core.expire_elapsed_window_rows(secondary_rows, now_epoch=now_epoch)
-            monthly_rows = usage_core.expire_elapsed_window_rows(monthly_rows, now_epoch=now_epoch)
-
-            primary_summary = _summarize_window(primary_rows, account_map, "primary")
-            secondary_summary = _summarize_window(secondary_rows, account_map, "secondary")
-            monthly_summary = _summarize_window(monthly_rows, account_map, "monthly")
-
-            primary_window = _window_snapshot(primary_summary, primary_rows, "primary", now_epoch)
-            secondary_window = _window_snapshot(secondary_summary, secondary_rows, "secondary", now_epoch)
-            monthly_window = _window_snapshot(monthly_summary, monthly_rows, "monthly", now_epoch)
-            limit_reached = not _has_available_usage_account(
+            primary_rows, secondary_rows, monthly_rows, now_epoch = await self._client_pool_rows(repos, account_map)
+            pool = usage_core.summarize_client_pool(
                 primary_rows=primary_rows,
                 secondary_rows=secondary_rows,
                 monthly_rows=monthly_rows,
                 account_map=account_map,
+                now_epoch=now_epoch,
+            )
+
+            primary_window = _window_snapshot(pool.primary, "primary", now_epoch)
+            secondary_window = _window_snapshot(pool.secondary, "secondary", now_epoch)
+            monthly_window = _window_snapshot(pool.monthly, "monthly", now_epoch)
+            limit_reached = not _has_available_usage_account(
+                primary_rows=usage_core.expire_elapsed_window_rows(primary_rows, now_epoch=now_epoch),
+                secondary_rows=usage_core.expire_elapsed_window_rows(secondary_rows, now_epoch=now_epoch),
+                monthly_rows=usage_core.expire_elapsed_window_rows(monthly_rows, now_epoch=now_epoch),
+                account_map=account_map,
             )
 
             additional_rate_limits = await self._build_additional_rate_limits(repos, account_map, now_epoch)
+            if claude_limit is not None:
+                additional_rate_limits.append(claude_limit)
 
             return RateLimitStatusPayloadData(
                 plan_type=_plan_type_for_accounts(selected_accounts),
@@ -215,6 +246,17 @@ class _RateLimitMixin:
             return []
         latest = await repos.usage.latest_by_account(window=window)
         return [usage_history_to_window_row(entry) for entry in latest.values() if entry.account_id in account_map]
+
+    async def _client_pool_rows(
+        self,
+        repos: ProxyRepositories,
+        account_map: dict[str, Account],
+    ) -> tuple[list[UsageWindowRow], list[UsageWindowRow], list[UsageWindowRow], int]:
+        primary_rows_raw = await self._latest_usage_rows(repos, account_map, "primary")
+        secondary_rows_raw = await self._latest_usage_rows(repos, account_map, "secondary")
+        monthly_rows = await self._latest_usage_rows(repos, account_map, "monthly")
+        primary_rows, secondary_rows = usage_core.normalize_weekly_only_rows(primary_rows_raw, secondary_rows_raw)
+        return primary_rows, secondary_rows, monthly_rows, int(time.time())
 
     async def _spendable_credit_usage_entries(
         self,
@@ -366,3 +408,33 @@ class _RateLimitMixin:
             )
 
         return additional_limits
+
+
+def _claude_additional_rate_limit(headers: Mapping[str, str]) -> AdditionalRateLimitData | None:
+    """The Claude pool as an additional limit of the Codex usage payload."""
+
+    snapshot = parse_rate_limit_headers(headers)
+    if snapshot is None:
+        return None
+    now_epoch = int(time.time())
+    return AdditionalRateLimitData(
+        quota_key=_CLAUDE_LIMIT_ID,
+        limit_name=_CLAUDE_LIMIT_NAME,
+        display_label=_CLAUDE_LIMIT_NAME,
+        metered_feature=_CLAUDE_LIMIT_ID,
+        rate_limit=_rate_limit_details(
+            _live_window_snapshot(snapshot.primary, now_epoch),
+            _live_window_snapshot(snapshot.secondary, now_epoch),
+        ),
+    )
+
+
+def _live_window_snapshot(window: LiveUsageWindow | None, now_epoch: int) -> RateLimitWindowSnapshotData | None:
+    if window is None:
+        return None
+    return RateLimitWindowSnapshotData(
+        used_percent=int(max(0.0, min(100.0, window.used_percent))),
+        limit_window_seconds=window.window_minutes * 60 if window.window_minutes is not None else None,
+        reset_after_seconds=max(0, window.reset_at - now_epoch) if window.reset_at is not None else None,
+        reset_at=window.reset_at,
+    )

@@ -119,7 +119,7 @@ async def test_live_ingestor_invalidates_rate_limit_header_cache(monkeypatch, db
         async def invalidate(self) -> None:
             invalidations.append(1)
 
-    monkeypatch.setattr(live_ingest_module, "get_rate_limit_headers_cache", lambda: _SpyHeadersCache())
+    monkeypatch.setattr(live_ingest_module, "get_client_usage_cache", lambda: _SpyHeadersCache())
 
     ingestor = live_ingest.LiveUsageIngestor(queue_size=8, write_min_interval_seconds=0.0)
     ingestor.start()
@@ -162,7 +162,7 @@ async def test_live_ingestor_trailing_invalidation_covers_throttled_writes(monke
         async def invalidate(self) -> None:
             invalidations.append(asyncio.get_event_loop().time())
 
-    monkeypatch.setattr(live_ingest_module, "get_rate_limit_headers_cache", lambda: _SpyHeadersCache())
+    monkeypatch.setattr(live_ingest_module, "get_client_usage_cache", lambda: _SpyHeadersCache())
     monkeypatch.setattr(live_ingest_module, "_CACHE_INVALIDATION_MIN_INTERVAL_SECONDS", 0.2)
 
     ingestor = live_ingest.LiveUsageIngestor(queue_size=8, write_min_interval_seconds=0.0)

@@ -116,13 +116,13 @@ from app.modules.openrouter import api as openrouter_api
 from app.modules.openrouter.scheduler import OpenRouterRefreshScheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy.cap_partitioning import refresh_cap_partition
+from app.modules.proxy.client_usage_cache import get_client_usage_cache
 from app.modules.proxy.durable_bridge_coordinator import DurableBridgeSessionCoordinator
 from app.modules.proxy.durable_bridge_repository import (
     DURABLE_BRIDGE_OPERATION_SPOOL_PURGE_BATCH_SIZE,
     missing_durable_bridge_tables,
 )
 from app.modules.proxy.durable_bridge_runtime import http_bridge_owner_process_epoch
-from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
     RING_HEARTBEAT_INTERVAL_SECONDS,
     RING_STALE_GRACE_SECONDS,
@@ -516,7 +516,7 @@ async def lifespan(app: FastAPI):
     startup_module.reset_bridge_registration()
     await get_settings_cache().invalidate(propagate=False)
     await get_dashboard_users_cache().invalidate(propagate=False)
-    await get_rate_limit_headers_cache().invalidate()
+    await get_client_usage_cache().invalidate()
     reload_additional_quota_registry()
     settings = get_settings()
     warn_removed_settings()

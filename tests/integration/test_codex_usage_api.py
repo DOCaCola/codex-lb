@@ -269,7 +269,8 @@ async def test_codex_usage_monthly_free_exhaustion_does_not_block_paid_capacity(
     assert rate_limit["allowed"] is True
     assert rate_limit["limit_reached"] is False
     assert rate_limit["primary_window"]["used_percent"] == 10
-    assert rate_limit["secondary_window"]["used_percent"] == 20
+    # The exhausted free account cannot serve, so its weekly capacity counts as used.
+    assert rate_limit["secondary_window"]["used_percent"] == 30
     assert rate_limit["monthly_window"]["used_percent"] == 100
 
 
@@ -508,6 +509,40 @@ async def test_codex_usage_additional_limit_supports_secondary_only(async_client
     assert additional_limit["rate_limit"]["primary_window"] is None
     assert additional_limit["rate_limit"]["secondary_window"]["used_percent"] == 65
     assert additional_limit["rate_limit"]["secondary_window"]["reset_at"] == 1735862400
+
+
+@pytest.mark.asyncio
+async def test_codex_usage_lists_the_claude_pool(async_client, db_setup, monkeypatch):
+    now_epoch = int(utcnow().replace(tzinfo=timezone.utc).timestamp())
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(
+            _make_account("acc_with_claude", "with-claude@example.com", chatgpt_account_id="workspace_with_claude")
+        )
+
+    async def claude_pool(windows):
+        assert set(windows) == {"five_hour", "seven_day"}
+        return {
+            "x-codex-primary-used-percent": "12.5",
+            "x-codex-primary-window-minutes": "300",
+            "x-codex-primary-reset-at": str(now_epoch + 3600),
+            "x-codex-secondary-used-percent": "40.0",
+            "x-codex-secondary-window-minutes": "10080",
+        }
+
+    monkeypatch.setattr("app.modules.proxy._service.rate_limit.load_claude_pool_rate_limit_headers", claude_pool)
+
+    response = await async_client.get(
+        "/api/codex/usage",
+        headers={"Authorization": "Bearer chatgpt-token", "chatgpt-account-id": "workspace_with_claude"},
+    )
+    assert response.status_code == 200
+
+    claude = next(limit for limit in response.json()["additional_rate_limits"] if limit["limit_name"] == "Claude")
+    assert claude["metered_feature"] == "claude"
+    assert claude["rate_limit"]["primary_window"]["used_percent"] == 12
+    assert claude["rate_limit"]["primary_window"]["reset_at"] == now_epoch + 3600
+    assert claude["rate_limit"]["secondary_window"]["used_percent"] == 40
+    assert claude["rate_limit"]["secondary_window"]["reset_at"] is None
 
 
 @pytest.mark.asyncio

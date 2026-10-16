@@ -36,6 +36,7 @@ class _WebSocketServiceProtocol(Protocol):
     _load_balancer: Any
     _maybe_touch_request_state_api_key_reservation: Any
     _next_websocket_receive_timeout: Any
+    openai_rate_limit_event: Any
     _open_upstream_websocket: Any
     _open_upstream_websocket_with_budget: Any
     _prepare_response_bridge_request_state: Any

@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Iterator, Mapping
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -32,6 +33,7 @@ from app.modules.proxy.downstream_delivery import (
     OUTCOME_TERMINAL_WRITTEN,
     DeliveryTracedStreamingResponse,
 )
+from app.modules.proxy.rate_limit_events import ClientUsageSnapshot
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import AdditionalUsageRepository
 
@@ -158,6 +160,16 @@ def _disable_http_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _SettingsCache())
     monkeypatch.setattr(proxy_module, "get_settings", lambda: app_settings)
+
+
+@pytest.fixture
+def pool_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native clients receive the OpenAI pool's usage in place of the serving account's."""
+
+    snapshot = ClientUsageSnapshot(
+        headers={"x-codex-secondary-used-percent": "30.5", "x-codex-secondary-window-minutes": "10080"}
+    )
+    monkeypatch.setattr(proxy_module.ProxyService, "openai_client_usage", AsyncMock(return_value=snapshot))
 
 
 @pytest.mark.asyncio
@@ -1088,7 +1100,9 @@ async def test_proxy_responses_openai_shape_custom_client_gets_sdk_sse_contract(
     ],
     ids=["v1", "v1-slash", "backend-public", "backend-public-slash", "backend-native", "backend-native-slash"],
 )
-async def test_responses_routes_filter_vendor_events_only_for_public_contract(async_client, monkeypatch, route, native):
+async def test_responses_routes_filter_vendor_events_only_for_public_contract(
+    async_client, monkeypatch, pool_usage, route, native
+):
     auth_json = _make_auth_json("acc_vendor_events", "vendor-events@example.com")
     response = await async_client.post(
         "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
@@ -1136,6 +1150,14 @@ async def test_responses_routes_filter_vendor_events_only_for_public_contract(as
             "responsesapi.websocket_timing",
             "response.completed",
         ]
+        # The serving account's usage is replaced by the pool's, never merged.
+        assert events[0] == {
+            "type": "codex.rate_limits",
+            "rate_limits": {
+                "primary": None,
+                "secondary": {"used_percent": 30.5, "window_minutes": 10080, "reset_at": None},
+            },
+        }
     else:
         assert event_types == ["response.created", "response.output_text.delta", "response.completed"]
     created = next(event for event in events if event["type"] == "response.created")
@@ -1222,6 +1244,7 @@ async def test_proxy_responses_instructionless_array_input_gets_sdk_sse_contract
 async def test_proxy_responses_native_string_input_with_instructions_preserves_vendor_events(
     async_client,
     monkeypatch,
+    pool_usage,
 ):
     email = "backend-native-string@example.com"
     raw_account_id = "acc_backend_native_string"
@@ -1256,7 +1279,7 @@ async def test_proxy_responses_native_string_input_with_instructions_preserves_v
 
 
 @pytest.mark.asyncio
-async def test_proxy_responses_native_conversation_preserves_vendor_events(async_client, monkeypatch):
+async def test_proxy_responses_native_conversation_preserves_vendor_events(async_client, monkeypatch, pool_usage):
     email = "backend-native-conversation@example.com"
     raw_account_id = "acc_backend_native_conversation"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -1296,7 +1319,9 @@ async def test_proxy_responses_native_conversation_preserves_vendor_events(async
 
 
 @pytest.mark.asyncio
-async def test_proxy_responses_native_openai_routing_headers_preserve_vendor_events(async_client, monkeypatch):
+async def test_proxy_responses_native_openai_routing_headers_preserve_vendor_events(
+    async_client, monkeypatch, pool_usage
+):
     email = "backend-native-openai-headers@example.com"
     raw_account_id = "acc_backend_native_openai_headers"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -1336,7 +1361,7 @@ async def test_proxy_responses_native_openai_routing_headers_preserve_vendor_eve
 
 
 @pytest.mark.asyncio
-async def test_proxy_responses_native_codex_shape_preserves_vendor_events(async_client, monkeypatch):
+async def test_proxy_responses_native_codex_shape_preserves_vendor_events(async_client, monkeypatch, pool_usage):
     email = "backend-native-codex@example.com"
     raw_account_id = "acc_backend_native_codex"
     auth_json = _make_auth_json(raw_account_id, email)

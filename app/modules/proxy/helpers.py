@@ -13,7 +13,7 @@ from app.core.openai.chat_responses import _coerce_number
 from app.core.openai.models import OpenAIError
 from app.core.plan_types import normalize_rate_limit_plan_type
 from app.core.types import JsonValue
-from app.core.usage.types import UsageWindowRow, UsageWindowSummary
+from app.core.usage.types import UsageWindowSummary
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.proxy.types import (
     CreditStatusDetailsData,
@@ -198,58 +198,24 @@ def _select_accounts_for_limits(accounts: Iterable[Account]) -> list[Account]:
     return [account for account in accounts if account.status not in (AccountStatus.DEACTIVATED, AccountStatus.PAUSED)]
 
 
-def _summarize_window(
-    rows: list[UsageWindowRow],
-    account_map: dict[str, Account],
-    window: str,
-) -> UsageWindowSummary | None:
-    if not rows:
-        return None
-    return usage_core.summarize_usage_window(rows, account_map, window)
-
-
 def _window_snapshot(
     summary: UsageWindowSummary | None,
-    rows: list[UsageWindowRow],
     window: str,
     now_epoch: int,
 ) -> RateLimitWindowSnapshotData | None:
-    if summary is None:
+    if summary is None or summary.used_percent is None:
         return None
-
-    used_percent = _normalize_used_percent(summary.used_percent, rows)
-    if used_percent is None:
-        return None
-
-    reset_at = summary.reset_at
-    if reset_at is None:
-        return None
-
     window_minutes = summary.window_minutes or usage_core.default_window_minutes(window)
     if not window_minutes:
         return None
-
-    limit_window_seconds = int(window_minutes * 60)
-    reset_after_seconds = max(0, int(reset_at) - now_epoch)
-
+    # An idle pool has no reset to announce.
+    reset_at = summary.reset_at
     return RateLimitWindowSnapshotData(
-        used_percent=_percent_to_int(used_percent),
-        limit_window_seconds=limit_window_seconds,
-        reset_after_seconds=reset_after_seconds,
-        reset_at=int(reset_at),
+        used_percent=_percent_to_int(summary.used_percent),
+        limit_window_seconds=int(window_minutes * 60),
+        reset_after_seconds=max(0, int(reset_at) - now_epoch) if reset_at is not None else None,
+        reset_at=int(reset_at) if reset_at is not None else None,
     )
-
-
-def _normalize_used_percent(
-    value: float | None,
-    rows: Iterable[UsageWindowRow],
-) -> float | None:
-    if value is not None:
-        return value
-    values = [row.used_percent for row in rows if row.used_percent is not None]
-    if not values:
-        return None
-    return sum(values) / len(values)
 
 
 def _percent_to_int(value: float) -> int:

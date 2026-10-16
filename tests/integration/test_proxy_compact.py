@@ -27,7 +27,7 @@ from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService
 from app.modules.proxy.account_cache import get_account_selection_cache
-from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
+from app.modules.proxy.client_usage_cache import get_client_usage_cache
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 from tests.integration.compact_test_helpers import _make_auth_json
 
@@ -658,7 +658,7 @@ async def test_proxy_compact_headers_include_monthly_only_credits(async_client, 
             credits_balance=8.75,
         )
 
-    await get_rate_limit_headers_cache().invalidate()
+    await get_client_usage_cache().invalidate()
 
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
@@ -963,7 +963,7 @@ async def test_proxy_compact_headers_normalize_weekly_only_with_stale_secondary(
             recorded_at=now,
         )
 
-    await get_rate_limit_headers_cache().invalidate()
+    await get_client_usage_cache().invalidate()
 
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
@@ -1014,7 +1014,7 @@ async def test_proxy_compact_headers_expire_elapsed_primary_rows(async_client, m
             recorded_at=now,
         )
 
-    await get_rate_limit_headers_cache().invalidate()
+    await get_client_usage_cache().invalidate()
 
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)

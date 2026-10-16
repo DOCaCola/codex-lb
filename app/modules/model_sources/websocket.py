@@ -25,6 +25,7 @@ from app.core.utils.shared_future import _await_result_deferring_cancellation
 from app.core.utils.sse import parse_sse_data_json
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.model_sources.selection import effective_model_for_api_key, select_responses_model_source
+from app.modules.proxy.rate_limit_events import rate_limit_event_from_headers
 from app.modules.proxy.source_dispatch import SourceStreamingResponse
 
 if TYPE_CHECKING:
@@ -160,6 +161,10 @@ async def handle_source_frame(
                 )
             if isinstance(result, StreamingResponse):
                 try:
+                    # A WebSocket client reads usage only from events, not the stream's headers.
+                    usage_event = rate_limit_event_from_headers(result.headers) if native_codex else None
+                    if usage_event is not None:
+                        await send(usage_event)
                     async for frame in api._iter_source_sse_event_blocks(result.body_iterator):
                         event = parse_sse_data_json(frame)
                         if event is not None:

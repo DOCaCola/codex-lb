@@ -14,7 +14,7 @@ from app.core.clients.rate_limit_reset_credits import (
 class RateLimitResetCreditsStore:
     """In-memory cache of the most recent reset-credits snapshot per account.
 
-    Mirrors the lock-guarded shape of :class:`RateLimitHeadersCache` /
+    Mirrors the lock-guarded shape of :class:`ClientUsageCache` /
     :class:`AccountSelectionCache`. Snapshots are keyed by account id and are
     repopulated by each replica's refresh scheduler on every tick; reads from
     the dashboard (GET + the AccountSummary mapper) never hit upstream.
