@@ -1318,7 +1318,9 @@ string-valued event type only when it is exactly `error` or begins with
 `response.`. Other string-valued event types MUST be dropped before they reach
 the public stream. OpenAI-shaped backend requests with public contract
 enforcement enabled MUST follow the same filtering rule. Native Codex requests
-with public contract enforcement disabled MUST retain upstream vendor events.
+with public contract enforcement disabled MUST retain upstream vendor events,
+except that `codex.rate_limits` MUST be rewritten as required by
+`client-usage-reporting`.
 
 #### Scenario: Codex-internal rate-limit event is dropped before response.created
 
@@ -1340,7 +1342,8 @@ with public contract enforcement disabled MUST retain upstream vendor events.
 #### Scenario: Codex-internal events on the Codex CLI route are preserved
 
 - **WHEN** a native `/backend-api/codex/responses` request disables public contract enforcement
-- **THEN** the response stream MUST retain `codex.rate_limits` and `responsesapi.websocket_timing` in upstream order
+- **THEN** the response stream MUST retain `responsesapi.websocket_timing` in upstream order
+- **AND** it MUST carry `codex.rate_limits` in upstream position with pool usage in place of the serving account's usage
 
 ### Requirement: Streamed /v1 responses terminal output is backfilled from item events
 When serving streaming `POST /v1/responses`, if the upstream's terminal `response.completed` or `response.incomplete` event carries `output` as missing or as an empty list, the service MUST reconstruct `output` from the `response.output_item.done` events emitted earlier in the same stream before yielding the terminal SSE event. The reconstructed `output` MUST preserve the `output_index` ordering and the raw item payloads. When the terminal `response.completed` / `response.incomplete` already carries a non-empty `output`, the service MUST forward it unchanged.
