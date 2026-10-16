@@ -317,6 +317,33 @@ def test_budget_safe_selection_keeps_burn_first_ahead_of_threshold():
     assert result.account.account_id == "temp"
 
 
+@pytest.mark.parametrize(
+    ("used_percent", "secondary_used_percent"),
+    [(100.0, 10.0), (20.0, 100.0)],
+)
+def test_budget_safe_selection_skips_exhausted_burn_first(used_percent: float, secondary_used_percent: float):
+    states = [
+        AccountState("normal", AccountStatus.ACTIVE, used_percent=50.0, routing_policy="normal"),
+        AccountState(
+            "temp",
+            AccountStatus.ACTIVE,
+            used_percent=used_percent,
+            secondary_used_percent=secondary_used_percent,
+            routing_policy="burn_first",
+        ),
+    ]
+
+    result = _select_account_preferring_budget_safe(
+        states,
+        prefer_earlier_reset=False,
+        routing_strategy="usage_weighted",
+        budget_threshold_pct=95.0,
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "normal"
+
+
 def test_budget_safe_selection_applies_burn_first_after_health_tier_filtering():
     states = [
         AccountState(

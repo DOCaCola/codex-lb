@@ -1623,6 +1623,22 @@ async def _select_with_stickiness(
                     secondary_budget_threshold_pct,
                 )
             )
+            # A burn-first owner is held through threshold crossings, but not
+            # past the end of its quota: once a window reports 100% the next
+            # turn on it is an upstream usage-limit rejection, so the soft
+            # mapping is released whenever a non-exhausted sibling exists.
+            # The pool check below keeps the owner when every candidate is
+            # exhausted too, because local snapshots only rank accounts.
+            owner_usage_exhausted = (
+                sticky_kind
+                in (
+                    StickySessionKind.PROMPT_CACHE,
+                    StickySessionKind.STICKY_THREAD,
+                    StickySessionKind.CODEX_SESSION,
+                )
+                and pinned.status != AccountStatus.RATE_LIMITED
+                and _state_usage_exhausted(pinned)
+            )
             rate_limit_far_away = (
                 sticky_kind == StickySessionKind.PROMPT_CACHE
                 and pinned.status == AccountStatus.RATE_LIMITED
@@ -1727,7 +1743,7 @@ async def _select_with_stickiness(
                 # retry below; the mutation block honors
                 # ``overload_reroute_request_local`` and keeps the mapping.
                 reallocate_sticky = True
-            elif not ((budget_pressured or rate_limit_far_away) and burn_first_reallocate):
+            elif not (((budget_pressured or rate_limit_far_away) and burn_first_reallocate) or owner_usage_exhausted):
                 pinned_result = select_account(
                     [pinned],
                     prefer_earlier_reset=prefer_earlier_reset_accounts,
@@ -1755,8 +1771,8 @@ async def _select_with_stickiness(
                 # is above the budget threshold, reallocating just
                 # wastes DB writes and destroys prompt-cache locality
                 # (thrashing).
-                if budget_pressured:
-                    apply_sticky_secondary_budget_threshold = True
+                if budget_pressured or owner_usage_exhausted:
+                    apply_sticky_secondary_budget_threshold = budget_pressured
                     pool_best = _select_account_preferring_budget_safe(
                         states,
                         prefer_earlier_reset=prefer_earlier_reset_accounts,
@@ -1767,19 +1783,26 @@ async def _select_with_stickiness(
                         deterministic_probe=True,
                         budget_threshold_pct=budget_threshold_pct,
                         secondary_budget_threshold_pct=secondary_budget_threshold_pct,
-                        apply_secondary_budget_threshold=True,
+                        apply_secondary_budget_threshold=budget_pressured,
                         traffic_class=traffic_class,
                         ignore_standard_quota=ignore_standard_quota,
                         routing_costs_by_account_id=routing_costs_by_account_id,
                         allow_usage_exhaustion_error=allow_usage_exhaustion_error,
                         usage_exhaustion_states=usage_exhaustion_states,
                     )
+                    # An exhausted owner moves to any non-exhausted sibling,
+                    # even one above the budget threshold; a merely pressured
+                    # owner only moves to a sibling below it.
                     pool_also_exhausted = pool_best.account is not None and (
                         pool_best.account.account_id == pinned.account_id
-                        or _state_above_sticky_budget_threshold(
-                            pool_best.account,
-                            budget_threshold_pct,
-                            secondary_budget_threshold_pct,
+                        or (
+                            _state_usage_exhausted(pool_best.account)
+                            if owner_usage_exhausted
+                            else _state_above_sticky_budget_threshold(
+                                pool_best.account,
+                                budget_threshold_pct,
+                                secondary_budget_threshold_pct,
+                            )
                         )
                     )
                     if pool_also_exhausted:
@@ -2214,6 +2237,22 @@ def _state_above_budget_threshold(state: AccountState, budget_threshold_pct: flo
     return used_percent is not None and used_percent > budget_threshold_pct
 
 
+def _sticky_usage_evidence(state: AccountState) -> tuple[float | None, float | None]:
+    """Return the (primary, secondary) used percent that sticky routing ranks on."""
+    used_percent = state.priority_used_percent if state.priority_used_percent is not None else state.used_percent
+    if state.limit_scoped_usage and state.priority_secondary_used_percent is None:
+        return used_percent, used_percent
+    return used_percent, (
+        state.priority_secondary_used_percent
+        if state.priority_secondary_used_percent is not None
+        else state.secondary_used_percent
+    )
+
+
+def _state_usage_exhausted(state: AccountState) -> bool:
+    return any(value is not None and value >= 100.0 for value in _sticky_usage_evidence(state))
+
+
 def _state_above_sticky_budget_threshold(
     state: AccountState,
     budget_threshold_pct: float,
@@ -2222,15 +2261,7 @@ def _state_above_sticky_budget_threshold(
     secondary_threshold = (
         budget_threshold_pct if secondary_budget_threshold_pct is None else secondary_budget_threshold_pct
     )
-    used_percent = state.priority_used_percent if state.priority_used_percent is not None else state.used_percent
-    if state.limit_scoped_usage and state.priority_secondary_used_percent is None:
-        secondary_used_percent = used_percent
-    else:
-        secondary_used_percent = (
-            state.priority_secondary_used_percent
-            if state.priority_secondary_used_percent is not None
-            else state.secondary_used_percent
-        )
+    used_percent, secondary_used_percent = _sticky_usage_evidence(state)
     return (used_percent is not None and used_percent > budget_threshold_pct) or (
         secondary_used_percent is not None and secondary_used_percent > secondary_threshold
     )
@@ -2285,16 +2316,21 @@ def _select_account_preferring_budget_safe(
         )
         if recovery_probe.account is not None:
             return recovery_probe
+    # An exhausted window is over budget whatever the configured thresholds
+    # are, so it never ranks as budget-safe.
     state_budget_threshold = (
         (
-            lambda state: _state_above_sticky_budget_threshold(
-                state,
-                budget_threshold_pct,
-                secondary_budget_threshold_pct,
+            lambda state: (
+                _state_usage_exhausted(state)
+                or _state_above_sticky_budget_threshold(
+                    state,
+                    budget_threshold_pct,
+                    secondary_budget_threshold_pct,
+                )
             )
         )
         if apply_secondary_budget_threshold
-        else (lambda state: _state_above_budget_threshold(state, budget_threshold_pct))
+        else (lambda state: _state_usage_exhausted(state) or _state_above_budget_threshold(state, budget_threshold_pct))
     )
     if routing_strategy in ("sequential_drain", "reset_drain", "single_account"):
         budget_safe_states = [
@@ -2320,7 +2356,13 @@ def _select_account_preferring_budget_safe(
         )
 
     best_health_states = _best_health_tier_states(state_list)
-    burn_first_states = [state for state in best_health_states if state.routing_policy == ROUTING_POLICY_BURN_FIRST]
+    # Burn-first accounts are drained ahead of the pool until their quota is
+    # used up; an exhausted one competes like any other over-budget account.
+    burn_first_states = [
+        state
+        for state in best_health_states
+        if state.routing_policy == ROUTING_POLICY_BURN_FIRST and not _state_usage_exhausted(state)
+    ]
     if burn_first_states:
         burn_first = select_account(
             burn_first_states,
@@ -2368,15 +2410,33 @@ def _select_account_preferring_budget_safe(
             return preferred
         if len(preferred_states) == len(state_list):
             return preferred
-    if routing_strategy == "usage_weighted" and state_list:
+
+    def _select_over_budget(pool: list[AccountState]) -> SelectionResult:
+        if routing_strategy == "usage_weighted" and pool:
+            return select_account(
+                pool,
+                prefer_earlier_reset=prefer_earlier_reset,
+                prefer_earlier_reset_window=prefer_earlier_reset_window,
+                routing_strategy=routing_strategy,
+                allow_backoff_fallback=allow_backoff_fallback,
+                deterministic_probe=deterministic_probe,
+                usage_weighted_order="primary_first",
+                traffic_class=traffic_class,
+                ignore_standard_quota=ignore_standard_quota,
+                routing_costs=routing_costs_by_account_id,
+                allow_usage_exhaustion_error=allow_usage_exhaustion_error,
+                usage_exhaustion_states=usage_exhaustion_states,
+                selection_seed=selection_seed,
+            )
         return select_account(
-            state_list,
+            pool,
             prefer_earlier_reset=prefer_earlier_reset,
             prefer_earlier_reset_window=prefer_earlier_reset_window,
             routing_strategy=routing_strategy,
             allow_backoff_fallback=allow_backoff_fallback,
             deterministic_probe=deterministic_probe,
-            usage_weighted_order="primary_first",
+            relative_availability_power=relative_availability_power,
+            relative_availability_top_k=relative_availability_top_k,
             traffic_class=traffic_class,
             ignore_standard_quota=ignore_standard_quota,
             routing_costs=routing_costs_by_account_id,
@@ -2384,22 +2444,16 @@ def _select_account_preferring_budget_safe(
             usage_exhaustion_states=usage_exhaustion_states,
             selection_seed=selection_seed,
         )
-    return select_account(
-        state_list,
-        prefer_earlier_reset=prefer_earlier_reset,
-        prefer_earlier_reset_window=prefer_earlier_reset_window,
-        routing_strategy=routing_strategy,
-        allow_backoff_fallback=allow_backoff_fallback,
-        deterministic_probe=deterministic_probe,
-        relative_availability_power=relative_availability_power,
-        relative_availability_top_k=relative_availability_top_k,
-        traffic_class=traffic_class,
-        ignore_standard_quota=ignore_standard_quota,
-        routing_costs=routing_costs_by_account_id,
-        allow_usage_exhaustion_error=allow_usage_exhaustion_error,
-        usage_exhaustion_states=usage_exhaustion_states,
-        selection_seed=selection_seed,
-    )
+
+    # Nothing is under budget: an account with quota left still ranks ahead
+    # of an exhausted one. The whole pool remains the last resort, because a
+    # local usage snapshot ranks accounts but never rejects them.
+    non_exhausted_states = [state for state in state_list if not _state_usage_exhausted(state)]
+    if non_exhausted_states and len(non_exhausted_states) != len(state_list):
+        non_exhausted = _select_over_budget(non_exhausted_states)
+        if non_exhausted.account is not None:
+            return non_exhausted
+    return _select_over_budget(state_list)
 
 
 def _best_health_tier_states(states: list[AccountState]) -> list[AccountState]:

@@ -1145,6 +1145,59 @@ async def test_burn_first_reallocation_only_when_burn_first_is_selectable():
     repo.upsert.assert_called_once_with("key1", "a", kind=StickySessionKind.PROMPT_CACHE)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("routing_strategy", ["capacity_weighted", "usage_weighted", "sequential_drain"])
+async def test_exhausted_burn_first_owner_is_released_to_non_exhausted_sibling(routing_strategy: RoutingStrategy):
+    pinned = _active("plus", used_percent=100.0, secondary_used_percent=16.0, routing_policy="burn_first")
+    sibling = _active("pro", used_percent=97.0, secondary_used_percent=40.0)
+    repo = _make_sticky_repo(existing_account_id="plus")
+
+    result = await _invoke_stickiness([pinned, sibling], "key1", repo, routing_strategy=routing_strategy)
+
+    assert result.account is not None
+    assert result.account.account_id == "pro"
+    repo.upsert.assert_called_once_with("key1", "pro", kind=StickySessionKind.PROMPT_CACHE)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_owner_is_kept_when_every_sibling_is_exhausted():
+    pinned = _active("plus", used_percent=100.0, routing_policy="burn_first")
+    sibling = _active("pro", used_percent=20.0, secondary_used_percent=100.0)
+    repo = _make_sticky_repo(existing_account_id="plus")
+
+    result = await _invoke_stickiness([pinned, sibling], "key1", repo)
+
+    assert result.account is not None
+    assert result.account.account_id == "plus"
+    repo.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_burn_first_owner_above_threshold_but_not_exhausted_is_kept():
+    pinned = _active("plus", used_percent=99.0, routing_policy="burn_first")
+    sibling = _active("pro", used_percent=10.0)
+    repo = _make_sticky_repo(existing_account_id="plus")
+
+    result = await _invoke_stickiness([pinned, sibling], "key1", repo)
+
+    assert result.account is not None
+    assert result.account.account_id == "plus"
+    repo.upsert.assert_called_once_with("key1", "plus", kind=StickySessionKind.PROMPT_CACHE)
+
+
+@pytest.mark.asyncio
+async def test_owner_with_exhausted_weekly_window_is_released_at_default_secondary_threshold():
+    pinned = _active("a", used_percent=10.0, secondary_used_percent=100.0)
+    sibling = _active("b", used_percent=30.0, secondary_used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    result = await _invoke_stickiness([pinned, sibling], "key1", repo, secondary_budget_threshold_pct=100.0)
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    repo.upsert.assert_called_once_with("key1", "b", kind=StickySessionKind.PROMPT_CACHE)
+
+
 # ---------------------------------------------------------------------------
 # Same-owner refresh skip: hot (key, kind) rows must not be rewritten on every
 # request when the lookup already observed a fresh row.
