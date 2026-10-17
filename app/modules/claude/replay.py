@@ -11,7 +11,13 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX
 from app.core.types import JsonValue as NativeJsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
-from app.modules.claude.search import assistant_history_message, claude_search_text, openai_search_text, search_replay
+from app.modules.claude.search import (
+    assistant_history_message,
+    claude_search_text,
+    deferred_search,
+    openai_search_text,
+    search_replay,
+)
 from app.modules.claude.task_input import is_external_task_input
 from app.modules.model_sources.compaction import source_compaction_history
 
@@ -140,6 +146,8 @@ def project_native_replay(
     envelopes: dict[int, SignedBlock] = {}
     # Search call item ID -> (envelope index, readable projection).
     searches: dict[str, tuple[int, str]] = {}
+    # Search items whose call Anthropic deferred; an answered one is projected from its result pair.
+    deferred: set[str] = set()
     for index, item in enumerate(items):
         token = item.get("encrypted_content") if isinstance(item, dict) else None
         if not isinstance(token, str) or not token.startswith(CLAUDE_REASONING_PREFIX):
@@ -158,10 +166,13 @@ def project_native_replay(
             )
         if envelope.block["type"] == "web_search":
             item_id, blocks = search_replay(envelope.block)
-            searches[item_id] = (index, claude_search_text(blocks))
+            if deferred_search(blocks):
+                deferred.add(item_id)
+            else:
+                searches[item_id] = (index, claude_search_text(blocks))
         envelopes[index] = envelope
     projected: list[NativeJsonValue] = []
-    omitted = searched = 0
+    omitted = searched = unanswered = 0
     for index, item in enumerate(items):
         envelope = envelopes.get(index)
         if envelope is None:
@@ -169,6 +180,8 @@ def project_native_replay(
             if isinstance(call_id, str) and call_id in searches:
                 projected.append(assistant_history_message(searches.pop(call_id)[1]))
                 searched += 1
+            elif isinstance(call_id, str) and call_id in deferred:
+                unanswered += 1  # The search never ran.
             else:
                 projected.append(item)
             continue
@@ -182,11 +195,12 @@ def project_native_replay(
             param=f"input[{min(position for position, _ in searches.values())}]",
             code="invalid_provider_history",
         )
-    if omitted or searched:
+    if omitted or searched or unanswered:
         logger.info(
-            "claude_native_history_projection thinking_omitted=%d search_projected=%d",
+            "claude_native_history_projection thinking_omitted=%d search_projected=%d search_unanswered=%d",
             omitted,
             searched,
+            unanswered,
         )
     return projected
 
@@ -213,10 +227,12 @@ class ClaudeReplay:
         if not isinstance(items, list):
             return payload
         replaced: dict[int, JsonValue | None] = {}
-        converted = omitted = searched = 0
+        converted = omitted = searched = unanswered = 0
         # Claude search calls replayed natively, and projections of those that cannot be.
         native_searches: set[str] = set()
         foreign_searches: dict[str, str] = {}
+        # Foreign search items whose call Anthropic deferred; an answered one is projected from its result pair.
+        foreign_deferred: set[str] = set()
         for block in self.blocks:
             envelope = block.envelope
             native = (envelope.source_id, envelope.model) == (source_id, model)
@@ -231,7 +247,10 @@ class ClaudeReplay:
                         code="nonportable_provider_history",
                     )
                 item_id, blocks = search_replay(envelope.block)
-                foreign_searches[item_id] = claude_search_text(blocks)
+                if deferred_search(blocks):
+                    foreign_deferred.add(item_id)
+                else:
+                    foreign_searches[item_id] = claude_search_text(blocks)
                 replaced[block.index] = None
                 continue
             # Anthropic accepts signed thinking from any Claude model or account and drops
@@ -253,6 +272,10 @@ class ClaudeReplay:
             call_id = item.get("id")
             if isinstance(call_id, str) and call_id in native_searches:
                 continue
+            if isinstance(call_id, str) and call_id in foreign_deferred and call_id not in foreign_searches:
+                replaced[index] = None  # The search never ran.
+                unanswered += 1
+                continue
             # Calls without a Claude envelope come from another provider (OpenAI hosted search).
             text = (
                 foreign_searches.pop(call_id)
@@ -268,10 +291,11 @@ class ClaudeReplay:
         if not replaced:
             return payload
         logger.info(
-            "claude_reasoning_projection converted=%d omitted=%d search_projected=%d",
+            "claude_reasoning_projection converted=%d omitted=%d search_projected=%d search_unanswered=%d",
             converted,
             omitted,
             searched,
+            unanswered,
         )
         projected: list[JsonValue] = []
         for index, item in enumerate(items):

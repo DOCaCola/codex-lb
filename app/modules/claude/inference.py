@@ -172,6 +172,7 @@ async def prepare_responses(
             projection.tools,
             opaque,
             search_enabled=projection.search_enabled,
+            deferred_searches=projection.deferred_searches,
             chat_reasoning=visible_chat_reasoning,
         ),
     )

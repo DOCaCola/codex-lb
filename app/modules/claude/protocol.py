@@ -7,8 +7,10 @@ import hashlib
 import json
 import logging
 import re
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from typing import cast
 
 from pydantic import JsonValue
@@ -19,7 +21,7 @@ from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, supports_mid_system
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_contract
 from app.modules.claude.model_limits import default_output_tokens
-from app.modules.claude.search import search_replay, search_tool
+from app.modules.claude.search import deferred_search, search_replay, search_tool
 from app.modules.claude.task_input import is_external_task_input, task_metadata_complete
 from app.modules.claude.tool_names import ClaudeToolNames, ToolIdentity
 from app.modules.claude.tool_schema import adapt_tool_schema
@@ -155,6 +157,16 @@ class MessagesProjection:
     body: dict[str, JsonValue]
     tools: ClaudeToolNames
     search_enabled: bool = False
+    # Deferred searches this request resumes, by call ID: their search item ID and call.
+    deferred_searches: dict[str, tuple[str, dict[str, JsonValue]]] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _DeferredSearch:
+    item_id: str
+    call: dict[str, JsonValue]
+    # The assistant turn holding the call, identified by object.
+    message: dict[str, JsonValue]
 
 
 def _tool_references(tools: ClaudeToolNames, loaded: list[ToolIdentity], *, in_result: bool) -> list[JsonValue]:
@@ -311,6 +323,13 @@ def project_responses(
         declarations.append(declaration)
 
     raw_tools = payload.get("tools", [])
+    raw_input = payload.get("input", [])
+    if isinstance(raw_input, str):
+        items: list[JsonValue] = [{"role": "user", "content": raw_input}]
+    elif isinstance(raw_input, list):
+        items = raw_input
+    else:
+        raise invalid("Responses input must be text or an array")
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
     # Loaded tools stay deferred behind the search tool. A request without one (a tool-less
@@ -323,13 +342,6 @@ def project_responses(
     contract = code_mode_contract(tools)
     if contract is not None:
         system.append({"type": "text", "text": contract})
-    raw_input = payload.get("input", [])
-    if isinstance(raw_input, str):
-        items: list[JsonValue] = [{"role": "user", "content": raw_input}]
-    elif isinstance(raw_input, list):
-        items = raw_input
-    else:
-        raise invalid("Responses input must be text or an array")
     # Every tool a search loaded is declared, in history order, before the conversation refers to it.
     search_results: dict[int, list[ToolIdentity]] = {}
     for index, item in enumerate(items):
@@ -414,6 +426,7 @@ def project_responses(
         append("user", [{"type": "text", "text": label}, *content])
 
     search_items: set[str] = set()
+    deferred: dict[str, _DeferredSearch] = {}
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise invalid("Invalid Responses input item")
@@ -556,10 +569,40 @@ def project_responses(
                 restored = restore_reasoning(encrypted)
                 if restored.get("type") == "web_search":
                     item_id, blocks = search_replay(restored)
-                    if item_id not in search_items:
+                    call = blocks[0]
+                    assert isinstance(call, dict)
+                    call_id = call["id"]
+                    assert isinstance(call_id, str)
+                    resumed = deferred.get(call_id)
+                    if resumed is not None and not deferred_search(blocks):
+                        # The result opened the response after the one that deferred the call.
+                        if resumed.item_id != item_id:
+                            raise invalid("Claude search state has no matching search item")
+                        del deferred[call_id]
+                        append("assistant", blocks[1:])
+                        continue
+                    if item_id not in search_items or call_id in deferred:
                         raise invalid("Claude search state has no matching search item")
                     search_items.remove(item_id)
-                    append("assistant", blocks)
+                    if deferred_search(blocks):
+                        # Anthropic keeps tool_use blocks last; the deferred call precedes its turn's client calls.
+                        last = messages[-1] if messages else None
+                        if not isinstance(last, dict) or last.get("role") != "assistant":
+                            raise invalid("Deferred Claude search state must follow its assistant turn")
+                        content = last["content"]
+                        assert isinstance(content, list)
+                        position = next(
+                            (
+                                position
+                                for position, block in enumerate(content)
+                                if isinstance(block, dict) and block.get("type") == "tool_use"
+                            ),
+                            len(content),
+                        )
+                        content.insert(position, call)
+                        deferred[call_id] = _DeferredSearch(item_id, call, last)
+                    else:
+                        append("assistant", blocks)
                 else:
                     append("assistant", [restored])
                 continue
@@ -586,6 +629,8 @@ def project_responses(
         append("user", [{"type": "text", "text": "(continue)"}])
         logger.info("claude_continuation_projected request_id=%s reason=assistant_tail", get_request_id())
     place_system()
+    search_declared = any(isinstance(t, dict) and t.get("type") == "web_search_20250305" for t in declarations)
+    resumed = _resume_deferred_searches(messages, deferred, search_declared=search_declared)
     limit = payload.get("max_output_tokens", default_output_tokens(max_output_tokens))
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit > max_output_tokens:
         raise invalid("Requested output limit exceeds the Claude model capability", "max_output_tokens")
@@ -687,6 +732,46 @@ def project_responses(
             if thinking and (field == "top_p" or payload[field] != 1):
                 raise invalid(f"Claude thinking cannot be combined with {field}", field)
             body[field] = payload[field]
-    return MessagesProjection(
-        body, tools, any(isinstance(t, dict) and t.get("type") == "web_search_20250305" for t in declarations)
+    return MessagesProjection(body, tools, search_declared, resumed)
+
+
+def _resume_deferred_searches(
+    messages: list[JsonValue], deferred: dict[str, _DeferredSearch], *, search_declared: bool
+) -> dict[str, tuple[str, dict[str, JsonValue]]]:
+    """Keep the deferred searches Anthropic can still run; omit the rest.
+
+    Anthropic runs a deferred search when the request continues its turn with a user message of only
+    tool_result blocks and still declares the search tool. Interrupted or continued turns can never run
+    it, and a call without its result is rejected, so the unanswered call is omitted.
+    """
+    resumed: dict[str, tuple[str, dict[str, JsonValue]]] = {}
+    omitted: Counter[str] = Counter()
+    for call_id, search in deferred.items():
+        tail = messages[next(index for index, message in enumerate(messages) if message is search.message) + 1 :]
+        if not search_declared:
+            reason = "search_undeclared"
+        elif len(tail) != 1:
+            reason = "later_history"
+        elif not _tool_results_only(tail[0]):
+            reason = "extra_content"
+        else:
+            resumed[call_id] = (search.item_id, search.call)
+            continue
+        content = search.message["content"]
+        assert isinstance(content, list)
+        content.remove(search.call)
+        omitted[reason] += 1
+    if omitted:
+        logger.info(
+            "claude_deferred_search_omitted request_id=%s reasons=%s",
+            get_request_id(),
+            ",".join(f"{reason}:{count}" for reason, count in sorted(omitted.items())),
+        )
+    return resumed
+
+
+def _tool_results_only(message: JsonValue) -> bool:
+    content = message.get("content") if isinstance(message, dict) and message.get("role") == "user" else None
+    return isinstance(content, list) and all(
+        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
     )

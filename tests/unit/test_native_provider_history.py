@@ -128,6 +128,38 @@ def test_search_state_without_its_call_fails():
     assert raised.value.param == "input[1]"
 
 
+@pytest.mark.parametrize("answered", [True, False])
+def test_deferred_search_becomes_one_readable_search_or_is_omitted(caplog, answered):
+    from tests.unit.test_claude_search import search_content
+
+    opaque = codec()
+    call = {
+        "type": "web_search_call",
+        "id": "resp_search_0",
+        "status": "in_progress",
+        "action": {"type": "search", "query": "test"},
+    }
+    deferred = reasoning(opaque, {"type": "web_search", "item_id": "resp_search_0", "blocks": search_content()[:1]})
+    tool_cycle = [
+        {"type": "function_call", "call_id": "call_lookup", "name": "lookup", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_lookup", "output": "found"},
+    ]
+    answer = {"type": "message", "role": "assistant", "content": "An answer"}
+    items = [call, deferred, *tool_cycle, *([search_state(opaque)] if answered else []), answer]
+    original = deepcopy(items)
+    with caplog.at_level("INFO"):
+        projected = convert(items, opaque)
+    text = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Web search: test\nSources:\n- Example — https://example.com"}],
+    }
+    assert projected == ([text, *tool_cycle, answer] if answered else [*tool_cycle, answer])
+    assert f"search_projected={int(answered)} search_unanswered={int(not answered)}" in caplog.text
+    assert items == original
+    ensure_native_provider_history({"input": projected})
+
+
 @pytest.mark.parametrize(
     ("action", "text"),
     [

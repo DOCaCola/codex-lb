@@ -128,6 +128,40 @@ def test_moved_search_state_without_its_call_fails():
         read(payload, opaque).project(payload, source_id="source-b", model=scope().model)
 
 
+def deferred_search_history(opaque, *, answered):
+    from tests.unit.test_claude_search import search_content
+
+    def state(blocks):
+        token = opaque.encode(scope(), {"type": "web_search", "item_id": "resp_search_0", "blocks": blocks})
+        return {"type": "reasoning", "encrypted_content": token}
+
+    items = [
+        {**SEARCH_CALL, "status": "in_progress"},
+        state(search_content()[:1]),
+        {"type": "function_call", "call_id": "toolu_lookup", "name": "lookup", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "toolu_lookup", "output": "found"},
+    ]
+    if answered:
+        items.append(state(search_content()[:2]))
+    return {"input": [*items, {"role": "assistant", "content": "answer"}, {"role": "user", "content": "next"}]}
+
+
+@pytest.mark.parametrize("answered", [True, False])
+def test_moved_deferred_search_is_projected_once_or_omitted(caplog, answered):
+    opaque = codec()
+    payload = deferred_search_history(opaque, answered=answered)
+    original = deepcopy(payload)
+    replay = read(payload, opaque)
+    assert replay.project(payload, source_id="source-a", model=scope().model) == payload
+    with caplog.at_level("INFO"):
+        moved = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    calls = payload["input"][2:4]
+    tail = payload["input"][-2:]
+    assert moved == ([SEARCH_TEXT, *calls, *tail] if answered else [*calls, *tail])
+    assert f"search_projected={int(answered)} search_unanswered={int(not answered)}" in caplog.text
+    assert payload == original
+
+
 def test_authentication_precedes_omission():
     opaque = codec()
     with pytest.raises(ClientPayloadError, match="another client") as rejected:

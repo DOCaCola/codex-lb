@@ -10,7 +10,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.responses import ResponsesProjection
 from app.modules.claude.tool_names import ClaudeToolNames
-from tests.claude_json_helpers import at
+from tests.claude_json_helpers import array, at
 from tests.unit.test_claude_protocol import codec, request, scope
 
 pytestmark = pytest.mark.unit
@@ -203,3 +203,148 @@ def test_search_failure_never_becomes_success(content):
         ResponsesProjection(scope(), ClaudeToolNames(), codec(), search_enabled=True).complete(
             {"id": "search", "content": content, "stop_reason": "end_turn"}
         )
+
+
+LOOKUP = {"type": "function", "name": "lookup", "parameters": {"type": "object", "properties": {}}}
+
+
+def deferred_turn(**overrides):
+    """Search deferred beside a client call, its result and the client's tool output (Anthropic server tools docs)."""
+    opaque = codec()
+    declared = project(request(tools=[LOOKUP, {"type": "web_search"}]), max_output_tokens=8192)
+    wire = at(declared.body, "tools", 0, "name")
+    adapter = ResponsesProjection(scope(), declared.tools, opaque, search_enabled=True)
+    call = search_content()[0]
+    tool_use = {"type": "tool_use", "id": "toolu_lookup", "name": wire, "input": {}}
+    response = adapter.complete({"id": "deferred", "content": [call, tool_use], "stop_reason": "tool_use", **overrides})
+    return opaque, declared, response
+
+
+def replay(opaque, items, tools=(LOOKUP, {"type": "web_search"})):
+    return project(
+        request(input=items, tools=list(tools)),
+        max_output_tokens=8192,
+        restore_reasoning=lambda token: opaque.authenticate(token, client_scope=scope().client_scope).block,
+    )
+
+
+def test_search_deferred_beside_a_client_call_completes_with_call_only_state(caplog):
+    with caplog.at_level("INFO"):
+        opaque, _, response = deferred_turn()
+    assert response["status"] == "completed"
+    output = response["output"]
+    assert isinstance(output, list)
+    assert [at(item, "type") for item in output] == ["web_search_call", "function_call", "reasoning"]
+    assert at(output, 0, "status") == "in_progress"
+    token = at(output, 2, "encrypted_content")
+    assert isinstance(token, str)
+    state = opaque.authenticate(token, client_scope=scope().client_scope).block
+    assert state == {"type": "web_search", "item_id": at(output, 0, "id"), "blocks": search_content()[:1]}
+    assert "pending_search=0 deferred_search=1" in caplog.text
+
+
+def test_search_pending_without_a_client_call_still_fails():
+    with pytest.raises(ClaudeError, match="pending_search=1, stop_reason=tool_use"):
+        ResponsesProjection(scope(), ClaudeToolNames(), codec(), search_enabled=True).complete(
+            {"id": "search", "content": search_content()[:1], "stop_reason": "tool_use"}
+        )
+
+
+def test_streamed_deferral_closes_search_after_the_held_call():
+    declared = project(request(tools=[LOOKUP, {"type": "web_search"}]), max_output_tokens=8192)
+    wire = at(declared.body, "tools", 0, "name")
+    adapter = ResponsesProjection(scope(), declared.tools, codec(), search_enabled=True)
+    events = adapter.consume({"type": "message_start", "message": {"id": "deferred"}})
+    blocks = [search_content()[0], {"type": "tool_use", "id": "toolu_lookup", "name": wire, "input": {}}]
+    for index, block in enumerate(blocks):
+        events += adapter.consume({"type": "content_block_start", "index": index, "content_block": block})
+        events += adapter.consume({"type": "content_block_stop", "index": index})
+    events += adapter.consume({"type": "message_delta", "delta": {"stop_reason": "tool_use"}})
+    events += adapter.consume({"type": "message_stop"})
+    done = [at(event, "item", "type") for event in events if event["type"] == "response.output_item.done"]
+    assert done == ["function_call", "web_search_call", "reasoning"]
+    sequence: list[int] = []
+    for event in events:
+        number = event["sequence_number"]
+        assert isinstance(number, int)
+        sequence.append(number)
+    assert sequence == sorted(sequence) and len(set(sequence)) == len(sequence)
+    assert events[-1]["type"] == "response.completed"
+
+
+def test_deferred_search_resumes_and_its_result_is_stored_as_a_pair():
+    opaque, declared, response = deferred_turn()
+    output = response["output"]
+    assert isinstance(output, list)
+    # Streamed clients record the held client call before the deferred search and its state.
+    turn = [
+        {"role": "user", "content": "Search and look up"},
+        output[1],
+        output[0],
+        output[2],
+        {"type": "function_call_output", "call_id": "toolu_lookup", "output": "found"},
+    ]
+    resumed = replay(opaque, turn)
+    assert at(resumed.body, "messages", 1, "content") == [
+        search_content()[0],
+        at(resumed.body, "messages", 1, "content", 1),
+    ]
+    assert at(resumed.body, "messages", 1, "content", 1, "type") == "tool_use"
+    assert [at(block, "type") for block in array(at(resumed.body, "messages", 2, "content"))] == ["tool_result"]
+    assert resumed.deferred_searches == {"srvtoolu_search": (at(output, 0, "id"), search_content()[0])}
+
+    adapter = ResponsesProjection(
+        scope(), declared.tools, opaque, search_enabled=True, deferred_searches=resumed.deferred_searches
+    )
+    answer = adapter.complete({"id": "resumed", "content": search_content()[1:], "stop_reason": "end_turn"})
+    answer_output = answer["output"]
+    assert isinstance(answer_output, list)
+    assert [at(item, "type") for item in answer_output] == ["reasoning", "message"]
+    token = at(answer_output, 0, "encrypted_content")
+    assert isinstance(token, str)
+    assert opaque.authenticate(token, client_scope=scope().client_scope).block == {
+        "type": "web_search",
+        "item_id": at(output, 0, "id"),
+        "blocks": search_content()[:2],
+    }
+
+    later = replay(opaque, [*turn, *answer_output, {"role": "user", "content": "Thanks"}])
+    assert at(later.body, "messages", 1, "content", 0) == search_content()[0]
+    assert at(later.body, "messages", 3, "content", 0) == search_content()[1]
+    assert later.deferred_searches == {}
+
+
+def test_result_without_a_call_or_resumable_deferral_fails():
+    with pytest.raises(ClaudeError, match="no matching server call"):
+        ResponsesProjection(
+            scope(), ClaudeToolNames(), codec(), search_enabled=True, deferred_searches={"srvtoolu_other": ("x", {})}
+        ).complete({"id": "resumed", "content": search_content()[1:], "stop_reason": "end_turn"})
+
+
+@pytest.mark.parametrize(
+    "reason,tail,tools",
+    [
+        ("search_undeclared", [], (LOOKUP,)),
+        ("extra_content", [{"role": "user", "content": "Stop searching"}], (LOOKUP, {"type": "web_search"})),
+        (
+            "later_history",
+            [{"role": "assistant", "content": "Stopped"}, {"role": "user", "content": "Next"}],
+            (LOOKUP, {"type": "web_search"}),
+        ),
+    ],
+)
+def test_deferred_search_that_can_no_longer_run_is_omitted(caplog, reason, tail, tools):
+    opaque, _, response = deferred_turn()
+    output = response["output"]
+    assert isinstance(output, list)
+    items = [
+        {"role": "user", "content": "Search and look up"},
+        *output,
+        {"type": "function_call_output", "call_id": "toolu_lookup", "output": "aborted"},
+        *tail,
+    ]
+    with caplog.at_level("INFO"):
+        projected = replay(opaque, items, tools)
+    assert [at(block, "type") for block in array(at(projected.body, "messages", 1, "content"))] == ["tool_use"]
+    assert projected.deferred_searches == {}
+    assert f"claude_deferred_search_omitted request_id=None reasons={reason}:1" in caplog.text

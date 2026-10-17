@@ -3,7 +3,7 @@ import json
 import pytest
 
 from tests.integration.test_claude_inference import MODEL, install_upstream, pool
-from tests.unit.test_claude_search import search_content
+from tests.unit.test_claude_search import LOOKUP, search_content
 
 __all__ = ["pool"]
 pytestmark = pytest.mark.integration
@@ -66,3 +66,43 @@ async def test_live_search_route_replay_and_completed_search_moves(async_client,
     assert "Web search: test" in sent
     assert "server_tool_use" not in sent
     assert "upstream-owned-opaque-data" not in sent
+
+
+def recorded_output(response, stream):
+    """Items in the order the client records them: done events when streaming."""
+    if not stream:
+        return response.json()["output"]
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    return [event["item"] for event in events if event["type"] == "response.output_item.done"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_search_deferred_beside_a_client_call_resumes_on_its_account(async_client, pool, monkeypatch, stream):
+    call = search_content()[0]
+    tool_use = {"type": "tool_use", "id": "toolu_lookup", "name": "lookup", "input": {}}
+    captured, _ = install_upstream(monkeypatch, content=[call, tool_use], stop="tool_use")
+    payload = {
+        "model": MODEL,
+        "input": "Search and look up",
+        "stream": stream,
+        "tools": [LOOKUP, {"type": "web_search"}],
+    }
+    response = await async_client.post("/v1/responses", json=payload)
+    assert response.status_code == 200, response.text
+    output = recorded_output(response, stream)
+    assert sorted(item["type"] for item in output) == ["function_call", "reasoning", "web_search_call"]
+
+    resumed, _ = install_upstream(monkeypatch, content=search_content()[1:])
+    payload["input"] = [
+        {"role": "user", "content": "Search and look up"},
+        *output,
+        {"type": "function_call_output", "call_id": "toolu_lookup", "output": "found"},
+    ]
+    again = await async_client.post("/v1/responses", json=payload)
+    assert again.status_code == 200, again.text
+    assert resumed[0][0] == captured[0][0]
+    messages = resumed[0][2]["messages"]
+    assert [block["type"] for block in messages[-2]["content"]] == ["server_tool_use", "tool_use"]
+    assert [block["type"] for block in messages[-1]["content"]] == ["tool_result"]
+    answer = recorded_output(again, stream)
+    assert [item["type"] for item in answer] == ["reasoning", "message"]

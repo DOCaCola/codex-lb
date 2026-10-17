@@ -127,6 +127,9 @@ class ResponsesProjection:
     opaque: ClaudeOpaqueState
     search_enabled: bool = False
     chat_reasoning: bool = False
+    # Searches the request resumes, by call ID: the original search item ID and its deferred call. Anthropic
+    # runs them first, so their results open this response without a call of their own.
+    deferred_searches: dict[str, tuple[str, dict[str, JsonValue]]] = field(default_factory=dict)
     response_id: str = ""
     created_at: int = field(default_factory=lambda: int(time.time()))
     sequence: int = 0
@@ -218,7 +221,9 @@ class ResponsesProjection:
             }
         if kind == "web_search_tool_result":
             call_id = block.get("tool_use_id")
-            if not isinstance(call_id, str) or call_id not in self.search_calls:
+            if not isinstance(call_id, str) or (
+                call_id not in self.search_calls and call_id not in self.deferred_searches
+            ):
                 raise ClaudeError("Claude search result has no matching server call")
             content = block.get("content")
             if not isinstance(content, list):
@@ -228,12 +233,16 @@ class ResponsesProjection:
                     raise ClaudeError("Unsupported Claude web search result")
             result_item: dict[str, JsonValue] = {"id": item_id, "type": "reasoning", "summary": []}
             if final:
-                call_index, call = self.search_calls[call_id]
+                if call_id in self.search_calls:
+                    call_index, call = self.search_calls[call_id]
+                    search_id = self.outputs[call_index]["id"]
+                else:
+                    search_id, call = self.deferred_searches[call_id]
                 result_item["encrypted_content"] = self.opaque.encode(
                     self.scope,
                     {
                         "type": "web_search",
-                        "item_id": self.outputs[call_index]["id"],
+                        "item_id": search_id,
                         "blocks": [call, block],
                     },
                 )
@@ -571,17 +580,19 @@ class ResponsesProjection:
         if block.get("type") == "web_search_tool_result":
             call_id = block["tool_use_id"]
             assert isinstance(call_id, str)
-            call_index, _ = self.search_calls.pop(call_id)
-            search_item = self.outputs[call_index]
-            search_item["status"] = "completed"
-            events.extend(
-                [
-                    self.event(
-                        "response.web_search_call.completed", item_id=search_item["id"], output_index=call_index
-                    ),
-                    self.event("response.output_item.done", output_index=call_index, item=deepcopy(search_item)),
-                ]
-            )
+            if call_id in self.search_calls:
+                call_index, _ = self.search_calls.pop(call_id)
+                search_item = self.outputs[call_index]
+                search_item["status"] = "completed"
+                events.extend(
+                    [
+                        self.event(
+                            "response.web_search_call.completed", item_id=search_item["id"], output_index=call_index
+                        ),
+                        self.event("response.output_item.done", output_index=call_index, item=deepcopy(search_item)),
+                    ]
+                )
+            # A resumed search's item was delivered by the response that deferred it.
         if item["type"] == "function_call":
             identity = self.called_tools[index]
             if identity.arguments is not None:
@@ -623,10 +634,38 @@ class ResponsesProjection:
         events.append(self.event("response.output_item.done", output_index=index, item=deepcopy(item)))
         return events
 
+    def _defer_searches(self) -> list[dict[str, JsonValue]]:
+        """Close the searches Anthropic deferred beside a client tool call, with state holding only their call.
+
+        Anthropic runs them once the client returns its tool results, and their results open that response
+        (server-tools documentation, "Mixing server tools and client tools in one turn"). The state follows
+        every content block.
+        """
+        events: list[dict[str, JsonValue]] = []
+        position = self.block_types.total()
+        for call_index, call in self.search_calls.values():
+            search_item = self.outputs[call_index]
+            search_item["status"] = "in_progress"
+            events.append(self.event("response.output_item.done", output_index=call_index, item=deepcopy(search_item)))
+            state: dict[str, JsonValue] = {"id": f"{self.response_id}_{position}", "type": "reasoning", "summary": []}
+            events.append(self.event("response.output_item.added", output_index=position, item=deepcopy(state)))
+            state["encrypted_content"] = self.opaque.encode(
+                self.scope, {"type": "web_search", "item_id": search_item["id"], "blocks": [call]}
+            )
+            self.outputs[position] = state
+            events.append(self.event("response.output_item.done", output_index=position, item=deepcopy(state)))
+            position += 1
+        self.search_calls.clear()
+        return events
+
     def _stop(self) -> list[dict[str, JsonValue]]:
         open_types = Counter(str(block.get("type")) for block in self.blocks.values())
         open_summary = ",".join(f"{kind}:{count}" for kind, count in sorted(open_types.items())) or "none"
-        unfinished = bool(self.blocks or self.search_calls)
+        # Anthropic defers searches only beside a client tool call; any other pending search is unfinished.
+        deferring = self.stop_reason == "tool_use" and bool(self.called_tools) and not self.blocks
+        pending_search = 0 if deferring else len(self.search_calls)
+        deferred_search = len(self.search_calls) if deferring else 0
+        unfinished = bool(self.blocks or pending_search)
         # Anthropic may decline mid-stream with a block still open; any other unfinished stop is malformed.
         refused = self.stop_reason == "refusal"
         valid = self.stop_reason in _STOP_REASONS and (not unfinished or refused)
@@ -641,7 +680,7 @@ class ResponsesProjection:
         )
         logger.info(
             "claude_message_stop request_id=%s response_id=%s model=%s stop_reason=%s status=%s "
-            "blocks=%s output_tokens=%d open=%s pending_search=%d refusal_category=%s "
+            "blocks=%s output_tokens=%d open=%s pending_search=%d deferred_search=%d refusal_category=%s "
             "withheld=%d delivered_output=%s",
             get_request_id(),
             self.response_id,
@@ -651,7 +690,8 @@ class ResponsesProjection:
             ",".join(f"{kind}:{count}" for kind, count in sorted(self.block_types.items())) or "none",
             self.usage.output_tokens,
             open_summary,
-            len(self.search_calls),
+            pending_search,
+            deferred_search,
             self.refusal_category,
             len(withheld),
             self.delivered_output,
@@ -661,7 +701,7 @@ class ResponsesProjection:
                 raise ClaudeError(f"Unknown Claude stop reason {self.stop_reason}")
             raise ClaudeError(
                 f"Claude stopped with unfinished output (open={open_summary}, "
-                f"pending_search={len(self.search_calls)}, stop_reason={self.stop_reason})"
+                f"pending_search={pending_search}, stop_reason={self.stop_reason})"
             )
         # Output a refusal cut off or held back is discarded, never closed: a done event would hand a
         # tool call from a refused turn to the client to run, and commit refused output to its history.
@@ -672,6 +712,8 @@ class ResponsesProjection:
             self.delivered_output |= bool(closing)
         else:
             closing = self._close_message(_TERMINAL_PHASES.get(str(self.stop_reason)))
+            if deferred_search:
+                closing.extend(self._defer_searches())
         discarded = {self.text_parts[index][0] if index in self.text_parts else index for index in self.blocks}
         discarded.update(call_index for call_index, _ in self.search_calls.values())
         discarded.update(withheld)

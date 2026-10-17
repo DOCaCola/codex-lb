@@ -47,23 +47,35 @@ def search_tool(tool: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
 
 
 def search_replay(block: dict[str, JsonValue]) -> tuple[str, list[JsonValue]]:
-    """Validate decoded state; never reconstruct encrypted results from citations."""
+    """Validate decoded state; never reconstruct encrypted results from citations.
+
+    The blocks are the call and its result, or only the call while Anthropic defers it beside a client
+    tool call; its result opens the next response.
+    """
     item_id, blocks = block.get("item_id"), block.get("blocks")
-    if not isinstance(item_id, str) or not isinstance(blocks, list) or len(blocks) != 2:
+    if not isinstance(item_id, str) or not isinstance(blocks, list) or len(blocks) not in (1, 2):
         raise ClaudeError("Invalid Claude search replay state")
-    call, result = blocks
+    call, result = blocks[0], blocks[1] if len(blocks) == 2 else None
     if (
         not isinstance(call, dict)
         or call.get("type") != "server_tool_use"
         or call.get("name") != "web_search"
         or not isinstance(call.get("id"), str)
-        or not isinstance(result, dict)
-        or result.get("type") != "web_search_tool_result"
-        or result.get("tool_use_id") != call["id"]
-        or not isinstance(result.get("content"), list)
+        or result is not None
+        and (
+            not isinstance(result, dict)
+            or result.get("type") != "web_search_tool_result"
+            or result.get("tool_use_id") != call["id"]
+            or not isinstance(result.get("content"), list)
+        )
     ):
         raise ClaudeError("Invalid Claude search replay blocks")
     return item_id, deepcopy(blocks)
+
+
+def deferred_search(blocks: list[JsonValue]) -> bool:
+    """Validated search blocks of a call Anthropic deferred, which has no result yet."""
+    return len(blocks) == 1
 
 
 def assistant_history_message(text: str) -> dict[str, JsonValue]:
