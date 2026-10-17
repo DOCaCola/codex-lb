@@ -1434,7 +1434,6 @@ class DashboardSettings(Base):
     compact_request_budget_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     transcription_request_budget_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     stream_idle_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
-    proxy_downstream_websocket_idle_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     sse_keepalive_interval_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     # end C2-1 timeouts
     # M1 stream/bridge budgets: dashboard-managed Responses stream and HTTP

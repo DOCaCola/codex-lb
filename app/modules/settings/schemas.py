@@ -185,7 +185,6 @@ class DashboardSettingsResponse(DashboardModel):
     compact_request_budget_seconds: float
     transcription_request_budget_seconds: float
     stream_idle_timeout_seconds: float
-    proxy_downstream_websocket_idle_timeout_seconds: float
     sse_keepalive_interval_seconds: float
     # end C2-1 timeouts
     # M1 stream/bridge budgets: effective values, unbounded like the C2-1
@@ -345,7 +344,6 @@ class DashboardSettingsUpdateRequest(DashboardModel):
     compact_request_budget_seconds: float | None = Field(default=None, gt=0, le=86400)
     transcription_request_budget_seconds: float | None = Field(default=None, gt=0, le=86400)
     stream_idle_timeout_seconds: float | None = Field(default=None, gt=0, le=86400)
-    proxy_downstream_websocket_idle_timeout_seconds: float | None = Field(default=None, gt=0, le=86400)
     sse_keepalive_interval_seconds: float | None = Field(default=None, ge=0, le=86400)
     # end C2-1 timeouts
     # M1 stream/bridge budgets: same tri-state contract and bounds as the

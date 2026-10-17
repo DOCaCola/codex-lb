@@ -15,7 +15,6 @@ const TIMEOUT_NAMES = [
   "http_responses_stream_request_budget_seconds",
   "http_responses_session_bridge_request_budget_seconds",
   "stream_idle_timeout_seconds",
-  "proxy_downstream_websocket_idle_timeout_seconds",
   "sse_keepalive_interval_seconds",
 ] as const;
 
@@ -33,7 +32,6 @@ function settingsWithProvenance(
     http_responses_stream_request_budget_seconds: 7200,
     http_responses_session_bridge_request_budget_seconds: 7200,
     stream_idle_timeout_seconds: 7200,
-    proxy_downstream_websocket_idle_timeout_seconds: 120,
     sse_keepalive_interval_seconds: 10,
   };
   for (const name of TIMEOUT_NAMES) {
@@ -54,7 +52,7 @@ describe("UpstreamTimeoutSettings", () => {
     expect(budget).toHaveValue(null);
     expect(budget).toHaveAttribute("placeholder", "700");
     expect(screen.getByText("Inherited from environment (700)")).toBeInTheDocument();
-    expect(screen.getAllByText(/^Default \(/)).toHaveLength(8);
+    expect(screen.getAllByText(/^Default \(/)).toHaveLength(7);
     expect(screen.getByRole("button", { name: "Save timeouts" })).toBeDisabled();
   });
 

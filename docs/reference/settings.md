@@ -7,7 +7,7 @@ Regenerate with `uv run python scripts/generate_settings_reference.py`;
 `tests/unit/test_settings_reference.py` fails when this page drifts from
 `app/core/config/settings.py`.
 
-codex-lb currently exposes 95 settings. Every setting is an environment
+codex-lb currently exposes 94 settings. Every setting is an environment
 variable, normally with the `CODEX_LB_` prefix (process environment or `.env` /
 `.env.local` next to the process); aliased settings list every accepted name.
 All defaults work with zero configuration —
@@ -159,7 +159,6 @@ anything else belongs in `app/core/config/settings.py`.
 | `CODEX_LB_PROXY_ACCOUNT_STREAM_LIMIT` | T3 (dashboard) | `int` | `8` |
 | `CODEX_LB_PROXY_ACCOUNT_STREAM_RECOVERY_RESERVE` | T3 (dashboard) | `int` | `1` |
 | `CODEX_LB_PROXY_API_KEY_FAIR_SHARE_CONGESTION_THRESHOLD_PCT` | T3 (dashboard) | `int` | `0` |
-| `CODEX_LB_PROXY_DOWNSTREAM_WEBSOCKET_IDLE_TIMEOUT_SECONDS` | T3 (dashboard) | `float` | `120.0` |
 | `CODEX_LB_PROXY_OVERLOAD_ISOLATION_SECONDS` | T3 (dashboard) | `int` | `1800` |
 | `CODEX_LB_PROXY_REQUEST_BUDGET_SECONDS` | T3 (dashboard) | `float` | `600.0` |
 | `CODEX_LB_PROXY_RESPONSE_CREATE_LIMIT` | T1 | `int` | `256` |
@@ -324,6 +323,7 @@ issue [#1340](https://github.com/Soju06/codex-lb/issues/1340)):
 - `CODEX_LB_TOKEN_REFRESH_INTERVAL_DAYS`
 - `CODEX_LB_TELEMETRY_ENABLED`
 - `CODEX_LB_TELEMETRY_ENDPOINT`
+- `CODEX_LB_PROXY_DOWNSTREAM_WEBSOCKET_IDLE_TIMEOUT_SECONDS`
 
 ---
 

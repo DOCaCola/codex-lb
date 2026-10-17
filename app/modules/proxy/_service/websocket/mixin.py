@@ -97,6 +97,7 @@ from app.core.resilience.network_recovery import (
     process_network_error_code,
 )
 from app.core.resilience.toggles import bind_resilience_toggles
+from app.core.resilience.websocket_reclaim import get_idle_websocket_reclaimer
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.usage.logs import CANCELLED_STATUS, WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE
@@ -1605,7 +1606,14 @@ class _WebSocketMixin:
             _sticky_key_from_turn_state_header(filtered_headers) if synthesized_turn_state is None else None
         )
         upstream_account_id: str | None = None
-        downstream_activity = _DownstreamWebSocketActivity(clock=clock)
+
+        def downstream_has_active_work() -> bool:
+            if pending_requests:
+                return True
+            terminal_task = upstream_control.terminal_message_task if upstream_control is not None else None
+            return terminal_task is not None and not terminal_task.done()
+
+        downstream_activity = _DownstreamWebSocketActivity(clock=clock, has_active_work=downstream_has_active_work)
         replay_request_state: _WebSocketRequestState | None = None
         request_state_to_fail: _WebSocketRequestState | None = None
         request_state_failure_task: asyncio.Task[None] | None = None
@@ -1709,6 +1717,8 @@ class _WebSocketMixin:
             upstream_control.replay_request_state = None
             return reader_replay
 
+        idle_websocket_reclaimer = get_idle_websocket_reclaimer()
+        idle_websocket_reclaimer.register(downstream_activity)
         try:
             while True:
                 if upstream_reader is not None and upstream_reader.done():
@@ -1800,7 +1810,6 @@ class _WebSocketMixin:
                     # account admission.  Leave that replay unregistered so the
                     # normal block below reacquires both before queue and send.
                 else:
-                    downstream_idle_timeout_seconds = runtime_settings.proxy_downstream_websocket_idle_timeout_seconds
                     if shutdown_state.is_draining() and not await _websocket_has_active_drain_work(
                         pending_requests,
                         pending_lock=pending_lock,
@@ -1824,32 +1833,31 @@ class _WebSocketMixin:
                     try:
                         message = await scheduler_for(proxy).wait_for(
                             source_receiver.receive(),
-                            timeout=min(
-                                downstream_idle_timeout_seconds, _facade()._DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS
-                            ),
+                            timeout=_facade()._DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS,
                         )
                     except asyncio.TimeoutError:
                         if shutdown_state.is_draining():
                             # Re-enter the loop so the drain gate above wins
-                            # over an idle close when draining began while
+                            # over an idle reclaim when draining began while
                             # receive() was blocked.
+                            continue
+                        if not downstream_activity.reclaim_requested:
                             continue
                         if not await proxy._downstream_websocket_is_idle(
                             pending_requests,
                             pending_lock=pending_lock,
                             upstream_control=upstream_control,
                             downstream_activity=downstream_activity,
-                            idle_timeout_seconds=downstream_idle_timeout_seconds,
                         ):
+                            downstream_activity.reclaim_requested = False
                             continue
-                        idle_close = False
+                        reclaimed = False
                         async with client_send_lock:
                             if await proxy._downstream_websocket_is_idle(
                                 pending_requests,
                                 pending_lock=pending_lock,
                                 upstream_control=upstream_control,
                                 downstream_activity=downstream_activity,
-                                idle_timeout_seconds=downstream_idle_timeout_seconds,
                             ):
                                 try:
                                     message = await scheduler_for(proxy).wait_for(
@@ -1858,14 +1866,21 @@ class _WebSocketMixin:
                                 except asyncio.TimeoutError:
                                     try:
                                         await websocket.close(
-                                            code=1001, reason=_facade()._DOWNSTREAM_WEBSOCKET_IDLE_CLOSE_REASON
+                                            code=1001, reason=_facade()._DOWNSTREAM_WEBSOCKET_RECLAIM_CLOSE_REASON
                                         )
                                     except Exception:
                                         _facade().logger.debug(
-                                            "Failed to close idle downstream websocket", exc_info=True
+                                            "Failed to close reclaimed downstream websocket", exc_info=True
                                         )
-                                    idle_close = True
-                        if idle_close:
+                                    reclaimed = True
+                            else:
+                                downstream_activity.reclaim_requested = False
+                        if reclaimed:
+                            _facade().logger.info(
+                                "proxy_websocket_idle_reclaimed conversation_id=%s idle_seconds=%.0f",
+                                conversation_id,
+                                clock.monotonic() - downstream_activity.last_activity_at,
+                            )
                             break
                     assert message is not None
                     downstream_activity.mark()
@@ -2572,6 +2587,10 @@ class _WebSocketMixin:
                         )
                         async with pending_lock:
                             pending_requests.append(response_create_request_state)
+                            # The client resumed: it answered (or abandoned) the
+                            # tool calls its previous response handed it.
+                            response_create_request_state.downstream_activity = downstream_activity
+                            downstream_activity.client_tool_results_owed = False
                             if shutdown_state.is_draining():
                                 # Register-first makes this barrier fail-closed
                                 # against a synchronous shutdown signal between
@@ -3170,6 +3189,7 @@ class _WebSocketMixin:
             scope_cancelled = True
             raise
         finally:
+            idle_websocket_reclaimer.unregister(downstream_activity)
 
             def current_scope_cleanup_timeout() -> float:
                 # The scope-cleanup wait guards terminal settlement (request
@@ -6485,6 +6505,10 @@ class _WebSocketMixin:
             and completed_usage is not None
             and completed_usage.output_tokens == 0
         )
+        if event_type == "response.completed" and request_state.downstream_activity is not None:
+            # Set before finalization drops the request from the pending queue,
+            # so the socket never looks idle while the client runs the calls.
+            request_state.downstream_activity.client_tool_results_owed = bool(request_state.pending_tool_call_types)
         # An interrupted response keeps its completed output and anchors the
         # client's follow-up (``previous_response_id``) like a completion.
         if (
@@ -6751,18 +6775,17 @@ class _WebSocketMixin:
         pending_lock: anyio.Lock,
         upstream_control: _WebSocketUpstreamControl | None = None,
         downstream_activity: _DownstreamWebSocketActivity,
-        idle_timeout_seconds: float,
     ) -> bool:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
+        if downstream_activity.client_tool_results_owed:
+            return False
         if upstream_control is not None:
             terminal_task = upstream_control.terminal_message_task
             if terminal_task is not None and not terminal_task.done():
                 return False
         async with pending_lock:
-            if pending_requests:
-                return False
-        return (clock_for(proxy).monotonic() - downstream_activity.last_activity_at) >= idle_timeout_seconds
+            return not pending_requests
 
     async def _fail_expired_pending_websocket_requests(
         self,

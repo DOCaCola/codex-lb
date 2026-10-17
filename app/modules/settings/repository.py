@@ -249,8 +249,6 @@ class SettingsRepository:
         clear_transcription_request_budget_seconds: bool = False,
         stream_idle_timeout_seconds: float | None = None,
         clear_stream_idle_timeout_seconds: bool = False,
-        proxy_downstream_websocket_idle_timeout_seconds: float | None = None,
-        clear_proxy_downstream_websocket_idle_timeout_seconds: bool = False,
         sse_keepalive_interval_seconds: float | None = None,
         clear_sse_keepalive_interval_seconds: bool = False,
         # end C2-1 timeouts
@@ -497,11 +495,6 @@ class SettingsRepository:
                 clear_transcription_request_budget_seconds,
             ),
             ("stream_idle_timeout_seconds", stream_idle_timeout_seconds, clear_stream_idle_timeout_seconds),
-            (
-                "proxy_downstream_websocket_idle_timeout_seconds",
-                proxy_downstream_websocket_idle_timeout_seconds,
-                clear_proxy_downstream_websocket_idle_timeout_seconds,
-            ),
             ("sse_keepalive_interval_seconds", sse_keepalive_interval_seconds, clear_sse_keepalive_interval_seconds),
             # M1 stream/bridge budgets
             (

@@ -1302,6 +1302,9 @@ class _WebSocketRequestState:
     suppressed_duplicate_tool_call: bool = False
     pending_function_call_ids: list[str] = field(default_factory=list)
     pending_tool_call_types: dict[str, str] = field(default_factory=dict)
+    # Client socket that sent this request; a completion with client tool
+    # calls protects it from idle reclaim until the client answers.
+    downstream_activity: _DownstreamWebSocketActivity | None = None
     added_tool_call_types: dict[str, str] = field(default_factory=dict)
     tool_call_manifest_invalid: bool = False
     seen_tool_call_keys: dict[ToolCallDedupeKey, None] = field(default_factory=dict)
@@ -1659,23 +1662,42 @@ class _WebSocketUpstreamControl:
     finished_response_ids: deque[str] = field(default_factory=lambda: deque(maxlen=64))
 
 
-@dataclass(slots=True)
+def _no_active_work() -> bool:
+    return False
+
+
+@dataclass(eq=False, slots=True)
 class _DownstreamWebSocketActivity:
-    """Downstream websocket liveness stamps, read with the owner's clock.
+    """Downstream websocket activity and reclaim state, read with the owner's clock.
 
     ``clock`` is the owner's collaborator (``clock_for(proxy)``); the real
     default keeps the previous ``time.monotonic`` stamps verbatim.
+    ``has_active_work`` reports the owner's pending requests and terminal
+    settlement. A socket whose last response handed the client tool calls
+    stays protected from reclaim until the client sends its next request.
     """
 
     clock: Clock = field(default=REAL_CLOCK, kw_only=True)
+    has_active_work: Callable[[], bool] = field(default=_no_active_work, kw_only=True)
     last_activity_at: float = field(init=False)
     disconnected: bool = False
+    client_tool_results_owed: bool = False
+    reclaim_requested: bool = False
 
     def __post_init__(self) -> None:
         self.last_activity_at = self.clock.monotonic()
 
     def mark(self) -> None:
         self.last_activity_at = self.clock.monotonic()
+        self.reclaim_requested = False
+
+    def reclaimable(self) -> bool:
+        return not (
+            self.disconnected or self.reclaim_requested or self.client_tool_results_owed or self.has_active_work()
+        )
+
+    def request_reclaim(self) -> None:
+        self.reclaim_requested = True
 
     def mark_disconnected(self) -> None:
         self.disconnected = True

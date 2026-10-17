@@ -195,7 +195,6 @@ export const DashboardSettingsSchema = z
     compactRequestBudgetSeconds: z.number().optional().default(180),
     transcriptionRequestBudgetSeconds: z.number().optional().default(120),
     streamIdleTimeoutSeconds: z.number().optional().default(7200),
-    proxyDownstreamWebsocketIdleTimeoutSeconds: z.number().optional().default(120),
     sseKeepaliveIntervalSeconds: z.number().optional().default(10),
     // M1 stream/bridge budgets: effective values, same contract as the C2-1
     // timeouts above (optional with the code defaults, unbounded).
@@ -356,7 +355,6 @@ export const SettingsUpdateRequestSchema = z
     compactRequestBudgetSeconds: z.number().positive().max(86400).nullable().optional(),
     transcriptionRequestBudgetSeconds: z.number().positive().max(86400).nullable().optional(),
     streamIdleTimeoutSeconds: z.number().positive().max(86400).nullable().optional(),
-    proxyDownstreamWebsocketIdleTimeoutSeconds: z.number().positive().max(86400).nullable().optional(),
     sseKeepaliveIntervalSeconds: z.number().min(0).max(86400).nullable().optional(),
     // M1 stream/bridge budgets: tri-state like the C2-1 timeouts.
     httpResponsesStreamRequestBudgetSeconds: z.number().positive().max(86400).nullable().optional(),

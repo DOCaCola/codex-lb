@@ -286,7 +286,6 @@ async def test_first_turn_reaches_connect_guard_not_the_reuse_guard(
     """
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 
@@ -334,7 +333,6 @@ async def test_reuse_guard_rejects_a_later_source_owned_turn(monkeypatch: pytest
     """
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 
@@ -510,7 +508,6 @@ async def test_reuse_guard_sees_the_raw_model_alias(monkeypatch: pytest.MonkeyPa
     """
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 
@@ -728,7 +725,6 @@ async def test_reuse_guard_forwards_a_pinned_input_file_turn(db_setup, monkeypat
     """
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 
@@ -782,7 +778,6 @@ async def test_reuse_guard_forwards_a_terminal_compaction_trigger_turn(
     """
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 
@@ -1013,7 +1008,6 @@ async def test_reuse_guard_rejects_a_later_disabled_source_turn(monkeypatch: pyt
     """
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 

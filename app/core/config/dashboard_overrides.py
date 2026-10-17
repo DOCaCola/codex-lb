@@ -36,7 +36,6 @@ DASHBOARD_TIMEOUT_SETTINGS: Final[tuple[str, ...]] = (
     "compact_request_budget_seconds",
     "transcription_request_budget_seconds",
     "stream_idle_timeout_seconds",
-    "proxy_downstream_websocket_idle_timeout_seconds",
     "sse_keepalive_interval_seconds",
     # M1 stream/bridge budgets: the Responses stream request budget and the
     # HTTP session bridge request budget share the Upstream timeouts card.

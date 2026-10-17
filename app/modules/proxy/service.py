@@ -781,7 +781,7 @@ def get_settings() -> _Settings:
 logger = logging.getLogger(__name__)
 
 _ResponsesPayloadT = TypeVar("_ResponsesPayloadT", ResponsesRequest, ResponsesCompactRequest)
-_DOWNSTREAM_WEBSOCKET_IDLE_CLOSE_REASON = "Idle downstream websocket timeout"
+_DOWNSTREAM_WEBSOCKET_RECLAIM_CLOSE_REASON = "Idle Responses websocket reclaimed"
 _DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS = 1.0
 # Keep the first HTTP bridge liveness frame behind the API layer's startup
 # error probe window. If a keepalive becomes the first yielded chunk, the HTTP

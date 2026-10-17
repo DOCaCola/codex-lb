@@ -269,7 +269,6 @@ TIMEOUT_INVARIANT_RULES: tuple[TimeoutInvariantRule, ...] = (
 )
 
 # TODO(timeout_sem_001): database_migration_lock_timeout_seconds is independent startup DB migration policy.
-# TODO(timeout_sem_008): proxy_downstream_websocket_idle_timeout_seconds has no verified ordering with bridge TTL.
 # TODO(timeout_sem_015): openai_cache_affinity_max_age_seconds participates with dashboard prompt-cache TTL in
 # cleanup retention.
 # TODO(timeout_sem_021): upstream_route_cache_ttl_seconds is invalidation freshness policy; no timeout inequality

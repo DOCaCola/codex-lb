@@ -38,11 +38,6 @@ const TIMEOUT_FIELDS = [
   },
   // end M1 stream/bridge budgets
   { field: "streamIdleTimeoutSeconds", name: "stream_idle_timeout_seconds", key: "streamIdle" },
-  {
-    field: "proxyDownstreamWebsocketIdleTimeoutSeconds",
-    name: "proxy_downstream_websocket_idle_timeout_seconds",
-    key: "websocketIdle",
-  },
   { field: "sseKeepaliveIntervalSeconds", name: "sse_keepalive_interval_seconds", key: "keepalive" },
 ] as const;
 

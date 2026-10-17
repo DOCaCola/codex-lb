@@ -26,7 +26,6 @@ def test_settings_multi_replica_defaults():
     assert settings.proxy_request_budget_seconds == 600.0
     assert settings.http_responses_session_bridge_request_budget_seconds == 7200.0
     assert settings.stream_idle_timeout_seconds == 7200.0
-    assert settings.proxy_downstream_websocket_idle_timeout_seconds == 120.0
     assert settings.http_responses_stream_request_budget_seconds == 7200.0
     assert settings.conversation_archive_queue_max_bytes == 256 * 1024 * 1024
     assert settings.otel_enabled is False
@@ -141,12 +140,6 @@ def test_settings_work_admission_limits_from_env(monkeypatch):
     monkeypatch.setenv("CODEX_LB_PROXY_RESPONSE_CREATE_LIMIT", "11")
     settings = Settings()
     assert settings.proxy_response_create_limit == 11
-
-
-def test_settings_proxy_downstream_websocket_idle_timeout_from_env(monkeypatch):
-    monkeypatch.setenv("CODEX_LB_PROXY_DOWNSTREAM_WEBSOCKET_IDLE_TIMEOUT_SECONDS", "45")
-    settings = Settings()
-    assert settings.proxy_downstream_websocket_idle_timeout_seconds == 45.0
 
 
 def test_settings_otel_enabled_from_env(monkeypatch):

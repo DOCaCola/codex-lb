@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from asyncio import Semaphore
@@ -15,6 +16,11 @@ from app.core.resilience.overload import (
     local_unavailable_error,
     merge_retry_after_headers,
     send_json_http_response,
+)
+from app.core.resilience.websocket_reclaim import (
+    WEBSOCKET_RECLAIM_ADMISSION_WAIT_SECONDS,
+    IdleWebSocketReclaimer,
+    get_idle_websocket_reclaimer,
 )
 from app.core.utils.request_id import get_request_id
 
@@ -63,9 +69,16 @@ class BulkheadSemaphore:
 
 
 class BulkheadMiddleware:
-    def __init__(self, app: ASGIApp, *, bulkhead: BulkheadSemaphore) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        bulkhead: BulkheadSemaphore,
+        websocket_reclaimer: IdleWebSocketReclaimer | None = None,
+    ) -> None:
         self.app = app
         self._bulkhead = bulkhead
+        self._websocket_reclaimer = websocket_reclaimer or get_idle_websocket_reclaimer()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -118,39 +131,52 @@ class BulkheadMiddleware:
             await self.app(scope, receive, send)
             return
 
+        reclaimed_slot = False
         if sem.locked():
-            message = f"codex-lb is temporarily overloaded in the {lane} lane"
-            await self._log_rejection(
-                path=diagnostic_path,
-                scope_type=scope["type"],
-                lane=lane,
-                status_code=429,
-                message=message,
-                available=0,
-            )
-            if scope["type"] == "websocket":
-                await deny_websocket_with_http_response(
-                    receive,
+            reclaimed_slot = lane == "proxy_websocket" and await self._admit_by_reclaiming_idle_websocket(sem)
+            if not reclaimed_slot:
+                message = f"codex-lb is temporarily overloaded in the {lane} lane"
+                await self._log_rejection(
+                    path=diagnostic_path,
+                    scope_type=scope["type"],
+                    lane=lane,
+                    status_code=429,
+                    message=message,
+                    available=0,
+                )
+                if scope["type"] == "websocket":
+                    await deny_websocket_with_http_response(
+                        receive,
+                        send,
+                        status_code=429,
+                        payload=local_overload_error(message) if is_proxy_path(path) else {"detail": message},
+                        headers=merge_retry_after_headers(),
+                    )
+                    return
+                await send_json_http_response(
                     send,
                     status_code=429,
                     payload=local_overload_error(message) if is_proxy_path(path) else {"detail": message},
                     headers=merge_retry_after_headers(),
                 )
                 return
-            await send_json_http_response(
-                send,
-                status_code=429,
-                payload=local_overload_error(message) if is_proxy_path(path) else {"detail": message},
-                headers=merge_retry_after_headers(),
-            )
-            return
 
-        await sem.acquire()
+        if not reclaimed_slot:
+            await sem.acquire()
 
         try:
             await self.app(scope, receive, send)
         finally:
             sem.release()
+
+    async def _admit_by_reclaiming_idle_websocket(self, sem: Semaphore) -> bool:
+        if not self._websocket_reclaimer.reclaim_least_recently_used():
+            return False
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=WEBSOCKET_RECLAIM_ADMISSION_WAIT_SECONDS)
+        except TimeoutError:
+            return False
+        return True
 
     async def _log_rejection(
         self,

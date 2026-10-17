@@ -166,7 +166,6 @@ async def test_cancelled_websocket_scope_cleanup_is_deadline_bounded_and_remains
         sticky_threads_enabled=False,
         openai_cache_affinity_max_age_seconds=0,
         prohibit_fast_mode=False,
-        proxy_downstream_websocket_idle_timeout_seconds=30.0,
         proxy_request_budget_seconds=30.0,
         stream_idle_timeout_seconds=30.0,
         sse_keepalive_interval_seconds=0.0,
@@ -343,7 +342,6 @@ async def test_cancelled_websocket_scope_cleanup_draws_on_published_post_drain_r
         sticky_threads_enabled=False,
         openai_cache_affinity_max_age_seconds=0,
         prohibit_fast_mode=False,
-        proxy_downstream_websocket_idle_timeout_seconds=30.0,
         proxy_request_budget_seconds=30.0,
         stream_idle_timeout_seconds=30.0,
         sse_keepalive_interval_seconds=0.0,
@@ -528,7 +526,7 @@ async def test_normal_websocket_scope_cleanup_uses_separate_scope_budget(
     monkeypatch.setattr(
         proxy_service,
         "get_settings",
-        lambda: SimpleNamespace(proxy_downstream_websocket_idle_timeout_seconds=30.0),
+        lambda: SimpleNamespace(),
     )
     monkeypatch.setattr(proxy_service, "_routing_strategy", lambda _settings: "usage_weighted")
     monkeypatch.setattr(service, "_websocket_continuity_state_for_request", lambda *_args, **_kwargs: None)
@@ -582,7 +580,6 @@ async def test_cancelled_scope_isolates_owned_reconnect_child_failure_and_finish
         sticky_threads_enabled=False,
         openai_cache_affinity_max_age_seconds=0,
         prohibit_fast_mode=False,
-        proxy_downstream_websocket_idle_timeout_seconds=30.0,
         proxy_request_budget_seconds=30.0,
         stream_idle_timeout_seconds=30.0,
         sse_keepalive_interval_seconds=0.0,
@@ -784,7 +781,6 @@ async def test_drain_start_during_admission_rejects_turn_before_connect_or_send(
         sticky_threads_enabled=False,
         openai_cache_affinity_max_age_seconds=0,
         prohibit_fast_mode=False,
-        proxy_downstream_websocket_idle_timeout_seconds=30.0,
         proxy_request_budget_seconds=30.0,
         stream_idle_timeout_seconds=30.0,
     )
@@ -1892,7 +1888,6 @@ async def test_scope_cancellation_finalizes_turn_when_connection_lease_release_f
         sticky_threads_enabled=False,
         openai_cache_affinity_max_age_seconds=0,
         prohibit_fast_mode=False,
-        proxy_downstream_websocket_idle_timeout_seconds=30.0,
         proxy_request_budget_seconds=30.0,
         stream_idle_timeout_seconds=30.0,
         sse_keepalive_interval_seconds=0.0,
@@ -2096,7 +2091,6 @@ async def test_scope_cancellation_while_waiting_for_reconnect_reader_preserves_a
         sticky_threads_enabled=False,
         openai_cache_affinity_max_age_seconds=0,
         prohibit_fast_mode=False,
-        proxy_downstream_websocket_idle_timeout_seconds=30.0,
         proxy_request_budget_seconds=30.0,
         stream_idle_timeout_seconds=30.0,
         sse_keepalive_interval_seconds=0.0,

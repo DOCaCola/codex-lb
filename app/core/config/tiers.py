@@ -53,7 +53,6 @@ SETTING_TIERS: Final[dict[str, Tier]] = {
     "compact_request_budget_seconds": "T3",
     "stream_idle_timeout_seconds": "T3",
     "sse_keepalive_interval_seconds": "T3",
-    "proxy_downstream_websocket_idle_timeout_seconds": "T3",
     # bind host of the OAuth callback listener; policy §2 T1 example
     "oauth_callback_host": "T1",
     "auth_guardian_enabled": "T3",

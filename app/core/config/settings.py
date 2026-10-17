@@ -142,6 +142,9 @@ _REMOVED_SETTINGS: tuple[str, ...] = (
     # remove-anonymous-telemetry: this fork has no telemetry at all.
     "CODEX_LB_TELEMETRY_ENABLED",
     "CODEX_LB_TELEMETRY_ENDPOINT",
+    # reclaim-idle-client-websockets: client Responses WebSockets are no longer
+    # closed on a timer; idle ones are reclaimed only when the lane is full.
+    "CODEX_LB_PROXY_DOWNSTREAM_WEBSOCKET_IDLE_TIMEOUT_SECONDS",
 )
 
 
@@ -345,8 +348,6 @@ class Settings(BaseSettings):
     stream_idle_timeout_seconds: float = Field(default=7200.0, gt=0)
     # T3 → dashboard (deprecated env alias, remove next minor)
     sse_keepalive_interval_seconds: float = Field(default=10.0, ge=0)
-    # T3 → dashboard (deprecated env alias, remove next minor)
-    proxy_downstream_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0)
     oauth_callback_host: str = _default_oauth_callback_host()
     # T3 → dashboard (deprecated env alias, remove next minor)
     auth_guardian_enabled: bool = True

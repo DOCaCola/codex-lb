@@ -210,7 +210,6 @@ async def test_direct_websocket_security_replay_reacquires_create_admission(
 ) -> None:
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
 

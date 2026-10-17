@@ -33,6 +33,7 @@ from app.core.clients.proxy_websocket import (
     WebsocketsUpstreamWebSocket,
 )
 from app.core.config.settings_cache import get_settings_cache
+from app.core.resilience.websocket_reclaim import get_idle_websocket_reclaimer
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.db.models import Account, AccountStatus, ApiKeyUsageReservation, RequestLog
@@ -271,7 +272,6 @@ def _websocket_settings(**overrides):
         "routing_strategy": "usage_weighted",
         "proxy_request_budget_seconds": 75.0,
         "stream_idle_timeout_seconds": 300.0,
-        "proxy_downstream_websocket_idle_timeout_seconds": 120.0,
         "http_responses_session_bridge_instance_id": "test-instance",
         "sse_keepalive_interval_seconds": 10.0,
         "trace_channels": frozenset(),
@@ -363,9 +363,7 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
 
     class _FakeSettingsCache:
         async def get(self):
-            return _websocket_settings(
-                proxy_downstream_websocket_idle_timeout_seconds=0.2,
-            )
+            return _websocket_settings()
 
     async def allow_firewall(_websocket):
         return None
@@ -484,9 +482,7 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
     monkeypatch.setattr(
         proxy_module,
         "get_settings",
-        lambda: _websocket_settings(
-            proxy_downstream_websocket_idle_timeout_seconds=0.2,
-        ),
+        lambda: _websocket_settings(),
     )
     monkeypatch.setattr(proxy_module, "_DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS", 0.01)
     monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
@@ -583,9 +579,7 @@ def test_responses_websocket_route_drain_interrupts_blocked_idle_receive(
 ):
     class _FakeSettingsCache:
         async def get(self):
-            return _websocket_settings(
-                proxy_downstream_websocket_idle_timeout_seconds=0.05,
-            )
+            return _websocket_settings()
 
     async def allow_firewall(_websocket):
         return None
@@ -604,9 +598,7 @@ def test_responses_websocket_route_drain_interrupts_blocked_idle_receive(
     monkeypatch.setattr(
         proxy_module,
         "get_settings",
-        lambda: _websocket_settings(
-            proxy_downstream_websocket_idle_timeout_seconds=0.05,
-        ),
+        lambda: _websocket_settings(),
     )
     monkeypatch.setattr(proxy_module, "_DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS", 0.01)
 
@@ -10157,39 +10149,33 @@ def test_backend_responses_websocket_keeps_downstream_open_after_clean_upstream_
     assert connect_models == ["gpt-5.4", "gpt-5.5"]
 
 
-def test_backend_responses_websocket_reclaims_idle_downstream_session_and_upstream(app_instance, monkeypatch):
-    fake_upstream = _FakeUpstreamWebSocket(
-        [
-            _FakeUpstreamMessage(
-                "text",
-                text=json.dumps(
-                    {"type": "response.created", "response": {"id": "resp_ws_idle_client", "status": "in_progress"}},
-                    separators=(",", ":"),
-                ),
-            ),
-            _FakeUpstreamMessage(
-                "text",
-                text=json.dumps(
-                    {
-                        "type": "response.completed",
-                        "response": {
-                            "id": "resp_ws_idle_client",
-                            "status": "completed",
-                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
-                        },
-                    },
-                    separators=(",", ":"),
-                ),
-            ),
-        ]
+def _reclaim_test_events(response_id: str, output: list[dict[str, object]]) -> list[_FakeUpstreamMessage]:
+    events: list[dict[str, object]] = [
+        {"type": "response.created", "response": {"id": response_id, "status": "in_progress"}}
+    ]
+    events.extend(
+        {"type": "response.output_item.done", "output_index": index, "item": item} for index, item in enumerate(output)
     )
+    events.append(
+        {
+            "type": "response.completed",
+            "response": {
+                "id": response_id,
+                "status": "completed",
+                "output": output,
+                "usage": {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5},
+            },
+        }
+    )
+    return [_FakeUpstreamMessage("text", text=json.dumps(event, separators=(",", ":"))) for event in events]
+
+
+def _install_reclaim_websocket_fixture(monkeypatch, fake_upstream: _FakeUpstreamWebSocket) -> list[dict[str, object]]:
     log_calls: list[dict[str, object]] = []
 
     class _FakeSettingsCache:
         async def get(self):
             return _websocket_settings()
-
-    runtime_settings = _websocket_settings(proxy_downstream_websocket_idle_timeout_seconds=0.1)
 
     async def allow_firewall(_websocket):
         return None
@@ -10197,39 +10183,8 @@ def test_backend_responses_websocket_reclaims_idle_downstream_session_and_upstre
     async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
         return None
 
-    async def fake_connect_proxy_websocket(
-        self,
-        headers,
-        *,
-        sticky_key,
-        sticky_kind,
-        reallocate_sticky,
-        sticky_max_age_seconds,
-        prefer_earlier_reset,
-        prefer_earlier_reset_window,
-        routing_strategy,
-        model,
-        request_state,
-        api_key,
-        client_send_lock,
-        websocket,
-    ):
-        del (
-            self,
-            headers,
-            sticky_key,
-            sticky_kind,
-            reallocate_sticky,
-            sticky_max_age_seconds,
-            prefer_earlier_reset,
-            prefer_earlier_reset_window,
-            routing_strategy,
-            model,
-            request_state,
-            api_key,
-            client_send_lock,
-            websocket,
-        )
+    async def fake_connect_proxy_websocket(self, headers, **_kwargs):
+        del self, headers
         return account_fixture(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
@@ -10239,153 +10194,123 @@ def test_backend_responses_websocket_reclaims_idle_downstream_session_and_upstre
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
     monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
-    monkeypatch.setattr(proxy_module, "get_settings", lambda: runtime_settings)
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: _websocket_settings())
+    monkeypatch.setattr(proxy_module, "_DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS", 0.01)
     monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
     monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
+    return log_calls
 
-    request_payload = {
-        "type": "response.create",
-        "model": "gpt-5.4",
-        "instructions": "",
-        "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
-        "stream": True,
-    }
+
+def _reclaim_idle_websocket(client: TestClient) -> bool:
+    async def reclaim() -> bool:
+        return get_idle_websocket_reclaimer().reclaim_least_recently_used()
+
+    assert client.portal is not None
+    return client.portal.call(reclaim)
+
+
+def _deliver_upstream_events(client: TestClient, upstream: _FakeUpstreamWebSocket, response_id: str) -> None:
+    assert client.portal is not None
+    for message in _reclaim_test_events(response_id, []):
+        client.portal.call(upstream._messages.put, message)
+
+
+def _reclaim_test_request(text: str) -> str:
+    return json.dumps(
+        {
+            "type": "response.create",
+            "model": "gpt-5.4",
+            "instructions": "",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": text}]}],
+            "stream": True,
+        }
+    )
+
+
+def test_backend_responses_websocket_quiet_socket_stays_open_until_reclaimed(app_instance, monkeypatch):
+    fake_upstream = _FakeUpstreamWebSocket(_reclaim_test_events("resp_ws_idle_client", []))
+    log_calls = _install_reclaim_websocket_fixture(monkeypatch, fake_upstream)
 
     with TestClient(app_instance) as client:
         with client.websocket_connect("/backend-api/codex/responses") as websocket:
-            websocket.send_text(json.dumps(request_payload))
-            created_event = json.loads(websocket.receive_text())
-            completed_event = json.loads(websocket.receive_text())
+            websocket.send_text(_reclaim_test_request("hi"))
+            assert [json.loads(websocket.receive_text())["type"] for _ in range(2)] == [
+                "response.created",
+                "response.completed",
+            ]
+
+            # Far beyond many receive polls: no timer closes a quiet socket.
+            time.sleep(0.3)
+            assert fake_upstream.closed is False
+            assert _reclaim_idle_websocket(client) is True
 
             with pytest.raises(WebSocketDisconnect) as exc_info:
                 websocket.receive_text()
 
-    assert created_event["type"] == "response.created"
-    assert completed_event["type"] == "response.completed"
     assert exc_info.value.code == 1001
-    assert exc_info.value.reason == "Idle downstream websocket timeout"
+    assert exc_info.value.reason == "Idle Responses websocket reclaimed"
     assert fake_upstream.closed is True
-    assert len(log_calls) == 1
-    assert log_calls[0]["request_id"] == "resp_ws_idle_client"
-    assert log_calls[0]["status"] == "success"
+    assert [call["status"] for call in log_calls] == ["success"]
 
 
-def test_backend_responses_websocket_does_not_expire_downstream_while_request_pending(app_instance, monkeypatch):
-    fake_upstream = _DelayedUpstreamWebSocket(
-        [
-            _FakeUpstreamMessage(
-                "text",
-                text=json.dumps(
-                    {
-                        "type": "response.created",
-                        "response": {"id": "resp_ws_pending", "status": "in_progress"},
-                    },
-                    separators=(",", ":"),
-                ),
-            ),
-            _FakeUpstreamMessage(
-                "text",
-                text=json.dumps(
-                    {
-                        "type": "response.completed",
-                        "response": {
-                            "id": "resp_ws_pending",
-                            "status": "completed",
-                            "usage": {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5},
-                        },
-                    },
-                    separators=(",", ":"),
-                ),
-            ),
-        ],
-        delays=[0.12, 0.12],
-    )
-    log_calls: list[dict[str, object]] = []
-
-    class _FakeSettingsCache:
-        async def get(self):
-            return _websocket_settings()
-
-    runtime_settings = _websocket_settings(
-        proxy_downstream_websocket_idle_timeout_seconds=0.1,
-        # Keep the upstream stream budget above both delayed messages. The
-        # assertion targets the downstream idle guard, not an upstream idle
-        # timeout; a slower CI runner must not turn the fixture into a race.
-        stream_idle_timeout_seconds=0.5,
-    )
-
-    async def allow_firewall(_websocket):
-        return None
-
-    async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
-        return None
-
-    async def fake_connect_proxy_websocket(
-        self,
-        headers,
-        *,
-        sticky_key,
-        sticky_kind,
-        reallocate_sticky,
-        sticky_max_age_seconds,
-        prefer_earlier_reset,
-        prefer_earlier_reset_window,
-        routing_strategy,
-        model,
-        request_state,
-        api_key,
-        client_send_lock,
-        websocket,
-    ):
-        del (
-            self,
-            headers,
-            sticky_key,
-            sticky_kind,
-            reallocate_sticky,
-            sticky_max_age_seconds,
-            prefer_earlier_reset,
-            prefer_earlier_reset_window,
-            routing_strategy,
-            model,
-            request_state,
-            api_key,
-            client_send_lock,
-            websocket,
-        )
-        return account_fixture(id="acct_ws_proxy"), fake_upstream
-
-    async def fake_write_request_log(self, **kwargs):
-        del self
-        log_calls.append(kwargs)
-
-    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
-    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
-    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
-    monkeypatch.setattr(proxy_module, "get_settings", lambda: runtime_settings)
-    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
-    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
-
-    request_payload = {
-        "type": "response.create",
-        "model": "gpt-5.4",
-        "instructions": "",
-        "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
-        "stream": True,
+def test_backend_responses_websocket_owed_tool_results_block_reclaim(app_instance, monkeypatch):
+    function_call: dict[str, object] = {
+        "type": "function_call",
+        "id": "fc_ws_reclaim",
+        "call_id": "call_ws_reclaim",
+        "name": "shell",
+        "arguments": "{}",
+        "status": "completed",
     }
+    fake_upstream = _FakeUpstreamWebSocket(_reclaim_test_events("resp_ws_tool_call", [function_call]))
+    _install_reclaim_websocket_fixture(monkeypatch, fake_upstream)
 
     with TestClient(app_instance) as client:
         with client.websocket_connect("/backend-api/codex/responses") as websocket:
-            websocket.send_text(json.dumps(request_payload))
-            created_event = json.loads(websocket.receive_text())
-            completed_event = json.loads(websocket.receive_text())
+            websocket.send_text(_reclaim_test_request("run it"))
+            assert [json.loads(websocket.receive_text())["type"] for _ in range(3)] == [
+                "response.created",
+                "response.output_item.done",
+                "response.completed",
+            ]
 
-    assert created_event["type"] == "response.created"
-    assert completed_event["type"] == "response.completed"
-    assert fake_upstream.closed is True
-    assert len(log_calls) == 1
-    assert log_calls[0]["request_id"] == "resp_ws_pending"
-    assert log_calls[0]["status"] == "success"
+            # The client is running the tool: the socket is not idle.
+            assert _reclaim_idle_websocket(client) is False
+
+            websocket.send_text(_reclaim_test_request("tool finished"))
+            _deliver_upstream_events(client, fake_upstream, "resp_ws_after_tool")
+            assert [json.loads(websocket.receive_text())["type"] for _ in range(2)] == [
+                "response.created",
+                "response.completed",
+            ]
+
+            assert _reclaim_idle_websocket(client) is True
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_text()
+
+    assert exc_info.value.reason == "Idle Responses websocket reclaimed"
+
+
+def test_backend_responses_websocket_pending_request_blocks_reclaim(app_instance, monkeypatch):
+    fake_upstream = _FakeUpstreamWebSocket([])
+    _install_reclaim_websocket_fixture(monkeypatch, fake_upstream)
+
+    with TestClient(app_instance) as client:
+        with client.websocket_connect("/backend-api/codex/responses") as websocket:
+            websocket.send_text(_reclaim_test_request("slow"))
+            deadline = time.monotonic() + 2.0
+            while not fake_upstream.sent_text and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert fake_upstream.sent_text
+
+            assert _reclaim_idle_websocket(client) is False
+
+            _deliver_upstream_events(client, fake_upstream, "resp_ws_slow")
+            assert [json.loads(websocket.receive_text())["type"] for _ in range(2)] == [
+                "response.created",
+                "response.completed",
+            ]
+            assert _reclaim_idle_websocket(client) is True
 
 
 def test_backend_responses_websocket_reconnects_after_account_health_failure(app_instance, monkeypatch):

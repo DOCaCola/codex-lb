@@ -5553,7 +5553,6 @@ async def test_compact_registered_synthesized_turn_state_is_a_strict_selection_c
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     owner = _make_account("acc_compact_http_turn_owner")
     turn_state = "http_turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -5648,7 +5647,6 @@ async def test_compact_file_pin_overrides_session_and_prompt_cache_locality(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     account = _make_account("acc_compact_file_owner_soft_locality")
     seen_selection: dict[str, object] = {}
@@ -33969,7 +33967,6 @@ async def test_proxy_responses_websocket_transparent_replay_strips_socket_turn_s
     settings = _make_proxy_settings()
     settings.sticky_threads_enabled = True
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
 
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
@@ -34212,7 +34209,6 @@ async def test_proxy_responses_websocket_downstream_disconnect_does_not_penalize
     release_reservation = AsyncMock()
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     upstream_receive_started = asyncio.Event()
 
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
@@ -34378,7 +34374,6 @@ async def test_proxy_responses_websocket_replay_cancellation_keeps_original_acco
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     api_key = _make_api_key_data("key_ws_replay_cancel_owner")
@@ -34502,7 +34497,6 @@ async def test_proxy_responses_websocket_replay_cancellation_keeps_original_acco
 async def test_proxy_responses_websocket_closes_idle_connection_during_drain(monkeypatch):
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 
@@ -34545,7 +34539,6 @@ async def test_proxy_responses_websocket_closes_idle_connection_during_drain(mon
 async def test_proxy_responses_websocket_rejects_response_create_observed_after_drain(monkeypatch):
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     prepare_request = AsyncMock(side_effect=AssertionError("late turn reached request preparation"))
@@ -34606,7 +34599,6 @@ async def test_proxy_responses_websocket_delivers_active_terminal_before_drain_c
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "_DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS", 0.01)
@@ -34764,7 +34756,6 @@ async def test_proxy_responses_websocket_replays_staged_turn_before_drain_close(
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service, "_DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS", 0.01)
@@ -35010,7 +35001,6 @@ async def test_proxy_responses_websocket_closes_sequenced_client_after_typed_sen
     handle_stream_error = AsyncMock()
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service.ProxyService, "_handle_stream_error", handle_stream_error)
@@ -35153,7 +35143,6 @@ async def test_proxy_responses_websocket_liveness_race_awaits_reader_settlement(
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     handle_stream_error = AsyncMock()
@@ -36019,7 +36008,6 @@ async def test_proxy_responses_websocket_cancels_api_key_heartbeat_when_connect_
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     api_key = ApiKeyData(
         id="key_ws_connect_fail",
         name="ws connect fail",
@@ -36616,7 +36604,6 @@ async def test_proxy_responses_websocket_replays_precreated_request_after_upstre
     released_leases: list[object | None] = []
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
 
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
@@ -36944,7 +36931,6 @@ async def _run_websocket_clean_close_during_send_failure(
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 
@@ -37342,7 +37328,6 @@ async def test_proxy_responses_websocket_prefers_previous_response_owner_from_re
 
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 
@@ -37490,7 +37475,6 @@ async def test_direct_websocket_rejects_conflicting_previous_response_and_file_o
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     release_reservation = AsyncMock(wraps=service._release_websocket_request_state_reservation)
@@ -37549,7 +37533,6 @@ async def test_direct_websocket_resolves_http_bridge_turn_state_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     owner = _make_account("acc-ws-bridge-turn-owner")
     turn_state = "http_turn_ws_bridge_owner"
@@ -37592,7 +37575,6 @@ async def test_direct_websocket_turn_state_owner_is_hard_connect_constraint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _make_proxy_settings()
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     owner = _make_account("acc-ws-turn-state-hard-owner")
     turn_state = "http_turn_ws_bridge_hard_owner"
@@ -37636,7 +37618,6 @@ async def test_direct_websocket_drops_retired_socket_turn_state_before_bare_sess
 ) -> None:
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     capped_owner = _make_account("acc-ws-capped-owner")
     spill_account = _make_account("acc-ws-spill-account")
@@ -37818,7 +37799,6 @@ async def test_direct_websocket_preserves_client_turn_state_when_switching_to_re
 ) -> None:
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     first_account = _make_account("acc-ws-first-owner")
     resolved_owner = _make_account("acc-ws-client-turn-owner")
@@ -38001,7 +37981,6 @@ async def test_reused_direct_websocket_revalidates_conversation_ownership(
 ) -> None:
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     socket_account = _make_account("acc-ws-existing-socket")
 
@@ -38182,7 +38161,6 @@ async def test_proxy_responses_websocket_uses_turn_state_as_owner_lookup_session
 
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 
@@ -38334,7 +38312,6 @@ async def test_proxy_responses_websocket_prefers_turn_state_over_session_for_own
 
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 
@@ -38496,7 +38473,6 @@ async def test_proxy_responses_websocket_previous_response_owner_lookup_failure_
 
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
@@ -38582,7 +38558,6 @@ async def test_proxy_responses_websocket_masks_owner_lookup_previous_response_no
 
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 
@@ -38691,7 +38666,6 @@ async def test_proxy_responses_websocket_masks_prepare_previous_response_not_fou
 
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(service, "_release_websocket_request_state_reservation", release_reservation)
@@ -38769,7 +38743,6 @@ async def test_proxy_responses_websocket_releases_reservation_on_local_account_c
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     settings = _make_proxy_settings()
     settings.stream_idle_timeout_seconds = 300.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
 
     class _UpdatingSettingsCache:
         calls = 0
@@ -38905,7 +38878,6 @@ async def test_proxy_responses_websocket_relay_uses_stream_specific_request_budg
     settings.proxy_request_budget_seconds = 600.0
     settings.http_responses_stream_request_budget_seconds = 7200.0
     settings.stream_idle_timeout_seconds = 7200.0
-    settings.proxy_downstream_websocket_idle_timeout_seconds = 120.0
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
 

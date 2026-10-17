@@ -216,7 +216,6 @@ export function UpstreamSettingsSection() {
           settings.httpResponsesStreamRequestBudgetSeconds,
           settings.httpResponsesSessionBridgeRequestBudgetSeconds,
           settings.streamIdleTimeoutSeconds,
-          settings.proxyDownstreamWebsocketIdleTimeoutSeconds,
           settings.sseKeepaliveIntervalSeconds,
         ].join(":")}
         settings={settings}

@@ -139,7 +139,6 @@ class DashboardSettingsData:
     compact_request_budget_seconds: float
     transcription_request_budget_seconds: float
     stream_idle_timeout_seconds: float
-    proxy_downstream_websocket_idle_timeout_seconds: float
     sse_keepalive_interval_seconds: float
     # end C2-1 timeouts
     # M1 stream/bridge budgets: effective values (dashboard column, else
@@ -261,8 +260,6 @@ class DashboardSettingsUpdateData:
     clear_transcription_request_budget_seconds: bool = False
     stream_idle_timeout_seconds: float | None = None
     clear_stream_idle_timeout_seconds: bool = False
-    proxy_downstream_websocket_idle_timeout_seconds: float | None = None
-    clear_proxy_downstream_websocket_idle_timeout_seconds: bool = False
     sse_keepalive_interval_seconds: float | None = None
     clear_sse_keepalive_interval_seconds: bool = False
     # end C2-1 timeouts
@@ -474,10 +471,6 @@ class SettingsService:
             clear_transcription_request_budget_seconds=payload.clear_transcription_request_budget_seconds,
             stream_idle_timeout_seconds=payload.stream_idle_timeout_seconds,
             clear_stream_idle_timeout_seconds=payload.clear_stream_idle_timeout_seconds,
-            proxy_downstream_websocket_idle_timeout_seconds=payload.proxy_downstream_websocket_idle_timeout_seconds,
-            clear_proxy_downstream_websocket_idle_timeout_seconds=(
-                payload.clear_proxy_downstream_websocket_idle_timeout_seconds
-            ),
             sse_keepalive_interval_seconds=payload.sse_keepalive_interval_seconds,
             clear_sse_keepalive_interval_seconds=payload.clear_sse_keepalive_interval_seconds,
             # end C2-1 timeouts
@@ -725,9 +718,6 @@ def _settings_data(row: DashboardSettings, totp: TotpEnrollmentSummary) -> Dashb
         compact_request_budget_seconds=float(resolved["compact_request_budget_seconds"].value),
         transcription_request_budget_seconds=float(resolved["transcription_request_budget_seconds"].value),
         stream_idle_timeout_seconds=float(resolved["stream_idle_timeout_seconds"].value),
-        proxy_downstream_websocket_idle_timeout_seconds=float(
-            resolved["proxy_downstream_websocket_idle_timeout_seconds"].value
-        ),
         sse_keepalive_interval_seconds=float(resolved["sse_keepalive_interval_seconds"].value),
         # end C2-1 timeouts
         # M1 stream/bridge budgets

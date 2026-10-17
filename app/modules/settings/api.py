@@ -325,7 +325,6 @@ def _dashboard_settings_response(settings, *, principal: DashboardPrincipal) -> 
         compact_request_budget_seconds=settings.compact_request_budget_seconds,
         transcription_request_budget_seconds=settings.transcription_request_budget_seconds,
         stream_idle_timeout_seconds=settings.stream_idle_timeout_seconds,
-        proxy_downstream_websocket_idle_timeout_seconds=settings.proxy_downstream_websocket_idle_timeout_seconds,
         sse_keepalive_interval_seconds=settings.sse_keepalive_interval_seconds,
         # end C2-1 timeouts
         # M1 stream/bridge budgets
@@ -1492,12 +1491,6 @@ async def update_settings(
                 clear_transcription_request_budget_seconds=timeout_fields["transcription_request_budget_seconds"][1],
                 stream_idle_timeout_seconds=timeout_fields["stream_idle_timeout_seconds"][0],
                 clear_stream_idle_timeout_seconds=timeout_fields["stream_idle_timeout_seconds"][1],
-                proxy_downstream_websocket_idle_timeout_seconds=timeout_fields[
-                    "proxy_downstream_websocket_idle_timeout_seconds"
-                ][0],
-                clear_proxy_downstream_websocket_idle_timeout_seconds=timeout_fields[
-                    "proxy_downstream_websocket_idle_timeout_seconds"
-                ][1],
                 sse_keepalive_interval_seconds=timeout_fields["sse_keepalive_interval_seconds"][0],
                 clear_sse_keepalive_interval_seconds=timeout_fields["sse_keepalive_interval_seconds"][1],
                 # end C2-1 timeouts
