@@ -1867,6 +1867,24 @@ async def test_forward_responses_passes_429_through_with_retry_after(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_responses_lite_history_is_projected_onto_source_tools(monkeypatch: pytest.MonkeyPatch, stream) -> None:
+    """Source models are advertised without Responses Lite, so its bundles become ordinary tools."""
+    tool: JsonValue = {"type": "function", "name": "view_image", "parameters": {"type": "object"}}
+    bundle: JsonValue = {"type": "additional_tools", "role": "developer", "tools": [tool]}
+    request: dict[str, JsonValue] = {"model": "m", "input": [bundle, {"role": "user", "content": "Hi"}]}
+    if stream:
+        created = _sse({"type": "response.created", "response": {"id": "resp_lite"}})
+        session, _, _ = _install_session(monkeypatch, _FakeResponse(content=_FakeContent(created)))
+        await (await forwarding_module.stream_responses(_responses_source(), request)).aclose()
+    else:
+        body = {"id": "resp_lite", "output": [], "usage": {"input_tokens": 1, "output_tokens": 1}}
+        session, _, _ = _install_session(monkeypatch, _FakeResponse(json_body=body))
+        await forwarding_module.forward_responses(_responses_source(), request)
+    assert session.calls[0]["json"] == {"model": "m", "input": [{"role": "user", "content": "Hi"}], "tools": [tool]}
+
+
+@pytest.mark.asyncio
 async def test_forward_responses_recode_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {"error": {"message": "bad key", "type": "invalid_request_error", "code": "invalid_api_key"}}
     _install_session(monkeypatch, _FakeResponse(status=403, json_body=payload))

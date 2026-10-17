@@ -167,11 +167,17 @@ def test_source_compaction_request_is_plain_tool_free_summary_turn() -> None:
 
 def test_cache_preserving_source_compaction_keeps_conversation_tool_declarations() -> None:
     tools: list[JsonValue] = [{"type": "function", "name": "do_work", "parameters": {"type": "object"}}]
+    # Responses Lite declarations in history are part of the conversation's tools (Claude merges them).
+    bundle: JsonValue = {
+        "type": "additional_tools",
+        "role": "developer",
+        "tools": [{"type": "function", "name": "lite"}],
+    }
     compact = ResponsesCompactRequest.model_validate(
         {
             "model": "anthropic/claude-opus-5-5",
             "instructions": "base instructions",
-            "input": [{"role": "user", "content": "history"}, {"type": "compaction_trigger"}],
+            "input": [bundle, {"role": "user", "content": "history"}, {"type": "compaction_trigger"}],
             "tools": tools,
             "tool_choice": "auto",
             "parallel_tool_calls": True,
@@ -184,6 +190,7 @@ def test_cache_preserving_source_compaction_keeps_conversation_tool_declarations
     assert (wire["tools"], wire["tool_choice"], wire["parallel_tool_calls"]) == (tools, "auto", True)
     assert wire["instructions"] == "base instructions"
     assert "text" not in wire
+    assert isinstance(wire["input"], list) and wire["input"][0] == bundle
     assert "compaction_trigger" not in str(wire["input"])
     assert SOURCE_COMPACTION_TOOL_REMINDER in str(wire["input"][-1])
 

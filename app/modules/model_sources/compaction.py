@@ -3,16 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeVar
 
+from app.core.openai.additional_tools import ADDITIONAL_TOOLS
 from app.core.openai.compaction import COMPACTION_PROMPT, lower_opaque_compaction_items_for_model_source
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
-_SOURCE_COMPACTION_EXCLUDED_INPUT_TYPES = frozenset({"additional_tools", "compaction_trigger"})
-# Declarations the client sent with the conversation. Claude caches the prompt
-# prefix in tools -> system -> messages order, so a summarization turn without
-# them misses the whole cached conversation.
+# Declarations the client sent with the conversation, including the Responses Lite
+# bundles in its history. Claude caches the prompt prefix in tools -> system ->
+# messages order, so a summarization turn without them misses the whole cached
+# conversation.
 _SOURCE_COMPACTION_TOOL_FIELDS = ("tools", "tool_choice", "parallel_tool_calls")
 _SOURCE_COMPACTION_OUTPUT_TYPES = frozenset({"message", "reasoning"})
 SOURCE_COMPACTION_TOOL_REMINDER = (
@@ -93,11 +94,8 @@ def build_source_compaction_request(
     lower_opaque_compaction_items_for_model_source(compact_payload)
     input_value = compact_payload.get("input")
     input_items = input_value if is_json_list(input_value) else [input_value]
-    history = [
-        item
-        for item in input_items
-        if not (is_json_mapping(item) and item.get("type") in _SOURCE_COMPACTION_EXCLUDED_INPUT_TYPES)
-    ]
+    excluded = {"compaction_trigger"} if keep_tool_declarations else {ADDITIONAL_TOOLS, "compaction_trigger"}
+    history = [item for item in input_items if not (is_json_mapping(item) and item.get("type") in excluded)]
     source_payload: dict[str, JsonValue] = {
         "model": payload.model,
         "instructions": payload.instructions,

@@ -18,6 +18,7 @@ from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler
 from app.core.config.dashboard_overrides import with_dashboard_overrides
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
+from app.core.openai.additional_tools import merge_additional_tools
 from app.core.openai.parsing import classify_event_type
 from app.core.resilience.network_recovery import is_pre_dispatch_connection_failure
 from app.core.types import JsonValue
@@ -445,7 +446,8 @@ async def forward_responses(
 ) -> SourceResponsesCompletion:
     from app.modules.openrouter.protocol import project_request
 
-    payload = project_request(source, payload, responses=True)
+    # Source models are advertised without Responses Lite (catalog.py), so Lite history is projected onto tools.
+    payload = project_request(source, merge_additional_tools(payload), responses=True)
     tool_names = ToolNames()
     tool_names.declare_plaintext_arguments(payload)
     if source.kind == "openrouter":
@@ -580,7 +582,8 @@ async def stream_responses(
 ) -> SourceResponsesStream:
     from app.modules.openrouter.protocol import project_request
 
-    payload = project_request(source, payload, responses=True)
+    # Source models are advertised without Responses Lite (catalog.py), so Lite history is projected onto tools.
+    payload = project_request(source, merge_additional_tools(payload), responses=True)
     tool_names = ToolNames()
     tool_names.declare_plaintext_arguments(payload)
     if source.kind == "openrouter":

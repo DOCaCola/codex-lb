@@ -561,7 +561,7 @@ def test_text_and_inline_image_projection_does_not_mutate_input():
     assert json.dumps(payload) == before
 
 
-def test_namespace_custom_tool_roundtrip_with_signed_thinking():
+def test_reserved_namespace_custom_tool_roundtrip_with_signed_thinking():
     payload = request(
         tools=[
             {
@@ -598,10 +598,13 @@ def test_namespace_custom_tool_roundtrip_with_signed_thinking():
     assert at(response, "usage", "total_tokens") == 100
     tool = at(response, "output", -1)
     assert isinstance(tool, dict)
-    assert (tool["name"], tool["namespace"], tool["input"]) == ("exec", "functions", "hello\nworld")
+    # Codex treats the reserved functions namespace as none.
+    assert (tool["name"], tool.get("namespace"), tool["input"]) == ("exec", None, "hello\nworld")
+    recorded = {**tool, "namespace": "functions"}
     history = [
         {"role": "user", "content": "Hello"},
-        *array(response["output"]),
+        *array(response["output"])[:-1],
+        recorded,
         {"type": "custom_tool_call_output", "call_id": "call1", "output": "done"},
     ]
     replay = project(
@@ -1306,3 +1309,83 @@ def test_real_pairing_key_does_not_become_external_task_input():
     assert messages[-1]["content"] == [
         {"type": "tool_result", "tool_use_id": "active", "content": [{"type": "text", "text": TASK_INPUT["output"]}]}
     ]
+
+
+def _function(name, description=""):
+    return {"type": "function", "name": name, "description": description, "parameters": {"type": "object"}}
+
+
+def _bundle(*tools):
+    return {"type": "additional_tools", "role": "developer", "tools": list(tools)}
+
+
+def test_responses_lite_bundles_merge_after_top_level_tools():
+    """Codex replays Responses Lite bundles after a switch to Claude (CLIProxyAPI responsesToolSources)."""
+    top_level = [
+        _function("exec_command", "current"),
+        {"type": "namespace", "name": "mcp__docs", "tools": [_function("search")]},
+    ]
+    first = _bundle(
+        {
+            "type": "namespace",
+            "name": "functions",
+            "tools": [_function("exec_command", "lite"), _function("view_image")],
+        },
+        {"type": "namespace", "name": "mcp__docs", "tools": [_function("search", "lite"), _function("fetch")]},
+    )
+    later = _bundle({"type": "namespace", "name": "functions", "tools": [_function("view_image", "changed")]})
+    call = {
+        "type": "function_call",
+        "call_id": "lite",
+        "name": "view_image",
+        "namespace": "functions",
+        "arguments": "{}",
+    }
+    history = [first, _user("Hi"), later, call, {"type": "function_call_output", "call_id": "lite", "output": "ok"}]
+    projected = project(request(tools=top_level, input=history), max_output_tokens=8192)
+    declared = {
+        (identity.namespace, identity.name): next(t for t in projected.body["tools"] if t["name"] == wire)
+        for wire, identity in projected.tools.by_wire.items()
+    }
+    assert list(declared) == [
+        (None, "exec_command"),
+        ("mcp__docs", "search"),
+        ("mcp__docs", "fetch"),
+        (None, "view_image"),
+    ]
+    assert declared[(None, "exec_command")]["description"] == "current"
+    assert declared[("mcp__docs", "search")]["description"] == ""
+    assert declared[(None, "view_image")]["description"] == ""
+    view_image = projected.tools.wire_name(ToolIdentity("view_image", None, False))
+    assert at(projected.body, "messages", 1, "content", 0, "name") == view_image
+    assert all(message["content"] != [] for message in projected.body["messages"])
+
+
+def test_responses_lite_bundles_leave_requests_without_them_unchanged():
+    tools = [_function("exec_command")]
+    plain = project(request(tools=tools, input=[_user("Hi")]), max_output_tokens=8192).body
+    bundled = project(
+        request(tools=tools, input=[_bundle(_function("exec_command", "lite")), _user("Hi")]), max_output_tokens=8192
+    )
+    assert bundled.body == plain
+
+
+def test_responses_lite_bundle_hosted_tools_do_not_duplicate_declarations():
+    search = {
+        "type": "tool_search",
+        "execution": "client",
+        "description": "Find tools",
+        "parameters": {"type": "object"},
+    }
+    body = project(
+        request(tools=[search], input=[_bundle({**search, "description": "lite"}), _user("Hi")]),
+        max_output_tokens=8192,
+    ).body
+    assert [(tool["name"], tool["description"]) for tool in body["tools"] if not tool.get("defer_loading")] == [
+        ("ToolSearch", "Find tools")
+    ]
+
+
+def test_responses_lite_bundle_requires_a_tools_array():
+    with pytest.raises(ClientPayloadError, match="additional_tools requires a tools array"):
+        project(request(input=[{"type": "additional_tools", "role": "developer"}, _user("Hi")]), max_output_tokens=8192)

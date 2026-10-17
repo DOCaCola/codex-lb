@@ -15,6 +15,12 @@ from typing import cast
 
 from pydantic import JsonValue
 
+from app.core.openai.additional_tools import (
+    ADDITIONAL_TOOLS,
+    additional_tool_bundles,
+    client_tool_namespace,
+    collect_responses_tools,
+)
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
 from app.core.utils.request_id import get_request_id
@@ -285,8 +291,12 @@ def project_responses(
             nested = tool.get("tools")
             if namespace is not None or not isinstance(nested, list):
                 raise invalid("Invalid tool namespace", "tools")
+            # Codex treats the reserved functions namespace as none (ToolRouter::build_tool_call).
+            member_namespace = client_tool_namespace(name)
             for index, child in enumerate(nested):
-                declare(child, name, param=f"{param}.tools[{index}]", loaded=loaded)
+                if member_namespace is None and isinstance(child, dict) and child.get("type") == "namespace":
+                    raise invalid("Invalid tool namespace", "tools")
+                declare(child, member_namespace, param=f"{param}.tools[{index}]", loaded=loaded)
             return
         if kind not in ("function", "custom"):
             raise invalid(f"Unsupported Claude tool type: {kind}", "tools")
@@ -322,7 +332,6 @@ def project_responses(
                 declaration["defer_loading"] = True
         declarations.append(declaration)
 
-    raw_tools = payload.get("tools", [])
     raw_input = payload.get("input", [])
     if isinstance(raw_input, str):
         items: list[JsonValue] = [{"role": "user", "content": raw_input}]
@@ -330,8 +339,11 @@ def project_responses(
         items = raw_input
     else:
         raise invalid("Responses input must be text or an array")
+    raw_tools = payload.get("tools", [])
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
+    # Responses Lite history carries tool declarations as additional_tools items.
+    raw_tools = cast(list[JsonValue], collect_responses_tools(raw_tools, additional_tool_bundles(items)))
     # Loaded tools stay deferred behind the search tool. A request without one (a tool-less
     # compaction) declares them as ordinary tools: Claude rejects a request whose tools are all deferred.
     searchable = any(isinstance(tool, dict) and tool.get("type") == "tool_search" for tool in raw_tools)
@@ -431,6 +443,8 @@ def project_responses(
         if not isinstance(item, dict):
             raise invalid("Invalid Responses input item")
         kind = item.get("type", "message")
+        if kind == ADDITIONAL_TOOLS:
+            continue
         if kind == "message":
             role = item.get("role")
             content = _content(item.get("content"))
@@ -453,7 +467,7 @@ def project_responses(
                 raise invalid("Tool calls require a name and call_id")
             if call_id in seen_calls:
                 raise invalid("Duplicate tool call_id")
-            identity = tools.identity(ToolIdentity(name, namespace, kind == "custom_tool_call"))
+            identity = tools.identity(ToolIdentity(name, client_tool_namespace(namespace), kind == "custom_tool_call"))
             if identity.key == CODE_MODE_EXEC.key:
                 exec_calls.add(call_id)
             if identity.custom:
