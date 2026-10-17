@@ -1,14 +1,56 @@
-"""One-shot, pre-delivery recovery for rejected historical thinking."""
+"""Survival of replayed historical thinking: prefix binding and one-shot recovery."""
 
 from __future__ import annotations
 
 import re
 from copy import deepcopy
 
+from pydantic import JsonValue as WireValue
+
 from app.core.types import JsonValue
+from app.modules.claude.capabilities import accepts_thinking_binding
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 _SIGNATURE_ERROR = re.compile(r"invalid\s+[`'\" ]*signature[`'\" ]*\s+in\s+[`'\" ]*thinking[`'\" ]*\s+block", re.I)
+THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+
+def _signed(block: WireValue) -> bool:
+    if not isinstance(block, dict):
+        return False
+    kind = block.get("type")
+    return (
+        kind == "thinking" and bool(block.get("signature")) or kind == "redacted_thinking" and bool(block.get("data"))
+    )
+
+
+def bind_replayed_thinking(body: dict[str, WireValue]) -> bool:
+    """Let preserved-thinking models drop prefix-mismatched blocks instead of rejecting the request.
+
+    Anthropic validates a signed block against the system, tools, and earlier
+    messages it was created with. Reconnects, model switches, and translated
+    history change that prefix, so replayed blocks opt into ``drop_block``
+    (CLIProxyAPI 911f49c, issue #6692). A caller-chosen behavior wins.
+    """
+    thinking = body.get("thinking")
+    model = body.get("model")
+    if not isinstance(thinking, dict) or not isinstance(model, str):
+        return False
+    if not accepts_thinking_binding(model, thinking.get("type")):
+        return False
+    binding = thinking.get("block_binding", {})
+    if not isinstance(binding, dict) or "prefix_mismatch_behavior" in binding:
+        return False
+    messages = body.get("messages")
+    contents = (
+        [message.get("content") for message in messages if isinstance(message, dict)]
+        if isinstance(messages, list)
+        else []
+    )
+    if not any(_signed(block) for content in contents if isinstance(content, list) for block in content):
+        return False
+    body["thinking"] = {**thinking, "block_binding": {**binding, "prefix_mismatch_behavior": "drop_block"}}
+    return True
 
 
 def historical_recovery(

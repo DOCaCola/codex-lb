@@ -64,6 +64,12 @@ _LEGACY_SYSTEM_REMINDER_MODELS = frozenset(
     }
 )
 
+# Models whose signed thinking Anthropic binds to the conversation prefix and
+# tool list it was created under (CLIProxyAPI isClaudePreservedThinkingModel).
+_PRESERVED_THINKING_MODELS = frozenset({"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"})
+# These accept a block binding only with adaptive thinking; the others also with manual budgets.
+_ADAPTIVE_ONLY_BINDING_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-5"})
+
 
 def _base_model(model: str) -> str:
     return re.sub(r"-\d{8}$", "", model.removeprefix("anthropic/"))
@@ -76,6 +82,14 @@ def model_policy(model: str) -> ModelPolicy | None:
 def supports_mid_system(model: str) -> bool:
     """Whether the model accepts instructions as a mid-conversation ``system`` turn."""
     return _base_model(model) not in _LEGACY_SYSTEM_REMINDER_MODELS
+
+
+def accepts_thinking_binding(model: str, thinking_type: object) -> bool:
+    """Whether ``thinking.block_binding`` is valid for this model and thinking mode."""
+    base = _base_model(model)
+    if base not in _PRESERVED_THINKING_MODELS:
+        return False
+    return thinking_type == "adaptive" or (thinking_type == "enabled" and base not in _ADAPTIVE_ONLY_BINDING_MODELS)
 
 
 class CatalogCapabilities(BaseModel):

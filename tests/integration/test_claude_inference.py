@@ -926,6 +926,45 @@ async def test_native_messages_preserves_body_and_pings(async_client, pool, monk
     assert closed == [captured[0][0]]
 
 
+async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_client, pool, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.modules.claude.client import ClaudeClient
+    from app.modules.claude.schemas import CatalogModel
+
+    model = "claude-opus-5-5"
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[CatalogModel(id=model, display_name="Opus")]))
+    assert (await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")).status_code == 200
+    selected = await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"selections": [{"model": model}]})
+    assert selected.status_code == 200
+    captured, _ = install_upstream(monkeypatch)
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "old", "signature": "signed"},
+                {"type": "text", "text": "answer"},
+            ],
+        },
+        {"role": "user", "content": "continue"},
+    ]
+    body = {"model": model, "max_tokens": 100, "stream": True, "thinking": {"type": "adaptive"}}
+    response = await async_client.post("/v1/messages", headers=native_headers(), json={**body, "messages": messages})
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["thinking"] == {
+        "type": "adaptive",
+        "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+    }
+    assert "thinking-binding-controls-2026-08-01" in captured[0][3]["anthropic-beta"].split(",")
+    response = await async_client.post(
+        "/v1/messages", headers=native_headers(), json={**body, "messages": messages[:1]}
+    )
+    assert response.status_code == 200, response.text
+    assert captured[1][2]["thinking"] == {"type": "adaptive"}
+    assert "thinking-binding-controls-2026-08-01" not in captured[1][3]["anthropic-beta"]
+
+
 async def test_native_stream_truncation_returns_native_error_and_closes_transport(async_client, pool, monkeypatch):
     captured, closed = install_upstream(monkeypatch, truncate=True)
     response = await async_client.post(

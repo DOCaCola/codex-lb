@@ -25,6 +25,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.failover import SendBudget
 from app.modules.claude.profile import RequestProfile, recognize_native
 from app.modules.claude.protocol import ADVANCED_TOOL_USE_BETA, defers_tools
+from app.modules.claude.recovery import THINKING_BINDING_BETA, bind_replayed_thinking
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
 from app.modules.claude.resources import ResourceScope, resolve_origins, resource_ids
@@ -212,6 +213,8 @@ class ClaudeDispatchPreparer:
             transformations += ("translated_cache_boundaries",)
         if retains_thinking:
             transformations += ("thinking_retention",)
+        if bind_replayed_thinking(projected.body):
+            transformations += ("thinking_block_binding",)
         # Validate caller beta metadata before a potentially rotating grant is
         # touched; the actual token is inserted only after refresh succeeds.
         feature_betas = list(projected.feature_betas)
@@ -219,8 +222,11 @@ class ClaudeDispatchPreparer:
             feature_betas.append(EXTENDED_CACHE_TTL_BETA)
         if retains_thinking:
             feature_betas.append(CONTEXT_MANAGEMENT_BETA)
+        # Upstream rejects a binding without its beta, whoever supplied the binding.
+        thinking = projected.body.get("thinking")
+        if isinstance(thinking, dict) and "block_binding" in thinking:
+            feature_betas.append(THINKING_BINDING_BETA)
         if not native:
-            thinking = projected.body.get("thinking")
             if isinstance(thinking, dict) and thinking.get("type") in {"enabled", "adaptive"}:
                 feature_betas.append("interleaved-thinking-2025-05-14")
             if defers_tools(projected.body):
