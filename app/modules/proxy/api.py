@@ -279,7 +279,11 @@ from app.modules.model_sources.forwarding import (
 from app.modules.model_sources.forwarding import (
     stream_responses as stream_source_responses,
 )
-from app.modules.model_sources.instructions import name_routed_identity, routed_base_instructions
+from app.modules.model_sources.instructions import (
+    name_routed_identity,
+    routed_base_instructions,
+    source_base_instructions,
+)
 from app.modules.model_sources.projection import strip_source_telemetry
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.selection import (
@@ -722,6 +726,9 @@ _CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS = 2.0
 _CURSOR_CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS = 15.0
 _CURSOR_CONTEXT_LIMIT_SYNTHETIC_USAGE_TOKENS: Final[int] = 1_000_000
 _V1_MAX_OUTPUT_TOKEN_OVERRIDES: Final[dict[str, int]] = {
+    "gpt-6-astra": 128_000,
+    "gpt-6-sol": 128_000,
+    "gpt-6-luna": 128_000,
     "gpt-5.4": 128_000,
     "gpt-5.5": 128_000,
     "gpt-5.4-mini": 128_000,
@@ -4004,11 +4011,12 @@ async def _build_codex_models_response_body(
     routed_instructions = routed_base_instructions(
         model for model in registry.get_models_with_fallback().values() if _is_codex_backend_catalog_model(model)
     )
-    if routed_instructions is None and visible_source_models:
-        logger.warning(
-            "codex_catalog_routed_instructions_unavailable source_models=%d",
-            len(visible_source_models),
-        )
+    if routed_instructions is None:
+        if visible_source_models:
+            logger.warning(
+                "codex_catalog_routed_instructions_unavailable source_models=%d",
+                len(visible_source_models),
+            )
         routed_instructions = ""
 
     entries: list[CodexModelEntry] = []
@@ -4067,7 +4075,7 @@ async def _build_codex_models_response_body(
             entry = _to_codex_model_entry(
                 model,
                 context_window_overrides=context_window_overrides,
-                base_instructions=routed_instructions,
+                base_instructions=source_base_instructions(model, routed_instructions),
             )
             entries.append(entry)
             seen_slugs.add(model.slug)
@@ -4089,7 +4097,7 @@ async def _build_codex_models_response_body(
                 visibility_allowed_models=visibility_allowed_models,
                 exact_source_allowed_models=exact_source_allowed_models,
             ),
-            base_instructions=routed_instructions,
+            base_instructions=source_base_instructions(model, routed_instructions),
         )
         entries.append(entry)
         seen_slugs.add(model.slug)

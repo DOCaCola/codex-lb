@@ -349,3 +349,24 @@ The service MUST use `CODEX_LB_RESPONSES_BODY_LIMIT_BYTES` for raw and decoded a
 - **WHEN** Responses ingress exceeds its configured budget
 - **THEN** it returns HTTP 413 with `inbound_body_too_large`, identifies codex-lb and the budget, and distinguishes declared lengths from observed lower bounds
 - **AND** expanded replay refusals use `outbound_body_too_large` rather than asserting an upstream context verdict
+
+### Requirement: SCIM body admission stops at the route limit
+
+SCIM resource writes MUST enforce their 64 KiB body limit while consuming
+the request stream. An oversized request MUST stop receiving at the first
+chunk that exceeds that limit and MUST return the SCIM 413 envelope without
+writing an account. Buffered body bytes MUST NOT exceed the route limit.
+The existing declared-length precheck MUST remain in effect. A valid body
+split across chunks, including a body exactly at the limit, MUST remain valid.
+
+#### Scenario: Stream exceeds the limit without a declared length
+
+- **GIVEN** a SCIM body arrives in several chunks without Content-Length
+- **WHEN** received bytes first exceed 64 KiB
+- **THEN** the API returns SCIM 413 without reading subsequent chunks
+- **AND** it writes no account
+
+#### Scenario: Valid resource arrives in fragments
+
+- **WHEN** a valid resource arrives in several chunks totaling at most 64 KiB
+- **THEN** the API parses the complete resource normally

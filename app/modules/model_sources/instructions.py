@@ -4,7 +4,8 @@ Codex renders a catalog row's instruction template literally, so a routed row
 without one would run with no Codex agent prompt at all. Routed rows instead
 reuse the live native prompt of the model Codex treats as its default, with the
 GPT identity neutralized so a Claude or OpenRouter model is not told it is a
-GPT model.
+GPT model. A source model that declares its own string ``base_instructions``
+keeps them, including an explicitly empty prompt.
 
 The catalog prompt stays model-neutral because Codex replays a parent's stored
 instructions into subagents running other models (opencodex #5217). The
@@ -80,3 +81,9 @@ def routed_base_instructions(native_models: Iterable[UpstreamModel]) -> str | No
     if not candidates:
         return None
     return neutralize_gpt_identity(native_instructions_template(candidates[0]))
+
+
+def source_base_instructions(model: UpstreamModel, routed: str) -> str:
+    """The source model's declared instructions, otherwise the neutral routed prompt."""
+    declared = model.raw.get("base_instructions")
+    return declared if isinstance(declared, str) else routed

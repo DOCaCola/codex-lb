@@ -1447,7 +1447,7 @@ The Codex-native catalog MUST preserve native OpenAI model priorities and assign
 - **THEN** their priorities start at zero and increase in catalog order
 
 ### Requirement: Routed Codex catalog entries carry the neutral Codex prompt
-Codex catalog entries for Claude, OpenRouter and OpenAI-compatible source models SHALL carry, as `base_instructions`, the instruction template of the default listed native model: the listed native Codex catalog model with the lowest priority and a non-empty template, ties broken by slug. A native template is read from `model_messages.instructions_template`, or from the legacy `base_instructions` when no template is present. The GPT identity in that prompt MUST be neutralised and the prompt MUST NOT name a model. Selection MUST NOT depend on the requesting API key. When no native prompt exists, routed entries SHALL carry an empty prompt and the catalog build SHALL log a warning. Native entries are unchanged.
+Codex catalog entries for Claude, OpenRouter and OpenAI-compatible source models SHALL carry, as `base_instructions`, the instruction template of the default listed native model: the listed native Codex catalog model with the lowest priority and a non-empty template, ties broken by slug. A source model that declares string `raw_metadata_json.base_instructions`, including an empty string, SHALL instead carry those instructions, as required by "Source-model base instructions are preserved in Codex catalogs". A native template is read from `model_messages.instructions_template`, or from the legacy `base_instructions` when no template is present. The GPT identity in that prompt MUST be neutralised and the prompt MUST NOT name a model. Selection MUST NOT depend on the requesting API key. When no native prompt exists, routed entries SHALL carry an empty prompt and the catalog build SHALL log a warning. Native entries are unchanged.
 
 #### Scenario: Live native prompt available
 - **GIVEN** listed native models with live prompts and an enabled Responses-capable source model
@@ -1533,3 +1533,31 @@ Source models SHALL report their real capacity as the default context window and
 
 - **WHEN** no override exists for a Codex-native model with `context_window=272000` and `max_context_window=872000`
 - **THEN** the catalog reports both upstream values unchanged
+
+### Requirement: Source-model base instructions are preserved in Codex catalogs
+
+For enabled OpenAI-compatible source models eligible for Codex catalogs,
+`GET /backend-api/codex/models` and `GET /v1/models` with `client_version` MUST emit a string-valued
+`raw_metadata_json.base_instructions` unchanged in the catalog's
+`base_instructions` field. Missing or non-string values MUST emit the existing
+empty-string default. This projection MUST preserve the existing passthrough
+of client capability metadata and MUST NOT imply support for additional tools.
+
+#### Scenario: Source instructions reach both Codex catalog routes
+
+- **GIVEN** an enabled Responses-capable source model declares string base instructions
+- **WHEN** a client requests either Codex catalog route
+- **THEN** the entry contains the exact instructions, including whitespace and Unicode
+- **AND** existing `tool_mode` and `multi_agent_version` metadata remain unchanged
+
+#### Scenario: Missing or malformed instructions retain the empty default
+
+- **GIVEN** an eligible source model omits base instructions or supplies a non-string value
+- **WHEN** a client requests its Codex catalog entry
+- **THEN** the entry contains `base_instructions` with the empty string
+
+#### Scenario: An explicitly empty instruction string stays empty
+
+- **GIVEN** an eligible source model declares an empty instruction string
+- **WHEN** a client requests its Codex catalog entry
+- **THEN** the entry contains the empty string without substituting bundled instructions
