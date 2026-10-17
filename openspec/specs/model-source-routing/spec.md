@@ -316,9 +316,13 @@ aggregate counts or bounded reasons.
 
 Only source requests containing an unreadable native checkpoint SHALL trigger
 handoff. The proxy MUST authenticate scope and recheck the checkpoint's verified
-original model under current access restrictions. Native checkpoints are not
-bound to the account that produced them, so the native request SHALL use ordinary
-account selection for that model under the key's current account restrictions,
+original model under current access restrictions. The handoff SHALL run on the
+economy model of the checkpoint's generation (gpt-6-luna for GPT-6 checkpoints,
+gpt-5.6-luna for gpt-5.6 checkpoints) when the catalog offers that model and the
+key may use it, otherwise on the original model; its request log SHALL name the
+model that ran. Native checkpoints are not bound to the account that produced
+them, so the native request SHALL use ordinary account selection for that model
+under the key's current account restrictions,
 with ordinary failover when an account is paused, limited or exhausted. A
 selection failure SHALL return the same error an ordinary native request receives.
 The native request SHALL contain that checkpoint and a handoff instruction, no
@@ -347,6 +351,14 @@ text or conversation content.
 #### Scenario: HTTP and WebSocket switch
 - **WHEN** an authenticated source request replays a checkpoint with verified native provenance
 - **THEN** one eligible native account generates one metered handoff and the destination receives readable summary plus unchanged visible history
+
+#### Scenario: Economy conversion
+- **WHEN** a GPT-6 checkpoint needs a handoff, the catalog offers gpt-6-luna and the key may use it
+- **THEN** gpt-6-luna generates the handoff, and the cached summary remains attributed to the original model for later access checks
+
+#### Scenario: Economy model unavailable
+- **WHEN** the catalog does not offer the economy model or the key's model restriction excludes it
+- **THEN** the original model generates the handoff
 
 #### Scenario: Repeated source turn
 - **WHEN** another source request replays a previously handed-off checkpoint
@@ -579,3 +591,10 @@ with an actionable history-unavailable error rather than silently losing history
 - **WHEN** the next request is routed to a model source
 - **THEN** the client receives an actionable history-unavailable error
 - **AND** it does not receive the opaque encrypted item
+
+### Requirement: Responses Lite tool bundles
+Model-source Responses forwarding SHALL merge the tools of `additional_tools` input items into `tools` by the rules of the Claude Responses Lite tool bundles requirement, remove the items from the input and remove the reserved `functions` namespace from recorded calls, because source models are advertised without Responses Lite. A request without bundles or calls under that namespace SHALL be forwarded unchanged. Cache-preserving source compaction SHALL keep the items with the other tool declarations; source compaction without tool declarations SHALL omit them.
+
+#### Scenario: OpenRouter after a Responses Lite model
+- **WHEN** a Responses request to a source model carries `additional_tools` items
+- **THEN** the source receives their tools in `tools` and no `additional_tools` item
