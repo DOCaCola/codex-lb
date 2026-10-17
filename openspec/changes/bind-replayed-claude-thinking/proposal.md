@@ -20,6 +20,11 @@ same beta with a caller-supplied binding.
   counting. Haiku and Sonnet 5.5 qualify only with adaptive thinking; Opus 5.5 and Fable 5.1 also with manual budgets.
   A caller-chosen behavior is kept.
 - Any request whose body carries `thinking.block_binding` sends the binding-controls beta.
+- Claude reports dropped thinking and binding mismatches it allowed in `input_transformations`, which is present only
+  with that beta. A non-empty report is logged as `claude_thinking_binding` with entry counts by type and reason, the
+  first reported path, and the cache-lineage comparison with the conversation's previous request (account, idle time,
+  tools, system, parameters, first diverging message). Non-streaming native responses join the cache-lineage
+  observation so both transports report.
 - Historical signature recovery is unchanged and remains the path for other models.
 
 ## Capabilities

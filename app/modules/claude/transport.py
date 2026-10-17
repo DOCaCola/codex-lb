@@ -140,6 +140,7 @@ async def _open_responses(
     observer = SourceStreamUsageParser(holder, response_shape="responses")
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
     start_usage: JsonValue = None
+    start_transformations: JsonValue = None
     try:
         await record_headers(
             prepared.source.id, prepared.credential_generation, response.headers, requested_at=requested_at
@@ -180,6 +181,7 @@ async def _open_responses(
                     message = event.get("message")
                     if isinstance(message, dict):
                         start_usage = message.get("usage")
+                        start_transformations = message.get("input_transformations")
                     if isinstance(message, dict) and message.get("content", []) == []:
                         usage = message.get("usage", {})
                         if isinstance(usage, dict) and usage.get("output_tokens", 0) == 0:
@@ -201,6 +203,7 @@ async def _open_responses(
         source_id=prepared.source.id,
         body=prepared.body,
         usage=start_usage,
+        transformations=start_transformations,
     )
 
     async def frames() -> AsyncIterator[bytes]:
@@ -402,6 +405,15 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                             prepared.source.id,
                             cast(dict[str, PydanticJsonValue], data),
                         )
+                if not count_tokens:
+                    CACHE_LINEAGE.observe(
+                        conversation_id=prepared.conversation_id,
+                        session_id=prepared.session_id,
+                        source_id=prepared.source.id,
+                        body=prepared.body,
+                        usage=data.get("usage"),
+                        transformations=data.get("input_transformations"),
+                    )
                 return SourceResponsesCompletion(
                     data,
                     usage,

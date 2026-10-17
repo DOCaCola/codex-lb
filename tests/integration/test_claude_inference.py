@@ -69,6 +69,7 @@ def install_upstream(
     start_usage=None,
     delta_usage=None,
     drop=None,
+    transformations=None,
 ):
     from app.modules.claude import transport
 
@@ -86,8 +87,11 @@ def install_upstream(
             )
         stack = AsyncExitStack()
         stack.callback(lambda: closed.append(source.id))
+        start: dict[str, JsonValue] = {"id": message_id, "usage": start_usage or {"input_tokens": 10}}
+        if transformations is not None:
+            start["input_transformations"] = transformations
         events = [
-            {"type": "message_start", "message": {"id": message_id, "usage": start_usage or {"input_tokens": 10}}},
+            {"type": "message_start", "message": start},
             {"type": "ping"},
             {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello from Claude"}},
@@ -926,7 +930,8 @@ async def test_native_messages_preserves_body_and_pings(async_client, pool, monk
     assert closed == [captured[0][0]]
 
 
-async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_client, pool, monkeypatch):
+async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_client, pool, monkeypatch, caplog):
+    import logging
     from unittest.mock import AsyncMock
 
     from app.modules.claude.client import ClaudeClient
@@ -937,7 +942,8 @@ async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_c
     assert (await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")).status_code == 200
     selected = await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"selections": [{"model": model}]})
     assert selected.status_code == 200
-    captured, _ = install_upstream(monkeypatch)
+    dropped = {"type": "thinking_dropped", "reason": "prefix_binding_mismatch", "path": "messages.1.content.0"}
+    captured, _ = install_upstream(monkeypatch, transformations=[dropped])
     messages = [
         {"role": "user", "content": "hi"},
         {
@@ -950,8 +956,14 @@ async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_c
         {"role": "user", "content": "continue"},
     ]
     body = {"model": model, "max_tokens": 100, "stream": True, "thinking": {"type": "adaptive"}}
-    response = await async_client.post("/v1/messages", headers=native_headers(), json={**body, "messages": messages})
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.cache_lineage"):
+        response = await async_client.post(
+            "/v1/messages", headers=native_headers(), json={**body, "messages": messages}
+        )
     assert response.status_code == 200, response.text
+    [line] = [record.getMessage() for record in caplog.records if "claude_thinking_binding" in record.getMessage()]
+    assert f"source_id={captured[0][0]}" in line
+    assert "entries=thinking_dropped:prefix_binding_mismatch:1 first_path=messages.1.content.0" in line
     assert captured[0][2]["thinking"] == {
         "type": "adaptive",
         "block_binding": {"prefix_mismatch_behavior": "drop_block"},
@@ -1089,7 +1101,8 @@ async def test_native_thinking_after_idle_expiry(async_client, pool, monkeypatch
 
 
 @pytest.mark.parametrize("rejections", [1, 2])
-async def test_native_json_signature_recovery(async_client, pool, monkeypatch, rejections):
+async def test_native_json_signature_recovery(async_client, pool, monkeypatch, caplog, rejections):
+    import logging
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock
 
@@ -1109,6 +1122,13 @@ async def test_native_json_signature_recovery(async_client, pool, monkeypatch, r
                 "content": [{"type": "text", "text": "done"}],
                 "stop_reason": "end_turn",
                 "usage": {"input_tokens": 10, "output_tokens": 1},
+                "input_transformations": [
+                    {
+                        "type": "thinking_mismatch_allowed",
+                        "reason": "prefix_binding_mismatch",
+                        "path": "messages.1.content.0",
+                    }
+                ],
             }
         )
         try:
@@ -1121,30 +1141,33 @@ async def test_native_json_signature_recovery(async_client, pool, monkeypatch, r
         yield SimpleNamespace(post=post)
 
     monkeypatch.setattr(transport, "lease_model_source_session", lease)
-    response = await async_client.post(
-        "/v1/messages",
-        headers=native_headers(),
-        json={
-            "model": "claude-opus-5",
-            "max_tokens": 100,
-            "stream": False,
-            "messages": [
-                {"role": "user", "content": "hi"},
-                {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "thinking", "thinking": "old", "signature": "sig"},
-                        {"type": "text", "text": "answer"},
-                    ],
-                },
-                {"role": "user", "content": "continue"},
-            ],
-        },
-    )
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.cache_lineage"):
+        response = await async_client.post(
+            "/v1/messages",
+            headers=native_headers(),
+            json={
+                "model": "claude-opus-5",
+                "max_tokens": 100,
+                "stream": False,
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "old", "signature": "sig"},
+                            {"type": "text", "text": "answer"},
+                        ],
+                    },
+                    {"role": "user", "content": "continue"},
+                ],
+            },
+        )
     assert len(requests) == len(closed) == 2
     assert response.status_code == (200 if rejections == 1 else 400)
     assert requests[0]["messages"][1]["content"][0]["type"] == "thinking"
     assert requests[1]["messages"][1]["content"] == [{"type": "text", "text": "answer"}]
+    bindings = [record.getMessage() for record in caplog.records if "claude_thinking_binding" in record.getMessage()]
+    assert len(bindings) == (1 if rejections == 1 else 0)
 
 
 async def test_native_count_tokens_forwards_json_and_headers_without_generation_usage(async_client, pool, monkeypatch):

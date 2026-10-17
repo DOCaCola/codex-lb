@@ -1,10 +1,14 @@
-"""Names the prompt part that changed when a Claude request misses the cache.
+"""Names the prompt part that changed when a Claude request misses the cache or loses replayed thinking.
 
 Claude caches a byte-exact prefix: tools, then system, then messages. A request
 that reads nothing yet writes a large prefix means something early in that
 prefix differs from the request that warmed it. Each conversation's latest
 request is remembered as digests only, and a full miss is compared with it or,
 for a forked side chat, with its parent session's latest request.
+
+Signed thinking is bound to the same prefix. When Claude reports thinking it
+dropped or kept despite a failed binding check (``input_transformations``), the
+report is logged with the same comparison, so the reshaping that caused it is named.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -127,6 +131,7 @@ class CacheLineage:
         source_id: str,
         body: dict[str, JsonValue],
         usage: object,
+        transformations: object = None,
     ) -> None:
         current = PrefixShape.of(body, source_id=source_id, observed_at=self._clock.monotonic())
         if conversation_id in self._shapes:
@@ -137,6 +142,9 @@ class CacheLineage:
         written = _full_miss_write(usage)
         if reference is not None and written is not None:
             self._log(conversation_id, relation, reference_id, reference, current, body, written)
+        entries = _binding_entries(transformations)
+        if entries:
+            _log_binding(conversation_id, relation, reference_id, reference, current, entries)
         self._shapes[conversation_id] = current
         self._shapes.move_to_end(conversation_id)
         while len(self._shapes) > self._capacity:
@@ -152,10 +160,7 @@ class CacheLineage:
         body: dict[str, JsonValue],
         written: int,
     ) -> None:
-        divergence = next(
-            (index for index, (a, b) in enumerate(zip(reference.messages, current.messages)) if a != b),
-            None,
-        )
+        divergence = _first_divergence(reference, current)
         messages = body.get("messages")
         divergent = (
             _message_blocks(messages[divergence]) if divergence is not None and isinstance(messages, list) else "-"
@@ -177,6 +182,53 @@ class CacheLineage:
             "none" if divergence is None else divergence,
             divergent,
         )
+
+
+def _first_divergence(reference: PrefixShape, current: PrefixShape) -> int | None:
+    return next(
+        (index for index, (a, b) in enumerate(zip(reference.messages, current.messages)) if a != b),
+        None,
+    )
+
+
+def _binding_entries(transformations: object) -> list[dict[str, JsonValue]]:
+    if not isinstance(transformations, list):
+        return []
+    return [entry for entry in transformations if isinstance(entry, dict)]
+
+
+def _log_binding(
+    conversation_id: str,
+    relation: str,
+    reference_id: str | None,
+    reference: PrefixShape | None,
+    current: PrefixShape,
+    entries: list[dict[str, JsonValue]],
+) -> None:
+    # Types and reasons are Anthropic's own vocabulary; unknown ones are counted as reported.
+    counts = Counter(f"{entry.get('type')}:{entry.get('reason')}" for entry in entries)
+    if reference is None:
+        comparison = "reference=none"
+    else:
+        divergence = _first_divergence(reference, current)
+        comparison = (
+            f"reference={relation} reference_id={reference_id} "
+            f"same_source={reference.source_id == current.source_id} "
+            f"idle_s={current.observed_at - reference.observed_at:.0f} "
+            f"tools={_tool_change(reference, current)} "
+            f"system={'same' if reference.system == current.system else 'changed'} "
+            f"params={_param_change(reference, current)} "
+            f"messages={len(reference.messages)}/{len(current.messages)} "
+            f"first_divergence={'none' if divergence is None else divergence}"
+        )
+    logger.info(
+        "claude_thinking_binding conversation_id=%s source_id=%s entries=%s first_path=%s %s",
+        conversation_id,
+        current.source_id,
+        ",".join(f"{key}:{count}" for key, count in sorted(counts.items())),
+        entries[0].get("path"),
+        comparison,
+    )
 
 
 def _full_miss_write(usage: object) -> int | None:

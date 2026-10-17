@@ -54,6 +54,14 @@ def _misses(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.getMessage() for record in caplog.records if "claude_cache_miss" in record.getMessage()]
 
 
+def _bindings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if "claude_thinking_binding" in record.getMessage()]
+
+
+def _dropped(path: str, reason: str = "prefix_binding_mismatch") -> JsonValue:
+    return {"type": "thinking_dropped", "reason": reason, "path": path}
+
+
 def test_fork_that_drops_a_tool_names_the_parent_and_the_tool(caplog: pytest.LogCaptureFixture) -> None:
     clock = _Clock()
     lineage = CacheLineage(clock=clock)
@@ -146,6 +154,71 @@ def test_cache_hit_is_silent(caplog: pytest.LogCaptureFixture) -> None:
         )
 
     assert _misses(caplog) == []
+
+
+def test_dropped_thinking_is_reported_with_the_reshaping(caplog: pytest.LogCaptureFixture) -> None:
+    clock = _Clock()
+    lineage = CacheLineage(clock=clock)
+    lineage.observe(
+        conversation_id="conversation",
+        session_id=None,
+        source_id="claude-a",
+        body=_body(["exec", "read"], [_user("one")]),
+        usage=_HIT,
+        transformations=[],
+    )
+    clock.now_s += 120
+    transformations: JsonValue = [
+        _dropped("messages.1.content.0"),
+        _dropped("messages.1.content.1"),
+        _dropped("messages.3.content.0", "model_binding_mismatch"),
+        {"type": "thinking_mismatch_allowed", "reason": "prefix_binding_mismatch", "path": "messages.5.content.0"},
+    ]
+
+    with caplog.at_level(logging.INFO):
+        lineage.observe(
+            conversation_id="conversation",
+            session_id=None,
+            source_id="claude-b",
+            body=_body(["exec"], [_user("one"), _user("two")]),
+            usage=_HIT,
+            transformations=transformations,
+        )
+
+    [line] = _bindings(caplog)
+    assert (
+        "entries=thinking_dropped:model_binding_mismatch:1,thinking_dropped:prefix_binding_mismatch:2,"
+        "thinking_mismatch_allowed:prefix_binding_mismatch:1 first_path=messages.1.content.0" in line
+    )
+    assert "reference=self reference_id=conversation same_source=False idle_s=120" in line
+    assert "tools=removed:read" in line
+    assert "messages=1/2 first_divergence=none" in line
+    assert "source_id=claude-b" in line
+
+
+def test_binding_report_without_entries_or_reference(caplog: pytest.LogCaptureFixture) -> None:
+    lineage = CacheLineage(clock=_Clock())
+    with caplog.at_level(logging.INFO):
+        lineage.observe(
+            conversation_id="conversation",
+            session_id=None,
+            source_id="claude-a",
+            body=_body([], [_user("one")]),
+            usage=_HIT,
+            transformations=[],
+        )
+        assert _bindings(caplog) == []
+        lineage.observe(
+            conversation_id="new",
+            session_id=None,
+            source_id="claude-a",
+            body=_body([], [_user("one")]),
+            usage=_HIT,
+            transformations=[_dropped("messages.0.content.0")],
+        )
+
+    [line] = _bindings(caplog)
+    assert line.endswith("first_path=messages.0.content.0 reference=none")
 
 
 def test_miss_without_reference_is_silent_and_capacity_is_bounded(caplog: pytest.LogCaptureFixture) -> None:
