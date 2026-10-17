@@ -7,6 +7,11 @@ which replay the same checkpoint under a new conversation ID, share them.
 Native checkpoints are readable by every OpenAI account, as ordinary native
 turns that move between accounts show. Provenance therefore records the
 producing model and account, but generation uses ordinary account selection.
+
+The economy model of the checkpoint's generation converts it when the catalog
+offers it and the API key may use it, otherwise the producing model. Measured on
+a 127k-token conversation, Luna compaction took about 5 s instead of 45-57 s on
+Astra and about one 5-hour quota point less, with summaries of usable quality.
 """
 
 from __future__ import annotations
@@ -27,7 +32,9 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler
 from app.core.config.settings import get_settings
 from app.core.errors import openai_error
+from app.core.exceptions import ProxyModelNotAllowed
 from app.core.openai.compaction import encode_codex_lb_compaction_summary, project_source_compaction_item
+from app.core.openai.model_registry import get_model_registry
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.core.utils.shared_future import _await_cleanup_deferring_cancellation, _await_result_deferring_cancellation
@@ -42,6 +49,8 @@ from app.modules.proxy.request_policy import validate_model_access
 logger = logging.getLogger(__name__)
 RETENTION_SECONDS = 30 * 24 * 3600
 HANDOFF_TIMEOUT_SECONDS = 300.0
+# Model-generation prefix and its economy model.
+_CONVERSION_MODELS = (("gpt-6", "gpt-6-luna"), ("gpt-5.6-", "gpt-5.6-luna"))
 
 
 @dataclass(frozen=True)
@@ -51,7 +60,7 @@ class NativeCheckpointOrigin:
     item: dict[str, JsonValue]
 
 
-type HandoffGenerator = Callable[[NativeCheckpointOrigin, dict[str, JsonValue]], Awaitable[dict[str, JsonValue]]]
+type HandoffGenerator = Callable[[str, dict[str, JsonValue]], Awaitable[dict[str, JsonValue]]]
 type CheckpointResolver = Callable[[ApiKeyScope, dict[str, JsonValue]], Awaitable[list[JsonValue] | None]]
 
 
@@ -163,6 +172,19 @@ class CheckpointHandoff:
                 openai_error("compaction_handoff_forbidden", "The checkpoint belongs to another API key."),
             )
 
+    def _conversion_model(self, origin_model: str) -> str:
+        economy = next((model for prefix, model in _CONVERSION_MODELS if origin_model.startswith(prefix)), None)
+        if economy is None:
+            return origin_model
+        registry = get_model_registry()
+        if not registry.plan_types_for_model(economy) or registry.is_suppressed_model(economy):
+            return origin_model
+        try:
+            validate_model_access(self.api_key, economy)
+        except ProxyModelNotAllowed:
+            return origin_model
+        return economy
+
     async def resolve(self, scope: ApiKeyScope, item: dict[str, JsonValue]) -> list[JsonValue] | None:
         ciphertext = item["encrypted_content"]
         assert isinstance(ciphertext, str)
@@ -192,8 +214,14 @@ class CheckpointHandoff:
             if cached is not None:
                 self._validate_access(scope, cached.model)
                 return cached.input
-            logger.info("compaction_handoff_started request_id=%s", get_request_id())
-            result = await self.generate(origin, {**origin.item, "encrypted_content": ciphertext})
+            model = self._conversion_model(origin.model)
+            logger.info(
+                "compaction_handoff_started request_id=%s origin_model=%s model=%s",
+                get_request_id(),
+                origin.model,
+                model,
+            )
+            result = await self.generate(model, {**origin.item, "encrypted_content": ciphertext})
             try:
                 summary = extract_completed_source_compaction_summary(result)
             except SourceCompactionResultError as exc:

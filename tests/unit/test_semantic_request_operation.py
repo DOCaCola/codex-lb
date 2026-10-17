@@ -20,7 +20,6 @@ from app.core.usage.request_operation import (
 from app.core.utils.request_id import get_request_id, reset_request_id, set_request_id
 from app.dependencies import ProxyContext
 from app.modules.proxy import api
-from app.modules.proxy.checkpoint_handoff import NativeCheckpointOrigin
 from app.modules.proxy.replay_store import ApiKeyScope
 from app.modules.proxy.request_policy import validate_top_level_compaction_trigger_input_shape
 
@@ -63,7 +62,6 @@ def test_validator_rejects_nonterminal_marker_before_refinement():
     ],
 )
 async def test_auxiliary_handoff_restores_parent_on_every_exit(monkeypatch, outcome, parent):
-    origin = NativeCheckpointOrigin("gpt-6.1-sol", "owner", {})
     seen = []
     active = asyncio.Event()
 
@@ -72,7 +70,7 @@ async def test_auxiliary_handoff_restores_parent_on_every_exit(monkeypatch, outc
             self.generate = generate
 
         async def resolve(self, scope, checkpoint):
-            return await self.generate(origin, checkpoint)
+            return await self.generate("gpt-6-luna", checkpoint)
 
     async def collect(*args, **kwargs):
         seen.append((get_request_operation(), get_request_id()))
