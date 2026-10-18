@@ -130,33 +130,6 @@ async def test_http_handoff_only_on_switch_cached_and_metered(async_client, hand
     assert b"Original decision" not in raw and b"PRIVATE" not in raw
 
 
-async def test_handoff_runs_on_the_economy_model_of_the_checkpoint_generation(async_client, handoff_env, monkeypatch):
-    from app.modules.proxy import checkpoint_handoff
-
-    class Catalog:
-        def plan_types_for_model(self, slug):
-            return frozenset({"plus"})
-
-        def is_suppressed_model(self, slug):
-            return False
-
-    monkeypatch.setattr(checkpoint_handoff, "_CONVERSION_MODELS", (("gpt-5.1", "gpt-5.1-codex-mini"),))
-    monkeypatch.setattr(checkpoint_handoff, "get_model_registry", Catalog)
-    headers, generated, finished, captured, directory, outcome = handoff_env
-    await observe_compact(async_client, headers, directory)
-    body = {"model": MODEL, "input": [checkpoint(), {"role": "user", "content": "Continue"}], "stream": False}
-    result = await async_client.post(PATHS[0], headers=headers, json=body)
-    assert result.status_code == 200, result.text
-    assert [sent["model"] for sent, _ in generated] == ["gpt-5.1-codex-mini"]
-    async with get_background_session() as session:
-        log = (
-            (await session.execute(select(RequestLog).where(RequestLog.archive_request_id.like("handoff_%"))))
-            .scalars()
-            .one()
-        )
-        assert log.model == "gpt-5.1-codex-mini" and log.request_operation == "checkpoint_handoff"
-
-
 @pytest.mark.parametrize("path", PATHS)
 async def test_websocket_handoff_and_source_continuation(async_client, handoff_env, path):
     headers, generated, finished, captured, directory, outcome = handoff_env

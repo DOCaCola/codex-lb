@@ -321,6 +321,7 @@ from app.modules.proxy.checkpoint_handoff import (
     HANDOFF_TIMEOUT_SECONDS,
     CheckpointHandoff,
     CheckpointResolver,
+    NativeCheckpointOrigin,
 )
 from app.modules.proxy.checkpoint_history import materialize_source_checkpoints
 from app.modules.proxy.downstream_delivery import DeliveryTracedStreamingResponse
@@ -7678,7 +7679,7 @@ async def _http_bridge_active_for_request(
 def _source_checkpoint_resolver(
     request: Request, api_key: ApiKeyData | None, context: ProxyContext | None
 ) -> CheckpointResolver:
-    async def generate(model: str, checkpoint: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    async def generate(origin: NativeCheckpointOrigin, checkpoint: dict[str, JsonValue]) -> dict[str, JsonValue]:
         from app.core.openai.compaction import COMPACTION_PROMPT
         from app.core.utils.request_id import reset_request_id, set_request_id
 
@@ -7692,7 +7693,7 @@ def _source_checkpoint_resolver(
         _, _, conversation_id = _request_log_client_fields(request.headers)
         native_payload = ResponsesRequest.model_validate(
             {
-                "model": model,
+                "model": origin.model,
                 "input": [checkpoint, {"role": "user", "content": COMPACTION_PROMPT}],
                 "instructions": "Prepare a faithful provider-switch handoff. Preserve exact constraints, decisions, "
                 "important evidence and unresolved work. Omit transport details, redundant chatter and obsolete plans. "

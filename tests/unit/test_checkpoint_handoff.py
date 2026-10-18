@@ -58,8 +58,8 @@ async def env(monkeypatch, tmp_path):
     await handoff.remember_checkpoint_origin(scope, "gpt-5.1", "owner", checkpoint())
     calls = []
 
-    async def generate(model, item):
-        calls.append((model, item))
+    async def generate(origin, item):
+        calls.append((origin, item))
         return result()
 
     return scope, origins, summaries, calls, generate
@@ -93,7 +93,7 @@ async def test_restart_cache_and_scope_isolation(env, monkeypatch):
     monkeypatch.setattr(handoff, "handoff_store", lambda: HTTPFallbackReplayStore(summaries.directory))
     assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint()) == first
     assert await resolver.resolve(ApiKeyScope("other"), checkpoint()) is None
-    assert calls == [("gpt-5.1", checkpoint())]
+    assert len(calls) == 1 and calls[0][0].account_id == "owner" and calls[0][1] == checkpoint()
 
 
 async def test_materialization_preserves_tail_and_original_index(env, tmp_path):
@@ -119,8 +119,8 @@ async def test_cross_worker_claim_prevents_duplicate_generation(env):
     scope, origins, summaries, calls, _ = env
     started, finish = asyncio.Event(), asyncio.Event()
 
-    async def generate(model, item):
-        calls.append(model)
+    async def generate(origin, item):
+        calls.append(origin)
         started.set()
         await finish.wait()
         return result()
@@ -141,7 +141,7 @@ async def test_cross_worker_claim_prevents_duplicate_generation(env):
 async def test_generation_failure_releases_claim(env, failure):
     scope, origins, summaries, calls, generate = env
 
-    async def fail(model, item):
+    async def fail(origin, item):
         if failure == "cancel":
             raise asyncio.CancelledError()
         raise ProxyResponseError(503, {"error": {"message": "Unavailable"}})
@@ -216,7 +216,7 @@ async def test_task_cancellation_releases_claim(env):
     started = asyncio.Event()
     finished = asyncio.Event()
 
-    async def blocked(model, item):
+    async def blocked(origin, item):
         started.set()
         try:
             await asyncio.Event().wait()
@@ -320,40 +320,3 @@ async def test_periodic_maintenance_sweeps_new_namespaces(env, monkeypatch, tmp_
     monkeypatch.setattr(mixin, "checkpoint_store", lambda: legacy)
     await mixin._WebSocketMixin.sweep_http_fallback_replay(SimpleNamespace(_http_fallback_replay_store=legacy))
     assert not list(origins.directory.glob("*.replay")) and not list(summaries.directory.glob("*.replay"))
-
-
-class _Catalog:
-    def __init__(self, *, offered=True, suppressed=False):
-        self.offered, self.suppressed = offered, suppressed
-
-    def plan_types_for_model(self, slug):
-        return frozenset({"plus"}) if self.offered else None
-
-    def is_suppressed_model(self, slug):
-        return self.suppressed
-
-
-@pytest.mark.parametrize(
-    "origin_model,catalog,allowed,expected",
-    [
-        ("gpt-6.1-sol", _Catalog(), None, "gpt-6-luna"),
-        ("gpt-6-astra", _Catalog(), None, "gpt-6-luna"),
-        ("gpt-5.6-sol", _Catalog(), None, "gpt-5.6-luna"),
-        ("gpt-5.5", _Catalog(), None, "gpt-5.5"),
-        ("gpt-6.1-sol", _Catalog(offered=False), None, "gpt-6.1-sol"),
-        ("gpt-6.1-sol", _Catalog(suppressed=True), None, "gpt-6.1-sol"),
-        ("gpt-6.1-sol", _Catalog(), ["gpt-6.1-sol"], "gpt-6.1-sol"),
-    ],
-)
-async def test_conversion_uses_the_economy_model_of_the_checkpoint_generation(
-    env, monkeypatch, origin_model, catalog, allowed, expected
-):
-    scope, origins, summaries, calls, generate = env
-    await handoff.remember_checkpoint_origin(scope, origin_model, "owner", checkpoint("GPT6_NATIVE"))
-    monkeypatch.setattr(handoff, "get_model_registry", lambda: catalog)
-    key = replace(api_key(), allowed_models=allowed)
-    await handoff.CheckpointHandoff(key, generate).resolve(scope, checkpoint("GPT6_NATIVE"))
-    assert calls == [(expected, checkpoint("GPT6_NATIVE"))]
-    # The summary stays attributed to the producing model, whose access every later reuse checks.
-    cached = await summaries.load(scope, handoff.checkpoint_digest("GPT6_NATIVE"))
-    assert cached.model == origin_model
