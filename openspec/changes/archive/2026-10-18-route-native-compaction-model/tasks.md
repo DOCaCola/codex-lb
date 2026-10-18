@@ -7,4 +7,4 @@
 - [x] Add `GET/PUT/DELETE /api/settings/model-compaction-routes` with audit events.
 - [x] Add the Compaction routing card to Settings -> Model catalogue.
 - [x] Cover the rules, the rewrite on each surface and the settings API with tests.
-- [ ] Verify end to end on production (WebSocket and HTTP Codex clients, `/responses/compact`).
+- [x] Verify end to end on production (WebSocket and HTTP Codex clients, `/responses/compact`).
