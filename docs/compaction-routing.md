@@ -41,7 +41,7 @@ The routes live in `model_compaction_routes` and are managed through `GET`, `PUT
 
 We measured the effect on a Plus account's 5-hour usage, which the dashboard reports in whole percentage points. Each arm compacted three forks of the same 127k-token `gpt-6-astra` (medium) thread. Each fork then ran one follow-up Astra turn. Usage was read only after the upstream counters had settled.
 
-Primed forks first ran one real Astra turn, as a live thread does just before auto-compaction. Only the baseline and the last arm were primed; the other arms were not, and that skews their first turn (see below).
+Primed forks first ran one real Astra turn, as a live thread does just before auto-compaction. Only the baseline and the last two arms were primed; the other arms were not, and that skews their first turn (see below). The baseline and the first primed Luna max arm were primed with "reply with exactly the word OK and nothing else"; the last arm with a realistic question about the thread's content.
 
 | Compaction ran on | Primed | Compactions (3×) | First Astra turn after (3×) | Total points | Checkpoint size (encrypted chars) | First turn cached |
 |---|---|---|---|---|---|---|
@@ -50,7 +50,8 @@ Primed forks first ran one real Astra turn, as a live thread does just before au
 | Route → `gpt-6-luna`, client's effort | no | 0 | 5 | 5 | 9.1k–14.5k | 0 on all 3 |
 | Route → `gpt-6-luna`, max effort | no | 0 | 5 | 5 | 12.0k–16.3k | 0, 6,400, 0 |
 | Route → `gpt-6.1-sol`, client's effort | no | 2 | 5 | 7 | 36.0k–41.8k | 0, 0, 11,648 |
-| Route → `gpt-6-luna`, max effort | yes | 0–1 | 1 | 2 | 2.1k–2.9k | 11,648 on all 3 |
+| Route → `gpt-6-luna`, max effort | yes ("OK") | 0–1 | 1 | 2 | 2.1k–2.9k | 11,648 on all 3 |
+| Route → `gpt-6-luna`, max effort | yes (question) | 0–1 | 0–1 | 1 | 4.1k–8.8k | 11,648 on all 3 |
 
 Each routed compaction read about 123.6k input tokens (129.2k when primed) with no cache hits.
 
@@ -60,7 +61,7 @@ Each routed compaction read about 123.6k input tokens (129.2k when primed) with 
 | Luna max | ~9 s | 0.8k–1.2k | ~$0.013 |
 | Sol 6.1 | ~45 s | 2.9k–3.3k | ~$0.27 |
 
-Each thread then answered a request for a 10-point summary of the work so far. In the unprimed arms, the answers were equivalent (1.04k–1.29k characters); the Luna max and Sol 6.1 checkpoints kept slightly more specifics. The primed Luna max arm is the exception, described under [Checkpoint quality](#checkpoint-quality).
+Each thread then answered a request for a 10-point summary of the work so far. In the unprimed arms and the question-primed Luna max arm, the answers were equivalent (1.04k–1.29k characters); the Luna max and Sol 6.1 checkpoints kept slightly more specifics. The "OK"-primed Luna max arm is the exception, described under [Checkpoint quality](#checkpoint-quality).
 
 ### Why the unprimed first turns cost more
 
@@ -78,9 +79,11 @@ In a live thread, the turn that triggers auto-compaction runs seconds before the
 
 ### Checkpoint quality
 
-In the primed arm, Luna max wrote checkpoints of only 57–117 output tokens (2.1k–2.9k encrypted characters), a fifth of the unprimed Luna max checkpoints. The follow-up answers lost most specifics and stated that the earlier explanations were unavailable. The priming turn was an instruction to reply with exactly "OK" and nothing else, and Luna appears to have carried that brevity into the summary. Astra compacting the same primed history produced 2.9k output tokens and kept full detail.
+In the "OK"-primed arm, Luna max wrote checkpoints of only 57–117 output tokens (2.1k–2.9k encrypted characters), a fifth of the unprimed Luna max checkpoints. The follow-up answers lost most specifics and stated that the earlier explanations were unavailable. Astra compacting history that ended in the same instruction produced 2.2k–2.9k output tokens and kept full detail.
 
-Real threads end with a work turn rather than such an instruction. The result still shows that Luna's checkpoint is more sensitive to the latest turn than Astra's, so check summary quality after enabling a route.
+Rerun with a realistic question as the priming turn, Luna max wrote 204–581 output tokens (4.1k–8.8k encrypted characters), and every follow-up summarized the whole conversation, including the latest exchange. The "OK" instruction caused the loss: Luna applies a strict output constraint in the latest user turn to its own summary as well, while Astra does not.
+
+Normal auto-compaction, mid-turn after tool output, is not affected. The risk is a manual `/compact` right after a user message that restricts the answer's length or format, such as "answer only yes or no".
 
 ### Reading 5-hour usage
 
