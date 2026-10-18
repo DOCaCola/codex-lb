@@ -41,7 +41,7 @@ The routes live in `model_compaction_routes` and are managed through `GET`, `PUT
 
 We measured the effect on a Plus account's 5-hour usage, which the dashboard reports in whole percentage points. Each arm compacted three forks of the same 127k-token `gpt-6-astra` (medium) thread. Each fork then ran one follow-up Astra turn. Usage was read only after the upstream counters had settled.
 
-Primed forks first ran one real Astra turn, as a live thread does just before auto-compaction. Only the baseline and the last two arms were primed; the other arms were not, and that skews their first turn (see below). The baseline and the first primed Luna max arm were primed with "reply with exactly the word OK and nothing else"; the last arm with a realistic question about the thread's content.
+Primed forks first ran one real Astra turn, as a live thread does just before auto-compaction. Only the baseline and the last three arms were primed; the other arms were not, and that skews their first turn (see below). The baseline and the first primed Luna max arm were primed with "reply with exactly the word OK and nothing else"; the last two arms with a realistic question about the thread's content.
 
 | Compaction ran on | Primed | Compactions (3×) | First Astra turn after (3×) | Total points | Checkpoint size (encrypted chars) | First turn cached |
 |---|---|---|---|---|---|---|
@@ -52,6 +52,7 @@ Primed forks first ran one real Astra turn, as a live thread does just before au
 | Route → `gpt-6.1-sol`, client's effort | no | 2 | 5 | 7 | 36.0k–41.8k | 0, 0, 11,648 |
 | Route → `gpt-6-luna`, max effort | yes ("OK") | 0–1 | 1 | 2 | 2.1k–2.9k | 11,648 on all 3 |
 | Route → `gpt-6-luna`, max effort | yes (question) | 0–1 | 0–1 | 1 | 4.1k–8.8k | 11,648 on all 3 |
+| Route → `gpt-6.1-sol`, client's effort | yes (question) | 2 | 2 | 4 | 39.4k–41.1k | 11,648 on all 3 |
 
 Each routed compaction read about 123.6k input tokens (129.2k when primed) with no cache hits.
 
@@ -60,6 +61,18 @@ Each routed compaction read about 123.6k input tokens (129.2k when primed) with 
 | Luna | ~7 s | 0.6k–1k | ~$0.013 |
 | Luna max | ~9 s | 0.8k–1.2k | ~$0.013 |
 | Sol 6.1 | ~45 s | 2.9k–3.3k | ~$0.27 |
+
+### Sol 6.1 threads
+
+A fourth arm ran the same procedure with the client on `gpt-6.1-sol` (medium) and a route to `gpt-6-luna` max, primed with the realistic question.
+
+| Phase (3×) | Points | Detail |
+|---|---|---|
+| Priming Sol turns | 1 | 125k input each, mostly uncached |
+| Compactions on Luna max | 0 | 5–6 s each, 252–567 output tokens, 4.7k–8.7k encrypted chars |
+| First Sol turn after | 1 | 6,400–11,648 cached of ~14.9k |
+
+The follow-up summaries were complete. No Sol self-compaction baseline was run, but the Astra → Sol arm measured Sol compacting the same history at 2 points per three compactions, so Sol compacting on itself costs about 3 points in total, against 1 with the route. Sol usage is roughly a sixth of Astra's for the same tokens, so the absolute saving is small.
 
 Each thread then answered a request for a 10-point summary of the work so far. In the unprimed arms and the question-primed Luna max arm, the answers were equivalent (1.04k–1.29k characters); the Luna max and Sol 6.1 checkpoints kept slightly more specifics. The "OK"-primed Luna max arm is the exception, described under [Checkpoint quality](#checkpoint-quality).
 
@@ -91,9 +104,17 @@ Normal auto-compaction, mid-turn after tool output, is not affected. The risk is
 
 ### Recommendation
 
-Routing `gpt-6-astra` compaction to `gpt-6-luna` max cuts the cost of compaction plus the next turn from 7–8 points to about 2 in a live thread, and compacts in seconds rather than a minute. Max effort costs the same as the client's effort and produced richer checkpoints in the unprimed arms. Watch checkpoint quality, given the result above.
+For compaction plus the next turn in a live thread (three compactions each):
 
-`gpt-6.1-sol` writes Astra-sized checkpoints and costs about 2 points per three compactions. Its unprimed first-turn penalty is the same test artifact, so in a live thread it would likely cost about 3–4 points in total. That figure is inferred, not measured primed. It is the safer choice when checkpoint detail matters more than speed.
+| Route | Points | Compaction time | Checkpoint |
+|---|---|---|---|
+| `gpt-6-astra` on itself | 7–8 | ~50 s | full |
+| `gpt-6-astra` → `gpt-6.1-sol` | 4 | ~50 s | full, Astra-sized |
+| `gpt-6-astra` → `gpt-6-luna` max | 1–2 | 3–6 s | smaller, complete for normal threads |
+| `gpt-6.1-sol` on itself | ~3 (inferred) | ~50 s | full |
+| `gpt-6.1-sol` → `gpt-6-luna` max | 1 | 5–6 s | smaller, complete for normal threads |
+
+Route `gpt-6-astra` to `gpt-6-luna` max for the largest saving. Route it to `gpt-6.1-sol` instead when checkpoint detail matters more than usage; that still halves the cost. Routing `gpt-6.1-sol` to `gpt-6-luna` max mostly buys speed, since Sol compaction is already cheap. Max effort costs the same as the client's effort on Luna. With a Luna route, watch checkpoint quality, given the result above.
 
 These are small samples measured in whole points, so treat the numbers as directional. Savings grow with how often a thread compacts, and shrink if the account's plan prices the compaction model differently.
 
