@@ -98,6 +98,18 @@ Rerun with a realistic question as the priming turn, Luna max wrote 204–581 ou
 
 Normal auto-compaction, mid-turn after tool output, is not affected. The risk is a manual `/compact` right after a user message that restricts the answer's length or format, such as "answer only yes or no".
 
+#### Recall of specific facts
+
+A 10-point summary only shows that topics survive. To test details, each compacted fork answered 11 recall questions about the assistant's earlier answers, such as the file that defines the menus, the setting that orders the admin menu, which libraries read barcodes, and the name of the generated dependency-tree file. That makes 30 checkable facts. The prompt asked for "unknown" instead of guessing. All forks were asked on Astra; user messages were not tested, because Codex keeps them verbatim after compaction.
+
+| Checkpoint written by | Facts recalled (of 30), per fork | Average | Wrong answers |
+|---|---|---|---|
+| Astra (baseline) | 30, 27, 25 | 91% | 1 (a URL missing a path segment) |
+| Sol 6.1 (routed) | 30, 27, 28 | 94% | 0 |
+| Luna max (routed) | 10, 6, 5 | 23% | 0 |
+
+Luna's checkpoints keep the topics and the gist, and the answers marked everything else as unknown rather than inventing it. They lose concrete identifiers: file names, settings, library names, paths. The fork with the largest Luna checkpoint (8.8k encrypted characters) recalled the most. In a coding thread, those identifiers are what the next turns depend on, so a Luna route would make the model re-read files and re-discover decisions after each compaction.
+
 ### Reading 5-hour usage
 
 5-hour usage does not follow API-equivalent cost linearly. The three primes, 387k uncached Astra input tokens priced at $3.88, cost 8 points, while three unprimed follow-ups of about 58k uncached tokens cost 5. Whole-point readings also round. Compare arms only roughly; the cached-token counts are the reliable signal.
@@ -108,13 +120,15 @@ For compaction plus the next turn in a live thread (three compactions each):
 
 | Route | Points | Compaction time | Checkpoint |
 |---|---|---|---|
-| `gpt-6-astra` on itself | 7–8 | ~50 s | full |
-| `gpt-6-astra` → `gpt-6.1-sol` | 4 | ~50 s | full, Astra-sized |
-| `gpt-6-astra` → `gpt-6-luna` max | 1–2 | 3–6 s | smaller, complete for normal threads |
-| `gpt-6.1-sol` on itself | ~3 (inferred) | ~50 s | full |
-| `gpt-6.1-sol` → `gpt-6-luna` max | 1 | 5–6 s | smaller, complete for normal threads |
+| Route | Points | Compaction time | Fact recall |
+|---|---|---|---|
+| `gpt-6-astra` on itself | 7–8 | ~50 s | 91% |
+| `gpt-6-astra` → `gpt-6.1-sol` | 4 | ~50 s | 94% |
+| `gpt-6-astra` → `gpt-6-luna` max | 1–2 | 3–6 s | 23% |
+| `gpt-6.1-sol` on itself | ~3 (inferred) | ~50 s | not tested |
+| `gpt-6.1-sol` → `gpt-6-luna` max | 1 | 5–6 s | not tested; Luna checkpoint |
 
-Route `gpt-6-astra` to `gpt-6-luna` max for the largest saving. Route it to `gpt-6.1-sol` instead when checkpoint detail matters more than usage; that still halves the cost. Routing `gpt-6.1-sol` to `gpt-6-luna` max mostly buys speed, since Sol compaction is already cheap. Max effort costs the same as the client's effort on Luna. With a Luna route, watch checkpoint quality, given the result above.
+Route `gpt-6-astra` to `gpt-6.1-sol`. It roughly halves the cost of compaction and the next turn, with recall as good as Astra's own checkpoints. Avoid Luna as a compaction model for working threads: it saves the most usage, but loses about three quarters of the concrete facts, and the lost context is likely to cost more in re-reading than the compaction saved. Sol compaction is already cheap, so `gpt-6.1-sol` needs no route.
 
 These are small samples measured in whole points, so treat the numbers as directional. Savings grow with how often a thread compacts, and shrink if the account's plan prices the compaction model differently.
 
