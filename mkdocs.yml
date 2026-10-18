@@ -65,6 +65,7 @@ nav:
   - Company Sign-In: sso.md
   - API Keys: api-keys.md
   - Routing: routing.md
+  - Compaction Routing: compaction-routing.md
   - Database: database.md
   - Deployment:
       - Docker: deployment/docker.md

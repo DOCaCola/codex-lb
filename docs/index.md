@@ -24,6 +24,7 @@ Load balancer for ChatGPT accounts. Pool multiple accounts, track usage, manage 
 - [Conversations](conversations.md) — dashboard view and conversation APIs
 - [API Keys](api-keys.md) — protecting proxy routes
 - [Routing](routing.md) — routing strategy guide
+- [Compaction Routing](compaction-routing.md) — compact a model's threads on another model, with measured savings
 - [Database](database.md) — SQLite / PostgreSQL, data paths, Postgres upgrades
 - [Deployment](deployment/docker.md) — Docker, [Kubernetes](deployment/kubernetes.md), [remote access](deployment/remote.md)
 - [Troubleshooting](troubleshooting.md)
