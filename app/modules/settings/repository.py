@@ -13,7 +13,13 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.core.auth.dashboard_session_ttl import DEFAULT_DASHBOARD_SESSION_TTL_SECONDS
 from app.core.exceptions import DashboardSettingsConflictError
 from app.core.upstream_proxy.cache import get_upstream_route_cache
-from app.db.models import DashboardSettings, DashboardUser, LocalLoginPolicy, ModelContextWindowOverride
+from app.db.models import (
+    DashboardSettings,
+    DashboardUser,
+    LocalLoginPolicy,
+    ModelCompactionRoute,
+    ModelContextWindowOverride,
+)
 from app.modules.dashboard_users.repository import DashboardUsersRepository
 
 _SETTINGS_ID = 1
@@ -593,6 +599,39 @@ class ModelContextWindowOverridesRepository:
 
     async def delete(self, slug: str) -> bool:
         row = await self._session.get(ModelContextWindowOverride, slug)
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.commit()
+        return True
+
+
+class ModelCompactionRoutesRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_all(self) -> list[ModelCompactionRoute]:
+        result = await self._session.execute(select(ModelCompactionRoute).order_by(ModelCompactionRoute.slug.asc()))
+        return list(result.scalars().all())
+
+    async def upsert(self, slug: str, compaction_model: str, reasoning_effort: str | None) -> None:
+        """Create or replace the route for ``slug`` in one statement (see the overrides upsert)."""
+        dialect = self._session.get_bind().dialect.name
+        insert_fn = _UPSERT_INSERT_FNS.get(dialect)
+        if insert_fn is None:
+            raise RuntimeError(f"model_compaction_routes upsert unsupported for dialect={dialect!r}")
+        values = {"compaction_model": compaction_model, "reasoning_effort": reasoning_effort}
+        statement = insert_fn(ModelCompactionRoute).values(slug=slug, **values)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[ModelCompactionRoute.slug],
+                set_={**values, "updated_at": func.now()},
+            )
+        )
+        await self._session.commit()
+
+    async def delete(self, slug: str) -> bool:
+        row = await self._session.get(ModelCompactionRoute, slug)
         if row is None:
             return False
         await self._session.delete(row)

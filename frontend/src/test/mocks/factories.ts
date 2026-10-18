@@ -58,11 +58,13 @@ import {
 	RequestLogsResponseSchema,
 } from "@/features/dashboard/schemas";
 import type {
+	CompactionRoutes,
 	DashboardSettings,
 	ModelContextWindowOverrides,
 	UpstreamProxyAdmin,
 } from "@/features/settings/schemas";
 import {
+	CompactionRoutesSchema,
 	DashboardSettingsSchema,
 	ModelContextWindowOverridesSchema,
 	UpstreamProxyAdminSchema,
@@ -88,7 +90,7 @@ export type ConversationDetails = z.infer<typeof ConversationDetailsSchema>;
 export type ConversationModelStat = z.infer<typeof ConversationModelStatSchema>;
 export type { QuotaPlannerDecision, QuotaPlannerForecast, QuotaPlannerSettings };
 export type QuotaPlannerWarmupActionResponse = z.infer<typeof QuotaPlannerWarmupActionResponseSchema>;
-export type { ModelContextWindowOverrides };
+export type { CompactionRoutes, ModelContextWindowOverrides };
 export type OauthCompleteResponse = z.infer<typeof OauthCompleteResponseSchema>;
 
 export type {
@@ -1152,6 +1154,24 @@ export function createModelContextWindowOverrides(
 		overrides: [
 			{ slug: "gpt-5.4", contextWindow: 515000, source: "dashboard", envValue: 300000 },
 			{ slug: "gpt-5.5", contextWindow: 400000, source: "env", envValue: 400000 },
+		],
+		...overrides,
+	});
+}
+
+export function createCompactionRoutes(overrides: Partial<CompactionRoutes> = {}): CompactionRoutes {
+	return CompactionRoutesSchema.parse({
+		models: [
+			{
+				slug: "gpt-6-astra",
+				displayName: "GPT-6-Astra",
+				reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+			},
+			{ slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+			{ slug: "gpt-6-luna", displayName: "GPT-6-Luna", reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] },
+		],
+		routes: [
+			{ slug: "gpt-6-astra", compactionModel: "gpt-6-luna", reasoningEffort: "low", status: "active", reason: null },
 		],
 		...overrides,
 	});

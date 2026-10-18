@@ -2,6 +2,8 @@ import { del, get, post, put } from "@/lib/api-client";
 import {
   AccountProxyBindingRequestSchema,
   AccountProxyBindingSchema,
+  CompactionRouteUpsertRequestSchema,
+  CompactionRoutesSchema,
   DashboardSettingsSchema,
   ModelContextWindowOverrideUpsertRequestSchema,
   ModelContextWindowOverridesSchema,
@@ -18,6 +20,7 @@ import {
 const SETTINGS_PATH = "/api/settings";
 const UPSTREAM_PROXY_PATH = `${SETTINGS_PATH}/upstream-proxy`;
 const MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = `${SETTINGS_PATH}/model-context-window-overrides`;
+const MODEL_COMPACTION_ROUTES_PATH = `${SETTINGS_PATH}/model-compaction-routes`;
 
 export function getSettings() {
   return get(SETTINGS_PATH, DashboardSettingsSchema);
@@ -83,4 +86,20 @@ export function putModelContextWindowOverride(slug: string, payload: unknown) {
 
 export function deleteModelContextWindowOverride(slug: string) {
   return del(`${MODEL_CONTEXT_WINDOW_OVERRIDES_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema);
+}
+
+// Native compaction model routes (one dashboard row per coding model).
+export function getModelCompactionRoutes() {
+  return get(MODEL_COMPACTION_ROUTES_PATH, CompactionRoutesSchema);
+}
+
+export function putModelCompactionRoute(slug: string, payload: unknown) {
+  const validated = CompactionRouteUpsertRequestSchema.parse(payload);
+  return put(`${MODEL_COMPACTION_ROUTES_PATH}/${encodeURIComponent(slug)}`, CompactionRoutesSchema, {
+    body: validated,
+  });
+}
+
+export function deleteModelCompactionRoute(slug: string) {
+  return del(`${MODEL_COMPACTION_ROUTES_PATH}/${encodeURIComponent(slug)}`, CompactionRoutesSchema);
 }

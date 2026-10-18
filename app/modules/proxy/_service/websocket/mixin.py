@@ -80,6 +80,7 @@ from app.core.errors import (
     response_failed_event,
 )
 from app.core.exceptions import AppError, ProxyAuthError
+from app.core.openai.compaction_routes import compaction_routes_for
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import (
@@ -3500,6 +3501,7 @@ class _WebSocketMixin:
             responses_payload,
             refreshed_api_key,
             prohibit_fast_mode=prohibit_fast_mode,
+            compaction_routes=await compaction_routes_for(responses_payload),
         ).service_tier_was_enforced
         if prohibit_fast_mode and model_alias_requests_fast_mode(raw_source_model):
             raw_source_model = responses_payload.model

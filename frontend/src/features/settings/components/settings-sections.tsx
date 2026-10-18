@@ -15,6 +15,7 @@ import { BackgroundJobsSettings } from "@/features/settings/components/backgroun
 import { ConversationArchiveSettings } from "@/features/settings/components/conversation-archive-settings";
 import { DataRetentionSettings } from "@/features/settings/components/data-retention-settings";
 import { ImportSettings } from "@/features/settings/components/import-settings";
+import { CompactionRouteSettings } from "@/features/settings/components/compaction-route-settings";
 import { ModelCatalogueSettings } from "@/features/settings/components/model-catalogue-settings";
 import { QuotaResetWebhookSettings } from "@/features/settings/components/quota-reset-webhook-settings";
 import { ResetCreditSettings } from "@/features/settings/components/reset-credit-settings";
@@ -157,6 +158,7 @@ export function ModelsSettingsSection() {
   return (
     <SettingsSection section="models">
       <ModelCatalogueSettings disabled={controlsDisabled} />
+      <CompactionRouteSettings disabled={controlsDisabled} />
     </SettingsSection>
   );
 }

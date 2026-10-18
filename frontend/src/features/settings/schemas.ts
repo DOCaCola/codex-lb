@@ -524,6 +524,34 @@ export const ModelContextWindowOverridesSchema = z.object({
 export const ModelContextWindowOverrideUpsertRequestSchema = z.object({
   contextWindow: z.number().int().positive(),
 });
+
+// Native compaction model routes: a coding model's compaction runs on another
+// native model. `models` are the native models a route may name, with the
+// efforts each supports; a route is "inactive" while the live catalog makes it
+// incompatible, and `reason` names why.
+export const CompactionRouteModelSchema = z.object({
+  slug: z.string().min(1),
+  displayName: z.string(),
+  reasoningEfforts: z.array(z.string()),
+});
+
+export const CompactionRouteSchema = z.object({
+  slug: z.string().min(1),
+  compactionModel: z.string().min(1),
+  reasoningEffort: z.string().nullable(),
+  status: z.enum(["active", "inactive"]),
+  reason: z.string().nullable(),
+});
+
+export const CompactionRoutesSchema = z.object({
+  models: z.array(CompactionRouteModelSchema),
+  routes: z.array(CompactionRouteSchema),
+});
+
+export const CompactionRouteUpsertRequestSchema = z.object({
+  compactionModel: z.string().min(1),
+  reasoningEffort: z.string().min(1).nullable(),
+});
 // end M4 model catalogue
 
 export type UpstreamProxyEndpoint = z.infer<typeof UpstreamProxyEndpointSchema>;
@@ -539,3 +567,7 @@ export type ModelContextWindowOverride = z.infer<typeof ModelContextWindowOverri
 export type ModelCatalogueEntry = z.infer<typeof ModelCatalogueEntrySchema>;
 export type ModelContextWindowOverrides = z.infer<typeof ModelContextWindowOverridesSchema>;
 export type ModelContextWindowOverrideUpsertRequest = z.infer<typeof ModelContextWindowOverrideUpsertRequestSchema>;
+export type CompactionRouteModel = z.infer<typeof CompactionRouteModelSchema>;
+export type CompactionRoute = z.infer<typeof CompactionRouteSchema>;
+export type CompactionRoutes = z.infer<typeof CompactionRoutesSchema>;
+export type CompactionRouteUpsertRequest = z.infer<typeof CompactionRouteUpsertRequestSchema>;

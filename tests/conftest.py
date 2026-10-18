@@ -524,6 +524,12 @@ def _reset_global_state() -> None:
     except Exception:
         pass
     try:
+        from app.core.openai.compaction_routes import get_model_compaction_routes_cache
+
+        get_model_compaction_routes_cache().clear()
+    except Exception:
+        pass
+    try:
         # Pending workspace-less plan-downgrade confirmations live in a
         # process-global fallback store when persistence is disabled, so a test
         # that leaves one behind would otherwise give the next test a head start

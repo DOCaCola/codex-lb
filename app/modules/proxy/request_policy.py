@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.exceptions import ProxyModelNotAllowed, ProxyReasoningEffortNotAllowed
+from app.core.openai.compaction_routes import CompactionRoute
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.model_registry import ModelRegistry, canonical_service_tier_value, get_model_registry
 from app.core.openai.requests import (
@@ -270,6 +271,7 @@ def apply_api_key_enforcement(
     *,
     registry: ModelRegistry | None = None,
     prohibit_fast_mode: bool = False,
+    compaction_routes: Mapping[str, CompactionRoute] | None = None,
 ) -> ApiKeyEnforcementResult:
     """Apply API-key policy and report whether it supplied the service tier.
 
@@ -277,6 +279,10 @@ def apply_api_key_enforcement(
     must not infer it later by comparing values: an explicit client request can
     equal the enforced value (including after ``fast`` canonicalizes to
     ``priority``).
+
+    ``compaction_routes`` are the compatible routes of a native compaction
+    request (``compaction_routes_for``). The route of the effective model
+    applies after model enforcement and before effort policy.
     """
     client_reasoning_effort = payload._codex_lb_client_reasoning_effort or _client_reasoning_effort(payload)
     payload._codex_lb_client_reasoning_effort = client_reasoning_effort
@@ -284,6 +290,7 @@ def apply_api_key_enforcement(
     normalize_upstream_model_alias(payload)
 
     if api_key is None:
+        _apply_compaction_route(payload, None, compaction_routes)
         _materialize_provider_reasoning_effort(payload, provider_reasoning_effort)
         pre_normalization_effort = normalize_unsupported_reasoning_effort(payload, registry=registry)
         apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
@@ -317,6 +324,8 @@ def apply_api_key_enforcement(
                 f"API key enforced model '{payload.model}' does not support Responses Lite",
                 code="responses_lite_model_mismatch",
             )
+
+    _apply_compaction_route(payload, api_key, compaction_routes)
 
     if api_key.enforced_reasoning_effort is not None:
         payload._codex_lb_pre_normalization_reasoning_effort = None
@@ -375,6 +384,41 @@ def apply_api_key_enforcement(
             )
     apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
     return ApiKeyEnforcementResult(service_tier_was_enforced, pre_normalization_effort)
+
+
+def _apply_compaction_route(
+    payload: ResponsesRequest | ResponsesCompactRequest,
+    api_key: ApiKeyData | None,
+    routes: Mapping[str, CompactionRoute] | None,
+) -> None:
+    route = routes.get(payload.model) if routes else None
+    if route is None:
+        return
+    if api_key is not None and api_key.allowed_models:
+        allowed_models = {resolve_model_alias(allowed_model) for allowed_model in api_key.allowed_models}
+        if resolve_model_alias(route.compaction_model) not in allowed_models:
+            logger.info(
+                "compaction_model_route_skipped request_id=%s coding_model=%s compaction_model=%s "
+                "reason=api_key_model_not_allowed",
+                get_request_id(),
+                route.slug,
+                route.compaction_model,
+            )
+            return
+    payload.model = route.compaction_model
+    effort = route.reasoning_effort if api_key is None or api_key.enforced_reasoning_effort is None else None
+    if effort is not None:
+        if payload.reasoning is None:
+            payload.reasoning = ResponsesReasoning(effort=effort)
+        else:
+            payload.reasoning.effort = effort
+    logger.info(
+        "compaction_model_routed request_id=%s coding_model=%s model=%s reasoning_effort=%s",
+        get_request_id(),
+        route.slug,
+        route.compaction_model,
+        payload.reasoning.effort if payload.reasoning else None,
+    )
 
 
 def apply_prohibit_fast_mode(

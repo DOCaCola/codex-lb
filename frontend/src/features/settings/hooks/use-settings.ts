@@ -7,16 +7,19 @@ import {
   addUpstreamProxyPoolMember,
   createUpstreamProxyEndpoint,
   createUpstreamProxyPool,
+  deleteModelCompactionRoute,
   deleteModelContextWindowOverride,
+  getModelCompactionRoutes,
   getModelContextWindowOverrides,
   getSettings,
   getUpstreamProxyAdmin,
   putAccountProxyBinding,
+  putModelCompactionRoute,
   putModelContextWindowOverride,
   testUpstreamProxyEndpoint,
   updateSettings,
 } from "@/features/settings/api";
-import type { SettingsUpdateRequest } from "@/features/settings/schemas";
+import type { CompactionRouteUpsertRequest, SettingsUpdateRequest } from "@/features/settings/schemas";
 import type {
   AccountProxyBindingRequest,
   UpstreamProxyEndpointCreateRequest,
@@ -197,4 +200,40 @@ export function useModelContextWindowOverrides() {
   });
 
   return { overridesQuery, upsertMutation, deleteMutation };
+}
+
+// Native compaction model routes. The backend validates every write against
+// the live catalog and reports each stored route as active or inactive.
+export function useModelCompactionRoutes() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const queryKey = ["settings", "model-compaction-routes"] as const;
+
+  const { data, error, isLoading } = useQuery({ queryKey, queryFn: getModelCompactionRoutes });
+  const routesQuery = { data, error, isLoading };
+
+  const upsertMutation = useMutation({
+    mutationFn: ({ slug, ...payload }: { slug: string } & CompactionRouteUpsertRequest) =>
+      putModelCompactionRoute(slug, payload),
+    onSuccess: (routes) => {
+      toast.success(t("settings.compactionRoutes.toasts.saved"));
+      queryClient.setQueryData(queryKey, routes);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t("settings.compactionRoutes.toasts.saveFailed"));
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (slug: string) => deleteModelCompactionRoute(slug),
+    onSuccess: (routes) => {
+      toast.success(t("settings.compactionRoutes.toasts.removed"));
+      queryClient.setQueryData(queryKey, routes);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t("settings.compactionRoutes.toasts.removeFailed"));
+    },
+  });
+
+  return { routesQuery, upsertMutation, deleteMutation };
 }

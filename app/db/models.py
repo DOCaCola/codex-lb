@@ -1776,6 +1776,27 @@ class ModelContextWindowOverride(Base):
     )
 
 
+class ModelCompactionRoute(Base):
+    """Native compaction requests on ``slug`` run on ``compaction_model``.
+
+    ``reasoning_effort`` replaces the client's effort for those requests; ``None``
+    keeps it.
+    """
+
+    __tablename__ = "model_compaction_routes"
+
+    slug: Mapped[str] = mapped_column(String, primary_key=True)
+    compaction_model: Mapped[str] = mapped_column(String, nullable=False)
+    reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 # end M4 model catalogue
 
 

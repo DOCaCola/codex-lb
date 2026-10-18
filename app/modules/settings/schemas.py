@@ -435,6 +435,33 @@ class ModelContextWindowOverrideUpsertRequest(DashboardModel):
     context_window: StrictInt = Field(ge=1, le=MAX_MODEL_CONTEXT_WINDOW)
 
 
+# Native compaction model routes. ``models`` are the native models a route may
+# name, each with the efforts it supports; a route is ``inactive`` while the
+# live catalog makes it incompatible (``reason``).
+class CompactionRouteModelResponse(DashboardModel):
+    slug: str
+    display_name: str
+    reasoning_efforts: list[str]
+
+
+class CompactionRouteResponse(DashboardModel):
+    slug: str
+    compaction_model: str
+    reasoning_effort: str | None
+    status: Literal["active", "inactive"]
+    reason: str | None = None
+
+
+class CompactionRoutesResponse(DashboardModel):
+    models: list[CompactionRouteModelResponse]
+    routes: list[CompactionRouteResponse]
+
+
+class CompactionRouteUpsertRequest(DashboardModel):
+    compaction_model: str = Field(min_length=1, max_length=256)
+    reasoning_effort: str | None = Field(default=None, min_length=1, max_length=32)
+
+
 # end M4 model catalogue
 
 

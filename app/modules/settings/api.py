@@ -49,11 +49,28 @@ from app.core.exceptions import (
     DashboardNotFoundError,
     DashboardSettingsConflictError,
 )
+from app.core.openai.compaction_routes import (
+    CompactionRoute,
+    CompactionRouteIncompatibility,
+    compaction_route_incompatibility,
+    effective_client_windows,
+    get_model_compaction_routes_cache,
+    native_route_model,
+)
+from app.core.openai.model_registry import get_model_registry
 from app.core.resilience.toggles import RESILIENCE_TOGGLE_SETTINGS
 from app.core.timeout_invariants import find_timeout_invariant_violations
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_proxy_endpoint, sends_plaintext_credentials
 from app.core.upstream_proxy.cache import get_upstream_route_cache
-from app.db.models import Account, AccountProxyBinding, AccountStatus, ProxyEndpoint, ProxyPool, ProxyPoolMember
+from app.db.models import (
+    Account,
+    AccountProxyBinding,
+    AccountStatus,
+    ModelCompactionRoute,
+    ProxyEndpoint,
+    ProxyPool,
+    ProxyPoolMember,
+)
 from app.dependencies import SettingsContext, get_proxy_service_for_app, get_settings_context
 from app.modules.dashboard_users.break_glass import BreakGlassRequiresTotpError
 from app.modules.proxy.account_cache import (
@@ -62,12 +79,16 @@ from app.modules.proxy.account_cache import (
     propagate_account_routing_change,
 )
 from app.modules.proxy.api import context_window_ceiling, list_model_catalogue
-from app.modules.settings.repository import ModelContextWindowOverridesRepository
+from app.modules.settings.repository import ModelCompactionRoutesRepository, ModelContextWindowOverridesRepository
 from app.modules.settings.schemas import (
     SECURITY_SETTINGS_FIELDS,
     AccountProxyBindingRequest,
     AccountProxyBindingResponse,
     AdditionalQuotaPolicy,
+    CompactionRouteModelResponse,
+    CompactionRouteResponse,
+    CompactionRoutesResponse,
+    CompactionRouteUpsertRequest,
     DashboardSettingsResponse,
     DashboardSettingsUpdateRequest,
     LocalLoginPolicyLiteral,
@@ -850,6 +871,137 @@ async def delete_model_context_window_override(
         details={"changed_fields": ["model_context_window_overrides"], "slug": normalized},
     )
     return await _model_context_window_overrides_response(context)
+
+
+# Native compaction model routes (model_compaction_routes).
+MODEL_COMPACTION_ROUTES_PATH = "/model-compaction-routes"
+
+_COMPACTION_ROUTE_REASON_MESSAGES: dict[CompactionRouteIncompatibility, str] = {
+    CompactionRouteIncompatibility.CODING_MODEL_UNAVAILABLE: (
+        "The coding model is not a native model offered to accounts"
+    ),
+    CompactionRouteIncompatibility.COMPACTION_MODEL_UNAVAILABLE: (
+        "The compaction model is not a native model offered to accounts"
+    ),
+    CompactionRouteIncompatibility.NOTHING_CHANGES: "The route names the same model without another effort",
+    CompactionRouteIncompatibility.CHECKPOINT_FORMAT_MISMATCH: "The models use different compaction checkpoint formats",
+    CompactionRouteIncompatibility.RESPONSES_LITE_MISMATCH: "Only one of the models uses Responses Lite",
+    CompactionRouteIncompatibility.CONTEXT_WINDOW_TOO_SMALL: (
+        "The compaction model's context limit is below the coding model's client window"
+    ),
+    CompactionRouteIncompatibility.INPUT_MODALITIES_MISSING: (
+        "The compaction model lacks an input type the coding model accepts"
+    ),
+    CompactionRouteIncompatibility.EFFORT_UNSUPPORTED: "The compaction model does not support this effort",
+    CompactionRouteIncompatibility.COMPACTION_MODEL_ROUTED: "The compaction model has a route of its own",
+}
+
+
+def _compaction_route_rows(rows: list[ModelCompactionRoute]) -> dict[str, CompactionRoute]:
+    return {row.slug: CompactionRoute(row.slug, row.compaction_model, row.reasoning_effort) for row in rows}
+
+
+async def _compaction_routes_response(context: SettingsContext) -> CompactionRoutesResponse:
+    registry = get_model_registry()
+    routes = _compaction_route_rows(await ModelCompactionRoutesRepository(context.session).list_all())
+    client_windows = await effective_client_windows()
+    models = [
+        native
+        for model in await list_model_catalogue()
+        if (native := native_route_model(registry, model.slug)) is not None
+    ]
+    entries: list[CompactionRouteResponse] = []
+    for route in routes.values():
+        reason = compaction_route_incompatibility(
+            route, routes=routes, registry=registry, client_windows=client_windows
+        )
+        entries.append(
+            CompactionRouteResponse(
+                slug=route.slug,
+                compaction_model=route.compaction_model,
+                reasoning_effort=route.reasoning_effort,
+                status="active" if reason is None else "inactive",
+                reason=None if reason is None else str(reason),
+            )
+        )
+    return CompactionRoutesResponse(
+        models=[
+            CompactionRouteModelResponse(
+                slug=model.slug,
+                display_name=model.display_name,
+                reasoning_efforts=[level.effort for level in model.supported_reasoning_levels],
+            )
+            for model in models
+        ],
+        routes=entries,
+    )
+
+
+@router.get(MODEL_COMPACTION_ROUTES_PATH, response_model=CompactionRoutesResponse)
+async def get_model_compaction_routes(
+    context: SettingsContext = Depends(get_settings_context),
+) -> CompactionRoutesResponse:
+    return await _compaction_routes_response(context)
+
+
+@router.put(MODEL_COMPACTION_ROUTES_PATH + "/{slug:path}", response_model=CompactionRoutesResponse)
+async def put_model_compaction_route(
+    request: Request,
+    slug: str,
+    payload: CompactionRouteUpsertRequest,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> CompactionRoutesResponse:
+    normalized = _validate_model_slug(slug)
+    repository = ModelCompactionRoutesRepository(context.session)
+    route = CompactionRoute(normalized, payload.compaction_model, payload.reasoning_effort)
+    routes = _compaction_route_rows(await repository.list_all())
+    routes[normalized] = route
+    reason = compaction_route_incompatibility(
+        route,
+        routes=routes,
+        registry=get_model_registry(),
+        client_windows=await effective_client_windows(),
+    )
+    if reason is not None:
+        raise DashboardBadRequestError(_COMPACTION_ROUTE_REASON_MESSAGES[reason], code="compaction_route_incompatible")
+    feeding = next(
+        (other for other in routes.values() if other.slug != normalized and other.compaction_model == normalized),
+        None,
+    )
+    if feeding is not None:
+        raise DashboardBadRequestError(
+            f"{normalized} compacts {feeding.slug}; a compaction model cannot have a route of its own",
+            code="compaction_route_incompatible",
+        )
+    await repository.upsert(normalized, route.compaction_model, route.reasoning_effort)
+    # Proxies read a cached snapshot: clear + durably bump before responding.
+    await get_model_compaction_routes_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_compaction_routes"], "slug": normalized},
+    )
+    return await _compaction_routes_response(context)
+
+
+@router.delete(MODEL_COMPACTION_ROUTES_PATH + "/{slug:path}", response_model=CompactionRoutesResponse)
+async def delete_model_compaction_route(
+    request: Request,
+    slug: str,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> CompactionRoutesResponse:
+    normalized = _validate_model_slug(slug)
+    if not await ModelCompactionRoutesRepository(context.session).delete(normalized):
+        raise DashboardNotFoundError("Compaction route not found", code="compaction_route_not_found")
+    await get_model_compaction_routes_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_compaction_routes"], "slug": normalized},
+    )
+    return await _compaction_routes_response(context)
 
 
 # end M4 model catalogue

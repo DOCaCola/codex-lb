@@ -48,6 +48,7 @@ import {
   createQuotaPlannerSettings,
   createQuotaPlannerWarmupActionResponse,
   createRequestLogFilterOptions,
+  createCompactionRoutes,
   createModelContextWindowOverrides,
   createUpstreamProxyAdmin,
   createRequestLogsResponse,
@@ -55,6 +56,7 @@ import {
   SCIM_BASE_PATH,
   type DashboardAuthSession,
   type DashboardSettings,
+  type CompactionRoutes,
   type ModelContextWindowOverrides,
   type ModelSource,
   type QuotaPlannerDecision,
@@ -416,6 +418,7 @@ type MockState = {
   quotaPlannerDecisions: QuotaPlannerDecision[];
   upstreamProxyAdmin: UpstreamProxyAdmin;
   modelContextWindowOverrides: ModelContextWindowOverrides;
+  compactionRoutes: CompactionRoutes;
   quotaPlannerForecast: QuotaPlannerForecast;
   apiKeys: ApiKey[];
   automations: Array<{
@@ -524,6 +527,7 @@ function createInitialState(): MockState {
     quotaPlannerDecisions: [createQuotaPlannerDecision()],
     upstreamProxyAdmin: createUpstreamProxyAdmin(),
     modelContextWindowOverrides: createModelContextWindowOverrides(),
+    compactionRoutes: createCompactionRoutes(),
     quotaPlannerForecast: createQuotaPlannerForecast(),
     apiKeys: createDefaultApiKeys(),
     automations: [],
@@ -1861,6 +1865,48 @@ export const handlers = [
           : others,
     };
     return HttpResponse.json(state.modelContextWindowOverrides);
+  }),
+
+  http.get("/api/settings/model-compaction-routes", () => {
+    return HttpResponse.json(state.compactionRoutes);
+  }),
+
+  http.put("/api/settings/model-compaction-routes/:slug*", async ({ params, request }) => {
+    const slug = decodeURIComponent(String(params.slug));
+    const payload = await parseJsonBody(
+      request,
+      z.object({ compactionModel: z.string().min(1), reasoningEffort: z.string().min(1).nullable() }),
+    );
+    const models = state.compactionRoutes.models;
+    if (!payload || !models.some((model) => model.slug === slug)) {
+      return HttpResponse.json(
+        { error: { code: "compaction_route_incompatible", message: "The coding model is not a native model offered to accounts" } },
+        { status: 400 },
+      );
+    }
+    const others = state.compactionRoutes.routes.filter((route) => route.slug !== slug);
+    state.compactionRoutes = {
+      ...state.compactionRoutes,
+      routes: [...others, { slug, ...payload, status: "active" as const, reason: null }].sort((a, b) =>
+        a.slug.localeCompare(b.slug),
+      ),
+    };
+    return HttpResponse.json(state.compactionRoutes);
+  }),
+
+  http.delete("/api/settings/model-compaction-routes/:slug*", ({ params }) => {
+    const slug = decodeURIComponent(String(params.slug));
+    if (!state.compactionRoutes.routes.some((route) => route.slug === slug)) {
+      return HttpResponse.json(
+        { error: { code: "compaction_route_not_found", message: "Compaction route not found" } },
+        { status: 404 },
+      );
+    }
+    state.compactionRoutes = {
+      ...state.compactionRoutes,
+      routes: state.compactionRoutes.routes.filter((route) => route.slug !== slug),
+    };
+    return HttpResponse.json(state.compactionRoutes);
   }),
 
   http.put("/api/settings", async ({ request }) => {

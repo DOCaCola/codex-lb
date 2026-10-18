@@ -145,6 +145,7 @@ from app.core.openai.compaction import (
     encode_codex_lb_compaction_summary,
     lower_opaque_compaction_items_for_model_source,
 )
+from app.core.openai.compaction_routes import compaction_routes_for
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.host_models import resolve_default_host_model
 from app.core.openai.images import (
@@ -2422,6 +2423,7 @@ async def _apply_api_key_enforcement_with_fast_mode_policy(
         payload,
         api_key,
         prohibit_fast_mode=prohibit_fast_mode,
+        compaction_routes=await compaction_routes_for(payload),
     )
     return (
         prohibit_fast_mode,
@@ -7365,6 +7367,7 @@ async def _stream_responses(
             # A forwarded payload carries the origin's signed effective tier.
             # Restore that tier below, then apply the global policy once.
             prohibit_fast_mode=prohibit_fast_mode and not forwarded_request,
+            compaction_routes=await compaction_routes_for(payload),
         ).service_tier_was_enforced
     if forwarded_request:
         payload.service_tier = forwarded_effective_service_tier
@@ -7766,6 +7769,7 @@ async def _collect_responses(
             payload,
             api_key,
             prohibit_fast_mode=prohibit_fast_mode,
+            compaction_routes=await compaction_routes_for(payload),
         ).service_tier_was_enforced
     apply_enforced_service_tier_model_fallback(
         payload,
@@ -7992,6 +7996,7 @@ async def _compact_responses(
         payload,
         api_key,
         prohibit_fast_mode=prohibit_fast_mode,
+        compaction_routes=await compaction_routes_for(payload),
     )
     apply_enforced_service_tier_model_fallback(
         payload,
