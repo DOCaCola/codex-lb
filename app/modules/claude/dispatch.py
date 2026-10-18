@@ -24,7 +24,7 @@ from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.failover import SendBudget
 from app.modules.claude.profile import RequestProfile, recognize_native
-from app.modules.claude.protocol import ADVANCED_TOOL_USE_BETA, defers_tools
+from app.modules.claude.protocol import ADVANCED_TOOL_USE_BETA, THINKING_DISPLAY_UPDATES_BETA, defers_tools
 from app.modules.claude.recovery import THINKING_BINDING_BETA, bind_replayed_thinking
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.request import has_native_identity, project_request
@@ -226,6 +226,9 @@ class ClaudeDispatchPreparer:
         thinking = projected.body.get("thinking")
         if isinstance(thinking, dict) and "block_binding" in thinking:
             feature_betas.append(THINKING_BINDING_BETA)
+        # The display, like a binding, is rejected without its beta.
+        if isinstance(thinking, dict) and thinking.get("display") == "updates":
+            feature_betas.append(THINKING_DISPLAY_UPDATES_BETA)
         if not native:
             if isinstance(thinking, dict) and thinking.get("type") in {"enabled", "adaptive"}:
                 feature_betas.append("interleaved-thinking-2025-05-14")

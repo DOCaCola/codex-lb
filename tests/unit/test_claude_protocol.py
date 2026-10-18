@@ -1389,3 +1389,189 @@ def test_responses_lite_bundle_hosted_tools_do_not_duplicate_declarations():
 def test_responses_lite_bundle_requires_a_tools_array():
     with pytest.raises(ClientPayloadError, match="additional_tools requires a tools array"):
         project(request(input=[{"type": "additional_tools", "role": "developer"}, _user("Hi")]), max_output_tokens=8192)
+
+
+ADAPTIVE = ReasoningSpec(mode="adaptive", levels=("low", "medium", "high"), default="high")
+
+
+def _thinking(model, reasoning):
+    payload = request(model=model, reasoning=reasoning)
+    return project_responses(payload, max_output_tokens=64000, reasoning=ADAPTIVE).body.get("thinking")
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic/claude-opus-5-5",
+        "anthropic/claude-opus-5-5-20260901",
+        "anthropic/claude-fable-5-1",
+        "anthropic/claude-mythos-5-1",
+        "anthropic/claude-sonnet-5",
+        "anthropic/claude-sonnet-5-5",
+    ],
+)
+def test_progress_display_models_ask_for_updates_without_a_caller_display(model):
+    assert _thinking(model, {"effort": "high"}) == {"type": "adaptive", "display": "updates"}
+
+
+@pytest.mark.parametrize(
+    "model,reasoning,thinking",
+    [
+        ("anthropic/claude-haiku-5-5", {"effort": "high"}, {"type": "adaptive"}),
+        ("anthropic/claude-opus-5", {"effort": "high"}, {"type": "adaptive"}),
+        (
+            "anthropic/claude-opus-5-5",
+            {"effort": "high", "display": "summarized"},
+            {"type": "adaptive", "display": "summarized"},
+        ),
+        ("anthropic/claude-opus-5-5", {"effort": "high", "display": "omitted"}, {"type": "adaptive"}),
+        ("anthropic/claude-opus-5-5", {"effort": "none"}, None),
+    ],
+    ids=["haiku-5-5", "opus-5", "summarized", "omitted", "no-reasoning"],
+)
+def test_progress_display_is_not_added_otherwise(model, reasoning, thinking):
+    assert _thinking(model, reasoning) == thinking
+
+
+UPDATE = {"type": "thinking", "thinking": "Checking the config next.", "signature": "sig-update"}
+REASONING = {"type": "thinking", "thinking": "", "signature": "sig-reasoning"}
+
+
+def _progress_adapter(*, updates=True):
+    projected = project(request(tools=[LOOKUP_TOOL]), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec(), progress_updates=updates)
+    return adapter, next(iter(projected.tools.by_wire))
+
+
+def _stream_thinking(adapter, index, block):
+    events = adapter.consume(
+        {
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {**block, "thinking": "", "signature": ""},
+        }
+    )
+    if block["thinking"]:
+        events += adapter.consume(
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "thinking_delta", "thinking": block["thinking"]},
+            }
+        )
+    events += adapter.consume(
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "signature_delta", "signature": block["signature"]},
+        }
+    )
+    return events + adapter.consume({"type": "content_block_stop", "index": index})
+
+
+def test_progress_update_is_delivered_as_commentary_after_its_signed_carrier(caplog):
+    adapter, wire = _progress_adapter()
+    events = adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    events += _stream_thinking(adapter, 0, REASONING)
+    update_events = _stream_thinking(adapter, 1, UPDATE)
+    events += update_events
+    tool = {"type": "tool_use", "id": "call", "name": wire, "input": {}}
+    events += adapter.consume({"type": "content_block_start", "index": 2, "content_block": tool})
+    events += adapter.consume({"type": "content_block_stop", "index": 2})
+    events += adapter.consume({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}})
+    with caplog.at_level(logging.INFO):
+        events += adapter.consume({"type": "message_stop"})
+    # Nothing visible streams before the signed block completes.
+    assert [event["type"] for event in update_events[:1]] == ["response.output_item.added"]
+    assert not any(event["type"] == "response.output_text.delta" for event in update_events[:-6])
+    done = [(event["output_index"], event["item"]) for event in events if event["type"] == "response.output_item.done"]
+    assert [(index, item["type"]) for index, item in done] == [
+        (0, "reasoning"),
+        (1, "reasoning"),
+        (2, "message"),
+        (3, "function_call"),
+    ]
+    carrier, copy = done[1][1], done[2][1]
+    assert carrier["summary"] == []
+    assert (copy["phase"], copy["content"]) == (
+        "commentary",
+        [{"type": "output_text", "text": UPDATE["thinking"], "annotations": []}],
+    )
+    opaque_state = adapter.opaque.authenticate(str(carrier["encrypted_content"]), client_scope="key-a")
+    assert (opaque_state.block, opaque_state.presented) == (UPDATE, True)
+    plain = adapter.opaque.authenticate(str(done[0][1]["encrypted_content"]), client_scope="key-a")
+    assert plain.presented is False
+    terminal = events[-1]["response"]
+    assert [item["id"] for item in terminal["output"]] == [item["id"] for _, item in done]
+    assert "progress_updates=1" in caplog.text
+
+
+def test_progress_update_copy_reaches_the_non_streaming_response():
+    adapter, _ = _progress_adapter()
+    terminal = adapter.complete(
+        {
+            "id": "m",
+            "content": [UPDATE, {"type": "text", "text": "Done."}],
+            "stop_reason": "end_turn",
+            "usage": {},
+        }
+    )
+    output = terminal["output"]
+    assert [(item["type"], item.get("phase")) for item in output] == [
+        ("reasoning", None),
+        ("message", "commentary"),
+        ("message", "final_answer"),
+    ]
+
+
+def test_interrupted_progress_update_is_shown_and_the_response_stays_incomplete():
+    adapter, _ = _progress_adapter()
+    notice = {**UPDATE, "thinking": "This part of the response was interrupted before it finished."}
+    terminal = adapter.complete({"id": "m", "content": [notice], "stop_reason": "max_tokens", "usage": {}})
+    assert (terminal["status"], terminal["incomplete_details"]) == ("incomplete", {"reason": "max_output_tokens"})
+    assert terminal["output"][1]["content"][0]["text"] == notice["thinking"]
+
+
+@pytest.mark.parametrize("updates,block", [(True, REASONING), (False, UPDATE)], ids=["empty-block", "not-requested"])
+def test_thinking_without_a_progress_update_stays_a_reasoning_item(updates, block):
+    adapter, _ = _progress_adapter(updates=updates)
+    events = adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    events += _stream_thinking(adapter, 0, block)
+    assert [event["item"]["type"] for event in events if event["type"] == "response.output_item.done"] == ["reasoning"]
+    state = adapter.opaque.authenticate(str(adapter.outputs[0]["encrypted_content"]), client_scope="key-a")
+    assert state.presented is False
+
+
+def test_stream_failing_inside_a_progress_update_delivers_no_copy():
+    adapter, _ = _progress_adapter()
+    events = adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    events += adapter.consume(
+        {"type": "content_block_start", "index": 0, "content_block": {**UPDATE, "thinking": "", "signature": ""}}
+    )
+    events += adapter.consume(
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Checking"}}
+    )
+    events += adapter.consume({"type": "error", "error": {"type": "overloaded_error"}})
+    assert not any(event["type"] in ("response.output_item.done", "response.output_text.delta") for event in events)
+
+
+def test_presented_update_replays_its_signed_block_before_the_tool_call():
+    opaque = codec()
+    carrier = {"type": "reasoning", "encrypted_content": opaque.encode(scope(), UPDATE, presented=True)}
+    payload = request(
+        tools=[LOOKUP_TOOL],
+        input=[
+            _user("inspect"),
+            carrier,
+            {"type": "function_call", "name": "lookup", "call_id": "call", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call", "output": "ok"},
+        ],
+    )
+    body = project(
+        payload,
+        max_output_tokens=8192,
+        restore_reasoning=lambda token: opaque.authenticate(token, client_scope=scope().client_scope).block,
+    ).body
+    assistant = at(body, "messages", 1, "content")
+    assert [block["type"] for block in array(assistant)] == ["thinking", "tool_use"]
+    assert at(assistant, 0) == UPDATE

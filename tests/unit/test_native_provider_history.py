@@ -53,6 +53,21 @@ def test_claude_thinking_is_omitted_without_mutating_tools_or_history(caplog):
     ensure_native_provider_history({"input": projected})
 
 
+def test_presented_progress_update_reaches_openai_once_through_its_copy():
+    opaque = codec()
+    update = {"type": "thinking", "thinking": "Switching to the new file.", "signature": "signed"}
+    carrier = {**reasoning(opaque), "encrypted_content": opaque.encode(scope(), update, presented=True)}
+    copy = {
+        "type": "message",
+        "role": "assistant",
+        "phase": "commentary",
+        "content": [{"type": "output_text", "text": update["thinking"]}],
+    }
+    projected = convert([carrier, copy], opaque)
+    assert projected == [copy]
+    ensure_native_provider_history({"input": projected})
+
+
 def test_cross_client_projection_fails_without_mutation():
     opaque = codec()
     items = [reasoning(opaque)]

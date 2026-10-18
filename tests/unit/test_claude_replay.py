@@ -311,3 +311,75 @@ def test_external_task_does_not_skip_signed_history_authentication():
     payload["input"].append(TASK_INPUT)
     with pytest.raises(ClientPayloadError):
         read(payload, opaque, client_scope="other", model="other")
+
+
+PROGRESS = {"type": "thinking", "thinking": "Checking the config next.", "signature": "sig-update"}
+CALL = {"type": "function_call", "name": "lookup", "call_id": "call", "arguments": "{}"}
+
+
+def _copy(text=PROGRESS["thinking"], **fields):
+    return {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}], **fields}
+
+
+def progress_history(opaque, copy, *, presented=True, completed=True):
+    token = opaque.encode(scope(), PROGRESS, presented=presented)
+    items = [{"role": "user", "content": "inspect"}, {"type": "reasoning", "encrypted_content": token}]
+    items += [copy] if copy is not None else []
+    items += [CALL, {"type": "function_call_output", "call_id": "call", "output": "ok"}]
+    if completed:
+        items.append({"role": "user", "content": "next"})
+    return {"input": items}
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [_copy(phase="commentary", id="resp_m_1_update"), _copy(phase="commentary"), _copy()],
+    ids=["with-id", "without-id", "without-phase"],
+)
+@pytest.mark.parametrize("target", ["source-a", "source-b"])
+def test_unedited_progress_copy_is_dropped_when_the_signed_block_is_forwarded(caplog, copy, target):
+    opaque = codec()
+    payload = progress_history(opaque, copy)
+    original = deepcopy(payload)
+    with caplog.at_level("INFO"):
+        projected = read(payload, opaque).project(payload, source_id=target, model=scope().model)["input"]
+    assert projected == [payload["input"][0], payload["input"][1], *payload["input"][3:]]
+    assert "progress_copies=1" in caplog.text
+    assert payload == original
+
+
+@pytest.mark.parametrize(
+    "copy,presented",
+    [
+        (_copy("Checking the config, then tests.", phase="commentary"), True),
+        (_copy(phase="final_answer"), True),
+        (_copy(phase="commentary"), False),
+        (None, True),
+    ],
+    ids=["edited", "final-answer", "legacy-envelope", "missing-copy"],
+)
+def test_progress_history_without_an_exact_copy_replays_as_sent(copy, presented):
+    opaque = codec()
+    payload = progress_history(opaque, copy, presented=presented)
+    assert read(payload, opaque).project(payload, source_id="source-a", model=scope().model) == payload
+
+
+def test_compaction_on_another_account_keeps_the_update_text_once():
+    opaque = codec()
+    payload = compact(progress_history(opaque, _copy(phase="commentary")))
+    replay = read(payload, opaque, require_complete_history=True)
+    projected = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    assert projected == [payload["input"][0], *payload["input"][2:]]
+    assert str(projected).count(PROGRESS["thinking"]) == 1
+
+
+def test_compaction_without_the_copy_converts_the_update_to_text():
+    opaque = codec()
+    payload = compact(progress_history(opaque, None))
+    replay = read(payload, opaque, require_complete_history=True)
+    projected = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    assert projected[1] == {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": PROGRESS["thinking"]}],
+    }

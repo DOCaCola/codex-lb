@@ -960,3 +960,26 @@ status, upstream block type counts and output tokens, so reasoning-only or empty
 turns (seen 2026-10-03 00:45–01:09 UTC on Opus 5.5) can be classified. An
 empty-completion guard is deferred until those logs show the cause; Codex
 already retries stream errors itself and persists reasoning items as they finish.
+
+## Progress updates as commentary (2026-10-18)
+
+Opus 5.5, Fable 5.1, Mythos 5.1, Sonnet 5 and Sonnet 5.5 answer a mid-turn steer
+in a progress update: a short signed `thinking` block placed before the next tool
+call. Without `thinking.display` these models default to `omitted`, which empties
+that text, so Codex showed only an empty reasoning item and the steer looked
+ignored. Local Opus 5.5 rollouts held about 5,800 reasoning items without text;
+7 of 14 steers got no visible reply. Translated Responses requests now send
+`display: "updates"` with `thinking-display-updates-2026-08-18`, the shape Claude
+Code uses for the same models (CLIProxyAPI `claudeModelUsesProgressDisplay`).
+OpenCodex #7108 reported the same symptom; its PR #7143 (`2cd40297e`) shows
+signed updates as commentary the same way.
+
+Example: Claude returns `thinking("Switching to the new file as you asked.", sig)`
+then `tool_use`. Codex receives an empty-summary reasoning item whose envelope
+holds the signed block marked `presented`, a `commentary` message with that text,
+then the function call. On replay the block is restored before its `tool_use` and
+the unedited copy is dropped; an edited copy is sent as written. Compaction to a
+readable form and the OpenAI handoff keep the copy and drop the block, so the
+text appears once. Chat Completions still asks for `summarized` and is unchanged.
+Not live-qualified: OAuth acceptance of the beta, which Claude Code and OpenCodex
+send over OAuth.

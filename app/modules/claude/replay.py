@@ -213,6 +213,31 @@ class ReplayBlock:
     strict: bool
 
 
+def _presented_copy(items: list[JsonValue], block: ReplayBlock) -> int | None:
+    """Index of the unedited commentary copy that follows a presented progress update, if the client kept it."""
+    if not block.envelope.presented or block.index + 1 >= len(items):
+        return None
+    item = items[block.index + 1]
+    if (
+        not isinstance(item, dict)
+        or item.get("type", "message") != "message"
+        or item.get("role") != "assistant"
+        or item.get("phase") not in (None, "commentary")
+        or not isinstance(content := item.get("content"), list)
+    ):
+        return None
+    texts: list[str] = []
+    for part in content:
+        if (
+            not isinstance(part, dict)
+            or part.get("type") != "output_text"
+            or not isinstance(text := part.get("text"), str)
+        ):
+            return None
+        texts.append(text)
+    return block.index + 1 if "".join(texts) == block.envelope.block.get("thinking") else None
+
+
 @dataclass(frozen=True)
 class ClaudeReplay:
     blocks: tuple[ReplayBlock, ...]
@@ -227,7 +252,7 @@ class ClaudeReplay:
         if not isinstance(items, list):
             return payload
         replaced: dict[int, JsonValue | None] = {}
-        converted = omitted = searched = unanswered = 0
+        converted = omitted = searched = unanswered = presented = 0
         # Claude search calls replayed natively, and projections of those that cannot be.
         native_searches: set[str] = set()
         foreign_searches: dict[str, str] = {}
@@ -256,7 +281,17 @@ class ClaudeReplay:
             # Anthropic accepts signed thinking from any Claude model or account and drops
             # blocks the target cannot read, so forwarding it keeps the history append-only.
             # Only a summarizer must read completed thinking another route produced.
+            copy = _presented_copy(items, block)
             if native or block.strict or not self.readable_history:
+                if copy is not None:
+                    # The signed block carries the update; its visible copy would repeat it as text.
+                    replaced[copy] = None
+                    presented += 1
+                continue
+            if copy is not None:
+                # The copy already holds the update as portable assistant text.
+                replaced[block.index] = None
+                converted += 1
                 continue
             text = envelope.block.get("thinking") if envelope.block["type"] == "thinking" else None
             assert text is None or isinstance(text, str)
@@ -291,11 +326,13 @@ class ClaudeReplay:
         if not replaced:
             return payload
         logger.info(
-            "claude_reasoning_projection converted=%d omitted=%d search_projected=%d search_unanswered=%d",
+            "claude_reasoning_projection converted=%d omitted=%d search_projected=%d search_unanswered=%d "
+            "progress_copies=%d",
             converted,
             omitted,
             searched,
             unanswered,
+            presented,
         )
         projected: list[JsonValue] = []
         for index, item in enumerate(items):

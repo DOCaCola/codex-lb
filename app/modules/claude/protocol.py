@@ -24,7 +24,7 @@ from app.core.openai.additional_tools import (
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
 from app.core.utils.request_id import get_request_id
-from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, supports_mid_system
+from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, supports_mid_system, uses_progress_display
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_contract
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import deferred_search, search_replay, search_tool
@@ -40,6 +40,7 @@ _WIRE_CALL_ID = re.compile(r"[A-Za-z0-9_-]+")
 _ENCODED_CALL_ID_PREFIX = "cxlb_tid_v1_"
 # Claude Code sends this beta while tool search defers tools (CLIProxyAPI claudeBodyUsesAdvancedToolUse).
 ADVANCED_TOOL_USE_BETA = "advanced-tool-use-2025-11-20"
+THINKING_DISPLAY_UPDATES_BETA = "thinking-display-updates-2026-08-18"
 # Anthropic keeps the prompt cache when deferred tools are added, but not when a request goes from no
 # deferred tool to one, and the advanced-tool-use beta follows the first deferred tool. A search-capable
 # request therefore declares this never-referenced deferred tool from its first turn, so each discovery
@@ -724,6 +725,9 @@ def project_responses(
             else:
                 body["thinking"] = {"type": "enabled", "budget_tokens": budget}
         thinking = body["thinking"] != {"type": "disabled"}
+        if thinking and display is None and uses_progress_display(str(payload.get("model"))):
+            # Progress updates answer the user between tool calls; the model default omits their text.
+            body["thinking"]["display"] = "updates"
         if thinking and (choice == "required" or isinstance(choice, dict)):
             raise invalid("Claude thinking cannot be combined with a forced tool choice", "tool_choice")
     text = payload.get("text")

@@ -165,6 +165,7 @@ async def prepare_responses(
     visible_chat_reasoning = chat_reasoning and (
         not isinstance(reasoning, dict) or reasoning.get("display") != "omitted"
     )
+    thinking = projection.body.get("thinking")
     return ClaudeAttempt(
         prepared,
         ResponsesProjection(
@@ -174,6 +175,7 @@ async def prepare_responses(
             search_enabled=projection.search_enabled,
             deferred_searches=projection.deferred_searches,
             chat_reasoning=visible_chat_reasoning,
+            progress_updates=isinstance(thinking, dict) and thinking.get("display") == "updates",
         ),
     )
 

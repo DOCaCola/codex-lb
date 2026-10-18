@@ -69,6 +69,11 @@ _LEGACY_SYSTEM_REMINDER_MODELS = frozenset(
 _PRESERVED_THINKING_MODELS = frozenset({"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"})
 # These accept a block binding only with adaptive thinking; the others also with manual budgets.
 _ADAPTIVE_ONLY_BINDING_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-5"})
+# Models Claude Code asks for progress updates with ``thinking.display: "updates"`` when no display
+# was chosen (CLIProxyAPI claudeModelUsesProgressDisplay, measured on Claude Code 2.1.280).
+_PROGRESS_DISPLAY_MODELS = frozenset(
+    {"claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-sonnet-5", "claude-sonnet-5-5"}
+)
 
 
 def _base_model(model: str) -> str:
@@ -82,6 +87,11 @@ def model_policy(model: str) -> ModelPolicy | None:
 def supports_mid_system(model: str) -> bool:
     """Whether the model accepts instructions as a mid-conversation ``system`` turn."""
     return _base_model(model) not in _LEGACY_SYSTEM_REMINDER_MODELS
+
+
+def uses_progress_display(model: str) -> bool:
+    """Whether the model writes progress updates that ``display: "updates"`` returns as readable text."""
+    return _base_model(model) in _PROGRESS_DISPLAY_MODELS
 
 
 def accepts_thinking_binding(model: str, thinking_type: object) -> bool:

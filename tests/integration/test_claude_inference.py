@@ -977,6 +977,35 @@ async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_c
     assert "thinking-binding-controls-2026-08-01" not in captured[1][3]["anthropic-beta"]
 
 
+async def test_responses_turn_on_progress_model_delivers_update_as_commentary(async_client, pool, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.modules.claude.client import ClaudeClient
+    from app.modules.claude.schemas import CatalogModel
+
+    model = "claude-opus-5-5"
+    monkeypatch.setattr(ClaudeClient, "catalog", AsyncMock(return_value=[CatalogModel(id=model, display_name="Opus")]))
+    assert (await async_client.post(f"/api/claude-accounts/{pool[0]}/refresh")).status_code == 200
+    selected = await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"selections": [{"model": model}]})
+    assert selected.status_code == 200
+    update = {"type": "thinking", "thinking": "Switching to the new file as you asked.", "signature": "signed"}
+    captured, _ = install_upstream(monkeypatch, content=[update, {"type": "text", "text": "Done."}])
+    response = await async_client.post(
+        "/v1/responses",
+        json={"model": f"anthropic/{model}", "input": "Hello", "stream": False, "reasoning": {"effort": "high"}},
+    )
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["thinking"]["display"] == "updates"
+    assert "thinking-display-updates-2026-08-18" in captured[0][3]["anthropic-beta"].split(",")
+    output = response.json()["output"]
+    assert [(item["type"], item.get("phase")) for item in output] == [
+        ("reasoning", None),
+        ("message", "commentary"),
+        ("message", "final_answer"),
+    ]
+    assert output[1]["content"][0]["text"] == update["thinking"]
+
+
 async def test_native_stream_truncation_returns_native_error_and_closes_transport(async_client, pool, monkeypatch):
     captured, closed = install_upstream(monkeypatch, truncate=True)
     response = await async_client.post(

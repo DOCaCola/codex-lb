@@ -127,6 +127,8 @@ class ResponsesProjection:
     opaque: ClaudeOpaqueState
     search_enabled: bool = False
     chat_reasoning: bool = False
+    # The request asked for ``display: "updates"``: thinking text is a progress update for the user.
+    progress_updates: bool = False
     # Searches the request resumes, by call ID: the original search item ID and its deferred call. Anthropic
     # runs them first, so their results open this response without a call of their own.
     deferred_searches: dict[str, tuple[str, dict[str, JsonValue]]] = field(default_factory=dict)
@@ -135,6 +137,11 @@ class ResponsesProjection:
     sequence: int = 0
     blocks: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     outputs: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
+    # Output index of each block's item. A presented progress update adds its commentary copy
+    # after its own item, so later blocks shift by the number of copies before them.
+    slots: dict[int, int] = field(default_factory=dict)
+    shift: int = 0
+    progress_update_count: int = 0
     partial_json: dict[int, str] = field(default_factory=dict)
     partial_json_bytes: dict[int, int] = field(default_factory=dict)
     # The client tool behind each tool_use block, by content index.
@@ -252,7 +259,9 @@ class ResponsesProjection:
             if final and self.chat_reasoning and kind == "thinking" and isinstance(block.get("thinking"), str):
                 result["summary"] = [{"type": "summary_text", "text": block["thinking"]}]
             if final:
-                result["encrypted_content"] = self.opaque.encode(self.scope, block)
+                result["encrypted_content"] = self.opaque.encode(
+                    self.scope, block, presented=self._progress_update(block) is not None
+                )
             return result
         if kind == "tool_use":
             name = block.get("name")
@@ -324,6 +333,51 @@ class ResponsesProjection:
                     result["encrypted_function_args"] = []
             return result
         raise ClaudeError("Claude returned an unsupported content block")
+
+    def _progress_update(self, block: dict[str, JsonValue]) -> str | None:
+        """The readable text of a progress update; under ``updates`` only those blocks carry text."""
+        text = block.get("thinking") if self.progress_updates and block.get("type") == "thinking" else None
+        return text if isinstance(text, str) and text else None
+
+    def _present_update(self, index: int, slot: int, text: str) -> list[dict[str, JsonValue]]:
+        """Deliver a progress update as its own commentary message right after its signed carrier."""
+        copy_slot = slot + 1
+        self.shift += 1
+        self.progress_update_count += 1
+        part: dict[str, JsonValue] = {"type": "output_text", "text": "", "annotations": []}
+        message: dict[str, JsonValue] = {
+            "id": f"{self.response_id}_{index}_update",
+            "type": "message",
+            "role": "assistant",
+            "status": "in_progress",
+            "content": [deepcopy(part)],
+        }
+        events = [
+            self.event("response.output_item.added", output_index=copy_slot, item=deepcopy(message)),
+            self.event(
+                "response.content_part.added",
+                item_id=message["id"],
+                output_index=copy_slot,
+                content_index=0,
+                part=deepcopy(part),
+            ),
+            self.event(
+                "response.output_text.delta", item_id=message["id"], output_index=copy_slot, content_index=0, delta=text
+            ),
+            self.event(
+                "response.output_text.done", item_id=message["id"], output_index=copy_slot, content_index=0, text=text
+            ),
+        ]
+        part["text"] = text
+        message.update(status="completed", phase="commentary", content=[deepcopy(part)])
+        self.outputs[copy_slot] = message
+        events.append(
+            self.event(
+                "response.content_part.done", item_id=message["id"], output_index=copy_slot, content_index=0, part=part
+            )
+        )
+        events.append(self.event("response.output_item.done", output_index=copy_slot, item=deepcopy(message)))
+        return events
 
     def consume(self, event: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
         events = self._translate(event)
@@ -427,21 +481,21 @@ class ResponsesProjection:
                     )
                 ]
             item = self._item(index, block, final=False)
-            self.outputs[index] = item
+            slot = index + self.shift
+            self.slots[index] = slot
+            self.outputs[slot] = item
             # Any other valid block after the message proves more work follows in this turn.
             events = self._close_message("commentary")
-            events.append(self.event("response.output_item.added", output_index=index, item=deepcopy(item)))
+            events.append(self.event("response.output_item.added", output_index=slot, item=deepcopy(item)))
             if block.get("type") == "server_tool_use":
-                events.append(
-                    self.event("response.web_search_call.in_progress", item_id=item["id"], output_index=index)
-                )
+                events.append(self.event("response.web_search_call.in_progress", item_id=item["id"], output_index=slot))
             if block.get("type") == "text":
-                self.text_parts[index] = (index, 0)
+                self.text_parts[index] = (slot, 0)
                 events.append(
                     self.event(
                         "response.content_part.added",
                         item_id=item["id"],
-                        output_index=index,
+                        output_index=slot,
                         content_index=0,
                         part=part,
                     )
@@ -489,12 +543,13 @@ class ResponsesProjection:
                 self.partial_json[index] = self.partial_json.get(index, "") + piece
                 if wrapped:
                     return []  # The private envelope must never reach client deltas.
-                item = self.outputs[index]
+                slot = self.slots[index]
+                item = self.outputs[slot]
                 if item["type"] in ("custom_tool_call", "web_search_call", "tool_search_call"):
                     return []  # Their input is decoded and delivered whole when the block completes.
                 return [
                     self.event(
-                        "response.function_call_arguments.delta", item_id=item["id"], output_index=index, delta=piece
+                        "response.function_call_arguments.delta", item_id=item["id"], output_index=slot, delta=piece
                     )
                 ]
             field_name = {"text_delta": "text", "thinking_delta": "thinking", "signature_delta": "signature"}.get(
@@ -521,8 +576,8 @@ class ResponsesProjection:
                 return [
                     self.event(
                         "response.reasoning_summary_text.delta",
-                        item_id=self.outputs[index]["id"],
-                        output_index=index,
+                        item_id=self.outputs[self.slots[index]]["id"],
+                        output_index=self.slots[index],
                         summary_index=0,
                         delta=delta[field_name],
                     )
@@ -568,15 +623,16 @@ class ResponsesProjection:
                 ),
             ]
         item = self._item(index, self.blocks.pop(index), final=True)
-        self.outputs[index] = item
+        slot = self.slots[index]
+        self.outputs[slot] = item
         events = []
         if block.get("type") == "server_tool_use":
             call_id = block["id"]
             assert isinstance(call_id, str)
             if call_id in self.search_calls:
                 raise ClaudeError("Duplicate Claude server call")
-            self.search_calls[call_id] = (index, deepcopy(block))
-            return [self.event("response.web_search_call.searching", item_id=item["id"], output_index=index)]
+            self.search_calls[call_id] = (slot, deepcopy(block))
+            return [self.event("response.web_search_call.searching", item_id=item["id"], output_index=slot)]
         if block.get("type") == "web_search_tool_result":
             call_id = block["tool_use_id"]
             assert isinstance(call_id, str)
@@ -600,7 +656,7 @@ class ResponsesProjection:
                     self.event(
                         "response.function_call_arguments.delta",
                         item_id=item["id"],
-                        output_index=index,
+                        output_index=slot,
                         delta=item["arguments"],
                     )
                 )
@@ -608,7 +664,7 @@ class ResponsesProjection:
                 self.event(
                     "response.function_call_arguments.done",
                     item_id=item["id"],
-                    output_index=index,
+                    output_index=slot,
                     arguments=item["arguments"],
                 )
             )
@@ -618,20 +674,23 @@ class ResponsesProjection:
                     self.event(
                         "response.custom_tool_call_input.delta",
                         item_id=item["id"],
-                        output_index=index,
+                        output_index=slot,
                         delta=item["input"],
                     ),
                     self.event(
                         "response.custom_tool_call_input.done",
                         item_id=item["id"],
-                        output_index=index,
+                        output_index=slot,
                         input=item["input"],
                     ),
                 ]
             )
         if item["type"] in _EXECUTABLE_ITEMS and self.held is None:
             self.held = []
-        events.append(self.event("response.output_item.done", output_index=index, item=deepcopy(item)))
+        events.append(self.event("response.output_item.done", output_index=slot, item=deepcopy(item)))
+        update = self._progress_update(block)
+        if update is not None:
+            events.extend(self._present_update(index, slot, update))
         return events
 
     def _defer_searches(self) -> list[dict[str, JsonValue]]:
@@ -642,7 +701,7 @@ class ResponsesProjection:
         every content block.
         """
         events: list[dict[str, JsonValue]] = []
-        position = self.block_types.total()
+        position = self.block_types.total() + self.shift
         for call_index, call in self.search_calls.values():
             search_item = self.outputs[call_index]
             search_item["status"] = "in_progress"
@@ -681,7 +740,7 @@ class ResponsesProjection:
         logger.info(
             "claude_message_stop request_id=%s response_id=%s model=%s stop_reason=%s status=%s "
             "blocks=%s output_tokens=%d open=%s pending_search=%d deferred_search=%d refusal_category=%s "
-            "withheld=%d delivered_output=%s",
+            "withheld=%d delivered_output=%s progress_updates=%d",
             get_request_id(),
             self.response_id,
             self.scope.model,
@@ -695,6 +754,7 @@ class ResponsesProjection:
             self.refusal_category,
             len(withheld),
             self.delivered_output,
+            self.progress_update_count,
         )
         if not valid:
             if self.stop_reason is not None and self.stop_reason not in _STOP_REASONS:
@@ -714,7 +774,9 @@ class ResponsesProjection:
             closing = self._close_message(_TERMINAL_PHASES.get(str(self.stop_reason)))
             if deferred_search:
                 closing.extend(self._defer_searches())
-        discarded = {self.text_parts[index][0] if index in self.text_parts else index for index in self.blocks}
+        discarded = {
+            self.text_parts[index][0] if index in self.text_parts else self.slots[index] for index in self.blocks
+        }
         discarded.update(call_index for call_index, _ in self.search_calls.values())
         discarded.update(withheld)
         if self.open_message is not None:

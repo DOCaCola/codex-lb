@@ -19,6 +19,8 @@ class SignedBlock(BaseModel):
     model: str
     client_scope: str
     block: dict[str, JsonValue]
+    # A progress update whose text was also delivered as a visible commentary message.
+    presented: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,7 +34,7 @@ class ClaudeOpaqueState:
     def __init__(self, encryptor: TokenEncryptor) -> None:
         self.encryptor = encryptor
 
-    def encode(self, scope: OpaqueScope, block: dict[str, JsonValue]) -> str:
+    def encode(self, scope: OpaqueScope, block: dict[str, JsonValue], *, presented: bool = False) -> str:
         if block.get("type") not in ("thinking", "redacted_thinking", "web_search"):
             raise ValueError("Only native Claude thinking or search state belongs in opaque reasoning")
         envelope = SignedBlock(
@@ -40,6 +42,7 @@ class ClaudeOpaqueState:
             model=scope.model,
             client_scope=scope.client_scope,
             block=block,
+            presented=presented,
         )
         return PREFIX + self.encryptor.encrypt(envelope.model_dump_json()).decode("ascii")
 
