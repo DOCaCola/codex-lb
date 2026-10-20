@@ -2102,6 +2102,22 @@ class _HTTPBridgeStreamingMixin:
                 return False
             return True
 
+        def owner_holds_no_upstream_state() -> bool:
+            """Return whether the bridge owner holds nothing this turn depends on.
+
+            A durable row without a response anchor has completed no turn, or
+            its anchor was invalidated. A request without
+            ``previous_response_id`` then reaches upstream as the client's
+            complete input, so the owner is a routing preference only.
+            """
+            return (
+                durable_lookup is not None
+                and durable_lookup.latest_response_id is None
+                and payload.previous_response_id is None
+                and isinstance(payload.input, list)
+                and bool(payload.input)
+            )
+
         def classify_account_neutral_replay_rejection() -> _AccountNeutralReplayRejection | None:
             """Return why this turn cannot move accounts, or None when it can.
 
@@ -2113,16 +2129,20 @@ class _HTTPBridgeStreamingMixin:
 
             if rewritten_file_account_id is not None:
                 return "file_bound"
-            if not durable_full_resend_retains_required_context():
+            unanchored = owner_holds_no_upstream_state()
+            if not unanchored and not durable_full_resend_retains_required_context():
                 return durable_full_resend_context_rejection or "no_durable_lookup"
             if durable_full_resend_fresh_payload is None:
-                if not isinstance(payload.input, list) or durable_full_resend_anchor_count is None:
+                if not isinstance(payload.input, list):
+                    return "no_durable_lookup"
+                stored_count = len(payload.input) if unanchored else durable_full_resend_anchor_count
+                if stored_count is None:
                     # Unreachable while the proof above holds; kept explicit so
                     # a future caller cannot turn it into an AssertionError.
                     return "no_durable_lookup"
                 replay_projection = project_responses_input_for_account_neutral_fresh_replay(
                     cast(list[JsonValue], payload.input),
-                    stored_count=durable_full_resend_anchor_count,
+                    stored_count=stored_count,
                 )
                 if replay_projection is None:
                     return "account_scoped_input"
