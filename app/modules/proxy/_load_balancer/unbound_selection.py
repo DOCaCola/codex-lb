@@ -65,6 +65,9 @@ class UnboundSelectionRequest(Generic[SelectionInputsT]):
     relative_availability_power: float
     relative_availability_top_k: int
     required_account_id: str | None
+    # True when ``required_account_id`` is a hard owner the request may not
+    # leave, as opposed to a preferred account it may fall back from.
+    required_account_is_owner: bool
     budget_threshold_pct: float
     secondary_budget_threshold_pct: float
     routing_costs_by_account_id: RoutingCostsByAccount | None
@@ -109,6 +112,7 @@ async def run_unbound_selection_path(
     relative_availability_power = request.relative_availability_power
     relative_availability_top_k = request.relative_availability_top_k
     required_account_id = request.required_account_id
+    required_account_is_owner = request.required_account_is_owner
     budget_threshold_pct = request.budget_threshold_pct
     secondary_budget_threshold_pct = request.secondary_budget_threshold_pct
     routing_costs_by_account_id = request.routing_costs_by_account_id
@@ -217,6 +221,15 @@ async def run_unbound_selection_path(
                 def _select_from(candidates: list[AccountState]) -> SelectionResult:
                     return _select_account_preferring_budget_safe(
                         candidates,
+                        # ``_prepare_sticky_selection_states`` above narrowed
+                        # ``states`` to ``required_account_id``. When that
+                        # account is a hard owner the pool has no sibling to
+                        # fail over to, and without the flag the owner's
+                        # bounded transient backoff empties the pool and the
+                        # turn dies as ``continuity_owner_unavailable``. A
+                        # merely preferred account keeps the fallback off so
+                        # the caller can choose a healthy sibling instead.
+                        hard_owner_pool=required_account_is_owner,
                         prefer_earlier_reset=prefer_earlier_reset_accounts,
                         prefer_earlier_reset_window=prefer_earlier_reset_window,
                         routing_strategy=routing_strategy,

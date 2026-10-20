@@ -56,6 +56,7 @@ class _AffinitySelectionKwargs(TypedDict):
     sticky_seed_kind: StickySessionKind | None
     spill_bare_session_on_account_cap: bool
     abandon_unavailable_legacy_owner: bool
+    sticky_owner_holds_no_upstream_state: bool
     require_unambiguous_account: bool
     sticky_max_age_seconds: int | None
 
@@ -71,6 +72,13 @@ class _AffinityPolicy:
     # An explicit, self-contained Codex goal restart may retire only a raw
     # compatibility owner whose durable account status is unavailable.
     abandon_unavailable_legacy_owner: bool = False
+    # Ownership is established by a completed response. The HTTP bridge sets
+    # this when the conversation's durable row holds no response anchor and
+    # the request names no ``previous_response_id``: the account a hard
+    # CODEX_SESSION row names served no turn this request depends on. That row
+    # is then locality, not ownership: selection prefers its account, may serve
+    # the turn elsewhere when that account cannot, and rebinds the row there.
+    owner_holds_no_upstream_state: bool = False
     max_age_seconds: int | None = None
     codex_session_source: _CodexSessionSource | None = None
     # A thread row is soft locality, but old replicas may have persisted the
@@ -141,6 +149,7 @@ class _AffinityPolicy:
             "sticky_seed_kind": self.seed_selection_kind,
             "spill_bare_session_on_account_cap": self.spill_on_account_cap,
             "abandon_unavailable_legacy_owner": self.abandon_unavailable_legacy_owner,
+            "sticky_owner_holds_no_upstream_state": self.owner_holds_no_upstream_state,
             "require_unambiguous_account": self.require_unambiguous_account,
             "sticky_max_age_seconds": self.max_age_seconds,
         }

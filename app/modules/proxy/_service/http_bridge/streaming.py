@@ -1893,6 +1893,23 @@ class _HTTPBridgeStreamingMixin:
                 previous_response_trimmed_input_count = len(previous_response_input_items)
                 previous_response_trimmed_input_fingerprint = _fingerprint_input_items(previous_response_input_items)
                 effective_payload = effective_payload.model_copy(update={"input": trimmed_input_items})
+        # Ownership is established by a completed response. A durable row
+        # without a response anchor names the account that last served this
+        # thread, but that account holds nothing a request without
+        # ``previous_response_id`` depends on: the client sends its complete
+        # input. That account is then no continuity owner, and neither is the
+        # account a turn-state alias issued on it names. Ordinary selection
+        # prefers it and moves the turn, and the alias, when it cannot serve.
+        # Without this, a thread whose first turn failed upstream stays bound
+        # to the account that failed it.
+        durable_continuity_lookup = (
+            durable_lookup
+            if durable_lookup is not None
+            and (effective_payload.previous_response_id is not None or durable_lookup.latest_response_id is not None)
+            else None
+        )
+        if durable_lookup is not None and durable_continuity_lookup is None:
+            affinity = dataclasses.replace(affinity, owner_holds_no_upstream_state=True)
         request_state, text_data = prepare_bridge_request(effective_payload)
         request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
         request_state.affinity_policy = affinity
@@ -1924,16 +1941,16 @@ class _HTTPBridgeStreamingMixin:
             durable_lookup=durable_lookup,
         )
         request_state.preferred_account_id = (
-            durable_lookup.account_id
+            durable_continuity_lookup.account_id
             if (
-                durable_lookup is not None
+                durable_continuity_lookup is not None
                 and (
                     request_state.previous_response_id is not None
                     or bridge_session_key.strength == "hard"
                     or (
                         bridge_session_key.affinity_kind == "prompt_cache"
                         and request_state.request_stage == "follow_up"
-                        and durable_lookup.latest_turn_state is not None
+                        and durable_continuity_lookup.latest_turn_state is not None
                     )
                 )
             )
@@ -1987,13 +2004,13 @@ class _HTTPBridgeStreamingMixin:
                     ("live bridge", local_previous_response_owner),
                     ("previous-response index", indexed_previous_response_owner),
                 )
-        durable_lookup_requires_owner = durable_lookup is not None and (
+        durable_lookup_requires_owner = durable_continuity_lookup is not None and (
             request_state.previous_response_id is not None
             or bridge_session_key.strength == "hard"
             or (
                 bridge_session_key.affinity_kind == "prompt_cache"
                 and request_state.request_stage == "follow_up"
-                and durable_lookup.latest_turn_state is not None
+                and durable_continuity_lookup.latest_turn_state is not None
             )
         )
         # A retired owner is not a missing one. Failing closed is right when a
@@ -2102,22 +2119,6 @@ class _HTTPBridgeStreamingMixin:
                 return False
             return True
 
-        def owner_holds_no_upstream_state() -> bool:
-            """Return whether the bridge owner holds nothing this turn depends on.
-
-            A durable row without a response anchor has completed no turn, or
-            its anchor was invalidated. A request without
-            ``previous_response_id`` then reaches upstream as the client's
-            complete input, so the owner is a routing preference only.
-            """
-            return (
-                durable_lookup is not None
-                and durable_lookup.latest_response_id is None
-                and payload.previous_response_id is None
-                and isinstance(payload.input, list)
-                and bool(payload.input)
-            )
-
         def classify_account_neutral_replay_rejection() -> _AccountNeutralReplayRejection | None:
             """Return why this turn cannot move accounts, or None when it can.
 
@@ -2129,20 +2130,16 @@ class _HTTPBridgeStreamingMixin:
 
             if rewritten_file_account_id is not None:
                 return "file_bound"
-            unanchored = owner_holds_no_upstream_state()
-            if not unanchored and not durable_full_resend_retains_required_context():
+            if not durable_full_resend_retains_required_context():
                 return durable_full_resend_context_rejection or "no_durable_lookup"
             if durable_full_resend_fresh_payload is None:
-                if not isinstance(payload.input, list):
-                    return "no_durable_lookup"
-                stored_count = len(payload.input) if unanchored else durable_full_resend_anchor_count
-                if stored_count is None:
+                if not isinstance(payload.input, list) or durable_full_resend_anchor_count is None:
                     # Unreachable while the proof above holds; kept explicit so
                     # a future caller cannot turn it into an AssertionError.
                     return "no_durable_lookup"
                 replay_projection = project_responses_input_for_account_neutral_fresh_replay(
                     cast(list[JsonValue], payload.input),
-                    stored_count=stored_count,
+                    stored_count=durable_full_resend_anchor_count,
                 )
                 if replay_projection is None:
                     return "account_scoped_input"

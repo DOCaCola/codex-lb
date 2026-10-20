@@ -363,6 +363,8 @@ Prompt-cache and sticky-thread bridge affinity that does not carry a hard contin
 
 Requests that depend on `previous_response_id`, hard turn-state, nonblank `conversation`, account-scoped `input_file.file_id` pins, live or durable bridge ownership, replay/reattach state, or another required owner continuity source MUST NOT silently reroute to an account that cannot preserve continuity. A resolved required owner MUST override bare process-session locality and MUST be selected without consulting or rewriting that soft mapping. A `previous_response_id` is a stored-object continuation reference and remains owner-bound even when the same request also carries a session header, `prompt_cache_key`, or another soft locality key. If independently resolved hard sources identify different accounts, if live durable referenced-file pins identify different accounts, or if a request has partial live durable file-pin coverage, the service MUST fail closed before upstream dispatch. A request for which no referenced file has a live durable pin MUST preserve opaque `file_id` compatibility and proceed without inventing ownership evidence. If the owner account/session is unavailable or saturated, the service MUST fail closed with an explicit retryable continuity/local overload reason instead of flooding the owner queue indefinitely.
 
+Ownership is established by a completed response. An HTTP-bridge request without `previous_response_id` whose durable bridge row has no response anchor reaches upstream as the client's complete input, so the row's account holds nothing the request depends on. Neither that row nor a turn-state alias resolving to it MUST make the row's account a required owner or a preferred account for that request. A hard `codex_session` sticky row for the conversation MUST then act as a preference: selection keeps its account while that account can serve, and otherwise selects another eligible account and rebinds the row to it. A row with a response anchor, and any request carrying `previous_response_id`, keeps the owner-bound rules above.
+
 Every HTTP, compact, direct WebSocket, and HTTP-bridge transport MUST resolve explicit turn state against both live and durable bridge aliases. Live, durable, previous-response, file, and explicit turn-state evidence MUST be compared independently; source ordering MUST NOT choose the first match when distinct sessions or accounts resolve. A reused direct WebSocket MUST repeat nonblank `conversation` ownership validation for each response-create frame because the existing socket account proves only the current route. Single-account routing MUST constrain effective routing without narrowing the ownership-candidate pool used by that validation.
 
 When an HTTP-bridge owner is on another replica, the origin MUST forward its resolved durable file owner in authenticated full-context metadata. The receiving owner MUST perform its own fresh shared-database lookup and MUST require that durable result to match the forwarded owner. A missing or conflicting receiver-side durable owner MUST fail closed before account selection or upstream invocation. A retired direct WebSocket's upstream turn-state token MUST NOT be sent to a different account selected for a later movable bare-session request.
@@ -510,6 +512,22 @@ A nonblank `conversation` without a dedicated resolved owner MUST proceed only w
 - **WHEN** the proxy opens the replacement WebSocket
 - **THEN** it removes account A's stale turn-state token before connect
 - **AND** account B never receives that token
+
+#### Scenario: Unanchored thread leaves the account that failed it
+
+- **GIVEN** a thread's first HTTP-bridge turn on account A failed upstream after `response.created`
+- **AND** its durable row names account A and a turn state but no response anchor
+- **AND** account A is in error backoff from that failure
+- **WHEN** the client retries with that turn state and no `previous_response_id`
+- **THEN** the bridge requires no owner and selection serves the turn on another eligible account B
+- **AND** the durable row and the turn-state sticky row move to account B
+
+#### Scenario: Unanchored row keeps a healthy account
+
+- **GIVEN** a durable row without a response anchor and a hard `codex_session` sticky row both name account A
+- **AND** account A can serve
+- **WHEN** the client retries with the row's turn state and no `previous_response_id`
+- **THEN** selection keeps account A
 
 ### Requirement: Bare process-session cap spillover is non-mutating
 
@@ -1624,3 +1642,29 @@ When a request resolves a `prompt_cache`, `sticky_thread` or soft `codex_session
 - **GIVEN** a soft mapping pinned to a burn-first account at 99% primary usage, above the budget threshold
 - **WHEN** the next request on the mapping is selected
 - **THEN** the pinned account is kept
+
+### Requirement: Hard continuity owners are admitted during their own error backoff
+
+When account selection has narrowed the pool to a hard continuity owner, either through a hard sticky row or through a required account the request may not leave, and that owner is blocked only by transient error backoff, selection MUST admit the owner instead of failing the turn. The backoff steers movable work away from the account but MUST NOT abandon hard ownership. A preferred account the request may fall back from MUST NOT be admitted this way: while it is in error backoff, selection MUST fall back to another eligible account.
+
+#### Scenario: Hard owner in error backoff keeps the turn
+
+- **GIVEN** a hard `codex_session` sticky row names account A
+- **AND** account A is in transient error backoff and account B is available
+- **WHEN** a request for that conversation is selected
+- **THEN** account A is selected
+- **AND** the sticky row is not rewritten
+
+#### Scenario: Required owner in error backoff keeps the turn
+
+- **GIVEN** a request whose required continuity owner is account A
+- **AND** account A is in transient error backoff
+- **WHEN** the request is selected
+- **THEN** account A is selected instead of failing with a continuity-owner error
+
+#### Scenario: Preferred account in error backoff is not admitted
+
+- **GIVEN** a request prefers account A and may fall back from it
+- **AND** account A is in transient error backoff and account B is available
+- **WHEN** the request is selected
+- **THEN** account B is selected

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator, Collection
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -350,6 +351,83 @@ async def test_required_continuity_owner_miss_does_not_mark_healthy_pool_degrade
 
 
 @pytest.mark.asyncio
+async def test_required_continuity_owner_in_transient_backoff_is_still_admitted(
+    selection_cache: AccountSelectionCache,
+) -> None:
+    """The unbound path narrows to the owner, so its backoff must not kill the turn.
+
+    ``run_unbound_selection_path`` calls ``_prepare_sticky_selection_states``
+    with ``required_account_id``, which leaves a pool of exactly one account.
+    A bounded transient backoff on that owner then empties the pool and the
+    turn dies as ``continuity_owner_unavailable`` even though the account is
+    ACTIVE and merely serving a backoff it would leave in seconds.
+    """
+    owner = _account("contract-backoff-owner")
+    available_alternate = _account("contract-backoff-alternate")
+    balancer, _, _, _ = _balancer([owner, available_alternate], selection_cache)
+    balancer._runtime[owner.id] = load_balancer_module.RuntimeState(
+        error_count=5,
+        last_error_at=time.time() - 1.0,
+    )
+
+    selection = await balancer.select_account(
+        required_account_id=owner.id,
+        required_continuity_owner=True,
+        lease_kind="stream",
+    )
+
+    assert selection.account is not None
+    assert selection.account.id == owner.id
+    assert selection.error_code is None
+
+
+@pytest.mark.asyncio
+async def test_required_continuity_owner_paused_still_fails_closed(
+    selection_cache: AccountSelectionCache,
+) -> None:
+    owner = _account("contract-paused-owner")
+    owner.status = AccountStatus.PAUSED
+    available_alternate = _account("contract-paused-alternate")
+    balancer, _, _, _ = _balancer([owner, available_alternate], selection_cache)
+
+    selection = await balancer.select_account(
+        required_account_id=owner.id,
+        required_continuity_owner=True,
+        lease_kind="stream",
+    )
+
+    assert selection.account is None
+    assert selection.error_code == load_balancer_module.CONTINUITY_OWNER_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_preferred_account_in_transient_backoff_is_not_admitted(
+    selection_cache: AccountSelectionCache,
+) -> None:
+    """A preferred account is narrowed like an owner but may be left.
+
+    The caller selects a merely preferred account through the same narrowed
+    pool and falls back to ordinary selection when that pool yields nothing.
+    Admitting the backed-off preference would send the turn back to the
+    account that just failed it instead of to a healthy sibling.
+    """
+    preferred = _account("contract-backoff-preferred")
+    available_alternate = _account("contract-backoff-preferred-alternate")
+    balancer, _, _, _ = _balancer([preferred, available_alternate], selection_cache)
+    balancer._runtime[preferred.id] = load_balancer_module.RuntimeState(
+        error_count=5,
+        last_error_at=time.time() - 1.0,
+    )
+
+    selection = await balancer.select_account(
+        required_account_id=preferred.id,
+        lease_kind="stream",
+    )
+
+    assert selection.account is None
+
+
+@pytest.mark.asyncio
 async def test_deleted_required_continuity_owner_returns_typed_miss_without_global_health_change(
     selection_cache: AccountSelectionCache,
     monkeypatch: pytest.MonkeyPatch,
@@ -571,6 +649,83 @@ async def test_hard_sticky_owner_miss_does_not_mark_healthy_pool_degraded(
     assert selection.error_code == "hard_affinity_saturated"
     assert degraded_reasons == []
     assert normal_calls == []
+
+
+@pytest.mark.asyncio
+async def test_hard_sticky_owner_in_transient_backoff_keeps_the_turn(
+    selection_cache: AccountSelectionCache,
+) -> None:
+    owner = _account("contract-hard-backoff-owner")
+    available_alternate = _account("contract-hard-backoff-alternate")
+    balancer, _, _, sticky_repo = _balancer([owner, available_alternate], selection_cache)
+    sticky_repo.account_id = owner.id
+    balancer._runtime[owner.id] = load_balancer_module.RuntimeState(
+        error_count=5,
+        last_error_at=time.time() - 1.0,
+    )
+
+    selection = await balancer.select_account(
+        sticky_key="hard-owned-turn-state",
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        lease_kind="stream",
+    )
+
+    assert selection.account is not None
+    assert selection.account.id == owner.id
+    assert sticky_repo.account_id == owner.id
+
+
+@pytest.mark.asyncio
+async def test_hard_sticky_row_without_upstream_state_moves_off_a_backed_off_account(
+    selection_cache: AccountSelectionCache,
+) -> None:
+    """A hard row whose account served no turn this request depends on is a preference.
+
+    The bridge declares that the conversation holds no upstream state when its
+    durable row has no response anchor. The row's account then serves the turn
+    only while it can; in its error backoff a sibling serves it and the row
+    follows, so the next turn does not return to the account that failed.
+    """
+    previous = _account("contract-unanchored-previous")
+    available_alternate = _account("contract-unanchored-alternate")
+    balancer, _, _, sticky_repo = _balancer([previous, available_alternate], selection_cache)
+    sticky_repo.account_id = previous.id
+    balancer._runtime[previous.id] = load_balancer_module.RuntimeState(
+        error_count=5,
+        last_error_at=time.time() - 1.0,
+    )
+
+    selection = await balancer.select_account(
+        sticky_key="unanchored-turn-state",
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_owner_holds_no_upstream_state=True,
+        lease_kind="stream",
+    )
+
+    assert selection.account is not None
+    assert selection.account.id == available_alternate.id
+    assert sticky_repo.account_id == available_alternate.id
+
+
+@pytest.mark.asyncio
+async def test_hard_sticky_row_without_upstream_state_keeps_a_healthy_account(
+    selection_cache: AccountSelectionCache,
+) -> None:
+    previous = _account("contract-unanchored-healthy-previous")
+    available_alternate = _account("contract-unanchored-healthy-alternate")
+    balancer, _, _, sticky_repo = _balancer([previous, available_alternate], selection_cache)
+    sticky_repo.account_id = previous.id
+
+    selection = await balancer.select_account(
+        sticky_key="unanchored-healthy-turn-state",
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_owner_holds_no_upstream_state=True,
+        lease_kind="stream",
+    )
+
+    assert selection.account is not None
+    assert selection.account.id == previous.id
+    assert sticky_repo.account_id == previous.id
 
 
 @pytest.mark.asyncio

@@ -530,6 +530,52 @@ class _PrecreatedOverloadUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
         )
 
 
+class _CreatedThenServerErrorUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
+    """Acknowledges the response, then fails it while generating.
+
+    Upstream reports ``server_error`` after the response was created, by
+    which time the bridge has published the turn's turn-state alias.
+    """
+
+    async def send_text(self, text: str) -> None:
+        self.sent_text.append(text)
+        response_id = f"resp_server_error_{len(self.sent_text)}"
+        await self._messages.put(
+            _FakeUpstreamMessage(
+                "text",
+                text=json.dumps(
+                    {
+                        "type": "response.created",
+                        "response": {"id": response_id, "object": "response", "status": "in_progress"},
+                    },
+                    separators=(",", ":"),
+                ),
+            )
+        )
+        asyncio.get_running_loop().call_later(
+            0.2,
+            self._messages.put_nowait,
+            _FakeUpstreamMessage(
+                "text",
+                text=json.dumps(
+                    {
+                        "type": "response.failed",
+                        "response": {
+                            "id": response_id,
+                            "object": "response",
+                            "status": "failed",
+                            "error": {
+                                "code": "server_error",
+                                "message": "An error occurred while processing your request.",
+                            },
+                        },
+                    },
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+
+
 class _CreatedOnlyUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
     async def send_text(self, text: str) -> None:
         self.sent_text.append(text)
@@ -9023,6 +9069,128 @@ async def test_v1_responses_http_bridge_rebinds_immediately_when_the_owner_canno
     assert any(row.account_id == healthy_account.id for row in rows)
     assert all(row.continuity_abandoned_at is None for row in rows)
     assert all(row.continuity_abandonment_scope is None for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_backend_responses_http_bridge_unanchored_thread_leaves_the_account_that_failed_it(
+    async_client,
+    app_instance,
+    monkeypatch,
+):
+    """A thread whose first turn never completed has no continuity owner.
+
+    The first turn reaches account A, which fails it with ``server_error``
+    before completing, so the durable row names A and a turn state but no
+    response anchor. A holds nothing the retry depends on: the client resends
+    its complete input. The retry therefore must not require A; ordinary
+    selection chooses the account, here B, while A serves its error backoff.
+    """
+    _install_bridge_settings(monkeypatch, enabled=True)
+    failing_account_id = await _import_account(
+        async_client,
+        "acc_http_bridge_unanchored_failing",
+        "http-bridge-unanchored-failing@example.com",
+    )
+    healthy_account_id = await _import_account(
+        async_client,
+        "acc_http_bridge_unanchored_healthy",
+        "http-bridge-unanchored-healthy@example.com",
+    )
+    failing_account = await _get_account(failing_account_id)
+    healthy_account = await _get_account(healthy_account_id)
+    upstreams = {
+        failing_account.id: _CreatedThenServerErrorUpstreamWebSocket(),
+        healthy_account.id: _FakeBridgeUpstreamWebSocket(),
+    }
+    preferred_account_ids: list[str | None] = []
+    owner_holds_no_upstream_state: list[object] = []
+
+    async def fake_select_account_with_budget(self, deadline, **kwargs):
+        del self, deadline
+        preferred_account_id = cast(str | None, kwargs.get("preferred_account_id"))
+        preferred_account_ids.append(preferred_account_id)
+        owner_holds_no_upstream_state.append(kwargs.get("sticky_owner_holds_no_upstream_state"))
+        if preferred_account_id == failing_account.id:
+            # A serves the error backoff its failed turn put it in.
+            return AccountSelection(
+                account=None,
+                error_message="No available accounts",
+                error_code=CONTINUITY_OWNER_UNAVAILABLE,
+            )
+        account = failing_account if len(preferred_account_ids) == 1 else healthy_account
+        return AccountSelection(account=account, error_message=None, error_code=None)
+
+    async def fake_ensure_fresh_with_budget(self, target, *, force=False, timeout_seconds):
+        del self, force, timeout_seconds
+        return target
+
+    connected_account_ids: list[str] = []
+
+    async def fake_open_upstream_websocket_with_budget(self, account, headers, *, timeout_seconds, **kwargs):
+        del self, headers, timeout_seconds, kwargs
+        connected_account_ids.append(account.id)
+        return upstreams[account.id]
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget", fake_select_account_with_budget)
+    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
+    monkeypatch.setattr(
+        proxy_module.ProxyService,
+        "_open_upstream_websocket_with_budget",
+        fake_open_upstream_websocket_with_budget,
+    )
+
+    thread_headers = {"session_id": "session-unanchored-failure", "thread-id": "thread-unanchored-failure"}
+    request_body = {
+        "model": "gpt-5.1",
+        "instructions": "Return exactly OK.",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
+        "prompt_cache_key": "http-bridge-unanchored-failure",
+        # Codex Desktop sends its thread and turn ids; the account-neutral
+        # replay validator treats them as account-scoped, so only ordinary
+        # selection can move this request.
+        "client_metadata": {"thread_id": "thread-unanchored-failure", "turn_id": "turn-1"},
+    }
+    first = await asyncio.wait_for(
+        async_client.post("/backend-api/codex/responses", headers=thread_headers, json=request_body),
+        timeout=_TEST_SYNC_TIMEOUT_SECONDS,
+    )
+    assert "response.failed" in first.text
+    turn_state = first.headers.get("x-codex-turn-state")
+
+    deadline = time.monotonic() + _TEST_SYNC_TIMEOUT_SECONDS
+    rows: list[HttpBridgeSessionRecord] = []
+    while time.monotonic() < deadline:
+        async with SessionLocal() as session:
+            rows = list((await session.execute(select(HttpBridgeSessionRecord))).scalars().all())
+        if rows and rows[0].latest_turn_state is not None:
+            break
+        await asyncio.sleep(0.05)
+    assert [(row.account_id, row.latest_response_id, row.latest_turn_state) for row in rows] == [
+        (failing_account.id, None, turn_state)
+    ]
+    service = get_proxy_service_for_app(app_instance)
+    async with service._http_bridge_lock:
+        service._http_bridge_sessions.clear()
+
+    retry_headers = dict(thread_headers)
+    if turn_state is not None:
+        retry_headers["x-codex-turn-state"] = turn_state
+    second = await asyncio.wait_for(
+        async_client.post("/backend-api/codex/responses", headers=retry_headers, json=request_body),
+        timeout=_TEST_SYNC_TIMEOUT_SECONDS,
+    )
+
+    assert second.status_code == 200
+    assert "response.completed" in second.text
+    assert preferred_account_ids[-1] is None
+    # The turn-state alias issued on A is no hard owner either.
+    assert owner_holds_no_upstream_state == [False, True]
+    assert connected_account_ids == [failing_account.id, healthy_account.id]
+    retried_payload = json.loads(upstreams[healthy_account.id].sent_text[-1])
+    assert "previous_response_id" not in retried_payload
+    async with SessionLocal() as session:
+        rows = list((await session.execute(select(HttpBridgeSessionRecord))).scalars().all())
+    assert [row.account_id for row in rows] == [healthy_account.id]
 
 
 @pytest.mark.asyncio
