@@ -57,6 +57,7 @@ from app.core.errors import (
     sanitize_public_error_detail,
 )
 from app.core.exceptions import AppError
+from app.core.openai.encrypted_content import ENCRYPTED_CONTENT_REJECTION_CODE
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
@@ -87,7 +88,7 @@ from app.modules.proxy._service.compact import (
     _sticky_key_from_compact_payload as _sticky_key_from_compact_payload,
 )
 from app.modules.proxy._service.http_bridge.accepted_replay import (
-    _websocket_accepted_capacity_retry_error_code,
+    _websocket_accepted_output_free_retry_error_code,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _active_http_bridge_instance_ring as _active_http_bridge_instance_ring,
@@ -242,6 +243,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
 from app.modules.proxy._service.http_bridge.helpers import (
     _record_bridge_reattach as _record_bridge_reattach,
 )
+from app.modules.proxy._service.http_bridge.rejected_encrypted_content import request_state_encrypted_content_rejection
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
 )
@@ -1040,8 +1042,8 @@ def _websocket_precreated_retry_error_code(
         return None
     if request_state.response_id is not None and not request_state.awaiting_response_created:
         # An accepted response is only replayable under the output-free
-        # capacity rule; every pre-created classifier below refuses it.
-        return _websocket_accepted_capacity_retry_error_code(
+        # rule; every pre-created classifier below refuses it.
+        return _websocket_accepted_output_free_retry_error_code(
             request_state,
             event_type=event_type,
             error_code=_normalize_error_code(
@@ -1090,6 +1092,8 @@ def _websocket_precreated_retry_error_code(
         message=error_message,
     ):
         return None
+    if request_state_encrypted_content_rejection(request_state, error_code=error_code, error_message=error_message):
+        return ENCRYPTED_CONTENT_REJECTION_CODE
     if _is_account_model_unsupported_error(
         code=error_code,
         message=error_message,

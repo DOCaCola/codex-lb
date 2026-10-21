@@ -1025,6 +1025,142 @@ async def test_stream_responses_omits_foreign_reasoning_for_native_upstream(
     assert "foreign plaintext" in str(payload.to_payload()["input"])
 
 
+class _SequencedCodexClient(_CodexClient):
+    """Answers each request with the next response, as upstream would on a retry."""
+
+    def __init__(self, *responses: object) -> None:
+        super().__init__()
+        self.responses = list(responses)
+
+    async def request(self, method: str, url: str, *, route: ResolvedUpstreamRoute, **kwargs: Any) -> object:
+        self.calls.append({"method": method, "url": url, "route": route, **kwargs})
+        return self.responses.pop(0)
+
+
+class _EncryptedContentRejectionStreamResponse:
+    status_code = 200
+    headers = {"content-type": "text/event-stream"}
+
+    class _Content:
+        async def iter_chunked(self, size: int):
+            del size
+            yield (
+                b'data: {"type":"error","error":{"type":"invalid_request_error",'
+                b'"code":"invalid_encrypted_content",'
+                b'"message":"Encrypted function output content could not be decrypted or decoded."}}\n\n'
+            )
+
+    content = _Content()
+
+
+def _encrypted_tool_output_payload_input(ciphertext: str) -> list[dict[str, Any]]:
+    return [
+        {"role": "user", "content": [{"type": "input_text", "text": "run it"}]},
+        {"type": "function_call", "call_id": "call_enc", "name": "shell", "arguments": "{}"},
+        {
+            "type": "function_call_output",
+            "call_id": "call_enc",
+            "output": [{"type": "encrypted_content", "encrypted_content": ciphertext}],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_retries_once_without_ciphertext_upstream_refused(
+    route: ResolvedUpstreamRoute,
+) -> None:
+    client = _SequencedCodexClient(_EncryptedContentRejectionStreamResponse(), _StreamResponse())
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.4",
+            "instructions": "Reply.",
+            "input": _encrypted_tool_output_payload_input("refused-stream-ciphertext"),
+            "stream": True,
+        }
+    )
+
+    events = [
+        event
+        async for event in stream_responses(
+            payload,
+            {"user-agent": "codex"},
+            "access",
+            "chatgpt_account",
+            session=cast(Any, object()),
+            upstream_stream_transport_override="http",
+            route=route,
+            codex_client=cast(Any, client),
+        )
+    ]
+
+    assert events == ['data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n']
+    assert len(client.calls) == 2
+    assert "refused-stream-ciphertext" in json.dumps(client.calls[0]["json"])
+    assert "refused-stream-ciphertext" not in json.dumps(client.calls[1]["json"])
+    assert client.calls[1]["json"]["input"][-1]["output"] == [
+        {"type": "input_text", "text": "[encrypted content omitted]"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_responses_forwards_a_rejection_of_a_body_without_ciphertext(
+    route: ResolvedUpstreamRoute,
+) -> None:
+    client = _SequencedCodexClient(_EncryptedContentRejectionStreamResponse())
+    payload = ResponsesRequest(model="gpt-5.4", instructions="Reply.", input="hello", stream=True)
+
+    events = [
+        event
+        async for event in stream_responses(
+            payload,
+            {"user-agent": "codex"},
+            "access",
+            "chatgpt_account",
+            session=cast(Any, object()),
+            upstream_stream_transport_override="http",
+            route=route,
+            codex_client=cast(Any, client),
+        )
+    ]
+
+    assert len(client.calls) == 1
+    assert "invalid_encrypted_content" in events[0]
+
+
+@pytest.mark.asyncio
+async def test_compact_responses_retries_once_without_ciphertext_upstream_refused(
+    route: ResolvedUpstreamRoute,
+) -> None:
+    client = _SequencedCodexClient(
+        _CompactTerminalErrorStreamResponse("invalid_request_error", "invalid_encrypted_content"),
+        _CompactStreamResponse(),
+    )
+    payload = ResponsesCompactRequest.model_validate(
+        {
+            "model": "gpt-5.4",
+            "instructions": "Summarize.",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+                {"type": "reasoning", "summary": [], "encrypted_content": "refused-compact-ciphertext"},
+            ],
+        }
+    )
+
+    await compact_responses(
+        payload,
+        {"user-agent": "codex"},
+        "access",
+        "chatgpt_account",
+        session=cast(Any, object()),
+        route=route,
+        codex_client=cast(Any, client),
+    )
+
+    assert len(client.calls) == 2
+    assert "refused-compact-ciphertext" in json.dumps(client.calls[0]["json"])
+    assert "refused-compact-ciphertext" not in json.dumps(client.calls[1]["json"])
+
+
 @pytest.mark.asyncio
 async def test_stream_responses_websocket_transport_uses_codex_client_when_route_is_resolved(
     route: ResolvedUpstreamRoute,

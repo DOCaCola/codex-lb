@@ -212,6 +212,20 @@ def _disable_request_log_count_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_rejected_encrypted_content():
+    """Start every test without remembered upstream ciphertext rejections.
+
+    The store is process-global by design (a refused ciphertext stays refused
+    for every conversation that replays it), so a digest one test remembers
+    would otherwise strip another test's request."""
+    from app.core.openai.encrypted_content import REJECTED_ENCRYPTED_CONTENT
+
+    REJECTED_ENCRYPTED_CONTENT.clear()
+    yield
+    REJECTED_ENCRYPTED_CONTENT.clear()
+
+
+@pytest.fixture(autouse=True)
 def _disable_account_usage_summary_cache(monkeypatch):
     """Zero the account request-usage summary cache TTL so listing summaries
     stay exact within a test. The TTL is a fixed constant in production;

@@ -55,6 +55,7 @@ from app.core.errors import (
 from app.core.errors import (
     PREVIOUS_RESPONSE_NOT_FOUND_MESSAGE as PREVIOUS_RESPONSE_NOT_FOUND_MESSAGE,
 )
+from app.core.openai.encrypted_content import is_encrypted_content_rejection
 from app.core.openai.models import OpenAIError, OpenAIEvent, OpenAIResponsePayload, ResponseUsage
 from app.core.openai.parsing import classify_event_type, parse_sse_event
 from app.core.openai.requests import ResponsesRequest
@@ -1076,15 +1077,17 @@ def _is_account_neutral_request_rejection(
     health untouched but still lets failover try accounts whose entitlements
     may differ.
 
-    ``invalid_encrypted_content`` rejects ciphertext the client replayed. It
+    An explicit refusal of replayed ciphertext (``invalid_encrypted_content``
+    and the message identities ``is_encrypted_content_rejection`` names)
     says nothing about the serving account's ability to handle other
-    requests, so it surfaces unchanged without a health write or replay.
+    requests, so it never writes account health; the request is re-sent once
+    without that ciphertext (``app.core.openai.encrypted_content``).
     """
     if http_status is not None and http_status != 400:
         return False
     if is_account_neutral_safety_policy_rejection(code=code, http_status=http_status, message=message):
         return True
-    if code == "invalid_encrypted_content":
+    if is_encrypted_content_rejection(code, message):
         return True
     return code == "invalid_request_error" and bool(_facade()._is_missing_tool_output_message(message))
 

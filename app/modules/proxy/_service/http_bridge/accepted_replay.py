@@ -15,6 +15,12 @@ body keeps the anchored body on its owner) -- while the client keeps reading
 the single lifecycle it already observed. Quota and rate-limit terminals after
 acceptance deliberately stay fail-closed; see the openspec change
 ``retry-accepted-output-free-capacity-failures``.
+
+An explicit upstream refusal of replayed ciphertext
+(``invalid_encrypted_content``) is replay-safe on the same grounds: it fails
+the accepted turn before any output. It is re-sent once without the refused
+ciphertext, by the surface's own recovery branch, which neither penalizes nor
+excludes the account (openspec change ``recover-rejected-encrypted-content``).
 """
 
 from __future__ import annotations
@@ -23,7 +29,9 @@ import asyncio
 import logging
 from typing import Literal
 
+from app.core.openai.encrypted_content import ENCRYPTED_CONTENT_REJECTION_CODE
 from app.core.types import JsonValue
+from app.modules.proxy._service.http_bridge.rejected_encrypted_content import request_state_encrypted_content_rejection
 from app.modules.proxy._service.support import (
     _REQUEST_TRANSPORT_WEBSOCKET,
     _affinity_may_resolve_hard_owner,
@@ -213,7 +221,7 @@ def _terminal_payload_reports_output(payload: dict[str, JsonValue] | None) -> bo
     return False
 
 
-def _websocket_accepted_capacity_retry_error_code(
+def _websocket_accepted_output_free_retry_error_code(
     request_state: _WebSocketRequestState,
     *,
     event_type: str | None,
@@ -223,14 +231,15 @@ def _websocket_accepted_capacity_retry_error_code(
     payload: dict[str, JsonValue] | None,
     has_other_pending_requests: bool,
 ) -> str | None:
-    """Classify an output-free capacity terminal of an accepted request.
+    """Classify an output-free terminal of an accepted request.
 
     Returns the replay error code, or ``None`` when the terminal must surface
-    to the client unchanged. Only capacity codes and the selected-model
-    capacity message qualify; quota and rate-limit codes are refused before
-    the message-only fallback so they can never be reclassified as overload.
-    The returned code is always a transparent replay code
-    (``model_at_capacity`` is reported as ``server_is_overloaded``).
+    to the client unchanged. An explicit refusal of replayed ciphertext
+    qualifies as ``invalid_encrypted_content``. Otherwise only capacity codes
+    and the selected-model capacity message qualify; quota and rate-limit
+    codes are refused before the message-only fallback so they can never be
+    reclassified as overload. Every capacity code returned is a transparent
+    replay code (``model_at_capacity`` is reported as ``server_is_overloaded``).
     """
     if event_type not in _TERMINAL_EVENT_TYPES:
         return None
@@ -240,6 +249,8 @@ def _websocket_accepted_capacity_retry_error_code(
         return None
     if _terminal_payload_reports_output(payload):
         return None
+    if request_state_encrypted_content_rejection(request_state, error_code=error_code, error_message=error_message):
+        return ENCRYPTED_CONTENT_REJECTION_CODE
     if error_code in _ACCEPTED_REPLAY_FAIL_CLOSED_ERROR_CODES:
         return None
     if is_upstream_model_capacity_error(error_message) or error_code in _ACCEPTED_CAPACITY_REPLAY_ERROR_CODES:

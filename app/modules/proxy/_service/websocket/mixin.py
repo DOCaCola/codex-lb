@@ -81,6 +81,7 @@ from app.core.errors import (
 )
 from app.core.exceptions import AppError, ProxyAuthError
 from app.core.openai.compaction_routes import compaction_routes_for
+from app.core.openai.encrypted_content import ENCRYPTED_CONTENT_REJECTION_CODE
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import (
@@ -295,6 +296,10 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _record_bridge_reattach as _record_bridge_reattach,
+)
+from app.modules.proxy._service.http_bridge.rejected_encrypted_content import (
+    remember_request_state_rejected_encrypted_content,
+    strip_request_state_rejected_encrypted_content,
 )
 from app.modules.proxy._service.http_bridge.request_submit import (
     _text_with_account_installation_id as _text_with_account_installation_id,
@@ -6368,6 +6373,57 @@ class _WebSocketMixin:
                 # it, so the fresh body is re-sent to the same account on a
                 # fresh socket instead of excluding the account it must use.
                 request_state.request_text = safe_request_text
+        # An explicit refusal of replayed ciphertext is remembered whether or
+        # not this request can still be replayed: the client's next attempt
+        # goes through the native sanitizer, which removes it.
+        rejected_encrypted_content_added = (
+            remember_request_state_rejected_encrypted_content(
+                request_state,
+                error_code=_normalize_error_code(
+                    _websocket_event_error_code(event_type, payload),
+                    _websocket_event_error_type(event_type, payload),
+                ),
+                error_message=_websocket_event_error_message(event_type, payload),
+            )
+            if event_type in {"error", "response.failed"}
+            else 0
+        )
+        if retry_error_code == ENCRYPTED_CONTENT_REJECTION_CODE:
+            retry_error_code = None
+            # Only a body that carried newly refused ciphertext differs on the
+            # replay. An anchored request reconnects, so it needs its retained
+            # full-history body; the account is neither penalized nor
+            # excluded, because the ciphertext, not the account, was refused.
+            if (
+                rejected_encrypted_content_added > 0
+                and strip_request_state_rejected_encrypted_content(request_state)
+                and (
+                    request_state.previous_response_id is None
+                    or _install_verified_fresh_replay(
+                        request_state,
+                        require_proxy_injected_previous_response_id=False,
+                        require_account_neutral=False,
+                    )
+                    is not None
+                )
+            ):
+                upstream_control.reconnect_requested = True
+                await _stage_websocket_request_state_for_replay(
+                    request_state,
+                    create_gate=None,
+                    surface="websocket",
+                    trigger="encrypted_content_rejection",
+                )
+                request_state.replay_count += 1
+                _clear_websocket_request_error_overrides(request_state)
+                upstream_control.suppress_downstream_event = True
+                upstream_control.replay_request_state = request_state
+                _facade().logger.info(
+                    "encrypted_content_rejection_retry kind=websocket request_id=%s account_id=%s",
+                    request_state.request_log_id or request_state.request_id,
+                    account.id,
+                )
+                return downstream_text
         if retry_error_code == _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE:
             retry_text = None
             if not request_state.file_required_preferred_account:

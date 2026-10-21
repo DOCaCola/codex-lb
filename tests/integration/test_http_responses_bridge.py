@@ -18171,6 +18171,78 @@ async def test_backend_responses_http_bridge_retries_accepted_output_free_capaci
 
 
 @pytest.mark.asyncio
+async def test_backend_responses_http_bridge_replays_encrypted_content_rejection_without_the_ciphertext(
+    async_client,
+    monkeypatch,
+):
+    """Upstream accepts the bridged turn and then refuses the encrypted tool
+    output it replays. The bridge re-sends it once with that ciphertext
+    replaced, on the same account and without an account-health penalty."""
+    _install_bridge_settings(monkeypatch, enabled=True)
+    first_account_id = await _import_account(
+        async_client,
+        "acc_http_bridge_encrypted_a",
+        "http-bridge-encrypted-a@example.com",
+    )
+    second_account_id = await _import_account(
+        async_client,
+        "acc_http_bridge_encrypted_b",
+        "http-bridge-encrypted-b@example.com",
+    )
+    first_account = await _get_account(first_account_id)
+    second_account = await _get_account(second_account_id)
+    failing_upstream = _AcceptedOutputFreeCapacityErrorUpstreamWebSocket(
+        error_code="invalid_encrypted_content",
+        error_message="Encrypted function output content could not be decrypted or decoded.",
+    )
+    retry_upstream = _FakeBridgeUpstreamWebSocket("resp_encrypted_retry")
+    connect_account_ids, selection_exclusions = _install_two_account_bridge_failover(
+        monkeypatch,
+        first_account=first_account,
+        second_account=second_account,
+        upstreams=[failing_upstream, retry_upstream],
+    )
+    stream_errors: list[str] = []
+
+    async def spy_handle_stream_error(self, account, error, code, http_status=None):
+        del self, account, error, http_status
+        stream_errors.append(code)
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_handle_stream_error", spy_handle_stream_error)
+    ciphertext = "gAAAA-bridge-refused-tool-output"
+
+    events = await _collect_sse_events(
+        async_client,
+        "/backend-api/codex/responses",
+        json_body={
+            "model": "gpt-5.1",
+            "instructions": "Return exactly OK.",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "run it"}]},
+                {"type": "function_call", "call_id": "call_enc", "name": "shell", "arguments": "{}"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_enc",
+                    "output": [{"type": "encrypted_content", "encrypted_content": ciphertext}],
+                },
+            ],
+            "prompt_cache_key": "encrypted-content-retry-key",
+            "stream": True,
+        },
+    )
+
+    _assert_single_response_lifecycle_completed(events)
+    assert connect_account_ids == ["acc_http_bridge_encrypted_a", "acc_http_bridge_encrypted_a"]
+    assert first_account.id not in selection_exclusions[-1]
+    assert stream_errors == []
+    assert ciphertext in failing_upstream.sent_text[0]
+    assert len(retry_upstream.sent_text) == 1
+    replayed_input = json.loads(retry_upstream.sent_text[0])["input"]
+    assert replayed_input[-1]["output"] == [{"type": "input_text", "text": "[encrypted content omitted]"}]
+    assert ciphertext not in retry_upstream.sent_text[0]
+
+
+@pytest.mark.asyncio
 async def test_backend_responses_http_bridge_retries_accepted_output_free_abrupt_close_on_another_account(
     async_client,
     monkeypatch,

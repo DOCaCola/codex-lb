@@ -14690,6 +14690,186 @@ def _sequenced_accepted_capacity_failure_upstream(response_id: str) -> _Sequence
     )
 
 
+_REFUSED_TOOL_OUTPUT_CIPHERTEXT = "gAAAA-refused-tool-output"
+_REFUSED_REASONING_CIPHERTEXT = "gAAAA-refused-reasoning"
+
+
+def _encrypted_content_rejection(message: str) -> _FakeUpstreamMessage:
+    return _ws_event(
+        {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "code": "invalid_encrypted_content", "message": message},
+        }
+    )
+
+
+def _encrypted_tool_output_input() -> list[dict[str, Any]]:
+    return [
+        {"role": "user", "content": [{"type": "input_text", "text": "run it"}]},
+        {"type": "function_call", "call_id": "call_enc", "name": "shell", "arguments": "{}"},
+        {
+            "type": "function_call_output",
+            "call_id": "call_enc",
+            "output": [{"type": "encrypted_content", "encrypted_content": _REFUSED_TOOL_OUTPUT_CIPHERTEXT}],
+        },
+    ]
+
+
+def _assert_replayed_on_the_same_account_without_penalty(failover: _TwoAccountWebSocketFailover) -> None:
+    assert not failover.refused_connects, failover.refused_connects
+    assert failover.connect_accounts == [failover.FIRST_ACCOUNT_ID, failover.FIRST_ACCOUNT_ID]
+    # The ciphertext, not the account, was refused: nothing is excluded and
+    # account health is untouched.
+    assert failover.excluded_at_connect[-1] == set(), failover.excluded_at_connect
+    assert failover.stream_errors == []
+
+
+def test_backend_responses_websocket_replays_accepted_encrypted_content_rejection_without_the_ciphertext(
+    app_instance,
+    monkeypatch,
+):
+    """Upstream accepts the turn and then refuses the encrypted tool output it
+    replays (production 2026-10-01). The proxy re-sends the turn once with
+    that ciphertext replaced while the client observes one lifecycle."""
+    first_upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            [
+                *_accepted_output_free_prelude("resp_ws_encrypted_rejected"),
+                _encrypted_content_rejection("Encrypted function output content could not be decrypted or decoded."),
+            ]
+        ],
+    )
+    recovered_upstream = _recovered_upstream("resp_ws_encrypted_recovered")
+    failover = _TwoAccountWebSocketFailover(first_upstream, _recovered_upstream("resp_ws_unused"))
+    failover.upstreams_by_account[failover.FIRST_ACCOUNT_ID].append(recovered_upstream)
+    failover.install(monkeypatch)
+
+    events, disconnect = failover.run(
+        app_instance,
+        requests=[failover.response_create(_encrypted_tool_output_input())],
+    )
+
+    _assert_ws_single_response_lifecycle_completed(events, disconnect)
+    _assert_replayed_on_the_same_account_without_penalty(failover)
+    assert _REFUSED_TOOL_OUTPUT_CIPHERTEXT in first_upstream.sent_text[0]
+    assert len(recovered_upstream.sent_text) == 1
+    replayed_input = json.loads(recovered_upstream.sent_text[0])["input"]
+    assert replayed_input[-1]["output"] == [{"type": "input_text", "text": "[encrypted content omitted]"}]
+    assert _REFUSED_TOOL_OUTPUT_CIPHERTEXT not in recovered_upstream.sent_text[0]
+
+
+def test_backend_responses_websocket_replays_precreated_encrypted_reasoning_rejection_without_the_item(
+    app_instance,
+    monkeypatch,
+):
+    """Upstream refuses replayed reasoning before ``response.created``
+    (production 2026-08-18). The replay drops that reasoning item."""
+    first_upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            [
+                _encrypted_content_rejection(
+                    "The encrypted content for item rs_1 could not be verified. "
+                    "Reason: Encrypted content item_id did not match the target item id."
+                )
+            ]
+        ],
+    )
+    recovered_upstream = _recovered_upstream("resp_ws_reasoning_recovered")
+    failover = _TwoAccountWebSocketFailover(first_upstream, _recovered_upstream("resp_ws_unused"))
+    failover.upstreams_by_account[failover.FIRST_ACCOUNT_ID].append(recovered_upstream)
+    failover.install(monkeypatch)
+    reasoning = {"type": "reasoning", "summary": [], "encrypted_content": _REFUSED_REASONING_CIPHERTEXT}
+
+    events, disconnect = failover.run(
+        app_instance,
+        requests=[failover.response_create([failover.HISTORICAL_INPUT, reasoning, failover.FOLLOW_UP_INPUT])],
+    )
+
+    _assert_ws_single_response_lifecycle_completed(events, disconnect)
+    _assert_replayed_on_the_same_account_without_penalty(failover)
+    assert _REFUSED_REASONING_CIPHERTEXT in first_upstream.sent_text[0]
+    replayed_input = json.loads(recovered_upstream.sent_text[0])["input"]
+    assert [item.get("type") for item in replayed_input] == [
+        item.get("type") for item in (failover.HISTORICAL_INPUT, failover.FOLLOW_UP_INPUT)
+    ]
+
+
+def test_backend_responses_websocket_surfaces_a_second_encrypted_content_rejection(
+    app_instance,
+    monkeypatch,
+):
+    """The recovery replays once; a refused replay reaches the client."""
+    rejection = "Encrypted function output content could not be decrypted or decoded."
+    first_upstream = _SequencedUpstreamWebSocket(
+        [], deferred_message_batches=[[_encrypted_content_rejection(rejection)]]
+    )
+    refused_replay_upstream = _SequencedUpstreamWebSocket(
+        [], deferred_message_batches=[[_encrypted_content_rejection(rejection)]]
+    )
+    failover = _TwoAccountWebSocketFailover(first_upstream, _recovered_upstream("resp_ws_unused"))
+    failover.upstreams_by_account[failover.FIRST_ACCOUNT_ID].append(refused_replay_upstream)
+    failover.install(monkeypatch)
+
+    events, _disconnect = failover.run(
+        app_instance,
+        requests=[failover.response_create(_encrypted_tool_output_input())],
+    )
+
+    assert failover.connect_accounts == [failover.FIRST_ACCOUNT_ID, failover.FIRST_ACCOUNT_ID]
+    assert len(refused_replay_upstream.sent_text) == 1
+    assert events[-1]["type"] == "error"
+    assert events[-1]["error"]["code"] == "invalid_encrypted_content"
+    assert failover.stream_errors == []
+
+
+def test_backend_responses_websocket_replays_an_anchored_encrypted_content_rejection_with_the_stripped_fresh_body(
+    app_instance,
+    monkeypatch,
+):
+    """An anchored follow-up reconnects for its replay, so it is re-sent as
+    the retained full resend, without the refused ciphertext and without the
+    connection-local anchor."""
+    reasoning = {"type": "reasoning", "summary": [], "encrypted_content": _REFUSED_REASONING_CIPHERTEXT}
+    first_upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            _completed_first_turn_upstream_batch("resp_ws_encrypted_anchor_turn_1"),
+            [
+                *_accepted_output_free_prelude("resp_ws_encrypted_anchored_rejected"),
+                _encrypted_content_rejection(
+                    "The encrypted content for item rs_1 could not be verified. "
+                    "Reason: Encrypted content item_id did not match the target item id."
+                ),
+            ],
+        ],
+    )
+    recovered_upstream = _recovered_upstream("resp_ws_encrypted_anchored_recovered")
+    failover = _TwoAccountWebSocketFailover(first_upstream, _recovered_upstream("resp_ws_unused"))
+    failover.upstreams_by_account[failover.FIRST_ACCOUNT_ID].append(recovered_upstream)
+    failover.install(monkeypatch)
+
+    events, disconnect = failover.run(
+        app_instance,
+        requests=[
+            failover.response_create([failover.HISTORICAL_INPUT]),
+            failover.response_create([failover.HISTORICAL_INPUT, reasoning, failover.FOLLOW_UP_INPUT]),
+        ],
+        headers={"Authorization": "Bearer external-token"},
+    )
+
+    created_id = _assert_ws_single_response_lifecycle_completed(events, disconnect)
+    assert created_id == "resp_ws_encrypted_anchored_rejected"
+    _assert_replayed_on_the_same_account_without_penalty(failover)
+    anchored_payload = json.loads(first_upstream.sent_text[1])
+    assert anchored_payload["previous_response_id"] == "resp_ws_encrypted_anchor_turn_1"
+    assert _REFUSED_REASONING_CIPHERTEXT in first_upstream.sent_text[1]
+    fresh_payload = json.loads(recovered_upstream.sent_text[0])
+    assert "previous_response_id" not in fresh_payload
+    assert fresh_payload["input"] == [failover.HISTORICAL_INPUT, failover.FOLLOW_UP_INPUT]
+
+
 def test_backend_responses_websocket_sequenced_accepted_capacity_error_is_not_replayed(
     app_instance,
     monkeypatch,

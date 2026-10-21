@@ -18,12 +18,14 @@ from pydantic import (
 )
 
 from app.core.openai.compaction import lower_codex_lb_compaction_items
+from app.core.openai.encrypted_content import strip_rejected_encrypted_content
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import sanitize_native_reasoning_input as sanitize_native_reasoning_input
 from app.core.openai.reasoning import strip_invalid_native_item_ids
 from app.core.openai.subagent_messages import project_native_collaboration_tools
 from app.core.openai.tool_call_safety import is_downstream_side_effect_tool_call_item
 from app.core.types import JsonObject, JsonValue
+from app.core.usage.request_operation import get_request_operation
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
 type MutableJsonObject = dict[str, JsonValue]
@@ -1901,10 +1903,18 @@ def strip_unstored_lookup_item_ids(payload: Mapping[str, JsonValue]) -> MutableJ
 
 
 def sanitize_native_responses_input(payload: Mapping[str, JsonValue]) -> MutableJsonObject:
-    """Normalize stateless input for the native ChatGPT Responses boundary."""
+    """Normalize stateless input for the native ChatGPT Responses boundary.
+
+    Runs in the task that owns the request, so the ingress operation decides
+    whether ciphertext upstream already refused is removed.
+    """
 
     return project_native_collaboration_tools(
-        sanitize_native_reasoning_input(strip_unstored_lookup_item_ids(strip_invalid_native_item_ids(payload)))
+        sanitize_native_reasoning_input(
+            strip_unstored_lookup_item_ids(
+                strip_invalid_native_item_ids(strip_rejected_encrypted_content(payload, get_request_operation()))
+            )
+        )
     )
 
 

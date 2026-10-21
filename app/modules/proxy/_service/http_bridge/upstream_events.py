@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import anyio
 
@@ -40,6 +40,7 @@ from app.core.clients.proxy_websocket import (
 )
 from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler, clock_for, scheduler_for
 from app.core.errors import response_failed_event
+from app.core.openai.encrypted_content import ENCRYPTED_CONTENT_REJECTION_CODE
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import (
     _LIFECYCLE_EVENT_TYPES,
@@ -95,6 +96,10 @@ from app.modules.proxy._service.http_bridge.quarantine import (
     _http_bridge_quarantine_clear_fence,
     _record_http_bridge_quarantine_eventless_timeout,
     _record_http_bridge_quarantine_wedged_pending,
+)
+from app.modules.proxy._service.http_bridge.rejected_encrypted_content import (
+    remember_request_state_rejected_encrypted_content,
+    strip_request_state_rejected_encrypted_content,
 )
 from app.modules.proxy._service.http_bridge.retry_circuit import (
     _HTTP_BRIDGE_RETRY_CIRCUIT_ANCHOR_ABANDONED_DETAIL,
@@ -1697,6 +1702,39 @@ async def _retire_denied_http_bridge_anchor(
         )
     except Exception:
         logger.warning("Failed to retire a denied proxy-injected HTTP bridge anchor", exc_info=True)
+
+
+async def _replay_http_bridge_terminal_request(
+    service: Any,
+    session: "_HTTPBridgeSession",
+    request_state: _WebSocketRequestState,
+    *,
+    trigger: str,
+) -> Literal["retried", "failed", "gate_busy"]:
+    """Re-send a request whose terminal was classified replayable.
+
+    The request is re-queued at the head, staged to the pre-created shape and
+    handed to the pre-created retry. ``gate_busy`` means the create gate was
+    held by another request, so nothing was attempted and the upstream
+    terminal is forwarded as-is; ``failed`` means a replay was attempted.
+    """
+    async with session.pending_lock:
+        if request_state not in session.pending_requests:
+            session.pending_requests.appendleft(request_state)
+            session.queued_request_count += 1
+        staged = await _stage_websocket_request_state_for_replay(
+            request_state,
+            create_gate=session.response_create_gate,
+            surface="http_bridge",
+            trigger=trigger,
+        )
+    if staged and await service._retry_http_bridge_precreated_request(session):
+        return "retried"
+    async with session.pending_lock:
+        if request_state in session.pending_requests:
+            session.pending_requests.remove(request_state)
+            session.queued_request_count = max(0, session.queued_request_count - 1)
+    return "failed" if staged else "gate_busy"
 
 
 class _HTTPBridgeUpstreamEventsMixin:
@@ -3413,6 +3451,36 @@ class _HTTPBridgeUpstreamEventsMixin:
             payload=payload,
             has_other_pending_requests=has_other_pending_requests,
         )
+        # An explicit refusal of replayed ciphertext is remembered whether or
+        # not this request can still be replayed: the client's next attempt
+        # goes through the native sanitizer, which removes it. The replay
+        # follows the generic branch's anchor rules but writes no account
+        # health, because the ciphertext, not the account, was refused.
+        rejected_encrypted_content_added = (
+            remember_request_state_rejected_encrypted_content(
+                status_request_state,
+                error_code=_normalize_error_code(
+                    _websocket_event_error_code(event_type, payload),
+                    _websocket_event_error_type(event_type, payload),
+                ),
+                error_message=_websocket_event_error_message(event_type, payload),
+            )
+            if status_request_state is not None and event_type in {"error", "response.failed"}
+            else 0
+        )
+        replay_without_rejected_encrypted_content = False
+        if retry_error_code == ENCRYPTED_CONTENT_REJECTION_CODE:
+            retry_error_code = None
+            replay_without_rejected_encrypted_content = bool(
+                rejected_encrypted_content_added > 0
+                and status_request_state is not None
+                and not is_previous_response_not_found_event
+                and (
+                    status_request_state.previous_response_id is None
+                    or _http_bridge_accepted_anchored_replay_candidate(status_request_state)
+                )
+                and strip_request_state_rejected_encrypted_content(status_request_state)
+            )
         auth_error_code = _websocket_precreated_auth_error_code(
             status_request_state,
             event_type=event_type,
@@ -3683,6 +3751,30 @@ class _HTTPBridgeUpstreamEventsMixin:
                 event_type = "response.failed"
             if status_request_state.precreated_replay_reason == _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE:
                 _clear_websocket_precreated_replay_fallback(status_request_state)
+        elif replay_without_rejected_encrypted_content and status_request_state is not None:
+            status_request_state.rejected_encrypted_content_replay = True
+            replay = await _replay_http_bridge_terminal_request(
+                self,
+                session,
+                status_request_state,
+                trigger="encrypted_content_rejection",
+            )
+            if replay == "retried":
+                logger.info(
+                    "encrypted_content_rejection_retry kind=http_bridge request_id=%s account_id=%s",
+                    status_request_state.request_log_id or status_request_state.request_id,
+                    session.account.id,
+                )
+                return
+            if replay == "failed":
+                status_request_state.error_http_status_override = 502
+                (
+                    _downstream_text,
+                    event_block,
+                    event,
+                    payload,
+                    event_type,
+                ) = _build_stream_incomplete_terminal_event_for_request(status_request_state)
         elif (
             retry_error_code is not None
             and retry_error_code != _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
@@ -3702,24 +3794,15 @@ class _HTTPBridgeUpstreamEventsMixin:
                 status_request_state.previous_response_id is None
                 or _http_bridge_accepted_anchored_replay_candidate(status_request_state)
             ):
-                async with session.pending_lock:
-                    if status_request_state not in session.pending_requests:
-                        session.pending_requests.appendleft(status_request_state)
-                        session.queued_request_count += 1
-                    staged = await _stage_websocket_request_state_for_replay(
-                        status_request_state,
-                        create_gate=session.response_create_gate,
-                        surface="http_bridge",
-                        trigger="capacity_error",
-                    )
-                retried = staged and await self._retry_http_bridge_precreated_request(session)
-                if retried:
+                replay = await _replay_http_bridge_terminal_request(
+                    self,
+                    session,
+                    status_request_state,
+                    trigger="capacity_error",
+                )
+                if replay == "retried":
                     return
-                async with session.pending_lock:
-                    if status_request_state in session.pending_requests:
-                        session.pending_requests.remove(status_request_state)
-                        session.queued_request_count = max(0, session.queued_request_count - 1)
-                if staged:
+                if replay == "failed":
                     # A busy create gate forwards the upstream terminal as-is;
                     # only a replay that was attempted and failed is rewritten.
                     status_request_state.error_http_status_override = 502

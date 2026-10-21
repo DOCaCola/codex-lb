@@ -80,6 +80,7 @@ from app.core.errors import (
     synthetic_stream_failure_event,
     synthetic_transport_failure_event,
 )
+from app.core.openai.encrypted_content import is_encrypted_content_rejection, remember_rejected_encrypted_content
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import CompactResponsePayload, OpenAIError, normalize_compaction_item_id
@@ -114,6 +115,7 @@ from app.core.types import JsonObject, JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.usage.live_hub import publish_live_usage
 from app.core.usage.live_snapshots import EVENT_MARKER, parse_rate_limit_event_text, parse_rate_limit_headers
+from app.core.usage.request_operation import get_request_operation
 from app.core.utils.encoded_json import EncodedJsonObject, encode_json_object
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.proxy_env import resolve_http_proxy_from_env
@@ -3643,44 +3645,102 @@ async def stream_responses(
     request_body_source: EncodedJsonObject | None = None,
 ) -> AsyncGenerator[str, None]:
     effective_allow_direct_egress = allow_direct_egress or (route is None and session is not None)
-    # aclosing() at every hop lets a consumer's aclose() reach the upstream
-    # response teardown synchronously instead of via the asyncgen finalizer.
-    async with (
-        lease_http_session(session) as client_session,
-        contextlib.aclosing(
-            _stream_responses_with_session(
-                payload=payload,
-                headers=headers,
-                access_token=access_token,
-                account_id=account_id,
-                base_url=base_url,
-                raise_for_status=raise_for_status,
-                session=client_session,
-                upstream_stream_transport_override=upstream_stream_transport_override,
-                route=route,
-                codex_client=codex_client,
-                route_trace=route_trace,
-                allow_direct_egress=effective_allow_direct_egress,
-                codex_installation_id=codex_installation_id,
-                enforce_openai_sdk_contract=enforce_openai_sdk_contract,
-                codex_lb_account_id=codex_lb_account_id,
-                suppress_live_usage=suppress_live_usage,
-                native_egress_client=native_egress_client,
-                synthesize_routing_hint=synthesize_routing_hint,
-                thread_cache_identity=thread_cache_identity,
-                request_body_source=request_body_source,
-            )
-        ) as upstream_events,
-    ):
-        async for event_block in upstream_events:
-            event_block = _restore_native_collaboration_block(event_block)
-            if not suppress_live_usage and (codex_lb_account_id or account_id) and EVENT_MARKER in event_block:
-                publish_live_usage(
-                    parse_rate_limit_event_text(event_block),
-                    account_id=codex_lb_account_id,
-                    chatgpt_account_id=account_id,
+    # An explicit refusal of replayed ciphertext before the response starts is
+    # retried once: the refused ciphertext is remembered, and the re-sent body
+    # goes through the native sanitizer, which removes it.
+    encrypted_content_retried = False
+    while True:
+        retry_without_rejected_ciphertext = False
+        response_started = False
+        # aclosing() at every hop lets a consumer's aclose() reach the upstream
+        # response teardown synchronously instead of via the asyncgen finalizer.
+        async with (
+            lease_http_session(session) as client_session,
+            contextlib.aclosing(
+                _stream_responses_with_session(
+                    payload=payload,
+                    headers=headers,
+                    access_token=access_token,
+                    account_id=account_id,
+                    base_url=base_url,
+                    raise_for_status=raise_for_status,
+                    session=client_session,
+                    upstream_stream_transport_override=upstream_stream_transport_override,
+                    route=route,
+                    codex_client=codex_client,
+                    route_trace=route_trace,
+                    allow_direct_egress=effective_allow_direct_egress,
+                    codex_installation_id=codex_installation_id,
+                    enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+                    codex_lb_account_id=codex_lb_account_id,
+                    suppress_live_usage=suppress_live_usage,
+                    native_egress_client=native_egress_client,
+                    synthesize_routing_hint=synthesize_routing_hint,
+                    thread_cache_identity=thread_cache_identity,
+                    request_body_source=request_body_source,
                 )
-            yield event_block
+            ) as upstream_events,
+        ):
+            try:
+                async for event_block in upstream_events:
+                    if not response_started:
+                        event_type = sse_event_type_from_block(event_block)
+                        if (
+                            not encrypted_content_retried
+                            and _event_block_rejects_encrypted_content(event_block, event_type)
+                            and remember_rejected_encrypted_content(payload.input, get_request_operation()) > 0
+                        ):
+                            retry_without_rejected_ciphertext = True
+                            break
+                        response_started = isinstance(event_type, str) and event_type.startswith("response.")
+                    event_block = _restore_native_collaboration_block(event_block)
+                    if not suppress_live_usage and (codex_lb_account_id or account_id) and EVENT_MARKER in event_block:
+                        publish_live_usage(
+                            parse_rate_limit_event_text(event_block),
+                            account_id=codex_lb_account_id,
+                            chatgpt_account_id=account_id,
+                        )
+                    yield event_block
+            except ProxyResponseError as exc:
+                if (
+                    response_started
+                    or encrypted_content_retried
+                    or not _proxy_error_rejects_encrypted_content(exc)
+                    or remember_rejected_encrypted_content(payload.input, get_request_operation()) == 0
+                ):
+                    raise
+                retry_without_rejected_ciphertext = True
+        if not retry_without_rejected_ciphertext:
+            return
+        encrypted_content_retried = True
+        logger.info("encrypted_content_rejection_retry kind=responses request_id=%s", get_request_id())
+
+
+def _event_block_rejects_encrypted_content(event_block: str, event_type: str | None) -> bool:
+    if event_type not in {"error", "response.failed"}:
+        return False
+    payload = parse_sse_data_json(event_block)
+    if payload is None:
+        return False
+    error: JsonValue | None = payload.get("error")
+    if event_type == "response.failed":
+        response = payload.get("response")
+        error = response.get("error") if isinstance(response, dict) else None
+    if not isinstance(error, dict):
+        error = payload
+    code = error.get("code")
+    message = error.get("message")
+    return is_encrypted_content_rejection(
+        code if isinstance(code, str) else None,
+        message if isinstance(message, str) else None,
+    )
+
+
+def _proxy_error_rejects_encrypted_content(exc: ProxyResponseError) -> bool:
+    if exc.status_code != 400:
+        return False
+    code, message = _error_details_from_envelope(exc.payload)
+    return is_encrypted_content_rejection(code, message)
 
 
 async def _stream_responses_with_session(
@@ -4844,21 +4904,35 @@ async def compact_responses(
     thread_cache_identity: ThreadCacheIdentity | None = None,
 ) -> CompactResponsePayload:
     async with lease_http_session(session) as client_session:
-        transport = _CompactCommandTransport(
-            payload=payload,
-            headers=headers,
-            access_token=access_token,
-            account_id=account_id,
-            session=client_session,
-            route=route,
-            codex_client=codex_client,
-            route_trace=route_trace,
-            chatgpt_account_id=chatgpt_account_id,
-            allow_direct_egress=allow_direct_egress,
-            synthesize_routing_hint=synthesize_routing_hint,
-            thread_cache_identity=thread_cache_identity,
-        )
-        return await transport.execute()
+
+        def transport() -> _CompactCommandTransport:
+            return _CompactCommandTransport(
+                payload=payload,
+                headers=headers,
+                access_token=access_token,
+                account_id=account_id,
+                session=client_session,
+                route=route,
+                codex_client=codex_client,
+                route_trace=route_trace,
+                chatgpt_account_id=chatgpt_account_id,
+                allow_direct_egress=allow_direct_egress,
+                synthesize_routing_hint=synthesize_routing_hint,
+                thread_cache_identity=thread_cache_identity,
+            )
+
+        try:
+            return await transport().execute()
+        except ProxyResponseError as exc:
+            # Same single retry as streaming: the sanitizer removes the
+            # ciphertext remembered here from the re-sent body.
+            if (
+                not _proxy_error_rejects_encrypted_content(exc)
+                or remember_rejected_encrypted_content(payload.input, get_request_operation()) == 0
+            ):
+                raise
+        logger.info("encrypted_content_rejection_retry kind=compact request_id=%s", get_request_id())
+        return await transport().execute()
 
 
 @dataclass(slots=True)

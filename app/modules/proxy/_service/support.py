@@ -1117,6 +1117,9 @@ class _WebSocketRequestState:
     # not turn the upstream 400 into a proxy-generated 5xx/no-accounts error.
     precreated_replay_reason: str | None = None
     precreated_replay_account_id: str | None = None
+    # The replay re-sends the request without ciphertext upstream refused. The
+    # account was not at fault, so the replay prefers it and never excludes it.
+    rejected_encrypted_content_replay: bool = False
     skip_request_log: bool = False
     previous_response_id: str | None = None
     session_id: str | None = None

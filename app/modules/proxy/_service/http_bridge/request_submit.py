@@ -4012,7 +4012,7 @@ class _HTTPBridgeRequestSubmitMixin:
                     request_text = _prepare_websocket_request_state_for_visible_output_replay(request_state)
                     if request_text is None:
                         return False
-                    if not hard_owner_bound:
+                    if not hard_owner_bound and not request_state.rejected_encrypted_content_replay:
                         request_state.excluded_account_ids.add(session.account.id)
             else:
                 # Account-scoped uploaded files cannot be replayed on a
@@ -4040,7 +4040,9 @@ class _HTTPBridgeRequestSubmitMixin:
                 if account_neutral_recovery or account_bound_replay:
                     request_state.preferred_account_id = session.account.id
                 elif not request_state.file_required_preferred_account:
-                    if hard_owner_bound and not model_fallback_replay and not fresh_hard_request_account_switch_allowed:
+                    if request_state.rejected_encrypted_content_replay or (
+                        hard_owner_bound and not model_fallback_replay and not fresh_hard_request_account_switch_allowed
+                    ):
                         request_state.preferred_account_id = session.account.id
                     else:
                         request_state.preferred_account_id = None
