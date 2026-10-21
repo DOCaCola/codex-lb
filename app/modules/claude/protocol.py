@@ -192,8 +192,9 @@ def _tool_references(tools: ClaudeToolNames, loaded: list[ToolIdentity], *, in_r
 
 
 def _content(value: JsonValue) -> list[JsonValue]:
+    """Project Responses content; Claude rejects empty and whitespace-only text blocks."""
     if isinstance(value, str):
-        return [{"type": "text", "text": value}]
+        return [{"type": "text", "text": value}] if value.strip() else []
     if not isinstance(value, list):
         raise invalid("Message content must be text or an array")
     result: list[JsonValue] = []
@@ -202,7 +203,8 @@ def _content(value: JsonValue) -> list[JsonValue]:
             raise invalid("Invalid message content block")
         kind = part.get("type")
         if kind in ("input_text", "output_text", "text") and isinstance(part.get("text"), str):
-            result.append({"type": "text", "text": part["text"]})
+            if cast(str, part["text"]).strip():
+                result.append({"type": "text", "text": part["text"]})
         elif kind == "input_image" and isinstance(part.get("image_url"), str):
             url = cast(str, part["image_url"])
             if url.startswith("data:"):
@@ -247,7 +249,7 @@ def project_responses(
     if instructions is not None:
         if not isinstance(instructions, str):
             raise invalid("Claude instructions must be text", "instructions")
-        if instructions:
+        if instructions.strip():
             system.append({"type": "text", "text": instructions})
     tools = ClaudeToolNames()
     declarations: list[JsonValue] = []
@@ -422,6 +424,8 @@ def project_responses(
         call's tool_result is still in the open result turn it joins that result; after a later
         assistant step (a ``wait`` cycle) it is labelled context closing the newest result turn.
         """
+        if not content:
+            return
         result = exec_results[call_id]
         last = messages[-1]
         assert isinstance(last, dict)
@@ -432,8 +436,8 @@ def project_responses(
         )
         if open_result and any(block is result for block in blocks):
             output = result["content"]
-            assert isinstance(output, list)
-            output.extend(content)
+            assert isinstance(output, list | str)
+            result["content"] = [*output, *content] if output else content
             return
         label = f"[Later exec output: tool_use_id={result['tool_use_id']}]"
         append("user", [{"type": "text", "text": label}, *content])
@@ -452,6 +456,9 @@ def project_responses(
             if role in ("system", "developer"):
                 (pending_system if messages else system).extend(content)
             elif role in ("user", "assistant"):
+                if not content:
+                    # Codex replays empty messages; Claude rejects a message without content.
+                    continue
                 if pending and role == "user":
                     raise invalid("Tool results are required before the next user message")
                 append(role, content)
@@ -558,7 +565,8 @@ def project_responses(
                 result: dict[str, JsonValue] = {
                     "type": "tool_result",
                     "tool_use_id": _wire_call_id(call_id),
-                    "content": content,
+                    # An output without visible content is an empty string, never an empty text block.
+                    "content": content or "",
                 }
                 append("user", [result])
                 if call_id in exec_calls:
@@ -628,7 +636,8 @@ def project_responses(
             for block in summary:
                 if not isinstance(block, dict) or not isinstance(block.get("text"), str):
                     raise invalid("Invalid reasoning summary block")
-                append("assistant", [{"type": "text", "text": block["text"]}])
+                if cast(str, block["text"]).strip():
+                    append("assistant", [{"type": "text", "text": block["text"]}])
         else:
             raise invalid(f"Unsupported Claude Responses item: {kind}")
     if search_items:

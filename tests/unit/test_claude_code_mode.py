@@ -92,6 +92,23 @@ def test_notification_in_the_open_result_turn_extends_the_exec_result():
     }
 
 
+@pytest.mark.parametrize("final", ["", "  \n"])
+def test_notification_replaces_an_empty_exec_result(final):
+    messages = project(
+        tools=[EXEC, WAIT],
+        input=[
+            {"role": "user", "content": "Run it"},
+            exec_call("call-1"),
+            exec_output("call-1", final),
+            exec_output("call-1", " "),
+            exec_output("call-1", "progress"),
+        ],
+    )["messages"]
+    assert messages[-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "call-1", "content": [{"type": "text", "text": "progress"}]}
+    ]
+
+
 def test_notification_after_a_wait_cycle_is_labelled_context_after_the_results():
     messages = project(
         tools=[EXEC, WAIT],

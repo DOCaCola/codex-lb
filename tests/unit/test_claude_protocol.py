@@ -103,6 +103,52 @@ def test_developer_message_between_assistant_items_waits_for_a_user_turn():
     assert [message["role"] for message in body["messages"]] == ["user", "assistant", "user", "system"]
 
 
+def _text_blocks(node):
+    if isinstance(node, list):
+        for item in node:
+            yield from _text_blocks(item)
+    elif isinstance(node, dict):
+        if node.get("type") == "text":
+            yield node
+        for value in node.values():
+            yield from _text_blocks(value)
+
+
+@pytest.mark.parametrize("blank", ["", " ", "\n\t"])
+def test_blank_text_never_becomes_a_claude_text_block(blank):
+    # Codex replays empty user messages, empty text before a tool call, and empty tool output.
+    history = [
+        {"role": "user", "content": [{"type": "input_text", "text": "Hi"}, {"type": "input_text", "text": blank}]},
+        _developer(blank),
+        _assistant(blank),
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": blank}]},
+        _call("c1"),
+        {"type": "function_call_output", "call_id": "c1", "output": blank},
+        {"type": "function_call_output", "call_id": "c0", "output": [{"type": "input_text", "text": blank}]},
+        {"role": "user", "content": blank},
+    ]
+    body = project(request(instructions=blank, input=history), max_output_tokens=64000).body
+    assert "system" not in body
+    assert all(block["text"].strip() for block in _text_blocks(body))
+    assert body["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "Hi"}]},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "c1", "name": "Shell", "input": {}}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": ""},
+                {"type": "text", "text": "[Standalone function_call_output: call_id=c0]"},
+            ],
+        },
+    ]
+
+
+def test_blank_user_message_does_not_interrupt_a_pending_tool_call():
+    history = [_user("Hi"), _call("c1"), _user(" "), _output("c1")]
+    body = project(request(input=history), max_output_tokens=64000).body
+    assert [message["role"] for message in body["messages"]] == ["user", "assistant", "user"]
+
+
 def _tool_ids(body):
     return [
         block.get("id") or block.get("tool_use_id")
@@ -1123,7 +1169,10 @@ def test_standalone_tool_output_is_labeled_context_and_preserves_logical_history
     assert len(body["messages"]) == 1
     assert body["messages"][0]["role"] == "user"
     assert blocks[0] == {"type": "text", "text": f"[Standalone {kind}: call_id=delegation-seed]"}
-    if isinstance(output, str):
+    if output == "":
+        # Claude rejects empty text blocks: only the label remains.
+        assert blocks[1] == {"type": "text", "text": "Continue"}
+    elif isinstance(output, str):
         assert blocks[1] == {"type": "text", "text": output}
     else:
         assert blocks[1:3] == [
@@ -1219,7 +1268,7 @@ def test_external_task_input_is_user_content_without_mutating_history(pairing, e
     assert payload == original
 
 
-def test_external_task_preserves_every_text_and_image_block_in_order():
+def test_external_task_preserves_every_visible_text_and_image_block_in_order():
     task = {
         **TASK_INPUT,
         "call_id": None,
@@ -1237,7 +1286,6 @@ def test_external_task_preserves_every_text_and_image_block_in_order():
             "role": "user",
             "content": [
                 {"type": "text", "text": "before"},
-                {"type": "text", "text": ""},
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="}},
                 {"type": "text", "text": "after"},
             ],
