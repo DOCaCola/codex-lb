@@ -1349,18 +1349,14 @@ async def connect_responses_websocket(
     initial_request_text: str | None = None,
     routing_hint: tuple[str, str | None] | None = None,
 ) -> UpstreamWebSocket:
-    from app.core.clients.proxy import (
-        UPSTREAM_RESPONSE_CREATE_MAX_BYTES,
-        log_upstream_reasoning_included,
-        stream_responses,
-    )
+    from app.core.clients.proxy import UPSTREAM_RESPONSE_CREATE_MAX_BYTES, stream_responses
     from app.core.clients.responses_transport import ResponsesTransport, utf8_size
 
     settings = get_settings()
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
 
     async def connect() -> UpstreamWebSocket:
-        websocket = await _connect_upstream_websocket(
+        return await _connect_upstream_websocket(
             headers,
             access_token,
             account_id,
@@ -1371,9 +1367,6 @@ async def connect_responses_websocket(
             policy=_RESPONSES_WEBSOCKET_POLICY,
             routing_hint=routing_hint,
         )
-        value = websocket.response_header("x-reasoning-included")
-        log_upstream_reasoning_included("websocket", {} if value is None else {"x-reasoning-included": value})
-        return websocket
 
     async def stream_http(text: str) -> AsyncGenerator[str, None]:
         # The frame is parsed once. Its members keep their encoded text, so the

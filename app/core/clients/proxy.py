@@ -3995,8 +3995,6 @@ async def _stream_responses_with_session(
                         account_id=codex_lb_account_id,
                         chatgpt_account_id=account_id,
                     )
-                if resp.status < 400:
-                    log_upstream_reasoning_included("http", getattr(raw_resp, "headers", None))
                 if resp.status >= 400:
                     if resp.status == 413 and not non_streaming_http:
                         error_code = "context_length_exceeded"
@@ -4171,8 +4169,6 @@ async def _stream_responses_with_session(
                     account_id=codex_lb_account_id,
                     chatgpt_account_id=account_id,
                 )
-            if resp.status < 400:
-                log_upstream_reasoning_included("http", getattr(resp, "headers", None))
             if resp.status >= 400:
                 if resp.status == 413 and not non_streaming_http:
                     error_code = "context_length_exceeded"
@@ -5473,31 +5469,6 @@ async def _codex_response_body(response: Any) -> bytes:
 def _codex_response_headers(response: Any) -> dict[str, str]:
     headers = getattr(response, "headers", {}) or {}
     return {str(key): str(value) for key, value in headers.items()}
-
-
-_REASONING_INCLUDED_HEADER = "x-reasoning-included"
-_reasoning_included_observations: set[tuple[str, str | None]] = set()
-
-
-def log_upstream_reasoning_included(transport: str, headers: Mapping[str, str] | None) -> None:
-    """Log each distinct upstream ``x-reasoning-included`` value once per transport and process.
-
-    Diagnostic: establishes whether, and on which transport, upstream tells Codex
-    that its token usage already accounts for past reasoning.
-    """
-    value = next(
-        (value for key, value in (headers or {}).items() if key.lower() == _REASONING_INCLUDED_HEADER),
-        None,
-    )
-    observation = (transport, value)
-    if observation in _reasoning_included_observations:
-        return
-    _reasoning_included_observations.add(observation)
-    logger.info(
-        "upstream_reasoning_included_header transport=%s value=%s",
-        transport,
-        "absent" if value is None else repr(value),
-    )
 
 
 async def _codex_error_payload_from_response(response: Any) -> OpenAIErrorEnvelope:
