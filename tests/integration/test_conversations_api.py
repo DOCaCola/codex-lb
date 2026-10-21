@@ -397,6 +397,99 @@ async def test_conversation_list_percent_search_is_not_match_all(async_client, d
     assert response.json() == {"conversations": [], "total": 0, "hasMore": False}
 
 
+async def _seed_trace(base: datetime) -> None:
+    async with SessionLocal() as session:
+        accounts = AccountsRepository(session)
+        logs = RequestLogsRepository(session)
+        await accounts.upsert(_account("trace-a"))
+        await accounts.upsert(_account("trace-b"))
+        # (seconds after base, account, prompt, cached reads, status)
+        rows = (
+            (0, "trace-a", 30_000, 0, "success"),
+            (60, "trace-a", 31_000, 29_000, "success"),
+            (120, "trace-a", 60_000, 30_000, "success"),
+            (180, "trace-b", 61_000, 0, "success"),
+            (240, "trace-b", None, None, "error"),
+            (1200, "trace-b", 62_000, 0, "success"),
+            (1260, "trace-b", 62_500, 1_000, "success"),
+        )
+        for index, (after_s, account_id, prompt, reads, status) in enumerate(rows):
+            await logs.add_log(
+                account_id=account_id,
+                request_id=f"trace-{index}",
+                model="gpt-6.1-sol",
+                reasoning_effort="high",
+                input_tokens=prompt,
+                output_tokens=100 if prompt else None,
+                cached_input_tokens=reads,
+                latency_ms=1000,
+                status=status,
+                error_code="stream_incomplete" if status == "error" else None,
+                requested_at=base + timedelta(seconds=after_s),
+                conversation_id="trace-conversation",
+            )
+        await logs.add_log(
+            account_id=None,
+            request_id="trace-warmup",
+            model="gpt-6.1-sol",
+            reasoning_effort=None,
+            input_tokens=19_000,
+            output_tokens=0,
+            latency_ms=10,
+            status="success",
+            error_code=None,
+            requested_at=base + timedelta(seconds=1250),
+            conversation_id="trace-conversation",
+            request_kind=RequestKind.WARMUP.value,
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_trace_classifies_cache_events_newest_first(async_client, db_setup):
+    await _seed_trace(utcnow().replace(microsecond=0) - timedelta(hours=1))
+
+    response = await async_client.get(
+        "/api/request-logs/conversation-trace", params={"conversationId": "trace-conversation"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 7
+    assert body["hasMore"] is False
+    requests = body["requests"]
+    assert [row["cacheEvent"] for row in requests] == [
+        "bust",
+        "idle_expiry",
+        None,
+        "account_switch",
+        "growth",
+        None,
+        "first",
+    ]
+    assert requests[0]["cacheReadRatio"] == round(1_000 / 62_500, 4)
+    assert requests[2]["promptTokens"] == 0
+    assert requests[2]["cacheReadRatio"] is None
+    # The idle gap runs from the previous prompt-bearing request, skipping the failed one.
+    assert requests[1]["idleGapMs"] == (1200 - 181) * 1000
+    assert "accountId" not in requests[0]
+
+
+@pytest.mark.asyncio
+async def test_conversation_trace_page_classifies_against_the_previous_page(async_client, db_setup):
+    await _seed_trace(utcnow().replace(microsecond=0) - timedelta(hours=1))
+
+    response = await async_client.get(
+        "/api/request-logs/conversation-trace",
+        params={"conversationId": "trace-conversation", "limit": 2, "offset": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hasMore"] is True
+    assert [row["cacheEvent"] for row in body["requests"]] == ["idle_expiry", None]
+
+    unknown = await async_client.get("/api/request-logs/conversation-trace", params={"conversationId": "unknown"})
+    assert unknown.status_code == 404
+
+
 @pytest.mark.asyncio
 async def test_conversation_cost_coverage_keeps_mixed_rows_distinct(async_client, db_setup):
     now = utcnow().replace(microsecond=0)
@@ -1667,6 +1760,7 @@ async def test_conversation_routes_reject_guest_principal(app_instance, async_cl
             "/api/conversations",
             "/api/conversations/",
             "/api/conversations/guest-hidden",
+            "/api/request-logs/conversation-trace?conversationId=guest-hidden",
         ):
             response = await async_client.get(path)
             assert response.status_code == 403

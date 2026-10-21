@@ -237,6 +237,13 @@ class ConversationDetailsResult:
     analytics: ConversationAnalyticsRows
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationTraceResult:
+    logs: list[RequestLog]
+    total: int
+    predecessor: RequestLog | None
+
+
 class RequestLogsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -440,6 +447,48 @@ class RequestLogsRepository:
             )
             for row in rows
         ]
+
+    async def get_conversation_trace(
+        self, conversation_id: str, *, limit: int, offset: int
+    ) -> ConversationTraceResult | None:
+        """Return a newest-first page of a conversation and the usage row preceding it."""
+        target = _normalize_conversation_id(conversation_id)
+        if not target:
+            return None
+        conditions = [*self._conversation_conditions(), RequestLog.conversation_id == target]
+        total = (await self._session.execute(select(func.count()).where(*conditions))).scalar_one()
+        if not total:
+            return None
+        logs = list(
+            (
+                await self._session.execute(
+                    select(RequestLog)
+                    .where(*conditions)
+                    .order_by(RequestLog.requested_at.desc(), RequestLog.id.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).scalars()
+        )
+        predecessor = None
+        if logs:
+            oldest = logs[-1]
+            predecessor = (
+                await self._session.execute(
+                    select(RequestLog)
+                    .where(
+                        *conditions,
+                        RequestLog.input_tokens > 0,
+                        or_(
+                            RequestLog.requested_at < oldest.requested_at,
+                            and_(RequestLog.requested_at == oldest.requested_at, RequestLog.id < oldest.id),
+                        ),
+                    )
+                    .order_by(RequestLog.requested_at.desc(), RequestLog.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return ConversationTraceResult(logs=logs, total=total, predecessor=predecessor)
 
     async def get_conversation_details(self, conversation_id: str) -> ConversationDetailsResult | None:
         target = _normalize_conversation_id(conversation_id)

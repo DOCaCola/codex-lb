@@ -38,6 +38,8 @@ import type {
 } from "@/features/access/api";
 import type { AuditEntry, AuthProvider, RoleMapping, ScimToken } from "@/features/organisation/api";
 import type {
+	ConversationTrace,
+	ConversationTraceRequest,
 	DashboardOverview,
 	DashboardProjections,
 	RequestLog,
@@ -50,6 +52,8 @@ import {
 	ConversationEntrySchema,
 	ConversationsResponseSchema,
 	ConversationModelStatSchema,
+	ConversationTraceRequestSchema,
+	ConversationTraceSchema,
 	DEFAULT_OVERVIEW_TIMEFRAME,
 	DashboardOverviewSchema,
 	DashboardProjectionsSchema,
@@ -1442,4 +1446,37 @@ export function createConversationDetails(
 		],
 		...overrides,
 	});
+}
+
+export function createConversationTraceRequest(
+	overrides: Partial<ConversationTraceRequest> = {},
+): ConversationTraceRequest {
+	return ConversationTraceRequestSchema.parse({
+		id: 1,
+		requestedAt: offsetIso(-1),
+		model: "gpt-5.1",
+		reasoningEffort: "high",
+		requestKind: "normal",
+		requestOperation: "responses",
+		status: "success",
+		errorCode: null,
+		latencyMs: 4000,
+		latencyFirstTokenMs: 800,
+		promptTokens: 100_000,
+		cacheReadTokens: 95_000,
+		cacheWriteTokens: null,
+		outputTokens: 500,
+		cacheReadRatio: 0.95,
+		cacheEvent: null,
+		idleGapMs: 12_000,
+		...overrides,
+	});
+}
+
+export function createConversationTrace(
+	requests: ConversationTraceRequest[] = [],
+	total = requests.length,
+	hasMore = false,
+): ConversationTrace {
+	return ConversationTraceSchema.parse({ requests, total, hasMore });
 }

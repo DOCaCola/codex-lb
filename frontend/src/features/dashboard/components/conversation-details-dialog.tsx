@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { useConversationDetails } from "@/features/dashboard/hooks/use-conversation-details";
 import { ConversationActivityChart } from "./conversation-activity-chart";
+import { ConversationTrace } from "./conversation-trace";
 import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import type { ConversationModelStat } from "@/features/dashboard/schemas";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -180,6 +181,7 @@ export function ConversationDetailsDialog({
                 </div>
               </div>
             </div>
+            <ConversationTrace conversationId={detailsQuery.data.conversationId} enabled={open} />
           </div>
         ) : null}
 

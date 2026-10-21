@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.core.usage.request_operation import RequestOperation
+from app.modules.request_logs.trace import CacheEvent
 from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 
 
@@ -164,6 +165,32 @@ class ConversationDetailsResponse(DashboardModel):
     dominant_useragent_group: str | None = None
     model_stats: list[ConversationModelStat] = Field(default_factory=list)
     analytics: ConversationAnalytics
+
+
+class ConversationTraceRequest(DashboardModel):
+    id: int
+    requested_at: datetime
+    model: str
+    reasoning_effort: str | None = None
+    request_kind: str
+    request_operation: RequestOperation | None = None
+    status: str
+    error_code: str | None = None
+    latency_ms: int | None = None
+    latency_first_token_ms: int | None = None
+    prompt_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_ratio: float | None = None
+    cache_event: CacheEvent | None = None
+    idle_gap_ms: int | None = None
+
+
+class ConversationTraceResponse(DashboardModel):
+    requests: list[ConversationTraceRequest] = Field(default_factory=list)
+    total: int
+    has_more: bool
 
 
 class CacheWindow(DashboardModel):

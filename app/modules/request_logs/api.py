@@ -21,6 +21,7 @@ from app.modules.request_logs.schemas import (
     ClaudeCacheActivityResponse,
     ConversationDetailsResponse,
     ConversationsResponse,
+    ConversationTraceResponse,
     RequestLogApiKeyOption,
     RequestLogFilterOptionsResponse,
     RequestLogModelOption,
@@ -135,6 +136,23 @@ async def list_request_logs(
         conversation=page.conversation,
         cost_coverage=page.cost_coverage,
     )
+
+
+@router.get(
+    "/conversation-trace",
+    response_model=ConversationTraceResponse,
+    dependencies=[Depends(require_dashboard_permission(Permission.CONVERSATIONS_READ))],
+)
+async def get_conversation_trace(
+    conversation_id: str = Query(alias="conversationId"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    context: RequestLogsContext = Depends(get_request_logs_context),
+) -> ConversationTraceResponse:
+    trace = await context.service.get_conversation_trace(conversation_id, limit=limit, offset=offset)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return trace
 
 
 @router.get("/options", response_model=RequestLogFilterOptionsResponse)

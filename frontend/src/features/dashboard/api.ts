@@ -2,6 +2,7 @@ import { get } from "@/lib/api-client";
 
 import {
   ConversationDetailsSchema,
+  ConversationTraceSchema,
   ConversationsResponseSchema,
   DEFAULT_OVERVIEW_TIMEFRAME,
   DashboardOverviewSchema,
@@ -149,4 +150,13 @@ export function getConversationDetails(conversationId: string) {
     : conversationId;
   const encoded = encodeURIComponent(opaqueId);
   return get(`${CONVERSATIONS_PATH}/${encoded}`, ConversationDetailsSchema);
+}
+
+export function getConversationTrace(conversationId: string, params: { limit: number; offset: number }) {
+  const query = new URLSearchParams({
+    conversationId,
+    limit: String(params.limit),
+    offset: String(params.offset),
+  });
+  return get(`${REQUEST_LOGS_PATH}/conversation-trace?${query.toString()}`, ConversationTraceSchema);
 }

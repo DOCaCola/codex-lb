@@ -222,6 +222,15 @@ const RequestLogCostBreakdownSchema = z.object({
   cacheWriteUsd: z.number().nullable().optional(),
 });
 
+const RequestKindSchema = z.enum(["normal", "warmup", "limit_warmup", "prewarm", "compaction", "realtime_live", "count_tokens"]);
+
+const RequestOperationSchema = z.enum([
+  "unknown", "responses", "chat_completions", "messages", "count_tokens", "compaction", "checkpoint_handoff",
+  "image_generation", "image_edit", "transcription", "embeddings", "file_create", "file_finalize",
+  "web_search", "goal_read", "goal_set", "goal_clear", "memory_summary", "analytics", "safety",
+  "identity_keys", "realtime_call", "realtime_session",
+]);
+
 export const RequestLogSchema = z.object({
   // Row identity; requestId repeats when a request is retried.
   id: z.number().int(),
@@ -232,13 +241,8 @@ export const RequestLogSchema = z.object({
   apiKeyId: z.string().nullable().optional().default(null),
   requestId: z.string(),
   archiveRequestId: z.string().nullable().optional(),
-  requestKind: z.enum(["normal", "warmup", "limit_warmup", "prewarm", "compaction", "realtime_live", "count_tokens"]).optional().default("normal"),
-  requestOperation: z.enum([
-    "unknown", "responses", "chat_completions", "messages", "count_tokens", "compaction", "checkpoint_handoff",
-    "image_generation", "image_edit", "transcription", "embeddings", "file_create", "file_finalize",
-    "web_search", "goal_read", "goal_set", "goal_clear", "memory_summary", "analytics", "safety",
-    "identity_keys", "realtime_call", "realtime_session",
-  ]).nullable().optional(),
+  requestKind: RequestKindSchema.optional().default("normal"),
+  requestOperation: RequestOperationSchema.nullable().optional(),
   connectionRequestKind: z.enum(["normal", "prewarm"]).nullable().optional(),
   model: z.string(),
   source: z.string().nullable().optional().default(null),
@@ -469,6 +473,40 @@ export const ConversationFilterStateSchema = z.object({
   offset: z.number().int().nonnegative(),
   timeframe: ConversationTimeframeKeySchema,
 });
+
+export const CacheEventSchema = z.enum([
+  "first", "compaction", "model_switch", "account_switch", "idle_expiry", "bust", "growth", "miss",
+]);
+
+export const ConversationTraceRequestSchema = z.object({
+  id: z.number().int(),
+  requestedAt: z.iso.datetime({ offset: true }),
+  model: z.string(),
+  reasoningEffort: z.string().nullable(),
+  requestKind: RequestKindSchema,
+  requestOperation: RequestOperationSchema.nullable(),
+  status: z.string(),
+  errorCode: z.string().nullable(),
+  latencyMs: z.number().int().nullable(),
+  latencyFirstTokenMs: z.number().int().nullable(),
+  promptTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nullable(),
+  outputTokens: z.number().int().nullable(),
+  cacheReadRatio: z.number().nullable(),
+  cacheEvent: CacheEventSchema.nullable(),
+  idleGapMs: z.number().int().nullable(),
+});
+
+export const ConversationTraceSchema = z.object({
+  requests: z.array(ConversationTraceRequestSchema),
+  total: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
+
+export type CacheEvent = z.infer<typeof CacheEventSchema>;
+export type ConversationTraceRequest = z.infer<typeof ConversationTraceRequestSchema>;
+export type ConversationTrace = z.infer<typeof ConversationTraceSchema>;
 
 export type ConversationModelEffort = z.infer<typeof ConversationModelEffortSchema>;
 export type ConversationModelStat = z.infer<typeof ConversationModelStatSchema>;

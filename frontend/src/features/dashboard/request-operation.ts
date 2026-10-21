@@ -2,11 +2,13 @@ import type { TFunction } from "i18next";
 
 import type { RequestLog } from "@/features/dashboard/schemas";
 
-export function requestOperationLabel(request: RequestLog, t: TFunction): string {
+type OperationFields = Pick<RequestLog, "requestOperation" | "requestKind">;
+
+export function requestOperationLabel(request: Pick<RequestLog, "requestOperation">, t: TFunction): string {
   return t(`dashboard.requests.operations.${request.requestOperation ?? "unknown"}`);
 }
 
-export function requestTypeLabel(request: RequestLog, t: TFunction): string {
+export function requestTypeLabel(request: OperationFields, t: TFunction): string {
   const standardOperation = request.requestOperation === "responses" || request.requestOperation === "messages";
   const operation = standardOperation ? "" : requestOperationLabel(request, t);
   const kind = request.requestKind;

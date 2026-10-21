@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
+from app.db.models import RequestLog
 from app.modules.request_logs.mappers import (
     ALL_CANCELLED_PUBLIC_STATUSES,
     QUOTA_CODES,
@@ -14,6 +15,7 @@ from app.modules.request_logs.repository import (
     ConversationDetailsResult,
     ConversationFacet,
     ConversationListResult,
+    ConversationTraceResult,
     RequestLogsRepository,
 )
 from app.modules.request_logs.schemas import (
@@ -26,10 +28,13 @@ from app.modules.request_logs.schemas import (
     ConversationModelEffort,
     ConversationModelStat,
     ConversationPerformance,
+    ConversationTraceRequest,
+    ConversationTraceResponse,
     RequestCostCoverage,
     RequestLogConversation,
     RequestLogEntry,
 )
+from app.modules.request_logs.trace import TraceSample, cache_event, idle_gap, prompt_split
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +291,70 @@ class RequestLogsService:
     async def get_conversation_details(self, conversation_id: str) -> ConversationDetails | None:
         result = await self._repo.get_conversation_details(conversation_id)
         return _to_conversation_details(result) if result is not None else None
+
+    async def get_conversation_trace(
+        self, conversation_id: str, *, limit: int, offset: int
+    ) -> ConversationTraceResponse | None:
+        result = await self._repo.get_conversation_trace(conversation_id, limit=limit, offset=offset)
+        if result is None:
+            return None
+        return ConversationTraceResponse(
+            requests=_to_trace_requests(result),
+            total=result.total,
+            has_more=offset + len(result.logs) < result.total,
+        )
+
+
+def _trace_sample(log: RequestLog) -> TraceSample:
+    prompt, reads = prompt_split(log.input_tokens, log.cached_input_tokens)
+    return TraceSample(
+        requested_at=log.requested_at,
+        latency_ms=log.latency_ms,
+        model=log.model,
+        provider_account=(log.account_id, log.model_source_id),
+        request_operation=log.request_operation,
+        prompt_tokens=prompt,
+        cache_read_tokens=reads,
+        cache_write_1h_tokens=log.cache_creation_1h_tokens or 0,
+    )
+
+
+def _to_trace_requests(result: ConversationTraceResult) -> list[ConversationTraceRequest]:
+    """Classify each request against the newest older request that carried a prompt."""
+    previous = _trace_sample(result.predecessor) if result.predecessor is not None else None
+    requests: list[ConversationTraceRequest] = []
+    for log in reversed(result.logs):
+        sample = _trace_sample(log)
+        measured = sample.prompt_tokens > 0
+        requests.append(
+            ConversationTraceRequest(
+                id=log.id,
+                requested_at=log.requested_at,
+                model=log.model,
+                reasoning_effort=log.reasoning_effort,
+                request_kind=log.request_kind,
+                request_operation=log.request_operation,
+                status=log.status,
+                error_code=log.error_code,
+                latency_ms=log.latency_ms,
+                latency_first_token_ms=log.latency_first_token_ms,
+                prompt_tokens=sample.prompt_tokens,
+                cache_read_tokens=sample.cache_read_tokens,
+                cache_write_tokens=log.cache_creation_tokens,
+                output_tokens=log.output_tokens,
+                cache_read_ratio=round(sample.cache_read_tokens / sample.prompt_tokens, 4) if measured else None,
+                cache_event=cache_event(sample, previous) if measured else None,
+                idle_gap_ms=(
+                    int(idle_gap(sample, previous).total_seconds() * 1000)
+                    if measured and previous is not None
+                    else None
+                ),
+            )
+        )
+        if measured:
+            previous = sample
+    requests.reverse()
+    return requests
 
 
 def _map_status_filter(status: list[str] | None) -> RequestLogStatusFilter:
