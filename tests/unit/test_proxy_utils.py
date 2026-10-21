@@ -35004,6 +35004,9 @@ async def test_proxy_responses_websocket_closes_sequenced_client_after_typed_sen
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(proxy_service.ProxyService, "_handle_stream_error", handle_stream_error)
+    # The client pipelines its second request only after reading the sequenced
+    # created frame, which the silent upstream leaves to the hold deadline.
+    monkeypatch.setattr(proxy_support, "_WEBSOCKET_PRELUDE_HOLD_SECONDS", 0.0)
 
     first_request = json.dumps(
         {
@@ -35147,6 +35150,9 @@ async def test_proxy_responses_websocket_liveness_race_awaits_reader_settlement(
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     handle_stream_error = AsyncMock()
     monkeypatch.setattr(proxy_service.ProxyService, "_handle_stream_error", handle_stream_error)
+    # The client sends its second request after reading created, which the
+    # silent upstream leaves to the pre-output hold deadline.
+    monkeypatch.setattr(proxy_support, "_WEBSOCKET_PRELUDE_HOLD_SECONDS", 0.0)
 
     request_texts = [
         json.dumps(
@@ -54690,10 +54696,11 @@ async def test_pop_replayable_refuses_sequenced_accepted_lifecycle_prelude():
 async def test_process_upstream_websocket_text_replays_accepted_capacity_error_within_one_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Direct websocket surface: created(X) and in_progress(X) are forwarded,
-    the output-free capacity error stages a replay on another account, and the
-    replay's created(Y)/in_progress(Y) are suppressed while its completion is
-    rewritten to X."""
+    """Direct websocket surface: created(X) and in_progress(X) are held, the
+    output-free capacity error stages a replay on another account with that
+    prelude still held, and the replay's created(Y)/in_progress(Y) are
+    suppressed while its completion is rewritten to X and commits the held
+    prelude ahead of it."""
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     handle_stream_error = AsyncMock()
@@ -54724,12 +54731,16 @@ async def test_process_upstream_websocket_text_replays_accepted_capacity_error_w
 
     created_text = await process({"type": "response.created", "response": {"id": "resp_x", "status": "in_progress"}})
     assert json.loads(created_text)["response"]["id"] == "resp_x"
-    assert upstream_control.suppress_downstream_event is False
+    assert upstream_control.suppress_downstream_event is True
+    upstream_control.suppress_downstream_event = False
     in_progress_text = await process(
         {"type": "response.in_progress", "response": {"id": "resp_x", "status": "in_progress"}}
     )
     assert json.loads(in_progress_text)["response"]["id"] == "resp_x"
-    assert upstream_control.suppress_downstream_event is False
+    assert upstream_control.suppress_downstream_event is True
+    upstream_control.suppress_downstream_event = False
+    assert pending_request.held_prelude_texts == [created_text, in_progress_text]
+    assert pending_request.last_downstream_sequence_number is None
     assert pending_request.response_event_count == 2
 
     await process(_accepted_capacity_error_payload())
@@ -54745,6 +54756,7 @@ async def test_process_upstream_websocket_text_replays_accepted_capacity_error_w
     assert pending_request.response_id is None
     assert pending_request.response_event_count == 0
     assert pending_request.replay_count == 1
+    assert pending_request.held_prelude_texts == [created_text, in_progress_text]
     assert pending_request.excluded_account_ids == {account.id}
     assert pending_request.affinity_policy.reallocate_sticky is True
     handle_stream_error.assert_awaited_once()
@@ -54782,6 +54794,8 @@ async def test_process_upstream_websocket_text_replays_accepted_capacity_error_w
 
     assert upstream_control.suppress_downstream_event is False
     assert json.loads(completed_text)["response"]["id"] == "resp_x"
+    assert upstream_control.downstream_request_state is pending_request
+    assert pending_request.held_prelude_texts == [created_text, in_progress_text]
     assert pending_requests == deque()
 
 
@@ -55032,7 +55046,9 @@ async def test_process_upstream_websocket_text_marks_model_output_and_refuses_ac
             response_create_gate=response_create_gate,
         )
 
-    await process({"type": "response.created", "response": {"id": "resp_x", "status": "in_progress"}})
+    created_text = await process({"type": "response.created", "response": {"id": "resp_x", "status": "in_progress"}})
+    assert upstream_control.suppress_downstream_event is True
+    upstream_control.suppress_downstream_event = False
     item_text = await process(
         {
             "type": "response.output_item.added",
@@ -55051,6 +55067,9 @@ async def test_process_upstream_websocket_text_marks_model_output_and_refuses_ac
 
     assert json.loads(item_text)["item"]["id"] == "fc_1"
     assert upstream_control.suppress_downstream_event is False
+    # The output frame is forwarded and commits the held created ahead of it.
+    assert upstream_control.downstream_request_state is pending_request
+    assert pending_request.held_prelude_texts == [created_text]
     assert pending_request.response_event_count == 2
     assert pending_request.upstream_model_output_seen is True
     assert proxy_support._websocket_request_is_accepted_lifecycle_only(pending_request) is False
@@ -55116,6 +55135,173 @@ async def test_emit_pending_websocket_keepalive_uses_the_visible_response_id_for
         {"type": "response.in_progress", "response": {"id": "resp_x_staged", "status": "in_progress"}},
         {"type": "codex.keepalive", "request_id": "ws_req_keepalive_precreated", "status": "pending_response_created"},
     ]
+
+
+def _held_prelude_request_state(**overrides: Any) -> proxy_service._WebSocketRequestState:
+    """An accepted request whose created frame the direct socket is holding."""
+    request_state = _accepted_lifecycle_request_state(response_event_count=1, **overrides)
+    proxy_support._hold_websocket_prelude_text(
+        request_state,
+        '{"type":"response.created","sequence_number":0}',
+        sequence_number=0,
+        now=100.0,
+    )
+    return request_state
+
+
+@pytest.mark.parametrize(
+    ("overrides", "event_type", "sole_pending_request", "expected"),
+    [
+        ({}, "response.created", True, True),
+        ({}, "response.in_progress", True, False),
+        ({}, "response.created", False, False),
+        ({"generate_false_prewarm": True}, "response.created", True, False),
+        ({"replay_count": 1}, "response.created", True, False),
+        ({"request_text": None}, "response.created", True, False),
+        ({"previous_response_id": "resp_anchor"}, "response.created", True, False),
+        (
+            {
+                "previous_response_id": "resp_anchor",
+                "fresh_upstream_request_is_retry_safe": True,
+                "fresh_upstream_request_text": '{"type":"response.create","input":"full"}',
+            },
+            "response.created",
+            True,
+            True,
+        ),
+        ({"upstream_model_output_seen": True}, "response.created", True, False),
+        ({"last_downstream_sequence_number": 0}, "response.created", True, False),
+    ],
+)
+def test_websocket_prelude_hold_opens_only_for_a_replayable_sole_request(
+    overrides: dict[str, Any],
+    event_type: str,
+    sole_pending_request: bool,
+    expected: bool,
+):
+    request_state = _accepted_lifecycle_request_state(response_event_count=1, **overrides)
+
+    assert (
+        proxy_support._websocket_prelude_hold_accepts(
+            request_state,
+            event_type,
+            sole_pending_request=sole_pending_request,
+            now=100.0,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("event_type", "now", "expected"),
+    [
+        ("response.in_progress", 100.0 + proxy_support._WEBSOCKET_PRELUDE_HOLD_SECONDS - 0.1, True),
+        ("response.queued", 101.0, True),
+        ("response.metadata", 101.0, True),
+        ("response.in_progress", 100.0 + proxy_support._WEBSOCKET_PRELUDE_HOLD_SECONDS, False),
+        ("response.output_item.added", 101.0, False),
+        ("response.completed", 101.0, False),
+    ],
+)
+def test_websocket_prelude_hold_keeps_lifecycle_frames_until_its_deadline(event_type: str, now: float, expected: bool):
+    request_state = _held_prelude_request_state()
+
+    assert (
+        proxy_support._websocket_prelude_hold_accepts(
+            request_state,
+            event_type,
+            sole_pending_request=True,
+            now=now,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize("event_type", ["response.queued", "response.metadata"])
+def test_record_response_event_does_not_count_metadata_frames_as_lifecycle_progress(event_type: str):
+    """Metadata frames do not end the accepted output-free window (Sub2API e068c3d02)."""
+    request_state = _accepted_lifecycle_request_state()
+
+    proxy_support._record_response_event(request_state, event_type, now=5.0)
+
+    assert request_state.response_event_count == 2
+    assert request_state.last_upstream_activity_at == 5.0
+    assert proxy_support._websocket_request_is_accepted_lifecycle_only(request_state) is True
+
+
+@pytest.mark.asyncio
+async def test_emit_pending_websocket_keepalive_keeps_a_held_prelude_request_pre_created():
+    """A keepalive must not name a response the client has not seen created."""
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    sent_text: list[str] = []
+
+    class _FakeDownstreamWebSocket:
+        async def send_text(self, text: str) -> None:
+            sent_text.append(text)
+
+    held = _held_prelude_request_state(request_id="ws_req_keepalive_held")
+
+    await service._emit_pending_websocket_keepalive(
+        cast(WebSocket, _FakeDownstreamWebSocket()),
+        pending_requests=deque([held]),
+        pending_lock=anyio.Lock(),
+        client_send_lock=anyio.Lock(),
+        downstream_activity=proxy_service._DownstreamWebSocketActivity(),
+        codex_session_affinity=True,
+    )
+
+    assert [json.loads(text) for text in sent_text] == [
+        {"type": "codex.keepalive", "request_id": "ws_req_keepalive_held", "status": "pending_response_created"},
+    ]
+    assert held.held_prelude_texts
+
+
+@pytest.mark.asyncio
+async def test_commit_expired_websocket_prelude_holds_sends_only_expired_holds_and_sets_the_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    sent_text: list[str] = []
+
+    class _FakeDownstreamWebSocket:
+        async def send_text(self, text: str) -> None:
+            sent_text.append(text)
+
+    expired = _held_prelude_request_state(request_id="ws_req_hold_expired")
+    proxy_support._hold_websocket_prelude_text(
+        expired,
+        '{"type":"response.in_progress","sequence_number":1}',
+        sequence_number=1,
+        now=101.0,
+    )
+    open_hold = _accepted_lifecycle_request_state(request_id="ws_req_hold_open", response_event_count=1)
+    proxy_support._hold_websocket_prelude_text(
+        open_hold,
+        '{"type":"response.created","sequence_number":0}',
+        sequence_number=0,
+        now=105.0,
+    )
+    monkeypatch.setattr(
+        service, "_clock", VirtualClock(monotonic_value=100.0 + proxy_support._WEBSOCKET_PRELUDE_HOLD_SECONDS)
+    )
+
+    await service._commit_expired_websocket_prelude_holds(
+        cast(WebSocket, _FakeDownstreamWebSocket()),
+        pending_requests=deque([expired, open_hold]),
+        pending_lock=anyio.Lock(),
+        client_send_lock=anyio.Lock(),
+        downstream_activity=proxy_service._DownstreamWebSocketActivity(),
+    )
+
+    assert sent_text == [
+        '{"type":"response.created","sequence_number":0}',
+        '{"type":"response.in_progress","sequence_number":1}',
+    ]
+    assert expired.held_prelude_texts == []
+    assert expired.held_prelude_deadline is None
+    assert expired.last_downstream_sequence_number == 1
+    assert open_hold.held_prelude_texts == ['{"type":"response.created","sequence_number":0}']
+    assert open_hold.last_downstream_sequence_number is None
 
 
 _ANCHORED_ACCEPTED_FRESH_REPLAY_TEXT = json.dumps(

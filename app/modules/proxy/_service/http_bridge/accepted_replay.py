@@ -36,6 +36,7 @@ from app.modules.proxy._service.support import (
     _REQUEST_TRANSPORT_WEBSOCKET,
     _affinity_may_resolve_hard_owner,
     _HTTPBridgeSession,
+    _websocket_request_has_replayable_body,
     _websocket_request_is_accepted_lifecycle_only,
     _WebSocketRequestState,
 )
@@ -93,15 +94,9 @@ def _websocket_accepted_replay_candidate(
         return False
     if not _websocket_request_is_accepted_lifecycle_only(request_state):
         return False
-    if not request_state.request_text or request_state.replay_count != 0:
-        return False
     if request_state.transport == _REQUEST_TRANSPORT_WEBSOCKET and request_state.response_create_sent_at is None:
         return False
-    if request_state.previous_response_id is not None and not (
-        request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text
-    ):
-        return False
-    return True
+    return _websocket_request_has_replayable_body(request_state)
 
 
 def _http_bridge_accepted_anchored_replay_candidate(request_state: _WebSocketRequestState) -> bool:

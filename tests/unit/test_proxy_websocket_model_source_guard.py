@@ -229,6 +229,7 @@ class _Downstream:
 
     def __init__(self, request_texts: list[str]) -> None:
         self.pending = list(request_texts)
+        self.delivered = 0
         self.done = asyncio.Event()
         self.sent_text: list[str] = []
         self.turn_completed = asyncio.Event()
@@ -236,9 +237,10 @@ class _Downstream:
     async def receive(self) -> dict[str, object]:
         if self.pending:
             # Wait for the previous turn to settle so the frames stay ordered.
-            if len(self.pending) < 1 or self.sent_text:
+            if self.delivered:
                 await self.turn_completed.wait()
                 self.turn_completed.clear()
+            self.delivered += 1
             return {"type": "websocket.receive", "text": self.pending.pop(0)}
         await self.done.wait()
         return {"type": "websocket.disconnect"}

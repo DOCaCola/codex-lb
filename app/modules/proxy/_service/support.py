@@ -7,7 +7,7 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -111,6 +111,20 @@ _MODEL_OUTPUT_EVENT_TYPES = frozenset(
         "response.output_tool_call.delta",
     }
 )
+# Upstream ``response.*`` frames that carry response metadata, not lifecycle
+# progress or output: ``response.queued`` and the moderation/verification
+# ``response.metadata`` frames. They neither count as a lifecycle event nor end
+# the accepted output-free window.
+_RESPONSE_METADATA_EVENT_TYPES = frozenset({"response.queued", "response.metadata"})
+# Lifecycle frames a direct WebSocket holds back while an accepted turn is still
+# output-free and replayable (openspec: hold-direct-websocket-pre-output-prelude).
+_WEBSOCKET_PRELUDE_EVENT_TYPES = frozenset({"response.created", "response.in_progress"}) | (
+    _RESPONSE_METADATA_EVENT_TYPES
+)
+# Upper bound for holding that prelude. Overloads arrive within a few seconds of
+# acceptance; past this window the prelude is committed and the turn keeps the
+# sequenced fail-closed contract.
+_WEBSOCKET_PRELUDE_HOLD_SECONDS = 10.0
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset(
@@ -1332,6 +1346,12 @@ class _WebSocketRequestState:
     client_ip: str | None = None
     downstream_visible: bool = False
     last_downstream_sequence_number: int | None = None
+    # Direct WebSocket pre-output hold: the accepted lifecycle frames not yet
+    # sent downstream, the last finite ``sequence_number`` among them, and the
+    # monotonic deadline after which they are committed.
+    held_prelude_texts: list[str] = field(default_factory=list)
+    held_prelude_sequence_number: int | None = None
+    held_prelude_deadline: float | None = None
     # Confirmed pre-dispatch account-route failures must not mutate account
     # health while this request's API-key reservation is still live. The
     # account objects are keyed by id so repeated connect attempts cannot
@@ -1658,6 +1678,13 @@ class _WebSocketUpstreamControl:
     downstream_texts: list[str] | None = None
     downstream_sequence_request_state: _WebSocketRequestState | None = None
     downstream_sequence_number: int | None = None
+    # Request the current ``response.*`` / ``error`` frame belongs to; a
+    # forwarded frame commits that request's held prelude first.
+    downstream_request_state: _WebSocketRequestState | None = None
+    # Held preludes of other requests that the current frame ended (a hold lasts
+    # only while its request is the socket's sole pending request), sent ahead
+    # of it whether or not the frame itself is forwarded.
+    prelude_commits: list[tuple[_WebSocketRequestState, list[str], int | None]] = field(default_factory=list)
     seen_tool_call_keys: dict[ToolCallDedupeKey, None] = field(default_factory=dict)
     terminal_message_task: asyncio.Task[bool] | None = None
     # Upstream response IDs that reached their terminal event on this
@@ -1804,7 +1831,7 @@ def _record_response_event(
     # ``now`` is the owner clock sample the bridge/websocket idle deadlines are
     # later compared against; callers pass ``clock_for(owner).monotonic()``.
     request_state.last_upstream_activity_at = now
-    if event_type in {"response.failed", "response.incomplete"}:
+    if event_type in {"response.failed", "response.incomplete"} or event_type in _RESPONSE_METADATA_EVENT_TYPES:
         return
     request_state.response_event_count += 1
 
@@ -1868,8 +1895,9 @@ def _websocket_request_is_accepted_lifecycle_only(request_state: _WebSocketReque
     """Return whether upstream accepted the request without producing any output.
 
     True only while the accepted response consists of its lifecycle prelude:
-    ``response.created`` and optionally ``response.in_progress``. In the
-    Responses protocol every other counted ``response.*`` event follows
+    ``response.created`` and optionally ``response.in_progress``; the
+    metadata frames ``response.queued`` and ``response.metadata`` are not
+    counted. In the Responses protocol every other counted ``response.*`` event follows
     ``response.output_item.added``, which is a model-output event
     (``_MODEL_OUTPUT_EVENT_TYPES``) that both the HTTP bridge and the direct
     websocket relay record in ``upstream_model_output_seen``, so "at most two
@@ -1895,6 +1923,85 @@ def _websocket_request_is_accepted_lifecycle_only(request_state: _WebSocketReque
     if request_state.deferred_reasoning_downstream_texts:
         return False
     return not (request_state.pending_function_call_ids or request_state.pending_tool_call_types)
+
+
+def _websocket_request_has_replayable_body(request_state: _WebSocketRequestState) -> bool:
+    """Return whether the request still has its single replay and a body it may re-send.
+
+    An anchored continuation is re-sent only through a retry-safe fresh body.
+    """
+    if not request_state.request_text or request_state.replay_count != 0:
+        return False
+    return request_state.previous_response_id is None or bool(
+        request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text
+    )
+
+
+def _websocket_prelude_hold_accepts(
+    request_state: _WebSocketRequestState,
+    event_type: str | None,
+    *,
+    sole_pending_request: bool,
+    now: float,
+) -> bool:
+    """Return whether a direct WebSocket lifecycle frame is held instead of forwarded.
+
+    The hold opens at ``response.created`` of a model-generating request that an
+    output-free failure could still replay -- the socket's only pending request,
+    with its replay budget and a re-sendable body -- and keeps the later
+    lifecycle and metadata frames until its deadline. Holding them keeps the client's
+    sequence watermark unset, so the accepted output-free replay stays
+    available on the direct WebSocket surface ("Direct WebSocket replay never
+    mixes numeric response sequences" only governs frames actually sent).
+    """
+    if event_type not in _WEBSOCKET_PRELUDE_EVENT_TYPES:
+        return False
+    hold_deadline = request_state.held_prelude_deadline
+    if hold_deadline is not None:
+        if now >= hold_deadline:
+            return False
+    elif event_type != "response.created":
+        return False
+    if not sole_pending_request:
+        return False
+    if request_state.generate_false_prewarm or request_state.last_downstream_sequence_number is not None:
+        return False
+    if request_state.downstream_visible or request_state.upstream_model_output_seen:
+        return False
+    return _websocket_request_has_replayable_body(request_state)
+
+
+def _hold_websocket_prelude_text(
+    request_state: _WebSocketRequestState,
+    text: str,
+    *,
+    sequence_number: int | None,
+    now: float,
+) -> None:
+    if not request_state.held_prelude_texts:
+        request_state.held_prelude_deadline = now + _WEBSOCKET_PRELUDE_HOLD_SECONDS
+    request_state.held_prelude_texts.append(text)
+    if sequence_number is not None:
+        request_state.held_prelude_sequence_number = sequence_number
+
+
+def _take_websocket_held_prelude(request_state: _WebSocketRequestState) -> tuple[list[str], int | None]:
+    """Remove and return the held prelude frames and their last sequence number."""
+    held_texts = request_state.held_prelude_texts
+    held_sequence_number = request_state.held_prelude_sequence_number
+    request_state.held_prelude_texts = []
+    request_state.held_prelude_sequence_number = None
+    request_state.held_prelude_deadline = None
+    return held_texts, held_sequence_number
+
+
+def _earliest_websocket_prelude_hold_deadline(pending_requests: Iterable[_WebSocketRequestState]) -> float | None:
+    deadlines = [
+        request_state.held_prelude_deadline
+        for request_state in pending_requests
+        if request_state.held_prelude_deadline is not None
+    ]
+    return min(deadlines, default=None)
 
 
 def _affinity_may_resolve_hard_owner(affinity_policy: _AffinityPolicy) -> bool:

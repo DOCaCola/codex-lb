@@ -46,6 +46,7 @@ from app.modules.api_keys.service import (
     ApiKeyUsageReservationData,
     LimitRuleInput,
 )
+from app.modules.proxy._service import support as proxy_support_module
 from app.modules.proxy._service.websocket import mixin as websocket_mixin_module
 from app.modules.proxy.account_cache import RoutingAvailabilityCache, mark_account_routing_unavailable
 from app.modules.proxy.affinity import _codex_session_selection_key
@@ -251,6 +252,38 @@ class _FailingSendUpstreamWebSocket(_FakeUpstreamWebSocket):
     async def send_text(self, text: str) -> None:
         await super().send_text(text)
         raise RuntimeError("socket closed during send")
+
+
+class _PausingSequencedUpstreamWebSocket(_SequencedUpstreamWebSocket):
+    """Sequenced upstream that stays silent for ``pause_seconds`` before the receive at ``pause_at``.
+
+    The pause ends at a fixed time, so a receive the relay abandons on its own
+    timer does not restart it.
+    """
+
+    def __init__(
+        self,
+        messages: list[_FakeUpstreamMessage],
+        *,
+        deferred_message_batches: list[list[_FakeUpstreamMessage]],
+        pause_at: int,
+        pause_seconds: float,
+    ) -> None:
+        super().__init__(messages, deferred_message_batches=deferred_message_batches)
+        self._pause_at = pause_at
+        self._pause_seconds = pause_seconds
+        self._resume_at: float | None = None
+        self._received = 0
+
+    async def receive(self) -> _FakeUpstreamMessage:
+        if self._received == self._pause_at:
+            loop = asyncio.get_running_loop()
+            if self._resume_at is None:
+                self._resume_at = loop.time() + self._pause_seconds
+            await asyncio.sleep(max(self._resume_at - loop.time(), 0.0))
+        message = await super().receive()
+        self._received += 1
+        return message
 
 
 class _DelayedUpstreamWebSocket(_FakeUpstreamWebSocket):
@@ -11834,10 +11867,14 @@ def test_backend_responses_websocket_emits_response_failed_before_close_on_upstr
     assert log_calls[0]["error_code"] == "stream_incomplete"
 
 
-def test_backend_responses_websocket_closes_before_replaying_exposed_sequence(
+def test_backend_responses_websocket_closes_when_replay_does_not_advance_beyond_held_prelude(
     app_instance,
     monkeypatch,
 ):
+    """The held created(5) is the lifecycle the client will read, so the
+    replay's first unsuppressed frame must advance beyond it. Its delta(1)
+    does not: the request settles as ``stream_incomplete`` and the client,
+    which saw nothing yet, gets the 1011 close."""
     first_upstream = _FakeUpstreamWebSocket(
         [
             _FakeUpstreamMessage(
@@ -11925,17 +11962,13 @@ def test_backend_responses_websocket_closes_before_replaying_exposed_sequence(
     with TestClient(app_instance) as client:
         with client.websocket_connect("/backend-api/codex/responses") as websocket:
             websocket.send_text(json.dumps(request_payload))
-            created_event = json.loads(websocket.receive_text())
             with pytest.raises(WebSocketDisconnect) as disconnect:
                 websocket.receive_text()
 
-    assert created_event["type"] == "response.created"
-    assert created_event["sequence_number"] == 5
     assert disconnect.value.code == 1011
-    assert connect_calls == 1
-    assert upstreams == [replay_upstream]
+    assert connect_calls == 2
+    assert upstreams == []
     assert len(log_calls) == 1
-    assert log_calls[0]["request_id"] == "resp_ws_sequenced_first"
     assert log_calls[0]["status"] == "error"
     assert log_calls[0]["error_code"] == "stream_incomplete"
 
@@ -14690,6 +14723,42 @@ def _sequenced_accepted_capacity_failure_upstream(response_id: str) -> _Sequence
     )
 
 
+def _sequenced_recovered_upstream(response_id: str) -> _SequencedUpstreamWebSocket:
+    """Native sequenced frames of a generation that completes."""
+    message_item = {
+        "type": "message",
+        "id": "msg_ws_seq_recovered",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "OK"}],
+    }
+    return _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            [
+                _sequenced_ws_event(
+                    {"type": "response.created", "response": {"id": response_id, "status": "in_progress"}}, 0
+                ),
+                _sequenced_ws_event(
+                    {"type": "response.in_progress", "response": {"id": response_id, "status": "in_progress"}}, 1
+                ),
+                _sequenced_ws_event({"type": "response.output_item.added", "output_index": 0, "item": message_item}, 2),
+                _sequenced_ws_event(
+                    {
+                        "type": "response.completed",
+                        "response": {"id": response_id, "status": "completed", "output": [message_item]},
+                    },
+                    3,
+                ),
+            ]
+        ],
+    )
+
+
+def _expire_prelude_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model a failure arriving after the pre-output hold committed the prelude."""
+    monkeypatch.setattr(proxy_support_module, "_WEBSOCKET_PRELUDE_HOLD_SECONDS", 0.0)
+
+
 _REFUSED_TOOL_OUTPUT_CIPHERTEXT = "gAAAA-refused-tool-output"
 _REFUSED_REASONING_CIPHERTEXT = "gAAAA-refused-reasoning"
 
@@ -14870,17 +14939,89 @@ def test_backend_responses_websocket_replays_an_anchored_encrypted_content_rejec
     assert fresh_payload["input"] == [failover.HISTORICAL_INPUT, failover.FOLLOW_UP_INPUT]
 
 
-def test_backend_responses_websocket_sequenced_accepted_capacity_error_is_not_replayed(
+def test_backend_responses_websocket_replays_a_held_sequenced_accepted_capacity_error_within_one_lifecycle(
+    app_instance,
+    monkeypatch,
+):
+    """Native Codex frames carry ``sequence_number``. The direct socket holds
+    created(0) and in_progress(1) while the accepted turn is output-free, so
+    the overload that follows is replayed on another account. The client reads
+    the held prelude and then the replay, rewritten to the held id, with
+    sequence numbers that keep advancing."""
+    first_upstream = _sequenced_accepted_capacity_failure_upstream("resp_ws_seq_accepted_held")
+    recovered_upstream = _sequenced_recovered_upstream("resp_ws_seq_accepted_recovered")
+    failover = _TwoAccountWebSocketFailover(first_upstream, recovered_upstream)
+    failover.install(monkeypatch)
+
+    events, disconnect = failover.run(app_instance)
+
+    created_id = _assert_ws_single_response_lifecycle_completed(events, disconnect)
+    assert created_id == "resp_ws_seq_accepted_held"
+    assert [(event["type"], event["sequence_number"]) for event in events] == [
+        ("response.created", 0),
+        ("response.in_progress", 1),
+        ("response.output_item.added", 2),
+        ("response.completed", 3),
+    ]
+    failover.assert_retried_on_another_account()
+    assert len(first_upstream.sent_text) == 1
+    assert len(recovered_upstream.sent_text) == 1
+
+
+def test_backend_responses_websocket_replays_a_held_sequenced_accepted_abrupt_close_within_one_lifecycle(
+    app_instance,
+    monkeypatch,
+):
+    """Transport-close twin: the held sequenced prelude keeps the accepted
+    output-free close replayable on the direct socket."""
+    first_upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            [
+                _sequenced_ws_event(
+                    {
+                        "type": "response.created",
+                        "response": {"id": "resp_ws_seq_held_closed", "status": "in_progress"},
+                    },
+                    0,
+                ),
+                _sequenced_ws_event(
+                    {
+                        "type": "response.in_progress",
+                        "response": {"id": "resp_ws_seq_held_closed", "status": "in_progress"},
+                    },
+                    1,
+                ),
+                _FakeUpstreamMessage("close", close_code=1011),
+            ]
+        ],
+    )
+    recovered_upstream = _sequenced_recovered_upstream("resp_ws_seq_close_recovered")
+    failover = _TwoAccountWebSocketFailover(first_upstream, recovered_upstream)
+    failover.install(monkeypatch)
+
+    events, disconnect = failover.run(app_instance)
+
+    created_id = _assert_ws_single_response_lifecycle_completed(events, disconnect)
+    assert created_id == "resp_ws_seq_held_closed"
+    assert [event["sequence_number"] for event in events] == [0, 1, 2, 3]
+    failover.assert_retried_on_another_account()
+    assert len(recovered_upstream.sent_text) == 1
+
+
+def test_backend_responses_websocket_sequenced_accepted_capacity_error_after_the_hold_is_not_replayed(
     app_instance,
     monkeypatch,
 ):
     """#2127 round 4 P2-B: native Codex frames carry ``sequence_number``. Once
-    created(0) and in_progress(1) reached the client, the existing requirement
+    created(0) and in_progress(1) reached the client -- the pre-output hold
+    committed them at its deadline -- the existing requirement
     "Direct WebSocket replay never mixes numeric response sequences" (scenario
     "Sequenced retryable terminal event is not replayed") governs: the
     accepted capacity terminal is finalized and surfaced unchanged on the
     single connect, exactly as on ``main``; the accepted-lifecycle replay does
     not widen that contract."""
+    _expire_prelude_hold(monkeypatch)
     first_upstream = _sequenced_accepted_capacity_failure_upstream("resp_ws_seq_accepted_failed")
     recovered_upstream = _recovered_upstream("resp_ws_seq_accepted_unused")
     failover = _TwoAccountWebSocketFailover(first_upstream, recovered_upstream)
@@ -14903,16 +15044,48 @@ def test_backend_responses_websocket_sequenced_accepted_capacity_error_is_not_re
     assert recovered_upstream.sent_text == []
 
 
-def test_backend_responses_websocket_sequenced_accepted_abrupt_close_fails_closed_without_replay(
+def test_backend_responses_websocket_commits_a_held_prelude_when_upstream_stays_silent_past_the_hold(
+    app_instance,
+    monkeypatch,
+):
+    """Silence after the prelude: the relay's timer commits created(0) and
+    in_progress(1) at the hold deadline, so the overload that arrives later
+    keeps the sequenced fail-closed contract instead of being replayed."""
+    monkeypatch.setattr(proxy_support_module, "_WEBSOCKET_PRELUDE_HOLD_SECONDS", 0.05)
+    capacity_failure = _sequenced_accepted_capacity_failure_upstream("resp_ws_seq_silent")
+    first_upstream = _PausingSequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=list(capacity_failure._deferred_message_batches),
+        pause_at=2,
+        pause_seconds=0.5,
+    )
+    recovered_upstream = _sequenced_recovered_upstream("resp_ws_seq_silent_unused")
+    failover = _TwoAccountWebSocketFailover(first_upstream, recovered_upstream)
+    failover.install(monkeypatch)
+
+    events, disconnect = failover.run(app_instance)
+
+    assert disconnect is None
+    assert [(event["type"], event["sequence_number"]) for event in events] == [
+        ("response.created", 0),
+        ("response.in_progress", 1),
+        ("error", 2),
+    ]
+    assert failover.connect_accounts == [failover.FIRST_ACCOUNT_ID]
+    assert recovered_upstream.sent_text == []
+
+
+def test_backend_responses_websocket_sequenced_accepted_abrupt_close_after_the_hold_fails_closed_without_replay(
     app_instance,
     monkeypatch,
 ):
     """#2127 round 4 P2-B, transport-close twin: after a sequenced accepted
-    prelude the abrupt close keeps the existing contract (scenario "sequenced
+    prelude reached the client the abrupt close keeps the existing contract (scenario "sequenced
     direct websocket closes before completion"): the request is recorded as
     ``stream_incomplete``, no synthetic terminal is emitted under the visible
     id, no replacement account is connected, and the downstream socket closes
     with 1011 so the client retries on a fresh transport."""
+    _expire_prelude_hold(monkeypatch)
     first_upstream = _SequencedUpstreamWebSocket(
         [],
         deferred_message_batches=[

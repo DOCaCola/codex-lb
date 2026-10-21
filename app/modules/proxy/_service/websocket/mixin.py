@@ -352,7 +352,9 @@ from app.modules.proxy._service.support import (
     _clear_websocket_precreated_replay_fallback,
     _clear_websocket_request_error_overrides,
     _DownstreamWebSocketActivity,
+    _earliest_websocket_prelude_hold_deadline,
     _finalize_ttft_reasoning_deltas,
+    _hold_websocket_prelude_text,
     _inherit_stamped_request_body_account_neutrality,
     _InputFingerprints,
     _PreparedWebSocketRequest,
@@ -363,8 +365,10 @@ from app.modules.proxy._service.support import (
     _sleep_for_account_selection_recovery,
     _stream_settlement_error_payload,
     _StreamSettlement,
+    _take_websocket_held_prelude,
     _wait_for_websocket_continuity_gap,
     _websocket_full_replay_should_wait_for_continuity,
+    _websocket_prelude_hold_accepts,
     _WebSocketConnectFailureEmitted,
     _WebSocketContinuityState,
     _WebSocketReceiveTimeout,
@@ -1170,10 +1174,14 @@ async def _process_and_forward_upstream_websocket_text(
     downstream_texts = upstream_control.downstream_texts
     downstream_sequence_request_state = upstream_control.downstream_sequence_request_state
     downstream_sequence_number = upstream_control.downstream_sequence_number
+    downstream_request_state = upstream_control.downstream_request_state
+    prelude_commits = upstream_control.prelude_commits
     upstream_control.suppress_downstream_event = False
     upstream_control.downstream_texts = None
     upstream_control.downstream_sequence_request_state = None
     upstream_control.downstream_sequence_number = None
+    upstream_control.downstream_request_state = None
+    upstream_control.prelude_commits = []
     if (
         downstream_texts is None
         and not suppress_downstream_event
@@ -1186,53 +1194,24 @@ async def _process_and_forward_upstream_websocket_text(
             suppress_downstream_event = True
         else:
             downstream_text = json.dumps(pool_event, ensure_ascii=True, separators=(",", ":"))
+    forwards_current_frame = downstream_texts is None and not suppress_downstream_event
+    if forwards_current_frame and downstream_request_state is not None and downstream_request_state.held_prelude_texts:
+        # The turn continues downstream (output, a surfaced terminal, or a frame
+        # past the hold deadline): its held prelude goes out unchanged first.
+        prelude_commits.append((downstream_request_state, *_take_websocket_held_prelude(downstream_request_state)))
+    outgoing_texts = [held_text for _state, held_texts, _sequence in prelude_commits for held_text in held_texts]
     if downstream_texts is not None:
-        for emitted_text in downstream_texts:
-            try:
-                await proxy._send_downstream_websocket_text(
-                    websocket,
-                    client_send_lock=client_send_lock,
-                    text=emitted_text,
-                    downstream_activity=downstream_activity,
-                )
-            except Exception:
-                downstream_activity.mark_disconnected()
-                _facade().logger.debug(
-                    "Downstream websocket disconnected during upstream relay",
-                    exc_info=True,
-                )
-                await proxy._fail_pending_websocket_requests(
-                    account=None,
-                    account_id_value=account_id_value,
-                    pending_requests=pending_requests,
-                    pending_lock=pending_lock,
-                    error_code="client_disconnected",
-                    error_message="Downstream websocket disconnected before response.completed",
-                    api_key=api_key,
-                    response_create_gate=response_create_gate,
-                    status="cancelled",
-                    penalize_account=False,
-                )
-                try:
-                    await upstream.close()
-                except Exception:
-                    _facade().logger.debug(
-                        "Failed to close upstream websocket after downstream disconnect",
-                        exc_info=True,
-                    )
-                break
-        if downstream_activity.disconnected:
-            return True
-    elif not suppress_downstream_event:
+        outgoing_texts.extend(downstream_texts)
+    elif forwards_current_frame:
+        outgoing_texts.append(downstream_text)
+    for outgoing_text in outgoing_texts:
         try:
             await proxy._send_downstream_websocket_text(
                 websocket,
                 client_send_lock=client_send_lock,
-                text=downstream_text,
+                text=outgoing_text,
                 downstream_activity=downstream_activity,
             )
-            if downstream_sequence_request_state is not None and downstream_sequence_number is not None:
-                downstream_sequence_request_state.last_downstream_sequence_number = downstream_sequence_number
         except Exception:
             downstream_activity.mark_disconnected()
             _facade().logger.debug(
@@ -1259,6 +1238,15 @@ async def _process_and_forward_upstream_websocket_text(
                     exc_info=True,
                 )
             return True
+    for committed_request_state, _held_texts, held_sequence_number in prelude_commits:
+        if held_sequence_number is not None:
+            committed_request_state.last_downstream_sequence_number = held_sequence_number
+    if (
+        forwards_current_frame
+        and downstream_sequence_request_state is not None
+        and downstream_sequence_number is not None
+    ):
+        downstream_sequence_request_state.last_downstream_sequence_number = downstream_sequence_number
     if upstream_control.reconnect_requested:
         should_reconnect = upstream_control.replay_request_state is not None
         if not should_reconnect:
@@ -5482,6 +5470,8 @@ class _WebSocketMixin:
                 receive_deadline = (
                     None if receive_timeout is None else clock.monotonic() + receive_timeout.timeout_seconds
                 )
+                async with pending_lock:
+                    prelude_hold_deadline = _earliest_websocket_prelude_hold_deadline(pending_requests)
                 try:
                     while True:
                         wait_timeout = None if receive_deadline is None else receive_deadline - clock.monotonic()
@@ -5492,6 +5482,9 @@ class _WebSocketMixin:
                             wait_timeout = (
                                 keepalive_interval if wait_timeout is None else min(wait_timeout, keepalive_interval)
                             )
+                        if prelude_hold_deadline is not None:
+                            hold_wait = max(prelude_hold_deadline - clock.monotonic(), 0.0)
+                            wait_timeout = hold_wait if wait_timeout is None else min(wait_timeout, hold_wait)
                         message = await scheduler.wait_for(
                             upstream.receive(),
                             timeout=wait_timeout,
@@ -5517,14 +5510,23 @@ class _WebSocketMixin:
                 except asyncio.TimeoutError:
                     if receive_deadline is None or clock.monotonic() < receive_deadline:
                         try:
-                            await proxy._emit_pending_websocket_keepalive(
-                                websocket,
-                                pending_requests=pending_requests,
-                                pending_lock=pending_lock,
-                                client_send_lock=client_send_lock,
-                                downstream_activity=downstream_activity,
-                                codex_session_affinity=codex_session_affinity,
-                            )
+                            if prelude_hold_deadline is not None and clock.monotonic() >= prelude_hold_deadline:
+                                await proxy._commit_expired_websocket_prelude_holds(
+                                    websocket,
+                                    pending_requests=pending_requests,
+                                    pending_lock=pending_lock,
+                                    client_send_lock=client_send_lock,
+                                    downstream_activity=downstream_activity,
+                                )
+                            else:
+                                await proxy._emit_pending_websocket_keepalive(
+                                    websocket,
+                                    pending_requests=pending_requests,
+                                    pending_lock=pending_lock,
+                                    client_send_lock=client_send_lock,
+                                    downstream_activity=downstream_activity,
+                                    codex_session_affinity=codex_session_affinity,
+                                )
                         except Exception:
                             downstream_activity.mark_disconnected()
                             _facade().logger.debug("Downstream websocket disconnected during keepalive", exc_info=True)
@@ -5908,22 +5910,37 @@ class _WebSocketMixin:
                 release_create_gate = False
             if request_state is not None:
                 request_state.upstream_transport = upstream_transport
+                if event_type is not None and (event_type.startswith("response.") or event_type == "error"):
+                    upstream_control.downstream_request_state = request_state
+                    # Another active request rules out replaying a held one.
+                    upstream_control.prelude_commits.extend(
+                        (pending_request, *_take_websocket_held_prelude(pending_request))
+                        for pending_request in pending_requests
+                        if pending_request is not request_state and pending_request.held_prelude_texts
+                    )
                 if event_type in {"response.created", "response.failed", "response.incomplete", "error"}:
                     request_state.http_replay_output.clear()
-                replay_created_will_be_suppressed = (
+                replay_prelude_will_be_suppressed = (
                     event_type == "response.created" and request_state.suppress_next_created_downstream
-                )
+                ) or (event_type == "response.in_progress" and request_state.suppress_next_in_progress_downstream)
                 sequence_number = parsed_frame.sequence_number
+                # A held prelude is the lifecycle the client will read, so the
+                # replay must advance beyond it exactly as beyond a sent one.
+                downstream_sequence_watermark = (
+                    request_state.last_downstream_sequence_number
+                    if request_state.last_downstream_sequence_number is not None
+                    else request_state.held_prelude_sequence_number
+                )
                 if (
                     request_state.replay_downstream_response_id is not None
-                    and request_state.last_downstream_sequence_number is not None
+                    and downstream_sequence_watermark is not None
                     and sequence_number is not None
-                    and sequence_number <= request_state.last_downstream_sequence_number
-                    and not replay_created_will_be_suppressed
+                    and sequence_number <= downstream_sequence_watermark
+                    and not replay_prelude_will_be_suppressed
                 ):
                     raise _WebSocketReplaySequenceRegression(
                         f"request_id={request_state.request_log_id or request_state.request_id} "
-                        f"watermark={request_state.last_downstream_sequence_number} replay={sequence_number}"
+                        f"watermark={downstream_sequence_watermark} replay={sequence_number}"
                     )
                 if event_type not in {"response.completed", "response.failed", "response.incomplete", "error"}:
                     _record_response_event(request_state, event_type, now=clock.monotonic())
@@ -5995,6 +6012,23 @@ class _WebSocketMixin:
                     if sequence_number is not None:
                         upstream_control.downstream_sequence_request_state = request_state
                         upstream_control.downstream_sequence_number = sequence_number
+                if not upstream_control.suppress_downstream_event and _websocket_prelude_hold_accepts(
+                    request_state,
+                    event_type,
+                    sole_pending_request=len(pending_requests) == 1,
+                    now=clock.monotonic(),
+                ):
+                    # Not sent yet: an output-free failure of this accepted
+                    # turn can still be replayed within one lifecycle.
+                    _hold_websocket_prelude_text(
+                        request_state,
+                        text,
+                        sequence_number=parsed_frame.sequence_number,
+                        now=clock.monotonic(),
+                    )
+                    upstream_control.suppress_downstream_event = True
+                    upstream_control.downstream_sequence_request_state = None
+                    upstream_control.downstream_sequence_number = None
             if (
                 event_type in {"response.completed", "response.failed", "response.incomplete", "error"}
                 and pending_requests
@@ -6016,6 +6050,7 @@ class _WebSocketMixin:
                     },
                 )
                 if request_state is not None:
+                    upstream_control.downstream_request_state = request_state
                     # Upstream generation ends here; everything after (affinity
                     # refresh, settlement, cleanup) is local and must not stretch
                     # the throughput sample's span. A later terminal for the same
@@ -6107,6 +6142,8 @@ class _WebSocketMixin:
             except ProxyResponseError as exc:
                 async with pending_lock:
                     created_request_state.response_id = None
+                    # The client must never see the lineage-less response.
+                    _take_websocket_held_prelude(created_request_state)
                 raise _CapabilityLineagePropagationError(exc) from exc
 
         if event_type == "response.created" and created_request_state is not None and continuity_state is not None:
@@ -6138,6 +6175,7 @@ class _WebSocketMixin:
             if grouped_error_reason != PREVIOUS_RESPONSE_MALFORMED_PARAM_REASON:
                 upstream_control.reconnect_requested = True
             downstream_texts: list[str] = []
+            upstream_control.downstream_request_state = None
             for grouped_request_state in grouped_previous_response_request_states:
                 if grouped_error_reason == PREVIOUS_RESPONSE_MALFORMED_PARAM_REASON:
                     grouped_request_state.previous_response_not_found_recovery_blocked = True
@@ -6164,6 +6202,7 @@ class _WebSocketMixin:
                     grouped_request_state,
                     reason=grouped_error_reason,
                 )
+                downstream_texts.extend(_take_websocket_held_prelude(grouped_request_state)[0])
                 downstream_texts.append(grouped_downstream_text)
                 await proxy._finalize_websocket_request_state(
                     grouped_request_state,
@@ -6183,6 +6222,7 @@ class _WebSocketMixin:
 
         if len(grouped_previous_response_request_states) == 1 and request_state is None:
             request_state = grouped_previous_response_request_states[0]
+            upstream_control.downstream_request_state = request_state
 
         _record_response_event(request_state, event_type, now=clock.monotonic())
 
@@ -6787,15 +6827,19 @@ class _WebSocketMixin:
             # replacement ``response.created`` has not arrived yet still owns
             # a response the client already saw: both stay ``response.in_progress``
             # under the visible id, like the bridge relay's idle keepalive.
+            # A request whose prelude is still held has shown the client no
+            # response yet and is kept alive like a pre-created one.
             keepalive_ids = [
                 _websocket_downstream_response_id(request_state)
                 for request_state in pending_requests
-                if request_state.response_id is not None or request_state.replay_downstream_response_id is not None
+                if not request_state.held_prelude_texts
+                and (request_state.response_id is not None or request_state.replay_downstream_response_id is not None)
             ]
             precreated_request_ids = [
                 request_state.request_id
                 for request_state in pending_requests
-                if request_state.response_id is None and request_state.replay_downstream_response_id is None
+                if request_state.held_prelude_texts
+                or (request_state.response_id is None and request_state.replay_downstream_response_id is None)
             ]
         emitted = False
         for response_id in keepalive_ids:
@@ -6825,6 +6869,35 @@ class _WebSocketMixin:
                 )
                 emitted = True
         return emitted
+
+    async def _commit_expired_websocket_prelude_holds(
+        self,
+        websocket: WebSocket,
+        *,
+        pending_requests: deque[_WebSocketRequestState],
+        pending_lock: anyio.Lock,
+        client_send_lock: anyio.Lock,
+        downstream_activity: _DownstreamWebSocketActivity,
+    ) -> None:
+        """Send every held prelude whose hold deadline has passed, unchanged."""
+        proxy = cast(_WebSocketServiceProtocol, self)
+        now = clock_for(proxy).monotonic()
+        async with pending_lock:
+            expired = [
+                (request_state, *_take_websocket_held_prelude(request_state))
+                for request_state in pending_requests
+                if request_state.held_prelude_deadline is not None and request_state.held_prelude_deadline <= now
+            ]
+        for request_state, held_texts, held_sequence_number in expired:
+            for held_text in held_texts:
+                await proxy._send_downstream_websocket_text(
+                    websocket,
+                    client_send_lock=client_send_lock,
+                    text=held_text,
+                    downstream_activity=downstream_activity,
+                )
+            if held_sequence_number is not None:
+                request_state.last_downstream_sequence_number = held_sequence_number
 
     async def _downstream_websocket_is_idle(
         self,
@@ -7788,7 +7861,16 @@ class _WebSocketMixin:
                 request_state,
                 response_create_gate,
             )
+        held_texts, _held_sequence_number = _take_websocket_held_prelude(request_state)
         try:
+            # A held prelude belongs to the lifecycle this failure terminates.
+            for held_text in held_texts:
+                await proxy._send_downstream_websocket_text(
+                    websocket,
+                    client_send_lock=client_send_lock,
+                    text=held_text,
+                    downstream_activity=downstream_activity,
+                )
             await proxy._send_downstream_websocket_text(
                 websocket,
                 client_send_lock=client_send_lock,
