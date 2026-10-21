@@ -34,7 +34,7 @@ from app.modules.request_logs.schemas import (
     RequestLogConversation,
     RequestLogEntry,
 )
-from app.modules.request_logs.trace import TraceSample, cache_event, idle_gap, prompt_split
+from app.modules.request_logs.trace import TraceSample, cache_event, cache_lifetime, idle_gap, prompt_split
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +315,7 @@ def _trace_sample(log: RequestLog) -> TraceSample:
         request_operation=log.request_operation,
         prompt_tokens=prompt,
         cache_read_tokens=reads,
-        cache_write_1h_tokens=log.cache_creation_1h_tokens or 0,
+        cache_lifetime=cache_lifetime(log.model_source_kind, log.cache_creation_1h_tokens),
     )
 
 

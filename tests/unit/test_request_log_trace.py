@@ -5,7 +5,16 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.modules.request_logs.trace import CacheEvent, TraceSample, cache_event, idle_gap, prompt_split
+from app.modules.request_logs.trace import (
+    CLAUDE_CACHE_TTL,
+    CLAUDE_EXTENDED_CACHE_TTL,
+    CacheEvent,
+    TraceSample,
+    cache_event,
+    cache_lifetime,
+    idle_gap,
+    prompt_split,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -21,7 +30,7 @@ def sample(*, after_s: float = 60, prompt: int = 100_000, reads: int = 0) -> Tra
         request_operation="responses",
         prompt_tokens=prompt,
         cache_read_tokens=reads,
-        cache_write_1h_tokens=0,
+        cache_lifetime=None,
     )
 
 
@@ -39,6 +48,13 @@ def test_idle_gap_runs_from_the_previous_end():
     assert idle_gap(sample(after_s=0.5), PREVIOUS) == timedelta(0)
 
 
+def test_only_claude_rows_have_a_cache_lifetime():
+    assert cache_lifetime("claude", None) == CLAUDE_CACHE_TTL
+    assert cache_lifetime("claude", 90_000) == CLAUDE_EXTENDED_CACHE_TTL
+    assert cache_lifetime(None, None) is None
+    assert cache_lifetime("openrouter", None) is None
+
+
 @pytest.mark.parametrize(
     "current,previous,expected",
     [
@@ -49,9 +65,10 @@ def test_idle_gap_runs_from_the_previous_end():
         (replace(sample(), model="claude-opus-5-5"), PREVIOUS, CacheEvent.MODEL_SWITCH),
         (replace(sample(), provider_account=("acc-b", None)), PREVIOUS, CacheEvent.ACCOUNT_SWITCH),
         (replace(sample(), provider_account=(None, "source-claude")), PREVIOUS, CacheEvent.ACCOUNT_SWITCH),
-        (sample(after_s=302), PREVIOUS, CacheEvent.IDLE_EXPIRY),
-        (replace(sample(after_s=1800), cache_write_1h_tokens=90_000), PREVIOUS, CacheEvent.BUST),
-        (replace(sample(after_s=3700), cache_write_1h_tokens=90_000), PREVIOUS, CacheEvent.IDLE_EXPIRY),
+        (replace(sample(after_s=302), cache_lifetime=CLAUDE_CACHE_TTL), PREVIOUS, CacheEvent.IDLE_EXPIRY),
+        (replace(sample(after_s=1800), cache_lifetime=CLAUDE_EXTENDED_CACHE_TTL), PREVIOUS, CacheEvent.BUST),
+        (replace(sample(after_s=3700), cache_lifetime=CLAUDE_EXTENDED_CACHE_TTL), PREVIOUS, CacheEvent.IDLE_EXPIRY),
+        (sample(after_s=86_400), PREVIOUS, CacheEvent.BUST),
         (sample(prompt=101_000, reads=5_000), PREVIOUS, CacheEvent.BUST),
         (sample(prompt=150_000, reads=95_000), PREVIOUS, CacheEvent.GROWTH),
         (sample(prompt=100_000, reads=40_000), PREVIOUS, CacheEvent.MISS),

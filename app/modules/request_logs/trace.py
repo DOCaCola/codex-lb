@@ -3,6 +3,11 @@
 Cache events follow Agent LB's session trace (``cache_kind``), adapted to rows of
 both providers: Codex rows report no cache writes, so a miss is the uncached part of
 the prompt rather than the written part. Claude rows count writes as uncached.
+
+Idle expiry is only inferred where the cache lifetime is known. Claude documents a
+5-minute and a 1-hour tier and reports which one was written. Signed-in Codex
+accounts keep their cache indefinitely (OpenAI, 2026-10-20), so idle time never
+explains a Codex miss; other model sources do not report a lifetime.
 """
 
 from __future__ import annotations
@@ -12,13 +17,14 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 
 from app.core.usage.request_operation import RequestOperation
+from app.modules.claude.schemas import CLAUDE_KIND
 
 # A miss smaller than this is ordinary growth of the prompt (Agent LB's threshold).
 MISS_THRESHOLD_TOKENS = 20_000
-# Prompt-cache lifetimes: 5 minutes by default, 1 hour when the miss was rewritten
-# into the 1-hour Claude tier (Agent LB compares the 1-hour share the same way).
-DEFAULT_CACHE_TTL = timedelta(minutes=5)
-EXTENDED_CACHE_TTL = timedelta(hours=1)
+# Claude prompt-cache lifetimes: 5 minutes by default, 1 hour when the miss was
+# rewritten into the 1-hour tier (Agent LB compares the 1-hour share the same way).
+CLAUDE_CACHE_TTL = timedelta(minutes=5)
+CLAUDE_EXTENDED_CACHE_TTL = timedelta(hours=1)
 
 
 class CacheEvent(StrEnum):
@@ -43,7 +49,14 @@ class TraceSample:
     request_operation: str | None
     prompt_tokens: int
     cache_read_tokens: int
-    cache_write_1h_tokens: int
+    cache_lifetime: timedelta | None
+
+
+def cache_lifetime(model_source_kind: str | None, cache_write_1h_tokens: int | None) -> timedelta | None:
+    """The prompt-cache lifetime of a request's provider, or ``None`` when idle time cannot expire it."""
+    if model_source_kind != CLAUDE_KIND:
+        return None
+    return CLAUDE_EXTENDED_CACHE_TTL if cache_write_1h_tokens else CLAUDE_CACHE_TTL
 
 
 def prompt_split(input_tokens: int | None, cached_input_tokens: int | None) -> tuple[int, int]:
@@ -71,8 +84,7 @@ def cache_event(sample: TraceSample, previous: TraceSample | None) -> CacheEvent
         return CacheEvent.MODEL_SWITCH
     if sample.provider_account != previous.provider_account:
         return CacheEvent.ACCOUNT_SWITCH
-    ttl = EXTENDED_CACHE_TTL if sample.cache_write_1h_tokens else DEFAULT_CACHE_TTL
-    if idle_gap(sample, previous) > ttl:
+    if sample.cache_lifetime is not None and idle_gap(sample, previous) > sample.cache_lifetime:
         return CacheEvent.IDLE_EXPIRY
     prior = previous.prompt_tokens
     reads = sample.cache_read_tokens

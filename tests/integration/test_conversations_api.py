@@ -458,7 +458,7 @@ async def test_conversation_trace_classifies_cache_events_newest_first(async_cli
     requests = body["requests"]
     assert [row["cacheEvent"] for row in requests] == [
         "bust",
-        "idle_expiry",
+        "bust",
         None,
         "account_switch",
         "growth",
@@ -484,10 +484,48 @@ async def test_conversation_trace_page_classifies_against_the_previous_page(asyn
     assert response.status_code == 200
     body = response.json()
     assert body["hasMore"] is True
-    assert [row["cacheEvent"] for row in body["requests"]] == ["idle_expiry", None]
+    assert [row["cacheEvent"] for row in body["requests"]] == ["bust", None]
 
     unknown = await async_client.get("/api/request-logs/conversation-trace", params={"conversationId": "unknown"})
     assert unknown.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_conversation_trace_expires_claude_cache_by_its_written_tier(async_client, db_setup):
+    base = utcnow().replace(microsecond=0) - timedelta(hours=3)
+    async with SessionLocal() as session:
+        logs = RequestLogsRepository(session)
+        # (seconds after base, prompt, cached reads, 1-hour cache writes)
+        rows = (
+            (0, 80_000, 0, 80_000),
+            (600, 81_000, 80_000, 0),
+            (1200, 82_000, 0, 0),
+            (6000, 83_000, 0, 83_000),
+        )
+        for index, (after_s, prompt, reads, writes_1h) in enumerate(rows):
+            await logs.add_log(
+                account_id=None,
+                request_id=f"claude-trace-{index}",
+                model="claude-opus-5-5",
+                input_tokens=prompt,
+                output_tokens=100,
+                cached_input_tokens=reads,
+                cache_creation_tokens=prompt - reads,
+                cache_creation_1h_tokens=writes_1h,
+                latency_ms=1000,
+                status="success",
+                error_code=None,
+                requested_at=base + timedelta(seconds=after_s),
+                conversation_id="claude-trace",
+                model_source_id="source-claude",
+                model_source_kind="claude",
+            )
+
+    response = await async_client.get("/api/request-logs/conversation-trace", params={"conversationId": "claude-trace"})
+
+    assert response.status_code == 200
+    # 10 minutes outlive the 5-minute tier; 80 minutes outlive the 1-hour tier.
+    assert [row["cacheEvent"] for row in response.json()["requests"]] == ["idle_expiry", "idle_expiry", None, "first"]
 
 
 @pytest.mark.asyncio
