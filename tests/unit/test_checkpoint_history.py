@@ -49,6 +49,7 @@ def history():
             "content": [{"type": "reasoning_text", "text": "Useful reasoning"}],
         },
         {"type": "reasoning", "encrypted_content": "PRIVATE_ONLY_CIPHERTEXT"},
+        {"type": "configuration_update", "reasoning": {"effort": "low"}},
         {"type": "function_call", "id": "fc_transport", "name": "read", "call_id": "call_1", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "call_1", "output": "Critical evidence" + "x" * 10_000},
         {
@@ -73,6 +74,7 @@ def test_projection_preserves_semantics_without_protocol_debris():
     projected = readable_checkpoint_input(original)
     wire = json.dumps(projected)
     assert "PRIVATE" not in wire and "encrypted_content" not in wire
+    assert "configuration_update" not in wire
     assert "fc_transport" not in wire and "msg_transport" not in wire
     assert wire.count("Useful reasoning") == 1
     assert "Critical evidence" + "x" * 10_000 in wire

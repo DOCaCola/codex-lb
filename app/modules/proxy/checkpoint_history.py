@@ -92,7 +92,9 @@ def readable_checkpoint_input(items: JsonValue) -> list[JsonValue]:
         kind = item.get("type", "message")
         if not isinstance(kind, str):
             raise UnreadableCheckpointHistory("invalid_item_type")
-        if kind in {"additional_tools", "compaction_trigger"}:
+        # Codex's configuration_update only addresses the native model's reasoning effort; Codex itself omits it
+        # for models that do not support effort updates, which every model reading this snapshot is.
+        if kind in {"additional_tools", "compaction_trigger", "configuration_update"}:
             continue
         if (
             kind == "context_compaction"

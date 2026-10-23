@@ -1954,6 +1954,34 @@ async def test_upstream_errors_preserve_status_and_limits(async_client, pool, mo
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/v1/messages"])
+async def test_prompt_overflow_carries_context_length_code_only_for_responses(async_client, pool, monkeypatch, path):
+    from app.modules.claude import transport
+    from app.modules.model_sources.forwarding import ModelSourceForwardingError
+
+    detail = {"type": "invalid_request_error", "message": "prompt is too long: 210000 tokens > 200000 maximum"}
+
+    async def fail(*args, **kwargs):
+        raise ModelSourceForwardingError(
+            status_code=400, payload={"type": "error", "error": dict(detail)}, upstream_status_code=400
+        )
+
+    monkeypatch.setattr(transport, "_open_source_stream", fail)
+    body = (
+        {"model": MODEL, "stream": True, "input": "Hi"}
+        if path.endswith("responses")
+        else {"model": MODEL, "stream": True, "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}
+    )
+    response = await async_client.post(path, json=body)
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["message"] == detail["message"]
+    if path.endswith("responses"):
+        assert error["code"] == "context_length_exceeded"
+    else:
+        assert error == detail
+
+
+@pytest.mark.parametrize("path", ["/v1/responses", "/v1/messages"])
 async def test_real_sse_transport_disconnect_releases_upstream(async_client, pool, path):
     from aiohttp import web
 

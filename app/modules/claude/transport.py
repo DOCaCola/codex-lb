@@ -126,7 +126,9 @@ async def _open_responses(
             status_code=exc.status_code,
             payload=cast(
                 dict[str, JsonValue],
-                _redact_json_value({**exc.payload, **({"type": "error"} if projection is None else {})}, secret),
+                _redact_json_value(
+                    {**exc.payload, "type": "error"} if projection is None else _responses_error(exc.payload), secret
+                ),
             ),
             upstream_status_code=exc.upstream_status_code,
             retry_after=exc.retry_after,
@@ -309,6 +311,17 @@ def public_headers(headers: Mapping[str, str]) -> dict[str, str]:
         for key, value in headers.items()
         if key.lower().startswith("anthropic-ratelimit-") or key.lower() in {"retry-after", "request-id"}
     }
+
+
+def _responses_error(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Anthropic reports input overflow by message only; Responses clients recover from it by error code."""
+    detail = payload.get("error")
+    if not isinstance(detail, dict) or detail.get("type") != "invalid_request_error" or "code" in detail:
+        return payload
+    message = detail.get("message")
+    if not isinstance(message, str) or not message.startswith("prompt is too long"):
+        return payload
+    return {**payload, "error": {**detail, "code": "context_length_exceeded"}}
 
 
 async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
