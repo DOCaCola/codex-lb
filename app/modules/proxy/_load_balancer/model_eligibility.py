@@ -6,7 +6,7 @@ from datetime import datetime
 from app.core.openai.model_registry import ModelRegistry, canonical_service_tier_value
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
 from app.db.models import Account, AdditionalUsageHistory
-from app.modules.proxy.account_cache import is_account_model_allowed
+from app.modules.proxy.account_cache import is_account_model_allowed, is_account_reasoning_allowed
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
@@ -118,6 +118,15 @@ def _filter_accounts_for_model(
         registry=registry,
         service_tier=service_tier,
     ).accounts
+
+
+def _filter_accounts_for_reasoning_effort(
+    accounts: list[Account],
+    model: str | None,
+    reasoning_effort: str | None,
+) -> list[Account]:
+    """Keep the accounts whose policy permits the model's requested or default reasoning effort."""
+    return [account for account in accounts if is_account_reasoning_allowed(account, model, reasoning_effort)]
 
 
 def _gated_limit_name_for_model(model: str | None) -> str | None:

@@ -996,7 +996,9 @@ async def test_proxy_compact_headers_expire_elapsed_primary_rows(async_client, m
     async with SessionLocal() as session:
         usage_repo = UsageRepository(session)
         # Upstream stopped reporting the primary window: the frozen 87%
-        # sample with an elapsed reset must not be served downstream.
+        # sample with an elapsed reset must not be served downstream. The pool
+        # then has no account reporting a 5h window, so none is reported
+        # (client-usage-reporting: "An elapsed window is no longer reported").
         await usage_repo.add_entry(
             account_id=expected_account_id,
             used_percent=87.0,
@@ -1019,7 +1021,8 @@ async def test_proxy_compact_headers_expire_elapsed_primary_rows(async_client, m
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
     assert response.status_code == 200
-    assert response.headers.get("x-codex-primary-used-percent") == "0.0"
+    assert response.headers.get("x-codex-primary-used-percent") is None
+    assert response.headers.get("x-codex-primary-window-minutes") is None
     assert response.headers.get("x-codex-primary-reset-at") is None
     assert response.headers.get("x-codex-secondary-used-percent") == "40.0"
     assert response.headers.get("x-codex-secondary-reset-at") == str(weekly_reset)

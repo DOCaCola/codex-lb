@@ -77,6 +77,7 @@ from app.modules.proxy._load_balancer.model_eligibility import (
     _additional_usage_is_exhausted,  # noqa: F401
     _catalog_omission_quota_admission,
     _effective_model_service_tier,  # noqa: F401
+    _filter_accounts_for_reasoning_effort,
     _gated_limit_name_for_model,
     _latest_additional_by_key,
     _ModelAccountFilterResult,
@@ -158,7 +159,6 @@ from app.modules.proxy._load_balancer.unbound_selection import (
 from app.modules.proxy.account_cache import (
     get_account_selection_cache,
     is_account_model_allowed,
-    is_account_reasoning_allowed,
     mark_account_routing_unavailable,
     record_account_quota_status,
 )
@@ -641,22 +641,16 @@ class LoadBalancer:
                 additional_limit_name=additional_limit_name,
                 account_ids=scoped_account_ids,
             )
-            accounts_before_reasoning = selection_inputs.accounts
-            reasoning_owners = [
-                account
-                for account in selection_inputs.effective_continuity_owner_candidates
-                if is_account_reasoning_allowed(account, model, reasoning_effort)
-            ]
-            reasoning_accounts = [
-                account
-                for account in accounts_before_reasoning
-                if is_account_reasoning_allowed(account, model, reasoning_effort)
-            ]
-            reasoning_denied = bool(accounts_before_reasoning and not reasoning_accounts)
+            reasoning_accounts = _filter_accounts_for_reasoning_effort(
+                selection_inputs.accounts, model, reasoning_effort
+            )
+            reasoning_denied = bool(selection_inputs.accounts and not reasoning_accounts)
             selection_inputs = replace(
                 selection_inputs,
                 accounts=reasoning_accounts,
-                continuity_owner_candidates=reasoning_owners,
+                continuity_owner_candidates=_filter_accounts_for_reasoning_effort(
+                    selection_inputs.effective_continuity_owner_candidates, model, reasoning_effort
+                ),
                 error_code="reasoning_effort_not_allowed" if reasoning_denied else selection_inputs.error_code,
                 error_message="No eligible account permits this model's requested or default reasoning effort"
                 if reasoning_denied

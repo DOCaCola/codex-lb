@@ -22,9 +22,14 @@ class SyntheticUpstream:
     def __init__(self, terminal: str = "response.completed") -> None:
         self.terminal = terminal
         self.messages: asyncio.Queue = asyncio.Queue()
+        self.response_count = 0
 
     async def send_text(self, text: str) -> None:
         request = json.loads(text)
+        # Upstream never reuses a response id; the proxy drops late frames of a
+        # finished response, so each turn on this socket needs its own id.
+        self.response_count += 1
+        response_id = "resp_affinity_ws" if self.response_count == 1 else f"resp_affinity_ws_{self.response_count}"
         for kind in ("response.created", self.terminal):
             self.messages.put_nowait(
                 UpstreamWebSocketMessage(
@@ -33,7 +38,7 @@ class SyntheticUpstream:
                         {
                             "type": kind,
                             "response": {
-                                "id": "resp_affinity_ws",
+                                "id": response_id,
                                 "object": "response",
                                 "model": request["model"],
                                 "status": "completed" if kind.endswith("completed") else "in_progress",
