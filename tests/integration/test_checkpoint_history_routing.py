@@ -9,6 +9,7 @@ import pytest
 from aiohttp import web
 
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
+from app.core.config.settings import get_settings
 from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
 from app.modules.proxy import checkpoint_handoff, checkpoint_history
@@ -247,6 +248,58 @@ async def test_native_websocket_compact_then_source_recovery(async_client, recov
         assert switched["type"] == "response.completed", switched
     assert_readable(captured[0][2])
     assert len(calls) == len(captured) == len(closed) == 1
+
+
+@pytest.mark.parametrize("path", PATHS)
+async def test_bridged_native_compaction_records_checkpoint_provenance(async_client, recovery_env, monkeypatch, path):
+    headers, calls, _, _, directory = recovery_env
+    settings = await async_client.put("/api/settings", json={"httpDownstreamTransportPolicy": "always_websocket"})
+    assert settings.status_code == 200, settings.text
+    bridged = []
+
+    class StreamedCheckpointSocket(SyntheticUpstream):
+        # Like OpenAI, the checkpoint arrives only as an output item and the
+        # terminal event carries an empty output.
+        async def send_text(self, text):
+            request = json.loads(text)
+            bridged.append(request)
+            response = {"id": "resp_bridged_compact", "object": "response", "model": request["model"]}
+            usage = {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20}
+            for event in (
+                {"type": "response.created", "response": {**response, "status": "in_progress", "output": []}},
+                {"type": "response.output_item.done", "output_index": 0, "item": checkpoint()},
+                {
+                    "type": "response.completed",
+                    "response": {**response, "status": "completed", "output": [], "usage": usage},
+                },
+            ):
+                self.messages.put_nowait(UpstreamWebSocketMessage(kind="text", text=json.dumps(event)))
+
+    async def connect(*args, **kwargs):
+        return StreamedCheckpointSocket()
+
+    monkeypatch.setattr(proxy_service, "connect_responses_websocket", connect)
+    try:
+        with monkeypatch.context() as bridge_env:
+            bridge_env.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED", "true")
+            bridge_env.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_CODEX_PREWARM_ENABLED", "false")
+            get_settings.cache_clear()
+            compact = await async_client.post(
+                path,
+                headers=headers,
+                json={
+                    "model": "gpt-5.1",
+                    "instructions": "Keep instructions",
+                    "input": [*history(), {"type": "compaction_trigger"}],
+                    "stream": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+    assert compact.status_code == 200, compact.text
+    assert "PRIVATE_NATIVE_CHECKPOINT" in compact.text
+    assert len(bridged) == 1 and not calls
+    assert list((directory / "origins").glob("*.replay"))
 
 
 @pytest.mark.parametrize("path", PATHS)

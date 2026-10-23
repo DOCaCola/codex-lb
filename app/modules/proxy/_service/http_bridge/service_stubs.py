@@ -404,6 +404,10 @@ def _find_websocket_request_state_by_response_id(*args: Any, **kwargs: Any) -> A
     return _service_global("_find_websocket_request_state_by_response_id")(*args, **kwargs)
 
 
+def _finish_websocket_terminal_output(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_finish_websocket_terminal_output")(*args, **kwargs)
+
+
 def _match_websocket_request_state_for_anonymous_event(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_match_websocket_request_state_for_anonymous_event")(*args, **kwargs)
 

@@ -421,6 +421,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _attribute_upstream_websocket_failure,
     _bind_websocket_request_dispatch_owner,
     _find_websocket_request_state_by_response_id,
+    _finish_websocket_terminal_output,
     _forget_websocket_stale_previous_response,
     _install_verified_fresh_replay,
     _is_websocket_interrupted_terminal,
@@ -6671,16 +6672,10 @@ class _WebSocketMixin:
             # Set before finalization drops the request from the pending queue,
             # so the socket never looks idle while the client runs the calls.
             request_state.downstream_activity.client_tool_results_owed = bool(request_state.pending_tool_call_types)
-        # An interrupted response keeps its completed output and anchors the
-        # client's follow-up (``previous_response_id``) like a completion.
+        _finish_websocket_terminal_output(request_state, event_type, payload)
         response_terminal_with_output = event_type == "response.completed" or _is_websocket_interrupted_terminal(
             event_type, payload
         )
-        if response_terminal_with_output and payload is not None:
-            completed_response = payload.get("response")
-            request_state.completed_output = request_state.http_replay_output.finish(
-                completed_response.get("output") if isinstance(completed_response, dict) else None
-            )
         if response_terminal_with_output and continuity_state is not None and not completed_empty_prewarm:
             if (
                 upstream_transport == "http"

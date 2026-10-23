@@ -1491,6 +1491,27 @@ def _is_websocket_interrupted_terminal(
     return _websocket_event_incomplete_reason(event_type, payload) == CLIENT_INTERRUPT_ERROR_CODE
 
 
+def _finish_websocket_terminal_output(
+    request_state: _WebSocketRequestState,
+    event_type: str | None,
+    payload: dict[str, JsonValue] | None,
+) -> None:
+    """Settle the response output that finalization records as replay history and checkpoint provenance.
+
+    An interrupted response keeps its completed output and anchors the client's
+    follow-up like a completion. Native compaction items arrive in
+    ``output_item.done`` while the terminal event may carry an empty output.
+    """
+    if payload is None or not (
+        event_type == "response.completed" or _is_websocket_interrupted_terminal(event_type, payload)
+    ):
+        return
+    response = payload.get("response")
+    request_state.completed_output = request_state.http_replay_output.finish(
+        response.get("output") if isinstance(response, dict) else None
+    )
+
+
 def _maybe_rewrite_websocket_previous_response_not_found_event(
     *,
     request_state: _WebSocketRequestState,

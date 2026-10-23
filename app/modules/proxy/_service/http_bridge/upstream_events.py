@@ -113,6 +113,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _build_stream_incomplete_terminal_event_for_request,
     _classify_upstream_close,
     _find_websocket_request_state_by_response_id,
+    _finish_websocket_terminal_output,
     _http_error_status_from_payload,
     _is_account_neutral_transport_drop,
     _is_missing_tool_output_error,
@@ -2791,8 +2792,8 @@ class _HTTPBridgeUpstreamEventsMixin:
                     payload=payload,
                 )
                 # Native compaction items arrive in ``output_item.done`` while
-                # ``response.completed`` may carry an empty output; terminal
-                # settlement records checkpoint provenance from this collector.
+                # ``response.completed`` may carry an empty output; finalization
+                # records checkpoint provenance from the settled terminal output.
                 if event_type in {"response.created", "response.failed", "response.incomplete", "error"}:
                     matched_request_state.http_replay_output.clear()
                 elif (
@@ -2801,6 +2802,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                     and is_checkpoint_item(payload.get("item"))
                 ):
                     matched_request_state.http_replay_output.retain(payload)
+                _finish_websocket_terminal_output(matched_request_state, event_type, payload)
                 completed_tool_call = _response_output_item_done_tool_call(payload)
                 if completed_tool_call is not None:
                     completed_call_id, completed_call_type = completed_tool_call
