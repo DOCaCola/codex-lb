@@ -698,14 +698,39 @@ def _prepare_websocket_request_state_for_account_switch(
     return _install_verified_fresh_replay(request_state)
 
 
+def _prepare_websocket_anchored_replay_body(request_state: "_WebSocketRequestState") -> str | None:
+    """Install the fresh body an anchored request is replayed with.
+
+    A replay reconnects, and upstream resolves a ``store=false`` anchor only on
+    the connection that produced it, so the anchored body itself is never
+    re-sent. The owner-switch prep releases the owner when the move is proven
+    safe; otherwise the fresh body keeps the owner pins the dispatch bound,
+    which hold the conversation's ciphertext and warm prompt cache.
+    """
+    switched_request_text = _prepare_websocket_request_state_for_account_switch(request_state)
+    if switched_request_text is not None:
+        return switched_request_text
+    fresh_request_text = request_state.fresh_upstream_request_text
+    if not (request_state.fresh_upstream_request_is_retry_safe and fresh_request_text):
+        return None
+    return _install_fresh_replay_body(
+        request_state,
+        fresh_request_text,
+        account_neutral=_request_body_is_account_neutral_fresh_replay(request_state, fresh_request_text),
+        release_owner_pin=False,
+    )
+
+
 def _retire_websocket_continuity_anchor(continuity_state: _WebSocketContinuityState) -> None:
     """Drop the completed-response anchor and the state that only exists for it."""
     continuity_state.last_completed_response_id = None
+    continuity_state.last_completed_client_response_id = None
     continuity_state.last_completed_upstream_connection_id = None
     continuity_state.last_completed_response_transport = None
     continuity_state.last_completed_model_selector = None
     continuity_state.last_completed_input_count = 0
     continuity_state.last_completed_input_prefix_fingerprint = None
+    continuity_state.last_completed_history = None
     continuity_state.last_pending_function_call_ids = []
     continuity_state.last_pending_tool_call_types = {}
 
@@ -861,9 +886,15 @@ def _record_websocket_continuity_completion(
     # is cleared rather than left stale when the completed turn cannot
     # provide one.
     continuity_state.last_completed_response_id = response_id
+    continuity_state.last_completed_client_response_id = request_state.replay_downstream_response_id or response_id
     continuity_state.last_completed_upstream_connection_id = request_state.upstream_connection_id
     continuity_state.last_completed_response_transport = upstream_transport
     continuity_state.last_completed_model_selector = request_state.raw_source_model or request_state.model
+    continuity_state.last_completed_history = (
+        [*request_state.materialized_input, *request_state.completed_output]
+        if request_state.materialized_input is not None and request_state.completed_output is not None
+        else None
+    )
     if request_state.input_item_count > 0 and request_state.input_full_fingerprint is not None:
         continuity_state.last_completed_input_count = request_state.input_item_count
         continuity_state.last_completed_input_prefix_fingerprint = request_state.input_full_fingerprint
@@ -884,6 +915,7 @@ def _record_websocket_empty_prewarm_completion(
     # A replayed prewarm keeps exposing its original id to the client, so the
     # turn chained to it references that id, never the hidden upstream one.
     continuity_state.empty_prewarm_response_id = request_state.replay_downstream_response_id or response_id
+    continuity_state.empty_prewarm_history = request_state.materialized_input
     if request_state.input_item_count > 0 and request_state.input_full_fingerprint is not None:
         continuity_state.empty_prewarm_input_count = request_state.input_item_count
         continuity_state.empty_prewarm_input_fingerprint = request_state.input_full_fingerprint

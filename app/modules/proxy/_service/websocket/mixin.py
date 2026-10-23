@@ -434,6 +434,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _pop_matching_websocket_request_states,
     _pop_replayable_precreated_websocket_request_state,
     _pop_terminal_websocket_request_state,
+    _prepare_websocket_anchored_replay_body,
     _prepare_websocket_request_state_for_account_switch,
     _prepare_websocket_request_state_for_auth_replay,
     _record_or_defer_websocket_accepted_replay_health,
@@ -3439,6 +3440,26 @@ class _WebSocketMixin:
                     ):
                         replay_account_id = retained.account_id
                     _facade().logger.info("websocket_http_history_expanded")
+        if (
+            continuity_state is not None
+            and payload.get("previous_response_id")
+            and continuity_state.last_completed_history is not None
+            and original_client_previous_id == continuity_state.last_completed_client_response_id
+            and original_client_previous_id != continuity_state.last_completed_response_id
+        ):
+            # A single-lifecycle replay showed the client its first attempt's
+            # id, which upstream never issued; upstream only knows the replay's
+            # own response. Send the conversation that id represents instead.
+            delta = payload.get("input", [])
+            if isinstance(delta, str):
+                delta = [{"role": "user", "content": delta}]
+            if isinstance(delta, list):
+                payload = {
+                    **payload,
+                    "input": [*continuity_state.last_completed_history, *cast(list[JsonValue], delta)],
+                }
+                payload.pop("previous_response_id", None)
+                _facade().logger.info("websocket_replayed_anchor_materialized")
         # Normalization may retain nested client objects. Own the complete
         # replay history before any normalization or upstream shaping occurs.
         replay_input = None
@@ -3584,18 +3605,18 @@ class _WebSocketMixin:
                 previous_response_trimmed_input_fingerprint = client_input_fingerprints.full()
                 responses_payload = responses_payload.model_copy(update={"input": trimmed_input_items})
         full_resend_client_metadata = client_metadata
+        if trusted_incremental_responses_lite and client_metadata is not None:
+            # A transparent fresh replay clears ``previous_response_id`` and its
+            # input carries no ``additional_tools`` prefix, so the replay loses
+            # the linkage that justified the trusted marker. Strip it so the
+            # replay does not advertise Responses Lite.
+            stripped_metadata = {
+                key: value
+                for key, value in client_metadata.items()
+                if key.lower() != CODEX_RESPONSES_LITE_WEBSOCKET_METADATA_KEY
+            }
+            full_resend_client_metadata = stripped_metadata or None
         if client_full_resend_retry_safe and client_full_resend_input_items is not None:
-            if trusted_incremental_responses_lite and client_metadata is not None:
-                # The transparent fresh replay clears ``previous_response_id``
-                # and this input carries no ``additional_tools`` prefix, so the
-                # replay loses the linkage that justified the trusted marker.
-                # Strip it so the replay does not advertise Responses Lite.
-                stripped_metadata = {
-                    key: value
-                    for key, value in client_metadata.items()
-                    if key.lower() != CODEX_RESPONSES_LITE_WEBSOCKET_METADATA_KEY
-                }
-                full_resend_client_metadata = stripped_metadata or None
             client_full_resend_payload = responses_payload.model_copy(
                 update={
                     "previous_response_id": None,
@@ -3667,6 +3688,20 @@ class _WebSocketMixin:
                     responses_payload.previous_response_id,
                     len(missing_call_ids),
                 )
+        # Codex anchors every follow-up on the socket to its previous response
+        # and sends only the new items. The history recorded for that response
+        # completes such a delta into the full resend a replay needs.
+        client_anchor_history: list[JsonValue] | None = None
+        if (
+            session_anchor is None
+            and continuity_state is not None
+            and responses_payload.previous_response_id is not None
+            and isinstance(responses_payload.input, list)
+        ):
+            if responses_payload.previous_response_id == continuity_state.last_completed_response_id:
+                client_anchor_history = continuity_state.last_completed_history
+            elif responses_payload.previous_response_id == continuity_state.empty_prewarm_response_id:
+                client_anchor_history = continuity_state.empty_prewarm_history
         session_id = _owner_lookup_session_id_from_headers(
             headers,
             synthesized_turn_state=synthesized_turn_state,
@@ -3802,6 +3837,37 @@ class _WebSocketMixin:
                     responses_payload.previous_response_id,
                     request_state.input_item_count,
                 )
+        if request_state.proxy_injected_previous_response_id:
+            if isinstance(original_full_resend_input, list):
+                request_state.materialized_input = list(cast(list[JsonValue], original_full_resend_input))
+        elif responses_payload.previous_response_id is None:
+            request_state.materialized_input = (
+                [{"role": "user", "content": responses_payload.input}]
+                if isinstance(responses_payload.input, str)
+                else list(cast(list[JsonValue], responses_payload.input))
+            )
+        elif client_full_resend_payload is not None:
+            request_state.materialized_input = client_full_resend_input_items
+        elif client_anchor_history is not None:
+            materialized_input = [*client_anchor_history, *cast(list[JsonValue], responses_payload.input)]
+            request_state.materialized_input = materialized_input
+            request_state.fresh_upstream_request_text = _facade()._response_create_text_with_size_guard(
+                responses_payload.model_copy(
+                    update={
+                        "previous_response_id": None,
+                        "input": materialized_input,
+                        "client_metadata": full_resend_client_metadata,
+                    }
+                ),
+                include_type_field=True,
+                client_metadata=full_resend_client_metadata,
+                request_state=request_state,
+                transport=_REQUEST_TRANSPORT_WEBSOCKET,
+            )
+            request_state.fresh_upstream_request_is_retry_safe = request_state.fresh_upstream_request_text is not None
+            request_state.fresh_upstream_request_responses_lite_model = (
+                responses_payload.model if body_uses_responses_lite else None
+            )
         affinity_policy = _sticky_key_for_responses_request(
             # Only the proven restart uses the pre-injection body. Ordinary
             # full resends must be classified after anchor injection so they
@@ -5981,6 +6047,7 @@ class _WebSocketMixin:
                 if (
                     (
                         (upstream_transport == "http" and request_state.http_replay_conversation_id is not None)
+                        or request_state.materialized_input is not None
                         or (payload is not None and is_checkpoint_item(payload.get("item")))
                     )
                     and event_type == "response.output_item.done"
@@ -6548,16 +6615,13 @@ class _WebSocketMixin:
                 request_state.replay_count += 1
                 _clear_websocket_request_error_overrides(request_state)
                 if accepted_lifecycle_replay and request_state.previous_response_id is not None:
-                    # The owner-switch prep swaps the retained fresh body in and
+                    # The replay reconnects, where the connection-local anchor
+                    # does not exist, so the retained fresh body is re-sent. It
                     # releases the anchor owner's pin only when the move is
                     # proven safe (proxy-injected anchor, account-neutral fresh
-                    # body). A client-supplied anchor or a fresh body that still
-                    # names an account-scoped upload keeps the anchored body: the
-                    # terminal proved the accepted turn produced nothing, so it
-                    # is re-sent as-is to the owner that accepted it (parity with
-                    # the bridge's owner-bound anchored retry). The dispatch
-                    # binding already requires that owner on the reconnect.
-                    _prepare_websocket_request_state_for_account_switch(request_state)
+                    # body); otherwise it goes to the owner that accepted the
+                    # turn, which the dispatch binding requires on the reconnect.
+                    _prepare_websocket_anchored_replay_body(request_state)
                 if accepted_lifecycle_replay and _websocket_accepted_replay_may_exclude_account(request_state):
                     # The accepted turn failed on this account; move the
                     # account-neutral replay to another one like the bridge does.
@@ -6609,21 +6673,22 @@ class _WebSocketMixin:
             request_state.downstream_activity.client_tool_results_owed = bool(request_state.pending_tool_call_types)
         # An interrupted response keeps its completed output and anchors the
         # client's follow-up (``previous_response_id``) like a completion.
-        if (
-            (event_type == "response.completed" or _is_websocket_interrupted_terminal(event_type, payload))
-            and continuity_state is not None
-            and not completed_empty_prewarm
-        ):
+        response_terminal_with_output = event_type == "response.completed" or _is_websocket_interrupted_terminal(
+            event_type, payload
+        )
+        if response_terminal_with_output and payload is not None:
+            completed_response = payload.get("response")
+            request_state.completed_output = request_state.http_replay_output.finish(
+                completed_response.get("output") if isinstance(completed_response, dict) else None
+            )
+        if response_terminal_with_output and continuity_state is not None and not completed_empty_prewarm:
             if (
                 upstream_transport == "http"
                 and request_state.http_replay_conversation_id is not None
                 and response_id is not None
                 and payload is not None
             ):
-                completed_response = payload.get("response")
-                output = request_state.http_replay_output.finish(
-                    completed_response.get("output") if isinstance(completed_response, dict) else None
-                )
+                output = request_state.completed_output
                 replay_text = request_state.fresh_upstream_request_text or request_state.request_text
                 if isinstance(output, list) and replay_text is not None:
                     for replay_id in _websocket_continuity_response_ids(request_state, response_id):
@@ -7327,7 +7392,7 @@ class _WebSocketMixin:
             and checkpoint_request_text is not None
             and isinstance(completed_response, dict)
         ):
-            output = request_state.http_replay_output.finish(completed_response.get("output"))
+            output = request_state.completed_output
             if output is not None and any(is_checkpoint_item(item) for item in output):
                 await retain_streamed_checkpoint(
                     checkpoint_request_text,

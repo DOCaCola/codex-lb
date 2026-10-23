@@ -54416,34 +54416,44 @@ def test_websocket_precreated_retry_error_code_replays_accepted_output_free_capa
 
 
 @pytest.mark.parametrize(
-    "overrides",
+    ("overrides", "reason"),
     [
-        {"replay_count": 1},
-        {"upstream_model_output_seen": True},
-        {"downstream_visible": True},
-        {"response_event_count": 3},
-        {"pending_function_call_ids": ["call_pending"]},
-        {"pending_tool_call_types": {"call_pending": "function_call"}},
-        {"deferred_reasoning_downstream_texts": ["data: {}\n\n"]},
-        {"previous_response_id": "resp_anchor"},
-        {"last_downstream_sequence_number": 0},
-        {"last_downstream_sequence_number": 1},
-        {"request_text": None},
-        {"response_create_sent_at": None},
+        ({"replay_count": 1}, "replay_consumed"),
+        ({"upstream_model_output_seen": True}, "output_started"),
+        ({"downstream_visible": True}, "output_started"),
+        ({"response_event_count": 3}, "output_started"),
+        ({"pending_function_call_ids": ["call_pending"]}, "output_started"),
+        ({"pending_tool_call_types": {"call_pending": "function_call"}}, "output_started"),
+        ({"deferred_reasoning_downstream_texts": ["data: {}\n\n"]}, "output_started"),
+        ({"previous_response_id": "resp_anchor"}, "anchored_without_fresh_body"),
+        ({"last_downstream_sequence_number": 0}, "sequenced_downstream_frame"),
+        ({"last_downstream_sequence_number": 1}, "sequenced_downstream_frame"),
+        ({"request_text": None}, "no_request_body"),
+        ({"response_create_sent_at": None}, "not_sent"),
     ],
 )
-def test_websocket_precreated_retry_error_code_refuses_unsafe_accepted_capacity_failure(overrides: dict[str, Any]):
+def test_websocket_precreated_retry_error_code_refuses_unsafe_accepted_capacity_failure(
+    overrides: dict[str, Any],
+    reason: str,
+    caplog: pytest.LogCaptureFixture,
+):
     payload = _accepted_capacity_error_payload()
 
-    assert (
-        proxy_service._websocket_precreated_retry_error_code(
-            _accepted_lifecycle_request_state(**overrides),
-            event_type="error",
-            payload=payload,
-            has_other_pending_requests=False,
+    with caplog.at_level(logging.INFO, logger="app.modules.proxy.service"):
+        assert (
+            proxy_service._websocket_precreated_retry_error_code(
+                _accepted_lifecycle_request_state(**overrides),
+                event_type="error",
+                payload=payload,
+                has_other_pending_requests=False,
+            )
+            is None
         )
-        is None
-    )
+
+    assert (
+        "Accepted output-free replay refused request_id=req_accepted_lifecycle "
+        f"code=server_is_overloaded reason={reason}"
+    ) in caplog.messages
 
 
 def test_websocket_precreated_retry_error_code_refuses_accepted_capacity_failure_with_other_pending_requests():
@@ -56092,9 +56102,11 @@ async def test_process_upstream_websocket_text_replays_an_owner_bound_anchored_a
     move used to fall into the pre-created anchored branches, which failed it
     closed as ``previous_response_owner_unavailable`` with an immediate health
     write and no replay -- neither the owner reconnect the spec requires nor
-    main's unchanged terminal. The capacity path must re-send the anchored body
-    once to the account that accepted it, the way the transport-close path
-    already reconnects an account-bound accepted replay to its owner."""
+    main's unchanged terminal. The capacity path must re-send the turn once to
+    the account that accepted it, the way the transport-close path already
+    reconnects an account-bound accepted replay to its owner. The replay
+    reconnects, where the connection-local anchor does not exist, so the
+    retained fresh body is what goes upstream."""
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     handle_stream_error = AsyncMock()
     monkeypatch.setattr(service, "_handle_stream_error", handle_stream_error)
@@ -56108,7 +56120,6 @@ async def test_process_upstream_websocket_text_replays_an_owner_bound_anchored_a
         response_create_gate_acquired=True,
         **shape,
     )
-    anchored_request_text = request_state.request_text
     fresh_request_text = request_state.fresh_upstream_request_text
     pending_requests = deque([request_state])
     upstream_control = proxy_service._WebSocketUpstreamControl()
@@ -56143,11 +56154,9 @@ async def test_process_upstream_websocket_text_replays_an_owner_bound_anchored_a
     assert request_state.response_id is None
     assert request_state.response_event_count == 0
     assert request_state.replay_count == 1
-    # The anchored body goes back to its owner as-is: no swap, no exclusion.
-    assert request_state.request_text == anchored_request_text
-    assert request_state.previous_response_id == "resp_ws_anchor"
-    assert request_state.fresh_upstream_request_text == fresh_request_text
-    assert request_state.fresh_upstream_request_is_retry_safe is True
+    # The fresh body goes back to the owner: no anchor, no exclusion.
+    assert request_state.request_text == fresh_request_text
+    assert request_state.previous_response_id is None
     assert request_state.replay_required_account_id == account.id
     assert request_state.preferred_account_id == account.id
     assert request_state.excluded_account_ids == set()
@@ -56207,7 +56216,7 @@ async def test_process_upstream_websocket_text_defers_owner_bound_accepted_repla
         **shape,
     )
     request_state.api_key = api_key
-    anchored_request_text = request_state.request_text
+    fresh_request_text = request_state.fresh_upstream_request_text
     pending_requests = deque([request_state])
     upstream_control = proxy_service._WebSocketUpstreamControl()
 
@@ -56228,7 +56237,7 @@ async def test_process_upstream_websocket_text_defers_owner_bound_accepted_repla
     await process(_accepted_capacity_error_payload())
 
     assert upstream_control.replay_request_state is request_state
-    assert request_state.request_text == anchored_request_text
+    assert request_state.request_text == fresh_request_text
     assert request_state.excluded_account_ids == set()
     assert request_state.replay_required_account_id == owner.id
     # The reservation is still open, so no health write happened yet.

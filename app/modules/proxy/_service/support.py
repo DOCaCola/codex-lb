@@ -121,10 +121,11 @@ _RESPONSE_METADATA_EVENT_TYPES = frozenset({"response.queued", "response.metadat
 _WEBSOCKET_PRELUDE_EVENT_TYPES = frozenset({"response.created", "response.in_progress"}) | (
     _RESPONSE_METADATA_EVENT_TYPES
 )
-# Upper bound for holding that prelude. Overloads arrive within a few seconds of
-# acceptance; past this window the prelude is committed and the turn keeps the
-# sequenced fail-closed contract.
-_WEBSOCKET_PRELUDE_HOLD_SECONDS = 10.0
+# Upper bound for holding that prelude; past it the prelude is committed and the
+# turn keeps the sequenced fail-closed contract. Sized from production: accepted
+# overload refusals on the ChatGPT backend arrived 0.9-36.5s after acceptance,
+# most of them after 15s, so a shorter hold commits before the refusal arrives.
+_WEBSOCKET_PRELUDE_HOLD_SECONDS = 40.0
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset(
@@ -1086,6 +1087,13 @@ class _WebSocketRequestState:
     http_replay_conversation_id: str | None = None
     http_replay_input: JsonValue = None
     http_replay_output: ReplayOutputCollector = field(default_factory=ReplayOutputCollector)
+    # The request's logical input with its anchor resolved: an unanchored
+    # request's own input, or the anchored response's history followed by the
+    # client's delta. ``None`` when the proxy does not know the full context.
+    materialized_input: list[JsonValue] | None = None
+    # Output of the completed or interrupted response, collected once at its
+    # terminal event for continuity history and checkpoint retention.
+    completed_output: list[JsonValue] | None = None
     enforce_openai_sdk_contract: bool = True
     propagate_http_errors: bool = False
     request_kind: str = "normal"
@@ -1660,6 +1668,17 @@ class _WebSocketContinuityState:
     empty_prewarm_response_id: str | None = None
     empty_prewarm_input_count: int = 0
     empty_prewarm_input_fingerprint: str | None = None
+    # Logical conversation (input followed by output) of
+    # ``last_completed_response_id`` / ``empty_prewarm_response_id``. A client
+    # delta anchored to one expands to the self-contained full resend Codex
+    # itself sends when it retries, which is what a transparent replay re-sends
+    # on a fresh upstream connection. ``None`` when that history is unknown.
+    last_completed_history: list[JsonValue] | None = None
+    empty_prewarm_history: list[JsonValue] | None = None
+    # The id the client read for ``last_completed_response_id``. A
+    # single-lifecycle replay shows the client its first attempt's id while
+    # upstream only knows the replay's own id.
+    last_completed_client_response_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

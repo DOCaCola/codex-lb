@@ -72,14 +72,30 @@ def _websocket_accepted_replay_candidate(
 ) -> bool:
     """Return whether an accepted request may still be replayed once.
 
+    See ``_websocket_accepted_replay_refusal_reason``.
+    """
+    return (
+        _websocket_accepted_replay_refusal_reason(request_state, has_other_pending_requests=has_other_pending_requests)
+        is None
+    )
+
+
+def _websocket_accepted_replay_refusal_reason(
+    request_state: _WebSocketRequestState,
+    *,
+    has_other_pending_requests: bool,
+) -> str | None:
+    """Return why an accepted request may not be replayed, or ``None`` when it may.
+
     Mirrors the fresh-replay rules of the pre-created path: a single pending
     request with its body retained, no replay consumed yet, a send boundary on
     the direct websocket transport, no finite ``sequence_number`` forwarded
-    downstream, and either no anchor or a retry-safe fresh payload. The fresh
-    payload replaces the anchored body only when the owner-switch prep proves
-    the move safe (proxy-injected anchor, account-neutral body); otherwise the
-    anchored body is re-sent to the owner that accepted it, which the terminal
-    proved produced nothing.
+    downstream, and either no anchor or a retry-safe fresh payload. A replay
+    reconnects, and upstream resolves a ``store=false`` anchor only on the
+    connection that produced it, so an anchored request is always re-sent as
+    its fresh payload; that payload leaves the owner that accepted the request
+    only when the owner-switch prep proves the move safe (proxy-injected
+    anchor, account-neutral body).
 
     The sequence guard is the direct websocket surface's existing contract
     (openspec: "Direct WebSocket replay never mixes numeric response
@@ -89,14 +105,18 @@ def _websocket_accepted_replay_candidate(
     records a downstream watermark, so its behaviour is unaffected.
     """
     if has_other_pending_requests:
-        return False
+        return "other_pending_requests"
     if request_state.last_downstream_sequence_number is not None:
-        return False
+        return "sequenced_downstream_frame"
     if not _websocket_request_is_accepted_lifecycle_only(request_state):
-        return False
+        return "output_started"
     if request_state.transport == _REQUEST_TRANSPORT_WEBSOCKET and request_state.response_create_sent_at is None:
-        return False
-    return _websocket_request_has_replayable_body(request_state)
+        return "not_sent"
+    if request_state.replay_count != 0:
+        return "replay_consumed"
+    if not _websocket_request_has_replayable_body(request_state):
+        return "anchored_without_fresh_body" if request_state.request_text else "no_request_body"
+    return None
 
 
 def _http_bridge_accepted_anchored_replay_candidate(request_state: _WebSocketRequestState) -> bool:
@@ -235,22 +255,38 @@ def _websocket_accepted_output_free_retry_error_code(
     codes are refused before the message-only fallback so they can never be
     reclassified as overload. Every capacity code returned is a transparent
     replay code (``model_at_capacity`` is reported as ``server_is_overloaded``).
+
+    A replayable terminal that the request's state refuses is logged with the
+    refusal reason, since the client then receives the terminal unchanged.
     """
     if event_type not in _TERMINAL_EVENT_TYPES:
         return None
-    if not _websocket_accepted_replay_candidate(request_state, has_other_pending_requests=has_other_pending_requests):
-        return None
-    if payload_response_id is not None and payload_response_id != request_state.response_id:
-        return None
-    if _terminal_payload_reports_output(payload):
-        return None
     if request_state_encrypted_content_rejection(request_state, error_code=error_code, error_message=error_message):
-        return ENCRYPTED_CONTENT_REJECTION_CODE
-    if error_code in _ACCEPTED_REPLAY_FAIL_CLOSED_ERROR_CODES:
+        replay_code: str | None = ENCRYPTED_CONTENT_REJECTION_CODE
+    elif error_code in _ACCEPTED_REPLAY_FAIL_CLOSED_ERROR_CODES:
+        replay_code = None
+    elif is_upstream_model_capacity_error(error_message) or error_code in _ACCEPTED_CAPACITY_REPLAY_ERROR_CODES:
+        replay_code = _ACCEPTED_CAPACITY_REPLAY_REPORTED_CODES.get(error_code or "", "server_is_overloaded")
+    else:
+        replay_code = None
+    if replay_code is None:
         return None
-    if is_upstream_model_capacity_error(error_message) or error_code in _ACCEPTED_CAPACITY_REPLAY_ERROR_CODES:
-        return _ACCEPTED_CAPACITY_REPLAY_REPORTED_CODES.get(error_code or "", "server_is_overloaded")
-    return None
+    refusal_reason = _websocket_accepted_replay_refusal_reason(
+        request_state, has_other_pending_requests=has_other_pending_requests
+    )
+    if refusal_reason is None and payload_response_id is not None and payload_response_id != request_state.response_id:
+        refusal_reason = "foreign_response_id"
+    if refusal_reason is None and _terminal_payload_reports_output(payload):
+        refusal_reason = "output_reported"
+    if refusal_reason is not None:
+        logger.info(
+            "Accepted output-free replay refused request_id=%s code=%s reason=%s",
+            request_state.request_log_id or request_state.request_id,
+            replay_code,
+            refusal_reason,
+        )
+        return None
+    return replay_code
 
 
 async def _claim_websocket_replay_create_gate(
