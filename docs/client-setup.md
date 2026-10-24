@@ -393,6 +393,7 @@ export ANTHROPIC_AUTH_TOKEN="sk-clb-..."   # key from dashboard; any value if AP
 export ANTHROPIC_DEFAULT_OPUS_MODEL="gpt-5.6-sol"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="gpt-5.6-terra"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="gpt-5.6-luna"
+export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1   # list codex-lb models in /model
 claude
 ```
 
@@ -401,6 +402,15 @@ Model names decide the route:
 - `claude-*` and `anthropic/*` names use [Claude accounts](claude-accounts.md) natively.
 - Any other name, such as `gpt-5.6-sol` or `openrouter/vendor/model`, is served by OpenAI accounts or an
   enabled model source. codex-lb translates the request to Responses and the reply back to Messages.
+
+With discovery enabled, `/model` lists every model your API key can use through Claude Code. Claude Code only lists
+IDs containing `claude`, so other models appear under an alias such as `clb-claude-gpt-5.6-sol` or
+`clb-claude-openrouter~svendor~smodel` (`~s` stands for `/`), with the real model as the name shown. The alias and the
+plain name select the same model, and the request log shows the real name.
+
+Claude Code assumes a default context window for models it does not know. Set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the
+window of your routed models to compact later; if the window is exceeded first, codex-lb's "prompt is too long" reply
+still triggers compaction.
 
 Translated requests use the same routing, API-key limits, logging and pricing as `/v1/responses`. The request
 log shows the Claude Code session as the conversation, and each Claude Code agent keeps its own prompt cache.

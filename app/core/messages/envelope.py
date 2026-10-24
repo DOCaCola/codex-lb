@@ -1,8 +1,9 @@
 """Signed thinking signatures that carry Responses reasoning through Claude Code.
 
 Claude Code replays a thinking block's signature verbatim. The signature holds the upstream
-encrypted reasoning, its item ID and the client-facing model, authenticated with an
-installation key, so it replays only to the model that produced it (opencodex `ocxr1`).
+encrypted reasoning, its item ID and the routed model, authenticated with an installation
+key, so it replays only to the model that produced it, whether selected by name or by
+alias (opencodex `ocxr1`).
 """
 
 from __future__ import annotations

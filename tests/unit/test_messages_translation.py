@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from app.core.messages.alias import decode_discovery_alias, discovery_alias
 from app.core.messages.envelope import ReasoningEnvelope, seal_reasoning, strip_proxy_thinking
 from app.core.messages.errors import MessagesRequestError, anthropic_error
 from app.core.messages.stream import MessagesStreamProjector, aggregate_message
@@ -320,7 +321,9 @@ def _feed(projector: MessagesStreamProjector, events: list[dict]) -> list[dict]:
 
 def test_tool_turn_projection():
     alias = tool_alias(LONG_NAME)
-    projector = MessagesStreamProjector(model=MODEL, tool_names={alias: LONG_NAME}, envelope_key=KEY)
+    projector = MessagesStreamProjector(
+        model=MODEL, reported_model=MODEL, tool_names={alias: LONG_NAME}, envelope_key=KEY
+    )
     out = _feed(
         projector,
         [
@@ -399,7 +402,7 @@ def test_tool_turn_projection():
 
 
 def test_text_web_search_and_incomplete_projection():
-    projector = MessagesStreamProjector(model=MODEL, tool_names={}, envelope_key=KEY)
+    projector = MessagesStreamProjector(model=MODEL, reported_model=MODEL, tool_names={}, envelope_key=KEY)
     out = _feed(
         projector,
         [
@@ -444,7 +447,7 @@ def test_text_web_search_and_incomplete_projection():
 
 def test_failures_before_and_after_output():
     overflow = {"code": "context_length_exceeded", "message": "Input exceeds the context window"}
-    projector = MessagesStreamProjector(model=MODEL, tool_names={}, envelope_key=KEY)
+    projector = MessagesStreamProjector(model=MODEL, reported_model=MODEL, tool_names={}, envelope_key=KEY)
     assert _feed(projector, [{"type": "response.failed", "response": {"error": overflow}}]) == []
     assert projector.failure == (
         400,
@@ -456,7 +459,7 @@ def test_failures_before_and_after_output():
             },
         },
     )
-    projector = MessagesStreamProjector(model=MODEL, tool_names={}, envelope_key=KEY)
+    projector = MessagesStreamProjector(model=MODEL, reported_model=MODEL, tool_names={}, envelope_key=KEY)
     out = _feed(projector, [{"type": "response.output_text.delta", "item_id": "m", "delta": "Hi"}])
     out += projector.end_of_stream()
     assert projector.failure is None
@@ -488,3 +491,43 @@ def test_token_estimate_bounds_attachments():
     image = "data:image/png;base64," + "A" * 2_000_000
     payload = {"instructions": "x" * 400, "input": [{"type": "input_image", "image_url": image}], "tools": []}
     assert estimate_input_tokens(payload) < 5_000
+
+
+@pytest.mark.parametrize(
+    ("model", "alias"),
+    [
+        ("gpt-6.1-sol", "clb-claude-gpt-6.1-sol"),
+        ("openrouter/z-ai/glm-5.3-flash", "clb-claude-openrouter~sz-ai~sglm-5.3-flash"),
+        ("lab/a~s", "clb-claude-lab~sa~ts"),
+    ],
+)
+def test_discovery_alias_round_trip(model, alias):
+    assert discovery_alias(model) == alias
+    assert decode_discovery_alias(alias) == model
+    assert "claude" in alias and not alias.startswith("claude-")
+
+
+def test_discovery_alias_leaves_model_names_and_rejects_invalid_aliases():
+    assert decode_discovery_alias("claude-opus-5-5") == "claude-opus-5-5"
+    assert decode_discovery_alias("gpt-6.1-sol") == "gpt-6.1-sol"
+    for invalid in ("clb-claude-", "clb-claude-gpt~x", "clb-claude-gpt~"):
+        with pytest.raises(MessagesRequestError):
+            decode_discovery_alias(invalid)
+
+
+def test_projection_reports_requested_model_and_seals_routed_model():
+    alias = discovery_alias(MODEL)
+    projector = MessagesStreamProjector(model=MODEL, reported_model=alias, tool_names={}, envelope_key=KEY)
+    out = _feed(
+        projector,
+        [
+            {
+                "type": "response.output_item.done",
+                "item": {"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "enc-1"},
+            },
+            {"type": "response.completed", "response": {"usage": {"input_tokens": 1, "output_tokens": 1}}},
+        ],
+    )
+    message = aggregate_message(projector.message_start(), out)
+    assert message["model"] == alias
+    assert message["content"][0]["signature"] == _signature()

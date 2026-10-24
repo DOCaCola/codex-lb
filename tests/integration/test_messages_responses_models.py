@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 import app.modules.proxy.service as proxy_module
 from app.core.config.settings import Settings
-from app.db.models import DashboardSettings, ModelSource, RequestLog
+from app.db.models import DashboardSettings, ModelSource, ModelSourceModel, RequestLog
 from app.db.session import SessionLocal
 from app.modules.openrouter.client import OpenRouterClient
 from app.modules.openrouter.schemas import CatalogResponse, KeyInfo
@@ -358,7 +358,7 @@ async def test_claude_code_request_served_by_openrouter_source(async_client, ope
         response = await async_client.post(
             "/v1/messages",
             json={
-                "model": "openrouter/vendor/test",
+                "model": "clb-claude-openrouter~svendor~stest",
                 "max_tokens": 1000,
                 "tools": [
                     {"name": "Read", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}}
@@ -370,7 +370,7 @@ async def test_claude_code_request_served_by_openrouter_source(async_client, ope
 
     assert response.status_code == 200, response.text
     message = response.json()
-    assert message["model"] == "openrouter/vendor/test"
+    assert message["model"] == "clb-claude-openrouter~svendor~stest"
     assert message["stop_reason"] == "tool_use"
     assert message["content"] == [{"type": "tool_use", "id": "call_1", "name": "Read", "input": {"path": "a.txt"}}]
     assert requests[0]["model"] == "vendor/test"
@@ -379,6 +379,68 @@ async def test_claude_code_request_served_by_openrouter_source(async_client, ope
     ]
     async with SessionLocal() as session:
         log = (await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id))).one()
+    assert log.model == "openrouter/vendor/test"
     assert log.conversation_id == SESSION
     assert log.request_operation == "messages"
     assert log.cost_usd == pytest.approx(0.001)
+
+
+async def test_claude_code_discovers_messages_servable_models(async_client, openrouter_catalog):
+    await _import_account(async_client)
+    created = await async_client.post("/api/openrouter-accounts", json={"name": "OR", "apiKey": "secret-test"})
+    await async_client.patch(
+        f"/api/openrouter-accounts/{created.json()['id']}", json={"selections": [{"model": "vendor/test"}]}
+    )
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                ModelSource(
+                    id="src_claude",
+                    name="Claude",
+                    kind="claude",
+                    base_url="https://claude.invalid",
+                    supports_responses=True,
+                ),
+                ModelSourceModel(
+                    source_id="src_claude",
+                    model="anthropic/claude-opus-5",
+                    display_name="Claude Opus 5",
+                    context_window=200_000,
+                    max_output_tokens=64_000,
+                ),
+                ModelSource(
+                    id="src_chat",
+                    name="Chat only",
+                    kind="openai_compatible",
+                    base_url="https://chat.invalid/v1",
+                    supports_chat_completions=True,
+                    supports_responses=False,
+                ),
+                ModelSourceModel(source_id="src_chat", model="local-coder"),
+            ]
+        )
+        await session.commit()
+
+    response = await async_client.get("/v1/models", params={"limit": 1000}, headers={"anthropic-version": "2023-06-01"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    ids = [entry["id"] for entry in body["data"]]
+    assert body["has_more"] is False
+    assert (body["first_id"], body["last_id"]) == (ids[0], ids[-1])
+    assert (
+        ids.index("clb-claude-gpt-5.4") < ids.index("claude-opus-5") < ids.index("clb-claude-openrouter~svendor~stest")
+    )
+    assert ids[-1] == "clb-claude-openrouter~svendor~stest"
+    assert not any("local-coder" in model_id for model_id in ids)
+    claude = next(entry for entry in body["data"] if entry["id"] == "claude-opus-5")
+    assert claude["type"] == "model"
+    assert claude["display_name"] == "Claude Opus 5"
+    assert claude["description"] == "Claude account via codex-lb"
+    assert (claude["max_input_tokens"], claude["max_tokens"]) == (200_000, 64_000)
+    routed = next(entry for entry in body["data"] if entry["id"] == "clb-claude-openrouter~svendor~stest")
+    assert routed["description"] == "OpenRouter via codex-lb"
+
+    openai_list = (await async_client.get("/v1/models")).json()
+    assert openai_list["object"] == "list"
+    assert {"gpt-5.4", "local-coder", "anthropic/claude-opus-5"} <= {entry["id"] for entry in openai_list["data"]}

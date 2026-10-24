@@ -112,6 +112,7 @@ from app.core.exceptions import (
     ProxyReasoningEffortNotAllowed,
     ProxyUpstreamError,
 )
+from app.core.messages.alias import decode_discovery_alias, discovery_alias
 from app.core.messages.envelope import envelope_key, strip_proxy_thinking
 from app.core.messages.errors import MessagesRequestError, anthropic_error, anthropic_error_body
 from app.core.messages.stream import MessagesStreamProjector
@@ -1853,7 +1854,11 @@ async def v1_models(
     # Codex clients and keep the OpenAI-compatible shape for everyone else.
     if request.query_params.get("client_version"):
         return await _build_codex_models_response(api_key)
-    return await _build_models_response(api_key)
+    now = time.time()
+    # Claude Code's gateway discovery sends `anthropic-version` and needs the Anthropic list.
+    if request.headers.get("anthropic-version") is not None:
+        return await _build_anthropic_models_response(api_key, now=now)
+    return await _build_models_response(api_key, now=now)
 
 
 @v1_router.post("/messages")
@@ -1870,16 +1875,20 @@ async def claude_messages(
 
     count_tokens = request.url.path.rstrip("/").endswith("/count_tokens")
     native_body = dict(payload)
-    model = native_body.get("model")
-    if not isinstance(model, str) or not model:
+    requested_model = native_body.get("model")
+    if not isinstance(requested_model, str) or not requested_model:
         return JSONResponse(
             anthropic_error_body("invalid_request_error", "model is required"),
             status_code=400,
         )
+    try:
+        model = decode_discovery_alias(requested_model)
+    except MessagesRequestError as exc:
+        return _logged_error_json_response(request, 400, anthropic_error_body("invalid_request_error", str(exc)))
     model = effective_model_for_api_key(api_key, model) or model
     if not model.startswith(("anthropic/", "claude-")):
         return await _messages_with_responses_model(
-            request, payload, model, context, api_key, count_tokens=count_tokens
+            request, payload, model, context, api_key, reported_model=requested_model, count_tokens=count_tokens
         )
     model = model if model.startswith("anthropic/") else "anthropic/" + model
     native_body["model"] = model
@@ -1945,6 +1954,7 @@ async def _messages_with_responses_model(
     context: ProxyContext,
     api_key: ApiKeyData | None,
     *,
+    reported_model: str,
     count_tokens: bool,
 ) -> Response:
     """Serve a Messages request for a Responses model through the `/v1/responses` dispatch."""
@@ -1976,7 +1986,9 @@ async def _messages_with_responses_model(
             exc.status_code, {"code": exc.code, "type": exc.error_type, "message": exc.message}
         )
         return _logged_error_json_response(request, status, envelope)
-    projector = MessagesStreamProjector(model=model, tool_names=translated.tool_names, envelope_key=key)
+    projector = MessagesStreamProjector(
+        model=model, reported_model=reported_model, tool_names=translated.tool_names, envelope_key=key
+    )
     return await messages_response(response, projector, stream=translated.stream, clock=clock_for(context.service))
 
 
@@ -4190,14 +4202,14 @@ async def _build_codex_models_response_body(
     return response
 
 
-async def _build_models_response(api_key: ApiKeyData | None) -> Response:
+async def _build_models_response(api_key: ApiKeyData | None, *, now: float) -> Response:
     reservation = await _enforce_request_limits(
         api_key,
         request_model=None,
         request_service_tier=None,
     )
     try:
-        return await _build_models_response_body(api_key)
+        return await _build_models_response_body(api_key, now=now)
     finally:
         if reservation is not None:
             await _release_reservation_deferring_cancellation(reservation)
@@ -4205,11 +4217,13 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
 
 async def _build_models_response_body(
     api_key: ApiKeyData | None,
+    *,
+    now: float,
 ) -> Response:
 
     allowed_models = _allowed_models_for_api_key(api_key)
     exact_source_allowed_models = _exact_source_allowed_models_for_api_key(api_key)
-    created = int(time.time())
+    created = int(now)
     context_window_overrides = await _effective_context_window_overrides()
 
     registry = get_model_registry()
@@ -4241,6 +4255,76 @@ async def _build_models_response_body(
         )
         seen_slugs.add(model.slug)
     return JSONResponse(content=_dump_v1_models_response(ModelListResponse(data=items)))
+
+
+_ANTHROPIC_LIST_PROVIDERS: Final[Mapping[str, str]] = {
+    MODEL_SOURCE_KIND_SUBSCRIPTION: "OpenAI account",
+    "claude": "Claude account",
+    "openrouter": "OpenRouter",
+}
+
+
+async def _build_anthropic_models_response(api_key: ApiKeyData | None, *, now: float) -> Response:
+    reservation = await _enforce_request_limits(
+        api_key,
+        request_model=None,
+        request_service_tier=None,
+    )
+    try:
+        return await _build_anthropic_models_response_body(api_key, now=now)
+    finally:
+        if reservation is not None:
+            await _release_reservation_deferring_cancellation(reservation)
+
+
+async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, now: float) -> Response:
+    """The models `/v1/messages` can serve for this key, in Anthropic's list shape (Claude Code discovery)."""
+    allowed_models = _allowed_models_for_api_key(api_key)
+    exact_source_allowed_models = _exact_source_allowed_models_for_api_key(api_key)
+    context_window_overrides = await _effective_context_window_overrides()
+    created_at = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    native_models = await _operator_available_native_models(get_model_registry().get_models_with_fallback(), api_key)
+    listed = [model for model in native_models.values() if is_public_model(model, allowed_models)]
+    source_models = [
+        model
+        for model in await _list_enabled_source_catalog_models(api_key, require_responses=True)
+        if model.raw.get("supports_streaming") is True
+        and model.slug not in native_models
+        and (
+            model.slug in exact_source_allowed_models
+            if exact_source_allowed_models is not None
+            else is_public_model(model, allowed_models)
+        )
+    ]
+    listed.extend(model for model in source_models if model.source_kind == "claude")
+    listed.extend(model for model in source_models if model.source_kind != "claude")
+
+    data: list[dict[str, JsonValue]] = []
+    for model in listed:
+        claude = model.source_kind == "claude"
+        entry: dict[str, JsonValue] = {
+            "type": "model",
+            "id": model.slug.removeprefix("anthropic/") if claude else discovery_alias(model.slug),
+            "display_name": model.display_name,
+            "description": (
+                f"{_ANTHROPIC_LIST_PROVIDERS.get(model.source_kind, 'OpenAI-compatible source')} via codex-lb"
+            ),
+            "created_at": created_at,
+            "max_input_tokens": _resolved_context_window(model, context_window_overrides),
+        }
+        max_tokens = _v1_max_output_tokens(model)
+        if max_tokens is not None:
+            entry["max_tokens"] = max_tokens
+        data.append(entry)
+    return JSONResponse(
+        content={
+            "data": data,
+            "has_more": False,
+            "first_id": data[0]["id"] if data else None,
+            "last_id": data[-1]["id"] if data else None,
+        }
+    )
 
 
 async def _operator_available_native_models(

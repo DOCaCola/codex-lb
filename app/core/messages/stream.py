@@ -49,8 +49,9 @@ class MessagesStreamProjector:
     envelope); before any output it also sets `failure` instead of producing an in-band event.
     """
 
-    def __init__(self, *, model: str, tool_names: Mapping[str, str], envelope_key: bytes) -> None:
+    def __init__(self, *, model: str, reported_model: str, tool_names: Mapping[str, str], envelope_key: bytes) -> None:
         self._model = model
+        self._reported_model = reported_model
         self._tool_names = tool_names
         self._envelope_key = envelope_key
         self._message_id: str | None = None
@@ -70,7 +71,7 @@ class MessagesStreamProjector:
                 "id": self._message_id or f"msg_{uuid.uuid4().hex}",
                 "type": "message",
                 "role": "assistant",
-                "model": self._model,
+                "model": self._reported_model,
                 "content": [],
                 "stop_reason": None,
                 "stop_sequence": None,
