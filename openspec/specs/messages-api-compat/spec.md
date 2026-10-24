@@ -1,7 +1,9 @@
 # messages-api-compat Specification
 
 ## Purpose
-TBD - created by archiving change serve-messages-with-responses-models. Update Purpose after archive.
+
+Let Anthropic Messages clients such as Claude Code use Responses models, served by OpenAI accounts and Responses
+model sources through the same dispatch as `/v1/responses`, while Claude models keep the native Claude route.
 
 ## Requirements
 
