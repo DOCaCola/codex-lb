@@ -109,8 +109,14 @@ from app.core.exceptions import (
     ProxyAuthError,
     ProxyModelNotAllowed,
     ProxyRateLimitError,
+    ProxyReasoningEffortNotAllowed,
     ProxyUpstreamError,
 )
+from app.core.messages.envelope import envelope_key, strip_proxy_thinking
+from app.core.messages.errors import MessagesRequestError, anthropic_error, anthropic_error_body
+from app.core.messages.stream import MessagesStreamProjector
+from app.core.messages.tokens import estimate_input_tokens
+from app.core.messages.translate import messages_identity, translate_messages_request
 from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
     bridge_public_contract_error_total,
@@ -336,6 +342,7 @@ from app.modules.proxy.images_observability import (
     IMAGE_ROUTE_STREAM_STATE,
     record_images_route_observability,
 )
+from app.modules.proxy.messages_projection import messages_response
 from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
 from app.modules.proxy.rate_limit_events import (
     hide_upstream_quota_for_api_key_clients as _hide_upstream_quota_for_api_key_clients,
@@ -1448,6 +1455,16 @@ async def v1_responses(
     raw_trigger_error = _raw_compaction_trigger_error(request)
     if raw_trigger_error is not None:
         return _logged_error_json_response(request, 400, openai_client_payload_error(raw_trigger_error))
+    return await _serve_v1_responses(request, payload, context, api_key)
+
+
+async def _serve_v1_responses(
+    request: Request,
+    payload: V1ResponsesRequest,
+    context: ProxyContext,
+    api_key: ApiKeyData | None,
+) -> Response:
+    """The `/v1/responses` dispatch after ingress parsing; Messages translation shares it."""
     try:
         responses_payload = payload.to_responses_request()
         enforce_strict_text_format(responses_payload)
@@ -1856,12 +1873,17 @@ async def claude_messages(
     model = native_body.get("model")
     if not isinstance(model, str) or not model:
         return JSONResponse(
-            {"type": "error", "error": {"type": "invalid_request_error", "message": "Claude model is required"}},
+            anthropic_error_body("invalid_request_error", "model is required"),
             status_code=400,
         )
-    model = model if model.startswith("anthropic/") else "anthropic/" + model
     model = effective_model_for_api_key(api_key, model) or model
+    if not model.startswith(("anthropic/", "claude-")):
+        return await _messages_with_responses_model(
+            request, payload, model, context, api_key, count_tokens=count_tokens
+        )
+    model = model if model.startswith("anthropic/") else "anthropic/" + model
     native_body["model"] = model
+    strip_proxy_thinking(native_body)
     validate_model_access(api_key, model)
     estimate = ResponsesRequest(
         model=model, instructions="", input=json.dumps(native_body), stream=native_body.get("stream") is True
@@ -1914,6 +1936,48 @@ async def claude_messages(
             status_code=exc.status_code,
             headers=_source_error_response_headers({}, exc),
         )
+
+
+async def _messages_with_responses_model(
+    request: Request,
+    body: dict[str, Any],
+    model: str,
+    context: ProxyContext,
+    api_key: ApiKeyData | None,
+    *,
+    count_tokens: bool,
+) -> Response:
+    """Serve a Messages request for a Responses model through the `/v1/responses` dispatch."""
+    key = envelope_key()
+    try:
+        validate_model_access(api_key, model)
+        translated = translate_messages_request(
+            body, model=model, identity=messages_identity(body, request.headers), envelope_key=key
+        )
+        responses_payload = V1ResponsesRequest.model_validate(translated.payload)
+    except MessagesRequestError as exc:
+        return _logged_error_json_response(request, 400, anthropic_error_body("invalid_request_error", str(exc)))
+    except ValidationError as exc:
+        message = exc.errors()[0]["msg"] if exc.errors() else "Invalid request payload"
+        return _logged_error_json_response(request, 400, anthropic_error_body("invalid_request_error", message))
+    except ProxyModelNotAllowed as exc:
+        return _logged_error_json_response(
+            request, exc.status_code, anthropic_error_body("permission_error", exc.message)
+        )
+    if count_tokens:
+        # A local estimate: no account selection, API-key reservation or upstream request.
+        return JSONResponse({"input_tokens": estimate_input_tokens(translated.payload)})
+    try:
+        response = await _required_capability_http_transport_denial(
+            request, api_key, payload=responses_payload
+        ) or await _serve_v1_responses(request, responses_payload, context, api_key)
+    except (ProxyModelNotAllowed, ProxyReasoningEffortNotAllowed, ProxyRateLimitError) as exc:
+        status, envelope = anthropic_error(
+            exc.status_code, {"code": exc.code, "type": exc.error_type, "message": exc.message}
+        )
+        return _logged_error_json_response(request, status, envelope)
+    projector = MessagesStreamProjector(model=model, tool_names=translated.tool_names, envelope_key=key)
+    return await messages_response(response, projector, stream=translated.stream, clock=clock_for(context.service))
 
 
 @v1_router.get("/usage", response_model=V1UsageResponse)

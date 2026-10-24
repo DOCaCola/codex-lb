@@ -12,6 +12,7 @@ The examples below use the current frontier lineup: **`gpt-5.6-sol`** (strongest
 | [OpenCode](#opencode) | `http://127.0.0.1:2455/v1` | `~/.config/opencode/opencode.json` |
 | [OpenClaw](#openclaw) | `http://127.0.0.1:2455/v1` | `~/.openclaw/openclaw.json` |
 | [Hermes Agent](#hermes-agent) | `http://127.0.0.1:2455/v1` | `~/.hermes/config.yaml` |
+| [Claude Code](#claude-code) | `http://127.0.0.1:2455` | Environment variables |
 | [OpenAI Python SDK](#openai-python-sdk) | `http://127.0.0.1:2455/v1` | Code |
 
 ## Codex CLI / IDE Extension
@@ -381,6 +382,37 @@ Then select the model interactively with `hermes model`, or in a session:
 export CODEX_LB_API_KEY="sk-clb-..."   # key from dashboard
 hermes
 ```
+
+## Claude Code
+
+Claude Code speaks the Anthropic Messages API. Point it at codex-lb and choose a model per family:
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:2455"
+export ANTHROPIC_AUTH_TOKEN="sk-clb-..."   # key from dashboard; any value if API key auth is disabled
+export ANTHROPIC_DEFAULT_OPUS_MODEL="gpt-5.6-sol"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="gpt-5.6-terra"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="gpt-5.6-luna"
+claude
+```
+
+Model names decide the route:
+
+- `claude-*` and `anthropic/*` names use [Claude accounts](claude-accounts.md) natively.
+- Any other name, such as `gpt-5.6-sol` or `openrouter/vendor/model`, is served by OpenAI accounts or an
+  enabled model source. codex-lb translates the request to Responses and the reply back to Messages.
+
+Translated requests use the same routing, API-key limits, logging and pricing as `/v1/responses`. The request
+log shows the Claude Code session as the conversation, and each Claude Code agent keeps its own prompt cache.
+GPT reasoning returns to Claude Code as thinking blocks and is replayed to the same model on the next turn. After a
+switch to another model, earlier GPT reasoning is left out rather than rejected.
+
+Limits of the translation:
+
+- `stop_sequences`, `top_k`, MCP connectors and code-execution containers have no Responses equivalent and are
+  rejected. Web search is supported; other Anthropic server tools are rejected.
+- `/v1/messages/count_tokens` returns a local estimate for these models.
+- When the conversation exceeds the model's window, codex-lb answers "prompt is too long" so Claude Code compacts.
 
 ## OpenAI Python SDK
 

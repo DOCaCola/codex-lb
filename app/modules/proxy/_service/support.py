@@ -665,6 +665,7 @@ def _supported_optional_kwargs(
 _CONVERSATION_HEADERS_BY_USERAGENT_PREFIX = (
     ("opencode", ("x-parent-session-id", "x-opencode-session", "x-session-id", "x-session-affinity")),
     ("codex", ("thread-id",)),
+    ("claude-cli", ("x-claude-code-session-id",)),
 )
 
 
