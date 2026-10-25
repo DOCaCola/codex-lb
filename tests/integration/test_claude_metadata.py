@@ -262,3 +262,17 @@ async def test_logical_catalog_timeout_does_not_prevent_usage(account, monkeypat
     assert result.state.catalog_error == "Claude catalog metadata timed out"
     assert result.state.metadata_refresh["catalog"].retry_at is not None
     assert result.state.usage is not None
+
+
+async def test_subscription_identity_check_runs_outside_the_fetch_timeout(account, monkeypatch):
+    original_get = ClaudeService._get
+
+    async def slow_get(self, source_id):
+        await asyncio.sleep(0.05)
+        return await original_get(self, source_id)
+
+    monkeypatch.setattr(service_module, "FETCH_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(ClaudeService, "_get", slow_get)
+    result = await poll(account, catalog=False)
+    assert result.state.subscription_error is None
+    assert result.state.subscription is not None

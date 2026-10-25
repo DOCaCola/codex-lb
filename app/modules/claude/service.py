@@ -313,6 +313,7 @@ class ClaudeService:
         if claimed is None:
             return
         result: list[CatalogModel] | UsageSnapshot | SubscriptionMetadata | None = None
+        bootstrap: BootstrapResponse | None = None
         error: str | None = None
         retry_at: datetime | None = None
         try:
@@ -323,21 +324,11 @@ class ClaudeService:
                     case "usage":
                         result = await self.client.usage(token, version)
                     case "subscription":
-                        bootstrap: BootstrapResponse = await self.client.bootstrap(token, version)
-                        account = bootstrap.oauth_account
-                        profile = AuthenticatedProfile(
-                            account=ProfileAccount(uuid=account.account_uuid),
-                            organization=ProfileOrganization(uuid=account.organization_uuid),
-                        )
-                        row = await self._get(source_id)
-                        if row.identity_fingerprint != profile_identity(profile):
-                            raise ClaudeError("Claude bootstrap identity does not match the enrolled account")
-                        result = SubscriptionMetadata(
-                            subscription_type=account.organization_type,
-                            rate_limit_tier=account.organization_rate_limit_tier,
-                            source="bootstrap",
-                            observed_at=datetime.now(UTC),
-                        )
+                        bootstrap = await self.client.bootstrap(token, version)
+            # The identity check reads the database, so it stays outside the network timeout: a query
+            # cancelled mid-flight invalidates the session that the completion write below still needs.
+            if bootstrap is not None:
+                result = await self._verified_subscription(source_id, bootstrap)
         except (ClaudeError, TimeoutError) as exc:
             error = str(exc) if isinstance(exc, ClaudeError) else f"Claude {endpoint} metadata timed out"
             retry_at = exc.retry_at if isinstance(exc, MetadataHTTPError) else datetime.now(UTC) + USAGE_INTERVAL
@@ -396,6 +387,22 @@ class ClaudeService:
                     source_id, sample, completed_at, provenance="usage_api", sample_seconds=60
                 )
         await self.repository.session.commit()
+
+    async def _verified_subscription(self, source_id: str, bootstrap: BootstrapResponse) -> SubscriptionMetadata:
+        account = bootstrap.oauth_account
+        profile = AuthenticatedProfile(
+            account=ProfileAccount(uuid=account.account_uuid),
+            organization=ProfileOrganization(uuid=account.organization_uuid),
+        )
+        row = await self._get(source_id)
+        if row.identity_fingerprint != profile_identity(profile):
+            raise ClaudeError("Claude bootstrap identity does not match the enrolled account")
+        return SubscriptionMetadata(
+            subscription_type=account.organization_type,
+            rate_limit_tier=account.organization_rate_limit_tier,
+            source="bootstrap",
+            observed_at=datetime.now(UTC),
+        )
 
     async def _save(self, row: ClaudeAccount, state: AccountState, *, project: bool) -> None:
         baseline = AccountState.model_validate_json(row.state_json).model_dump()
