@@ -4299,6 +4299,8 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
     ]
     listed.extend(model for model in source_models if model.source_kind == "claude")
     listed.extend(model for model in source_models if model.source_kind != "claude")
+    # Claude Code has no visibility field; the list is its picker, so catalog-hidden models stay out.
+    listed = [model for model in listed if _model_visibility(model) == "list"]
 
     data: list[dict[str, JsonValue]] = []
     for model in listed:

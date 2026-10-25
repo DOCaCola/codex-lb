@@ -433,6 +433,7 @@ async def test_claude_code_discovers_messages_servable_models(async_client, open
     )
     assert ids[-1] == "clb-claude-openrouter~svendor~stest"
     assert not any("local-coder" in model_id for model_id in ids)
+    assert "clb-claude-codex-auto-review" not in ids
     claude = next(entry for entry in body["data"] if entry["id"] == "claude-opus-5")
     assert claude["type"] == "model"
     assert claude["display_name"] == "Claude Opus 5"
@@ -443,4 +444,6 @@ async def test_claude_code_discovers_messages_servable_models(async_client, open
 
     openai_list = (await async_client.get("/v1/models")).json()
     assert openai_list["object"] == "list"
-    assert {"gpt-5.4", "local-coder", "anthropic/claude-opus-5"} <= {entry["id"] for entry in openai_list["data"]}
+    assert {"gpt-5.4", "codex-auto-review", "local-coder", "anthropic/claude-opus-5"} <= {
+        entry["id"] for entry in openai_list["data"]
+    }
