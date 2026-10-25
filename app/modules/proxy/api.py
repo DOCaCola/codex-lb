@@ -188,6 +188,7 @@ from app.core.openai.requests import (
     strip_unstored_lookup_item_ids,
 )
 from app.core.openai.subagent_messages import lower_agent_messages
+from app.core.openai.turn_metadata import is_composer_prediction_turn
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.request_locality import (
     FORWARDED_CHAIN_HEADER_NAMES,
@@ -373,6 +374,7 @@ from app.modules.proxy.request_policy import (
 from app.modules.proxy.schemas import (
     AccountPoolUsageResponse,
     CodexLbCapabilitiesResponse,
+    CodexLbCapability,
     CodexModelEntry,
     CodexModelsResponse,
     CodexTruncationPolicy,
@@ -1257,7 +1259,11 @@ async def responses(
             is not None
         )
         set_request_operation(
-            refine_responses_operation(get_request_operation(), terminal_compaction=terminal_compaction)
+            refine_responses_operation(
+                get_request_operation(),
+                terminal_compaction=terminal_compaction,
+                composer_prediction=is_composer_prediction_turn(request.headers.get("x-codex-turn-metadata")),
+            )
         )
         source_route_excluded = responses_source_route_excluded(
             responses_payload,
@@ -1499,7 +1505,11 @@ async def _serve_v1_responses(
             is not None
         )
         set_request_operation(
-            refine_responses_operation(get_request_operation(), terminal_compaction=terminal_compaction)
+            refine_responses_operation(
+                get_request_operation(),
+                terminal_compaction=terminal_compaction,
+                composer_prediction=is_composer_prediction_turn(request.headers.get("x-codex-turn-metadata")),
+            )
         )
         source_route_excluded = responses_source_route_excluded(
             responses_payload,
@@ -1843,11 +1853,25 @@ async def models(
 
 @router.get("/codex-lb/capabilities", response_model=CodexLbCapabilitiesResponse)
 @v1_router.get("/codex-lb/capabilities", response_model=CodexLbCapabilitiesResponse)
-async def codex_lb_capabilities() -> CodexLbCapabilitiesResponse:
+async def codex_lb_capabilities(
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> CodexLbCapabilitiesResponse:
     # Resolved relative to a Codex provider base_url, like <base_url>/models.
-    # Prediction forks are ordinary Responses turns that inherit the parent's
-    # model, history and prompt-cache key, so every source serves them.
-    return CodexLbCapabilitiesResponse(capabilities=["composer_predictions"])
+    # A prediction fork re-sends its parent's history plus a prediction prompt
+    # under the parent's prompt-cache key. Predictions are offered for the
+    # native subscription models this key can call; routed sources (Claude,
+    # OpenRouter) stay excluded until the composer_prediction request-log label
+    # shows what predictions cost there.
+    allowed_models = _allowed_models_for_api_key(api_key)
+    native_models = await _operator_available_native_models(get_model_registry().get_models_with_fallback(), api_key)
+    prediction_models = sorted(
+        slug
+        for slug, model in native_models.items()
+        if _is_codex_backend_catalog_model(model) and (allowed_models is None or slug in allowed_models)
+    )
+    return CodexLbCapabilitiesResponse(
+        capabilities=[CodexLbCapability(id="composer_predictions", models=prediction_models)]
+    )
 
 
 @v1_router.get("/models", response_model=None)

@@ -19,6 +19,7 @@ describe("request operation labels", () => {
     ["messages", "compaction", "Compaction"],
     ["compaction", "compaction", "Compaction"],
     ["compaction", "normal", "Compaction"],
+    ["composer_prediction", "normal", "Prediction"],
     ["checkpoint_handoff", "normal", "Checkpoint handoff"],
     ["count_tokens", "count_tokens", "Token count"],
     ["realtime_session", "realtime_live", "Realtime session"],
@@ -44,7 +45,7 @@ describe("request operation labels", () => {
   });
 
   it.each([
-    "unknown", "chat_completions", "count_tokens", "compaction", "checkpoint_handoff",
+    "unknown", "chat_completions", "count_tokens", "compaction", "composer_prediction", "checkpoint_handoff",
     "image_generation", "image_edit", "transcription", "embeddings", "file_create", "file_finalize",
     "web_search", "goal_read", "goal_set", "goal_clear", "memory_summary", "analytics", "safety",
     "identity_keys", "realtime_call", "realtime_session",

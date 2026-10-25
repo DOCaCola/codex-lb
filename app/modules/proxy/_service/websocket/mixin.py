@@ -93,6 +93,7 @@ from app.core.openai.requests import (
     ResponsesRequest,
     validate_passthrough_depth,
 )
+from app.core.openai.turn_metadata import is_composer_prediction_turn
 from app.core.resilience.network_recovery import (
     NetworkRecoveryDecision,
     ProcessNetworkRecovery,
@@ -3743,7 +3744,10 @@ class _WebSocketMixin:
             await proxy._release_websocket_reservation(reservation)
             raise
         request_state.request_operation = refine_responses_operation(
-            request_state.request_operation, terminal_compaction=terminal_compaction
+            request_state.request_operation,
+            terminal_compaction=terminal_compaction,
+            composer_prediction=client_metadata is not None
+            and is_composer_prediction_turn(client_metadata.get("x-codex-turn-metadata")),
         )
         request_state.useragent = useragent
         request_state.useragent_group = useragent_group

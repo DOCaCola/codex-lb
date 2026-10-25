@@ -225,7 +225,8 @@ const RequestLogCostBreakdownSchema = z.object({
 const RequestKindSchema = z.enum(["normal", "warmup", "limit_warmup", "prewarm", "compaction", "realtime_live", "count_tokens"]);
 
 const RequestOperationSchema = z.enum([
-  "unknown", "responses", "chat_completions", "messages", "count_tokens", "compaction", "checkpoint_handoff",
+  "unknown", "responses", "chat_completions", "messages", "count_tokens", "compaction", "composer_prediction",
+  "checkpoint_handoff",
   "image_generation", "image_edit", "transcription", "embeddings", "file_create", "file_finalize",
   "web_search", "goal_read", "goal_set", "goal_clear", "memory_summary", "analytics", "safety",
   "identity_keys", "realtime_call", "realtime_session",

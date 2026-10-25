@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clock import REAL_SCHEDULER
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.turn_metadata import codex_turn_thread_source, is_composer_prediction_turn
 from app.core.usage.request_operation import (
     RequestOperation,
     get_request_operation,
@@ -29,9 +30,35 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize("operation", list(RequestOperation))
 @pytest.mark.parametrize("compacting", [False, True])
-def test_refinement_only_changes_responses(operation, compacting):
-    expected = RequestOperation.COMPACTION if operation == RequestOperation.RESPONSES and compacting else operation
-    assert refine_responses_operation(operation, terminal_compaction=compacting) == expected
+@pytest.mark.parametrize("predicting", [False, True])
+def test_refinement_only_changes_responses(operation, compacting, predicting):
+    expected = operation
+    if operation == RequestOperation.RESPONSES and compacting:
+        expected = RequestOperation.COMPACTION
+    elif operation == RequestOperation.RESPONSES and predicting:
+        expected = RequestOperation.COMPOSER_PREDICTION
+    assert (
+        refine_responses_operation(operation, terminal_compaction=compacting, composer_prediction=predicting)
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ('{"thread_source":"composer_predictions","prediction_trigger":"live"}', "composer_predictions"),
+        ('{"thread_source":"subagent"}', "subagent"),
+        ('{"thread_source":7}', None),
+        ('{"request_kind":"prewarm"}', None),
+        ('["composer_predictions"]', None),
+        ("not json", None),
+        (None, None),
+        ({"thread_source": "composer_predictions"}, None),
+    ],
+)
+def test_turn_metadata_thread_source(raw, expected):
+    assert codex_turn_thread_source(raw) == expected
+    assert is_composer_prediction_turn(raw) is (expected == "composer_predictions")
 
 
 @pytest.mark.parametrize(

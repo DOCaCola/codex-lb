@@ -11,6 +11,7 @@ class RequestOperation(StrEnum):
     MESSAGES = "messages"
     COUNT_TOKENS = "count_tokens"
     COMPACTION = "compaction"
+    COMPOSER_PREDICTION = "composer_prediction"
     CHECKPOINT_HANDOFF = "checkpoint_handoff"
     IMAGE_GENERATION = "image_generation"
     IMAGE_EDIT = "image_edit"
@@ -45,8 +46,22 @@ def reset_request_operation(token: Token[RequestOperation]) -> None:
     _OPERATION.reset(token)
 
 
-def refine_responses_operation(operation: RequestOperation, *, terminal_compaction: bool) -> RequestOperation:
-    """Refine an ingress label from an already validated routing decision."""
-    if operation == RequestOperation.RESPONSES and terminal_compaction:
+def refine_responses_operation(
+    operation: RequestOperation,
+    *,
+    terminal_compaction: bool,
+    composer_prediction: bool,
+) -> RequestOperation:
+    """Refine a Responses ingress label.
+
+    Compaction comes from an already validated routing decision. A composer
+    prediction is the client's declared turn source; it only labels the log
+    and never influences routing or accounting.
+    """
+    if operation != RequestOperation.RESPONSES:
+        return operation
+    if terminal_compaction:
         return RequestOperation.COMPACTION
+    if composer_prediction:
+        return RequestOperation.COMPOSER_PREDICTION
     return operation

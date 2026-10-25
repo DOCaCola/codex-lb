@@ -29,6 +29,9 @@ from tests.integration.test_proxy_affinity_websocket_observation import Syntheti
 pytestmark = pytest.mark.integration
 opus_pool = provider_fixtures.opus_pool
 TRIGGER = {"type": "compaction_trigger"}
+PREDICTION_TURN_METADATA = json.dumps(
+    {"thread_source": "composer_predictions", "prediction_trigger": "live", "session_id": "sess_parent"}
+)
 
 
 async def operations(client):
@@ -87,6 +90,53 @@ async def test_native_http_terminal_trigger_refines_operation(async_client, monk
     assert response.status_code == 200, response.text
     logged = await operations(async_client)
     assert len(logged) == 1 and logged[0][0] == "compaction"
+
+
+@pytest.mark.parametrize("path", PATHS)
+async def test_native_http_prediction_turn_is_labelled(async_client, monkeypatch, path):
+    await _import_synthetic_account(async_client)
+
+    async def stream(payload, *args, **kwargs):
+        yield 'data: {"type":"response.completed","response":{"id":"resp_native","status":"completed","output":[]}}\n\n'
+
+    monkeypatch.setattr(proxy_service, "core_stream_responses", stream)
+    for metadata in (PREDICTION_TURN_METADATA, json.dumps({"thread_source": "user"})):
+        response = await async_client.post(
+            path,
+            headers={"x-codex-turn-metadata": metadata},
+            json={"model": "gpt-6.1-sol", "instructions": "Keep context", "input": "Predict", "stream": True},
+        )
+        assert response.status_code == 200, response.text
+    assert [op for op, _ in await operations(async_client)] == ["composer_prediction", "responses"]
+
+
+@pytest.mark.parametrize("path", PATHS)
+async def test_native_websocket_prediction_label_is_per_turn(async_client, monkeypatch, path):
+    await _import_synthetic_account(async_client)
+
+    async def connect(*args, **kwargs):
+        return SyntheticUpstream()
+
+    monkeypatch.setattr(proxy_service, "connect_responses_websocket", connect)
+    prediction_metadata = {"x-codex-turn-metadata": PREDICTION_TURN_METADATA}
+    async with websocket(async_client._transport.app, path) as turn:
+        for items, metadata in [
+            ("Normal", None),
+            ("Predict", prediction_metadata),
+            ([TRIGGER], prediction_metadata),
+            ("Normal again", None),
+        ]:
+            body = {"model": "gpt-6.1-sol", "instructions": "Keep context", "input": items}
+            if metadata is not None:
+                body["client_metadata"] = metadata
+            result = await turn(body)
+            assert result["type"] == "response.completed", result
+    assert [op for op, _ in await operations(async_client)] == [
+        "responses",
+        "composer_prediction",
+        "compaction",
+        "responses",
+    ]
 
 
 @pytest.mark.parametrize("path", PATHS)

@@ -250,7 +250,13 @@ class CodexModelsResponse(BaseModel):
     data: list[ModelListItem] = []
 
 
-CodexLbCapability = Literal["composer_predictions"]
+class CodexLbCapability(BaseModel):
+    """A client feature codex-lb serves, limited to the models it applies to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: Literal["composer_predictions"]
+    models: list[str]
 
 
 class CodexLbCapabilitiesResponse(BaseModel):

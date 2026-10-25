@@ -14,10 +14,15 @@ features it serves, behind the same authentication as the rest of the proxy.
 
 - `GET <base_url>/codex-lb/capabilities` returns a capability document under both `/backend-api/codex` and
   `/v1`, the two base URLs Codex providers use.
-- The first capability is `composer_predictions`. Prediction forks are ordinary Responses turns that inherit
-  the parent's model, history and prompt-cache key, so codex-lb serves them without further changes.
+- Each capability names the models it applies to. The first is `composer_predictions`, limited to native
+  subscription models. A prediction fork re-sends its parent's history plus a prediction prompt under the
+  parent's prompt-cache key, which native models serve largely from cache. Routed sources (Claude,
+  OpenRouter) are excluded until their prediction cost is measured.
+- Request logs label prediction turns `composer_prediction`, from the `thread_source` in Codex turn
+  metadata, so their cache ratio and cost can be measured. The label affects nothing but the log.
 
 ## Impact
 
-- Specs: new `client-capability-discovery`.
-- Code: `app/modules/proxy/api.py`, `app/modules/proxy/schemas.py`.
+- Specs: new `client-capability-discovery`; modified `provider-request-log-attribution`.
+- Code: `app/modules/proxy/api.py`, `app/modules/proxy/schemas.py`, `app/core/openai/turn_metadata.py`,
+  `app/core/usage/request_operation.py`, the WebSocket response-create path, and the dashboard operation label.
