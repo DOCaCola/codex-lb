@@ -1,6 +1,7 @@
 """Public native compact -> on-demand handoff on any eligible account -> source paths."""
 
 import asyncio
+import contextlib
 import json
 from copy import deepcopy
 
@@ -10,8 +11,9 @@ from sqlalchemy import select
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
+from app.core.clock import RealScheduler
 from app.core.errors import openai_error
-from app.core.usage.request_operation import get_request_operation
+from app.core.usage.request_operation import RequestOperation, get_request_operation
 from app.db.models import Account, AccountStatus, ApiKeyUsageReservation, RequestLog
 from app.db.session import get_background_session
 from app.modules.proxy import service as proxy_service
@@ -90,6 +92,34 @@ async def observe_compact(client, headers, directory, *, items=None):
     for record in directory.glob("*.replay"):
         record.unlink()
     return compact
+
+
+class _HandoffDeadlineAtGenerationStart(RealScheduler):
+    """Expire the handoff wait exactly when native generation is in flight.
+
+    A short real timeout races account selection and dispatch under load; this expires the first
+    handoff wait as soon as generation starts, so the timeout path is exercised deterministically.
+    Every other wait passes through to asyncio.
+    """
+
+    def __init__(self, started: asyncio.Event) -> None:
+        self._started = started
+        self._armed = True
+
+    async def wait_for(self, fut, /, timeout):
+        if not (self._armed and get_request_operation() is RequestOperation.CHECKPOINT_HANDOFF):
+            return await asyncio.wait_for(fut, timeout)
+        self._armed = False
+        task = asyncio.ensure_future(fut)
+        started = asyncio.ensure_future(self._started.wait())
+        await asyncio.wait({task, started}, return_when=asyncio.FIRST_COMPLETED)
+        started.cancel()
+        if task.done():
+            return task.result()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        raise TimeoutError
 
 
 @pytest.mark.parametrize("path", PATHS)
@@ -560,12 +590,11 @@ async def test_destination_enforcement_never_rewrites_native_origin_and_handoff_
 
 
 async def test_handoff_timeout_does_not_dispatch_and_releases_claim(async_client, handoff_env, monkeypatch):
-    from app.modules.proxy import api
-
     headers, generated, finished, captured, directory, outcome = handoff_env
     await observe_compact(async_client, headers, directory)
     outcome.update(started=asyncio.Event(), finish=asyncio.Event())
-    monkeypatch.setattr(api, "HANDOFF_TIMEOUT_SECONDS", 0.05)
+    service = async_client._transport.app.state.proxy_service
+    monkeypatch.setattr(service, "_scheduler", _HandoffDeadlineAtGenerationStart(outcome["started"]))
     body = {"model": MODEL, "input": [checkpoint()], "stream": False}
     response = await async_client.post(PATHS[1], headers=headers, json=body)
     assert response.status_code == 504, response.text

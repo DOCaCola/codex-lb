@@ -1189,26 +1189,27 @@ async def test_cancelled_task_wait_is_strictly_bounded_by_shared_deadline() -> N
 
     task = asyncio.create_task(cancellation_resistant_task())
     await asyncio.sleep(0)
+    # Virtual time keeps the bound independent of machine load: the wait may only end once the
+    # 0.05s shutdown deadline elapses, well before the 1.0s per-task cancellation timeout.
+    scheduler = VirtualScheduler(VirtualClock())
     shutdown_state.commit_shutdown(timeout_seconds=0.05)
-    release_later = asyncio.create_task(_release_after(release_task, 0.25))
-
-    loop = asyncio.get_running_loop()
-    started_at = loop.time()
-    cancelled = await proxy_service._await_cancelled_task(
-        task,
-        timeout_seconds=1.0,
-        label="cancellation-resistant task",
+    waiter = asyncio.create_task(
+        proxy_service._await_cancelled_task(
+            task,
+            timeout_seconds=1.0,
+            label="cancellation-resistant task",
+            scheduler=scheduler,
+        )
     )
-    elapsed = loop.time() - started_at
-
-    release_task.set()
+    try:
+        await scheduler.drain()
+        await scheduler.advance(0.05)
+        cancelled = await asyncio.wait_for(waiter, timeout=5)
+    finally:
+        release_task.set()
     await asyncio.wait_for(task, timeout=1)
-    release_later.cancel()
-    with suppress(asyncio.CancelledError):
-        await release_later
 
     assert cancelled is False
-    assert elapsed < 0.15
     assert cancellation_seen.is_set()
 
 
@@ -1511,30 +1512,31 @@ async def test_terminal_message_cancellation_is_bounded_by_shared_deadline(
     )
     await asyncio.wait_for(child_started.wait(), timeout=1)
 
-    loop = asyncio.get_running_loop()
-    started_at = loop.time()
+    # Virtual time keeps the bound independent of machine load: the wait may only end once the
+    # 0.05s shutdown deadline elapses, well before the 1.0s per-task cancellation timeout.
+    scheduler = VirtualScheduler(VirtualClock())
     shutdown_state.commit_shutdown(timeout_seconds=0.05)
-    release_later = asyncio.create_task(_release_after(release_child, 0.25))
-    cancelled = await proxy_service._await_cancelled_task(
-        relay,
-        timeout_seconds=0.05,
-        label="test terminal relay timeout",
+    waiter = asyncio.create_task(
+        proxy_service._await_cancelled_task(
+            relay,
+            timeout_seconds=1.0,
+            label="test terminal relay timeout",
+            scheduler=scheduler,
+        )
     )
-    elapsed = loop.time() - started_at
-
-    release_later.cancel()
-    with suppress(asyncio.CancelledError):
-        await release_later
-    assert cancelled is False
-    assert elapsed < 0.15
-    assert child_cancelled.is_set() is False
-    assert any(
-        task.get_name() == "proxy-websocket-terminal-account_terminal_timeout"
-        for task in service._background_cleanup_tasks
-        if not task.done()
-    )
-    release_child.set()
-    assert await service.drain_persistence_tasks(timeout_seconds=0.1)
+    try:
+        await scheduler.drain()
+        await scheduler.advance(0.05)
+        assert await asyncio.wait_for(waiter, timeout=5) is False
+        assert child_cancelled.is_set() is False
+        assert any(
+            task.get_name() == "proxy-websocket-terminal-account_terminal_timeout"
+            for task in service._background_cleanup_tasks
+            if not task.done()
+        )
+    finally:
+        release_child.set()
+    assert await service.drain_persistence_tasks(timeout_seconds=5)
 
 
 @pytest.mark.asyncio
@@ -2257,8 +2259,3 @@ async def test_scope_cancellation_while_waiting_for_reconnect_reader_preserves_a
     assert captured_response_create_gate is not None and captured_response_create_gate.locked() is False
     assert current.account_response_create_lease is None
     assert released_leases.count(account_create_lease) == 1
-
-
-async def _release_after(event: asyncio.Event, delay_seconds: float) -> None:
-    await asyncio.sleep(delay_seconds)
-    event.set()
