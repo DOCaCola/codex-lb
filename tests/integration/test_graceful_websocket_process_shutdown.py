@@ -32,8 +32,11 @@ def _unused_local_port() -> int:
 
 
 async def _wait_until_ready(server: _RunningServer) -> None:
+    # Bounded by time rather than attempts: interpreter start-up and app import can take several seconds
+    # when the full suite saturates every core. An early exit still fails immediately.
+    deadline = time.monotonic() + 30
     async with httpx.AsyncClient(timeout=0.2) as client:
-        for _ in range(100):
+        while time.monotonic() < deadline:
             if server.process.returncode is not None:
                 output = await server.process.stdout.read() if server.process.stdout is not None else b""
                 raise AssertionError(f"fixture server exited early: {output.decode(errors='replace')}")
@@ -68,7 +71,6 @@ async def _run_server(
     *,
     mode: str,
     drain_timeout_seconds: float,
-    completion_delay_seconds: float = 0.0,
     post_drain_cleanup_timeout_seconds: float = 25.0,
 ) -> AsyncIterator[_RunningServer]:
     port = _unused_local_port()
@@ -82,8 +84,6 @@ async def _run_server(
         mode,
         "--drain-timeout-seconds",
         str(drain_timeout_seconds),
-        "--completion-delay-seconds",
-        str(completion_delay_seconds),
         "--post-drain-cleanup-timeout-seconds",
         str(post_drain_cleanup_timeout_seconds),
         stdout=asyncio.subprocess.PIPE,
@@ -110,9 +110,8 @@ async def _run_server(
 @pytest.mark.asyncio
 async def test_sigterm_delivers_terminal_before_close_and_rejects_late_websocket() -> None:
     async with _run_server(
-        mode="complete",
+        mode="controlled_complete",
         drain_timeout_seconds=2.0,
-        completion_delay_seconds=0.25,
     ) as server:
         async with connect(server.websocket_url) as websocket:
             await websocket.send(json.dumps({"type": "response.create"}))
@@ -127,6 +126,7 @@ async def test_sigterm_delivers_terminal_before_close_and_rejects_late_websocket
                 async with connect(server.websocket_url):
                     pytest.fail("late WebSocket admission unexpectedly succeeded")
 
+            await websocket.send("complete")
             terminal = json.loads(await websocket.recv())
             assert terminal["type"] == "response.completed"
             with pytest.raises(ConnectionClosed):

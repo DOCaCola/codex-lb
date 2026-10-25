@@ -18,11 +18,9 @@ class _LifecycleApp:
         self,
         *,
         mode: str,
-        completion_delay_seconds: float,
         drain_timeout_seconds: float,
     ) -> None:
         self._mode = mode
-        self._completion_delay_seconds = completion_delay_seconds
         self._drain_timeout_seconds = drain_timeout_seconds
 
     async def _lifespan(self, receive, send) -> None:  # noqa: ANN001
@@ -141,11 +139,10 @@ class _LifecycleApp:
 
         while not shutdown_state.is_draining():
             await asyncio.sleep(0.01)
-        if self._mode == "controlled_complete":
-            release_message = await receive()
-            assert release_message["type"] == "websocket.receive"
-            assert release_message.get("text") == "complete"
-        await asyncio.sleep(self._completion_delay_seconds)
+        # The test releases the turn once it has observed the drain, so completion never races its checks.
+        release_message = await receive()
+        assert release_message["type"] == "websocket.receive"
+        assert release_message.get("text") == "complete"
         await send(
             {
                 "type": "websocket.send",
@@ -169,8 +166,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--drain-timeout-seconds", required=True, type=float)
-    parser.add_argument("--mode", choices=("complete", "controlled_complete", "stuck", "cleanup_stuck"), required=True)
-    parser.add_argument("--completion-delay-seconds", type=float, default=0.0)
+    parser.add_argument("--mode", choices=("controlled_complete", "stuck", "cleanup_stuck"), required=True)
     parser.add_argument("--post-drain-cleanup-timeout-seconds", type=float, default=25.0)
     return parser.parse_args(argv)
 
@@ -181,7 +177,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     app = InFlightMiddleware(
         _LifecycleApp(
             mode=args.mode,
-            completion_delay_seconds=args.completion_delay_seconds,
             drain_timeout_seconds=args.drain_timeout_seconds,
         )
     )
