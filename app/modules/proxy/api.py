@@ -372,6 +372,7 @@ from app.modules.proxy.request_policy import (
 )
 from app.modules.proxy.schemas import (
     AccountPoolUsageResponse,
+    CodexLbCapabilitiesResponse,
     CodexModelEntry,
     CodexModelsResponse,
     CodexTruncationPolicy,
@@ -1838,6 +1839,15 @@ async def models(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     return await _build_codex_models_response(api_key)
+
+
+@router.get("/codex-lb/capabilities", response_model=CodexLbCapabilitiesResponse)
+@v1_router.get("/codex-lb/capabilities", response_model=CodexLbCapabilitiesResponse)
+async def codex_lb_capabilities() -> CodexLbCapabilitiesResponse:
+    # Resolved relative to a Codex provider base_url, like <base_url>/models.
+    # Prediction forks are ordinary Responses turns that inherit the parent's
+    # model, history and prompt-cache key, so every source serves them.
+    return CodexLbCapabilitiesResponse(capabilities=["composer_predictions"])
 
 
 @v1_router.get("/models", response_model=None)

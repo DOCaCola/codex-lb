@@ -76,7 +76,9 @@ _FAIL_CLOSED_HTTP_ROUTES: frozenset[_RouteKey] = frozenset(
 _LOCAL_AUTHENTICATED_ROUTES: frozenset[_RouteKey] = frozenset(
     {
         ("HTTP", "GET", "/backend-api/codex/models"),
+        ("HTTP", "GET", "/backend-api/codex/codex-lb/capabilities"),
         ("HTTP", "GET", "/v1/models"),
+        ("HTTP", "GET", "/v1/codex-lb/capabilities"),
         ("HTTP", "GET", "/v1/usage"),
         ("HTTP", "POST", "/v1/images/variations"),
         ("HTTP", "GET", "/v1/reset-credit"),

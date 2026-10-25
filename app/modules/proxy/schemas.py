@@ -250,6 +250,19 @@ class CodexModelsResponse(BaseModel):
     data: list[ModelListItem] = []
 
 
+CodexLbCapability = Literal["composer_predictions"]
+
+
+class CodexLbCapabilitiesResponse(BaseModel):
+    """Identifies codex-lb to desktop integrations and lists the client features it serves."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    object: Literal["codex_lb.capabilities"] = "codex_lb.capabilities"
+    service: Literal["codex-lb"] = "codex-lb"
+    capabilities: list[CodexLbCapability]
+
+
 class V1UsageLimitResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
