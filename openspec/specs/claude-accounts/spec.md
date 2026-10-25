@@ -470,6 +470,8 @@ The gateway SHALL observe valid five-hour and seven-day utilization headers on p
 
 Window freshness and provenance SHALL distinguish header receipt from polling. Header updates MUST NOT mark unrelated windows fresh, clear poll errors, erase model-specific windows or clear refusal cooldowns. Request-start ordering SHALL prevent older concurrent requests from replacing newer observations; expired evidence SHALL be unknown. Atomic bounded merges SHALL preserve concurrent settings/catalog updates. History SHALL record every sample whose utilization or reset deadline differs from the latest stored sample for that account/window; unchanged samples SHALL be bounded to one per account/window/minute. Observation failures MUST NOT fail or retry inference; cancellation and upstream ownership SHALL remain intact.
 
+The observation write SHALL run inline to completion without its own timeout. Caller cancellation during the write SHALL be delivered after the write finishes.
+
 #### Scenario: Failover attribution
 - **WHEN** account A returns quota headers with 429 before account B succeeds
 - **THEN** both observations belong to their respective sending accounts
@@ -490,6 +492,14 @@ Window freshness and provenance SHALL distinguish header receipt from polling. H
 - **WHEN** five-hour utilization moves from 99% to 100% 27 seconds after the 99% sample with the same reset deadline
 - **THEN** history stores the 100% sample
 - **AND** a repeated 100% sample within the same minute is not stored
+
+#### Scenario: Slow observation write
+- **WHEN** persisting an observation takes longer than under normal load
+- **THEN** the observation is recorded and the write is not cancelled
+
+#### Scenario: Cancelled during observation
+- **WHEN** the request is cancelled while its observation is being written
+- **THEN** the write completes before the cancellation propagates
 
 ### Requirement: Scoped Claude overage restrictions
 Claude 429 recovery SHALL distinguish shared subscription rejection from requested-model overage or entitlement rejection. Healthy shared windows with explicit overage-only evidence SHALL NOT create an account-wide restriction. An omitted shared-window status SHALL require finite nonnegative utilization below one and another explicitly allowed shared window to establish health; missing or malformed usage MUST NOT imply health. Explicit shared rejection SHALL retain account-wide scope. Structured credits_required errors SHALL restrict the requested model without suppressing independently rejected shared windows. Fast-mode entitlement refusals SHALL retain existing no-failover behavior.
@@ -638,7 +648,7 @@ Each Claude account SHALL support normal, burn_first and preserve routing polici
 - **THEN** the owner is retained
 
 ### Requirement: Coordinated Claude metadata refresh
-Usage and catalog refreshes SHALL coordinate independently through durable per-account endpoint claims and cooldowns. Scheduled usage refresh SHALL run no more often than every three minutes and catalog refresh every six hours. Manual refresh MAY bypass successful-cache cadence but MUST NOT bypass an active claim or failed-attempt cooldown. Claims SHALL expire after bounded execution and completion SHALL require the owning claim and credential generation. Network I/O MUST NOT hold database write locks.
+Usage and catalog refreshes SHALL coordinate independently through durable per-account endpoint claims and cooldowns. Scheduled usage refresh SHALL run no more often than every three minutes and catalog refresh every six hours. Manual refresh MAY bypass successful-cache cadence but MUST NOT bypass an active claim or failed-attempt cooldown. Claims SHALL expire after bounded execution and completion SHALL require the owning claim and credential generation. Network I/O MUST NOT hold database write locks, and the metadata fetch timeout SHALL bound only network I/O; database work, including the subscription identity check, SHALL run outside it.
 
 Last successful observations and timestamps SHALL survive failures. HTTP errors SHALL identify the metadata endpoint without exposing response bodies or credentials. Valid Retry-After seconds or HTTP dates SHALL establish the next attempt time; absent or invalid hints SHALL use three minutes. Failure on one endpoint MUST NOT prevent refreshing the other. Metadata failures MUST NOT pause accounts, penalize inference health, or trigger reactive credential rotation. Fresh inference quota headers SHALL retain their independent authority.
 
@@ -653,6 +663,10 @@ Last successful observations and timestamps SHALL survive failures. HTTP errors 
 #### Scenario: Endpoint isolation
 - **WHEN** catalog is cooling down but usage is due
 - **THEN** usage still refreshes and catalog retains its last successful data
+
+#### Scenario: Slow identity check
+- **WHEN** the subscription identity check's database read outlasts the metadata fetch timeout
+- **THEN** the subscription refresh still completes and the refresh's state write succeeds
 
 ### Requirement: Claude request usage and timing
 Claude native and adapted request logs SHALL preserve inclusive input/output tokens, separately reported cache reads and writes, and only provider-reported reasoning tokens. The gateway SHALL measure upstream-attempt duration and time to first nonempty generated text, thinking or tool payload from a monotonic pre-open anchor. Nonempty redacted-thinking data and thinking signatures SHALL establish opaque first output. Metadata, pings and empty deltas MUST NOT establish first-token latency. Error, cancellation and truncated streams SHALL finalize duration without inventing first-token latency. Timing observation MUST precede Responses adaptation and MUST NOT expose opaque contents or infer reasoning token counts.
