@@ -147,19 +147,42 @@ async def test_observation_failure_does_not_break_stream(async_client, pool, mon
     assert len(captured) == len(closed) == 1
 
 
-async def test_observation_database_timeout_is_bounded(pool, monkeypatch):
+async def test_slow_observation_write_completes(pool, monkeypatch):
     generation, _ = await snapshot(pool[0])
-    cancelled = asyncio.Event()
+    original = ClaudeRepository.mutate_state
 
-    async def stalled(*args, **kwargs):
-        try:
-            await asyncio.Event().wait()
-        finally:
-            cancelled.set()
+    async def slow(self, *args, **kwargs):
+        await asyncio.sleep(0.8)
+        return await original(self, *args, **kwargs)
 
-    monkeypatch.setattr(ClaudeRepository, "mutate_state", stalled)
-    await asyncio.wait_for(record_headers(pool[0], generation, headers(0.5), requested_at=datetime.now(UTC)), 2)
-    assert cancelled.is_set()
+    monkeypatch.setattr(ClaudeRepository, "mutate_state", slow)
+    await record_headers(pool[0], generation, headers(0.45), requested_at=datetime.now(UTC))
+    _, state = await snapshot(pool[0])
+    assert state.header_usage["five_hour"].window.utilization == 45
+
+
+async def test_cancelled_observation_finishes_write_then_propagates(pool, monkeypatch):
+    generation, _ = await snapshot(pool[0])
+    original = ClaudeRepository.mutate_state
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated(self, *args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ClaudeRepository, "mutate_state", gated)
+    task = asyncio.create_task(record_headers(pool[0], generation, headers(0.55), requested_at=datetime.now(UTC)))
+    await entered.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    _, state = await snapshot(pool[0])
+    assert state.header_usage["five_hour"].window.utilization == 55
 
 
 @pytest.mark.parametrize("count_tokens", [False, True])
