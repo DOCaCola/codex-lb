@@ -18,6 +18,7 @@ from app.core.clients.proxy import (  # noqa: F401
     CODEX_TURN_METADATA_HEADER,
     ImageFetchSession,
     ProxyResponseError,
+    UpstreamAccountStamp,
     UpstreamProxyRouteTrace,
     _as_image_fetch_session,
     _finalize_responses_lite_reasoning_context,
@@ -28,6 +29,7 @@ from app.core.clients.proxy import (  # noqa: F401
     _payload_uses_responses_lite,
     _ws_transport_payload_budget_bytes,
     apply_codex_installation_metadata,
+    apply_upstream_account_stamp,
     filter_inbound_headers,
     pop_compact_timeout_overrides,
     pop_stream_timeout_overrides,
@@ -232,6 +234,7 @@ from app.modules.proxy.affinity import (
 )
 from app.modules.proxy.affinity_observation import AffinityObservation
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
+from app.modules.proxy.capability_routing import upstream_account_stamp
 from app.modules.proxy.continuity import is_http_bridge_account_neutral_replay
 from app.modules.proxy.durable_bridge_repository import (
     DurableBridgeAliasRegistration,
@@ -265,8 +268,8 @@ _WEBSOCKET_AUTH_INVALIDATED_FAILURE_CODE = "account_auth_invalidated"
 _NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE = "no_security_work_authorized_accounts"
 _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. codex-lb is continuing with normal account selection; the upstream request may still fail until "
-    "an account with Trusted Access for Cyber is marked as security-work-authorized."
+    "security work. codex-lb is forwarding the original upstream error; mark an account with Trusted Access for "
+    "Cyber as security-work-authorized to route these requests to it."
 )
 
 
@@ -327,7 +330,7 @@ def _http_bridge_operation_fingerprint(
     request_state: _WebSocketRequestState,
     text_data: str,
 ) -> str:
-    fingerprint_text = _text_without_account_installation_id(text_data)
+    fingerprint_text = _text_without_account_stamp(text_data)
     return durable_bridge_operation_fingerprint(
         api_key_scope=api_key_scope,
         request_text=fingerprint_text,
@@ -575,14 +578,51 @@ def _splice_account_installation_id(text_data: str, codex_installation_id: str |
     return f"{text_data[:index]}{_CLIENT_METADATA_TAIL_KEY}{updated_metadata}}}"
 
 
-def _text_with_account_installation_id(text_data: str, codex_installation_id: str | None) -> str:
-    spliced = _splice_account_installation_id(text_data, codex_installation_id)
+_ACCESS_PROGRAMS_TAIL_KEY = ',"access_programs":'
+_ACCESS_PROGRAMS_HEAD = '{"access_programs":'
+
+
+def _splice_account_stamp(text_data: str, stamp: UpstreamAccountStamp) -> str | None:
+    """Apply ``stamp`` without decoding the rest of the frame.
+
+    ``apply_upstream_account_stamp`` rewrites ``client_metadata`` in place and then re-appends
+    ``access_programs`` as the last member. A trailing top-level ``access_programs`` member is therefore
+    removed first, ``client_metadata`` is spliced as before, and the new member is appended, which yields the
+    bytes of the full round trip. Any other placement returns ``None`` for the full round trip.
+    """
+    if len(text_data) < 3 or text_data[0] != "{" or text_data[-1] != "}":
+        return None
+    body = text_data[:-1]
+    index = body.rfind(_ACCESS_PROGRAMS_TAIL_KEY)
+    if index >= 0:
+        try:
+            trailing_value = json.loads(body[index + len(_ACCESS_PROGRAMS_TAIL_KEY) :])
+        except json.JSONDecodeError:
+            # Nested match, or a member followed by further keys: not the trailing top-level member.
+            return None
+        if not isinstance(trailing_value, dict):
+            return None
+        body = body[:index]
+    if body.startswith(_ACCESS_PROGRAMS_HEAD):
+        return None
+    spliced = _splice_account_installation_id(f"{body}}}", stamp.codex_installation_id)
+    if spliced is None:
+        return None
+    if stamp.cyber_access_program is None:
+        return text_data if spliced == text_data else spliced
+    access_programs = _dumps_compact({"cyber": stamp.cyber_access_program})
+    stamped = f"{spliced[:-1]}{_ACCESS_PROGRAMS_TAIL_KEY}{access_programs}}}"
+    return text_data if stamped == text_data else stamped
+
+
+def _text_with_account_stamp(text_data: str, stamp: UpstreamAccountStamp) -> str:
+    spliced = _splice_account_stamp(text_data, stamp)
     if spliced is not None:
         return spliced
     payload = json.loads(text_data)
     if not isinstance(payload, dict):
         return text_data
-    apply_codex_installation_metadata(cast(dict[str, JsonValue], payload), codex_installation_id)
+    apply_upstream_account_stamp(cast(dict[str, JsonValue], payload), stamp)
     return _dumps_compact(payload)
 
 
@@ -625,8 +665,8 @@ def _text_without_operation_id(text_data: str) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
 
 
-def _text_without_account_installation_id(text_data: str) -> str:
-    """Normalize account-specific installation metadata out of a fingerprint."""
+def _text_without_account_stamp(text_data: str) -> str:
+    """Normalize account-derived installation metadata and access programs out of a fingerprint."""
     try:
         payload = json.loads(text_data)
     except (TypeError, json.JSONDecodeError):
@@ -634,8 +674,11 @@ def _text_without_account_installation_id(text_data: str) -> str:
     if not isinstance(payload, dict):
         return text_data
     raw_metadata = payload.get("client_metadata")
-    if not isinstance(raw_metadata, dict):
+    if not isinstance(raw_metadata, dict) and "access_programs" not in payload:
         return text_data
+    payload.pop("access_programs", None)
+    if not isinstance(raw_metadata, dict):
+        return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
     metadata: dict[str, JsonValue] = {}
     for key, value in raw_metadata.items():
         if not isinstance(key, str) or key.lower() == CODEX_INSTALLATION_ID_HEADER:
@@ -917,27 +960,26 @@ class _HTTPBridgeRequestSubmitMixin:
         _enforce_response_create_size_limit(request_state)
         return request_state, text_data
 
-    def _http_bridge_text_with_account_installation_id(
+    def _http_bridge_text_with_account_stamp(
         self: Any,
         session: "_HTTPBridgeSession",
         request_state: _WebSocketRequestState,
         text_data: str,
     ) -> str:
-        codex_installation_id = getattr(session.account, "codex_installation_id", None)
+        stamp = upstream_account_stamp(session.account, request_state.model)
         # The memo holds the exact objects the previous call returned for this
-        # installation id; a text rewrite yields a new object and an account
-        # swap changes the id, so both miss and take the full stamp below.
-        memo_valid = request_state.installation_stamp_installation_id == codex_installation_id
+        # stamp; a text rewrite yields a new object and an account swap changes
+        # the stamp, so both miss and take the full stamp below.
+        memo_valid = request_state.account_stamp == stamp
         if memo_valid and (
-            text_data is request_state.installation_stamp_text
-            or text_data is request_state.installation_stamp_fresh_text
+            text_data is request_state.account_stamp_text or text_data is request_state.account_stamp_fresh_text
         ):
             updated_text = text_data
         else:
-            updated_text = _text_with_account_installation_id(text_data, codex_installation_id)
+            updated_text = _text_with_account_stamp(text_data, stamp)
         fresh_text = request_state.fresh_upstream_request_text
-        if fresh_text is not None and not (memo_valid and fresh_text is request_state.installation_stamp_fresh_text):
-            updated_fresh_text = _text_with_account_installation_id(fresh_text, codex_installation_id)
+        if fresh_text is not None and not (memo_valid and fresh_text is request_state.account_stamp_fresh_text):
+            updated_fresh_text = _text_with_account_stamp(fresh_text, stamp)
             _enforce_http_bridge_response_create_text_size(request_state, updated_fresh_text)
             request_state.fresh_upstream_request_text = updated_fresh_text
         if updated_text == text_data:
@@ -949,11 +991,11 @@ class _HTTPBridgeRequestSubmitMixin:
             request_state,
             [(text_data, updated_text)]
             + ([(fresh_text, request_state.fresh_upstream_request_text)] if fresh_text is not None else []),
-            codex_installation_id,
+            stamp.codex_installation_id,
         )
-        request_state.installation_stamp_installation_id = codex_installation_id
-        request_state.installation_stamp_text = updated_text
-        request_state.installation_stamp_fresh_text = request_state.fresh_upstream_request_text
+        request_state.account_stamp = stamp
+        request_state.account_stamp_text = updated_text
+        request_state.account_stamp_fresh_text = request_state.fresh_upstream_request_text
         return updated_text
 
     async def _inline_http_bridge_image_urls(
@@ -1335,7 +1377,7 @@ class _HTTPBridgeRequestSubmitMixin:
         # Account installation metadata is part of the final upstream frame.
         # Apply and size-check it before recording the operation so a local
         # payload-too-large rejection cannot leave a submitted retry fence.
-        text_data = self._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+        text_data = self._http_bridge_text_with_account_stamp(session, request_state, text_data)
         record_operation = getattr(self._durable_bridge, "record_operation", None)
         if (
             callable(record_operation)
@@ -1435,7 +1477,7 @@ class _HTTPBridgeRequestSubmitMixin:
                         operation_parent_response_id = terminal_hard_turn_response_id
                         operation_fingerprint = durable_bridge_operation_fingerprint(
                             api_key_scope=api_key_scope,
-                            request_text=_text_without_account_installation_id(text_data),
+                            request_text=_text_without_account_stamp(text_data),
                         )
                         operation_id = durable_bridge_operation_id(
                             session.durable_session_id,
@@ -1493,7 +1535,7 @@ class _HTTPBridgeRequestSubmitMixin:
                                 request_state.hard_continuity_anchor = True
                                 operation_fingerprint = durable_bridge_operation_fingerprint(
                                     api_key_scope=api_key_scope,
-                                    request_text=_text_without_account_installation_id(text_data),
+                                    request_text=_text_without_account_stamp(text_data),
                                 )
                                 operation_id = durable_bridge_operation_id(
                                     session.durable_session_id,
@@ -1665,7 +1707,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 counted_in_queue=False,
             )
 
-        text_data = self._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+        text_data = self._http_bridge_text_with_account_stamp(session, request_state, text_data)
         if request_state.response_id is not None or request_state.response_event_count > 0:
             await _cleanup_unsubmitted_recovery_claim()
             _log_http_bridge_event(
@@ -1769,7 +1811,7 @@ class _HTTPBridgeRequestSubmitMixin:
                             502,
                             openai_error("upstream_unavailable", "HTTP responses session bridge is closed"),
                         )
-        text_data = self._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+        text_data = self._http_bridge_text_with_account_stamp(session, request_state, text_data)
         request_state.session_previous_gap_ms = int(max(0.0, request_state.started_at - session.last_used_at) * 1000)
         gate_acquired = False
         request_enqueued = False
@@ -1900,7 +1942,7 @@ class _HTTPBridgeRequestSubmitMixin:
             raise
         try:
             text_data = await self._inline_http_bridge_image_urls(text_data, request_state)
-            text_data = self._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+            text_data = self._http_bridge_text_with_account_stamp(session, request_state, text_data)
             self._start_request_state_api_key_reservation_heartbeat(
                 request_state,
                 api_key=request_state.api_key,
@@ -3739,7 +3781,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 require_preferred_account=request_state.file_required_preferred_account,
             )
             if send_request:
-                retry_text_data = self._http_bridge_text_with_account_installation_id(
+                retry_text_data = self._http_bridge_text_with_account_stamp(
                     session,
                     request_state,
                     retry_text_data,
@@ -4198,7 +4240,7 @@ class _HTTPBridgeRequestSubmitMixin:
                     request_state.response_create_admission = None
                     await self._release_request_state_account_response_create_lease(request_state)
                     return False
-            request_text = self._http_bridge_text_with_account_installation_id(session, request_state, request_text)
+            request_text = self._http_bridge_text_with_account_stamp(session, request_state, request_text)
             await _send_http_bridge_request_text_with_archive_id(session, request_state, request_text, clock=clock)
             session.last_used_at = clock.monotonic()
             request_state.clean_close_retry_result = True
@@ -4312,7 +4354,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 ),
                 require_preferred_account=bound_to_current_account,
             )
-            request_text = self._http_bridge_text_with_account_installation_id(session, request_state, request_text)
+            request_text = self._http_bridge_text_with_account_stamp(session, request_state, request_text)
             await _send_http_bridge_request_text_with_archive_id(session, request_state, request_text, clock=clock)
             session.last_used_at = clock.monotonic()
             return "retried"
@@ -4504,7 +4546,7 @@ class _HTTPBridgeRequestSubmitMixin:
                         ),
                     )
                 operation_rebound_for_retry = True
-            retry_text = self._http_bridge_text_with_account_installation_id(session, request_state, retry_text)
+            retry_text = self._http_bridge_text_with_account_stamp(session, request_state, retry_text)
             await _send_http_bridge_request_text_with_archive_id(
                 session,
                 request_state,

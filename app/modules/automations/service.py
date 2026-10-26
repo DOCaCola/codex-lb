@@ -45,6 +45,7 @@ from app.modules.proxy.account_cache import (
     mark_account_routing_unavailable,
     record_account_quota_status,
 )
+from app.modules.proxy.capability_routing import cyber_access_program_for_account
 from app.modules.proxy.helpers import _header_account_id
 from app.modules.proxy.request_policy import resolve_wire_reasoning_effort
 from app.modules.request_logs.repository import RequestLogsRepository
@@ -1225,6 +1226,7 @@ class AutomationsService:
                         account_id=_header_account_id(account.chatgpt_account_id),
                         route=route,
                         allow_direct_egress=route is None,
+                        cyber_access_program=cyber_access_program_for_account(account, ping_request.model),
                     ),
                     timeout=_automation_compact_request_timeout_seconds(run),
                 )

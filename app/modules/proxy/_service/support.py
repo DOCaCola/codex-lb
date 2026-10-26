@@ -22,6 +22,7 @@ from app.core.balancer.types import UpstreamError
 from app.core.clients.proxy import (
     CodexControlRequestPrivacyPolicy,
     ProxyResponseError,
+    UpstreamAccountStamp,
     apply_codex_installation_metadata,
 )
 from app.core.clients.proxy_websocket import (
@@ -1195,16 +1196,16 @@ class _WebSocketRequestState:
     # on, and dropping the anchor there would silently turn a continuation into
     # a context-free fresh turn.
     fresh_upstream_request_is_retry_safe: bool = False
-    # Memo for the account installation-id stamp applied to ``request_text`` /
+    # Memo for the account stamp applied to ``request_text`` /
     # ``fresh_upstream_request_text`` on the HTTP bridge submit path. The stamp
     # is re-applied at several submit and retry sites; these fields remember the
-    # exact ``str`` objects the last stamp returned for ``codex_installation_id``
+    # exact ``str`` objects the last stamp returned for ``account_stamp``
     # so an already-stamped object is recognised by identity instead of being
     # decoded and re-encoded again. Every text rewrite yields a new ``str``
-    # object and an account swap changes the id, so both miss automatically.
-    installation_stamp_installation_id: str | None = None
-    installation_stamp_text: str | None = None
-    installation_stamp_fresh_text: str | None = None
+    # object and an account swap changes the stamp, so both miss automatically.
+    account_stamp: UpstreamAccountStamp | None = None
+    account_stamp_text: str | None = None
+    account_stamp_fresh_text: str | None = None
     # Account-neutrality verdicts for the bodies this request currently holds,
     # keyed by ``str`` identity like the installation stamp memo above:
     # ``(body, body-without-client_metadata verdict, client_metadata)``.

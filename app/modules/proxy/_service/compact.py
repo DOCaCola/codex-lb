@@ -67,6 +67,7 @@ from app.modules.proxy.affinity import (
 )
 from app.modules.proxy.affinity_observation import AffinityObservation
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
+from app.modules.proxy.capability_routing import cyber_access_program_for_account
 from app.modules.proxy.checkpoint_history import retain_native_checkpoint
 from app.modules.proxy.continuity import (
     resolve_required_account_id,
@@ -383,11 +384,11 @@ def _record_continuity_fail_closed(
     )
 
 
-def _is_security_work_authorization_required_error(code: str | None, message: str | None) -> bool:
+def _is_security_work_authorization_required_error(code: str | None) -> bool:
     return cast(
-        Callable[[str | None, str | None], bool],
+        Callable[[str | None], bool],
         _service_global("_is_security_work_authorization_required_error"),
-    )(code, message)
+    )(code)
 
 
 def _is_account_neutral_error_code(code: str | None) -> bool:
@@ -1202,6 +1203,7 @@ class _CompactMixin:
                                     "route_trace": route_trace,
                                     "chatgpt_account_id": account_id,
                                     "synthesize_routing_hint": True,
+                                    "cyber_access_program": cyber_access_program_for_account(target, payload.model),
                                     # ``target.id`` is the load-balancer account
                                     # id; ``account_id`` above is the wire one.
                                     # The scope token hashes the LB id in both
@@ -1323,30 +1325,10 @@ class _CompactMixin:
                     ):
                         logger.info(
                             "No security-work-authorized account available for compact retry; "
-                            "continuing normal account failover request_id=%s",
+                            "forwarding original upstream error request_id=%s",
                             request_id,
                         )
-                        require_security_work_authorized = False
-                        selection = await proxy._select_account_with_budget_compatible(
-                            deadline,
-                            request_id=request_id,
-                            kind="compact",
-                            api_key=api_key,
-                            affinity_policy=affinity,
-                            prefer_earlier_reset_accounts=prefer_earlier_reset,
-                            prefer_earlier_reset_window=_prefer_earlier_reset_window(settings),
-                            routing_strategy=routing_strategy,
-                            model=payload.model,
-                            reasoning_effort=payload.routing_reasoning_effort,
-                            service_tier=payload.service_tier,
-                            exclude_account_ids=excluded_account_ids,
-                            preferred_account_id=preferred_account_id,
-                            require_security_work_authorized=False,
-                            lease_kind="response_create",
-                            estimated_lease_tokens=estimated_lease_tokens,
-                            fallback_on_preferred_account_unavailable=preferred_account_id is None,
-                        )
-                        account = selection.account
+                        break
                     if (
                         account is None
                         and previous_response_preferred_account_id is not None
@@ -1962,7 +1944,6 @@ class _CompactMixin:
                             error.code if error else None,
                             error.type if error else None,
                         )
-                        error_message = error.message if error else None
                         network_recovery.account_id = account.id
                         recovery_decision = await network_recovery.wait(
                             error_code=code,
@@ -1984,7 +1965,7 @@ class _CompactMixin:
                         if exc.retryable_same_contract and safe_retry_budget > 0:
                             safe_retry_budget -= 1
                             continue
-                        if _is_security_work_authorization_required_error(code, error_message):
+                        if _is_security_work_authorization_required_error(code):
                             if (
                                 not account.security_work_authorized
                                 and account.id != preferred_account_id

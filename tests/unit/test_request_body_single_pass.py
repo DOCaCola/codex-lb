@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-from app.core.clients.proxy import CODEX_INSTALLATION_ID_HEADER
+from app.core.clients.proxy import CODEX_INSTALLATION_ID_HEADER, UpstreamAccountStamp
 from app.core.types import JsonValue
-from app.modules.proxy._service.http_bridge.request_submit import _text_with_account_installation_id
+from app.modules.proxy._service.http_bridge.request_submit import _text_with_account_stamp
 from app.modules.proxy._service.response_create import _fingerprint_input_items
 from app.modules.proxy._service.support import (
     _inherit_stamped_request_body_account_neutrality,
@@ -86,7 +86,7 @@ def test_stamped_body_verdict_uses_the_stamped_metadata() -> None:
     _record_request_body_account_neutrality(request_state, text, payload)
     assert _request_body_is_account_neutral_fresh_replay(request_state, text) is False
 
-    stamped = _text_with_account_installation_id(text, "install-1")
+    stamped = _text_with_account_stamp(text, UpstreamAccountStamp("install-1", "standard"))
     request_state.request_text = stamped
     _inherit_stamped_request_body_account_neutrality(request_state, [(text, stamped)], "install-1")
 

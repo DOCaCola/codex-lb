@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Version of the persisted payload shape. MUST be bumped whenever the payload
 # encoding changes (new/renamed fields, different container shapes); replicas
 # ignore snapshots whose schema_version differs from their codec version.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SNAPSHOT_ROW_ID = 1
 
@@ -78,6 +78,7 @@ SNAPSHOT_CODEC_FIELDS = frozenset(
         "account_catalogs_authoritative",
         "bootstrap_floor_active",
         "suppressed_model_slugs",
+        "model_cyber_access_program_accounts",
     }
 )
 
@@ -235,6 +236,7 @@ def _encode_snapshot(snapshot: ModelRegistrySnapshot) -> dict[str, JsonValue]:
         "account_catalogs_authoritative": snapshot.account_catalogs_authoritative,
         "bootstrap_floor_active": snapshot.bootstrap_floor_active,
         "suppressed_model_slugs": _encode_string_list(sorted(snapshot.suppressed_model_slugs)),
+        "model_cyber_access_program_accounts": _encode_tier_sets(snapshot.model_cyber_access_program_accounts),
     }
 
 
@@ -273,6 +275,7 @@ def _decode_snapshot(data: dict[str, JsonValue], *, fetched_at: float) -> ModelR
         account_catalogs_authoritative=bool(data["account_catalogs_authoritative"]),
         bootstrap_floor_active=bool(data["bootstrap_floor_active"]),
         suppressed_model_slugs=frozenset(str(item) for item in suppressed),
+        model_cyber_access_program_accounts=_decode_tier_sets(data["model_cyber_access_program_accounts"]),
     )
 
 

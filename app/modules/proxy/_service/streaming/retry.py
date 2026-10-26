@@ -1530,7 +1530,7 @@ class _StreamingRetryMixin:
                     ):
                         _facade().logger.info(
                             "No security-work-authorized account available for stream retry; "
-                            "continuing normal account failover request_id=%s",
+                            "forwarding original upstream error request_id=%s",
                             request_id,
                         )
                         yield format_sse_event(
@@ -1538,11 +1538,9 @@ class _StreamingRetryMixin:
                                 code=_facade()._NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE,
                                 message=_facade()._SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE,
                                 request_id=request_id,
-                                action="continue_normal_selection",
+                                action="forward_original_security_work_error",
                             )
                         )
-                        require_security_work_authorized = False
-                        continue
                     if not account and deferred_capacity_account is not None:
                         deferred_error = _parse_openai_error(last_transient_exc.payload) if last_transient_exc else None
                         recovery_sleep_seconds = _account_selection_recovery_sleep_seconds(
@@ -2514,7 +2512,7 @@ class _StreamingRetryMixin:
                                     # below, where the rejected account is
                                     # already excluded by the helper.
                                     break
-                                if _facade()._is_security_work_authorization_required_error(code, error_message):
+                                if _facade()._is_security_work_authorization_required_error(code):
                                     if (
                                         account.security_work_authorized
                                         or account.id == file_preferred_account_id
@@ -2541,7 +2539,7 @@ class _StreamingRetryMixin:
                                     excluded_account_ids.add(account.id)
                                     require_security_work_authorized = True
                                     last_security_work_retry_error = _RetryableStreamError(
-                                        _facade()._SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE,
+                                        code,
                                         _upstream_error_from_openai(error),
                                     )
                                     last_transient_exc = tex
@@ -2885,7 +2883,7 @@ class _StreamingRetryMixin:
                         return
                     continue  # outer loop: account failover after transient exhaustion
                 except _RetryableStreamError as exc:
-                    if _facade()._is_security_work_authorization_required_error(exc.code, exc.error.get("message")):
+                    if _facade()._is_security_work_authorization_required_error(exc.code):
                         if (
                             account.security_work_authorized
                             or account.id == file_preferred_account_id
@@ -3559,7 +3557,7 @@ class _StreamingRetryMixin:
                     error_message = error.message if error else None
                     error_type = error.type if error else None
                     error_param = error.param_state if error else None
-                    if _facade()._is_security_work_authorization_required_error(error_code, error_message):
+                    if _facade()._is_security_work_authorization_required_error(error_code):
                         if (
                             not account.security_work_authorized
                             and account.id != file_preferred_account_id
@@ -3584,6 +3582,11 @@ class _StreamingRetryMixin:
                             current_account_lease = None
                             excluded_account_ids.add(account.id)
                             require_security_work_authorized = True
+                            last_security_work_retry_error = _RetryableStreamError(
+                                error_code,
+                                _upstream_error_from_openai(error),
+                            )
+                            last_transient_exc = exc
                             continue
                     health_write_allowed = await _drain_pending_post_refresh_penalty_on_terminal(settlement)
                     if (

@@ -303,7 +303,7 @@ from app.modules.proxy._service.http_bridge.rejected_encrypted_content import (
     strip_request_state_rejected_encrypted_content,
 )
 from app.modules.proxy._service.http_bridge.request_submit import (
-    _text_with_account_installation_id as _text_with_account_installation_id,
+    _text_with_account_stamp as _text_with_account_stamp,
 )
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
@@ -510,6 +510,7 @@ from app.modules.proxy.capability_routing import (
     parse_routing_intent,
     reject_capability_signal_outside_response_create,
     strip_capability_metadata,
+    upstream_account_stamp,
 )
 from app.modules.proxy.checkpoint_handoff import handoff_store, origin_store
 from app.modules.proxy.checkpoint_history import (
@@ -909,11 +910,6 @@ async def _wait_for_process_network_recovery(
         rotate_shared_client=True,
         failed_session=exc.failed_session,
     )
-
-
-def _websocket_text_with_account_installation_id(text_data: str, account: Account) -> str:
-    codex_installation_id = getattr(account, "codex_installation_id", None)
-    return _text_with_account_installation_id(text_data, codex_installation_id)
 
 
 async def _route_websocket_response_interrupt(
@@ -2917,11 +2913,12 @@ class _WebSocketMixin:
                     ):
                         unstamped_text = text_data
                         unstamped_fresh_text = request_state.fresh_upstream_request_text
-                        text_data = _websocket_text_with_account_installation_id(text_data, account)
+                        account_stamp = upstream_account_stamp(account, request_state.model)
+                        text_data = _text_with_account_stamp(text_data, account_stamp)
                         if unstamped_fresh_text is not None:
-                            fresh_upstream_request_text = _websocket_text_with_account_installation_id(
+                            fresh_upstream_request_text = _text_with_account_stamp(
                                 unstamped_fresh_text,
-                                account,
+                                account_stamp,
                             )
                             _websocket_enforce_response_create_text_size(request_state, fresh_upstream_request_text)
                             request_state.fresh_upstream_request_text = fresh_upstream_request_text
@@ -2934,7 +2931,7 @@ class _WebSocketMixin:
                                 if unstamped_fresh_text is not None
                                 else []
                             ),
-                            getattr(account, "codex_installation_id", None),
+                            account_stamp.codex_installation_id,
                         )
                         _facade()._enforce_response_create_size_limit(request_state)
                     if (
@@ -6725,7 +6722,7 @@ class _WebSocketMixin:
                 error.type if error else None,
             )
             terminal_error_message = error.message if error else None
-            if _facade()._is_security_work_authorization_required_error(terminal_error_code, terminal_error_message):
+            if _facade()._is_security_work_authorization_required_error(terminal_error_code):
                 can_retry_security_work = (
                     not account.security_work_authorized
                     and not has_other_pending_requests
@@ -6753,7 +6750,7 @@ class _WebSocketMixin:
                         request_state.response_id = None
                         request_state.awaiting_response_created = True
                         request_state.require_security_work_authorized = True
-                        request_state.error_code_override = _facade()._SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE
+                        request_state.error_code_override = terminal_error_code
                         request_state.error_message_override = terminal_error_message
                         request_state.error_type_override = error.type if error else None
                         request_state.error_param_override = error.param_state if error else None

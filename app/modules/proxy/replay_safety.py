@@ -123,6 +123,8 @@ _ACCOUNT_SCOPED_HOSTED_INPUT_TYPES = frozenset(
 )
 _RESPONSES_PAYLOAD_FIELDS_WITH_DEDICATED_VALIDATION = frozenset(
     {
+        # Re-derived for every destination account (see ``apply_cyber_access_program``).
+        "access_programs",
         "conversation",
         "client_metadata",
         "include",

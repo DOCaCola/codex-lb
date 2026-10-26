@@ -238,7 +238,7 @@ def test_bridge_security_retry_logs_cleared_effective_affinity(app_instance, mon
                                 "id": "resp_security_failed",
                                 "status": "failed",
                                 "error": {
-                                    "code": "invalid_request_error",
+                                    "code": "cyber_policy",
                                     "type": "invalid_request_error",
                                     "message": "This chat was flagged for possible cybersecurity risk. "
                                     "To get authorized for security work, join the Trusted Access for Cyber program. "

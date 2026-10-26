@@ -383,6 +383,7 @@ from app.modules.proxy.affinity import (
     _sticky_key_from_session_header,  # noqa: F401
 )
 from app.modules.proxy.affinity_observation import AffinityObservation
+from app.modules.proxy.capability_routing import cyber_access_program_for_account
 from app.modules.proxy.checkpoint_history import checkpoint_scope, is_checkpoint_item, retain_completed_checkpoint
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
@@ -532,6 +533,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 "allow_direct_egress": route is None,
                 "route_trace": route_trace,
                 "codex_installation_id": account.codex_installation_id,
+                "cyber_access_program": cyber_access_program_for_account(account, payload.model),
                 "enforce_openai_sdk_contract": enforce_openai_sdk_contract,
                 "codex_lb_account_id": account.id,
                 # Selected subscription Account, independent of optional legacy header.
@@ -677,12 +679,8 @@ class _StreamingMixin(_StreamingRetryMixin):
                     settlement.account_health_error = _facade()._should_penalize_stream_error(code, error_message)
                     if allow_retry and code == "stream_idle_timeout":
                         raise _RetryableStreamError(code, upstream_error, exclude_account=True)
-                    if allow_retry and _facade()._is_security_work_authorization_required_error(code, error_message):
-                        error_code = _facade()._SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE
-                        raise _RetryableStreamError(
-                            _facade()._SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE,
-                            upstream_error,
-                        )
+                    if allow_retry and _facade()._is_security_work_authorization_required_error(code):
+                        raise _RetryableStreamError(code, upstream_error)
                     if allow_retry and _facade()._should_retry_stream_error(code, error_message):
                         raise _RetryableStreamError(code, upstream_error, exclude_account=True)
                 terminal_stream_error = _TerminalStreamError(

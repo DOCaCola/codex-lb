@@ -32,7 +32,8 @@ from app.core.auth.refresh import RefreshError
 from app.core.clients.proxy import (
     CODEX_RESPONSES_LITE_WEBSOCKET_METADATA_KEY,
     ProxyResponseError,
-    apply_codex_installation_metadata,
+    UpstreamAccountStamp,
+    apply_upstream_account_stamp,
 )
 from app.core.clients.proxy_websocket import (
     UPSTREAM_WEBSOCKET_LIVENESS_TIMEOUT_CODE,
@@ -367,7 +368,7 @@ def test_http_bridge_operation_fingerprint_strips_account_installation_metadata(
         '"x-codex-turn-metadata":"{\\"installation_id\\":\\"account-a\\",\\"turn_id\\":\\"t1\\"}",'
         '"caller":"stable"}}'
     )
-    normalized = json.loads(http_bridge_request_submit_module._text_without_account_installation_id(request))
+    normalized = json.loads(http_bridge_request_submit_module._text_without_account_stamp(request))
     assert normalized == {
         "type": "response.create",
         "previous_response_id": "resp_parent",
@@ -9644,7 +9645,7 @@ def test_http_bridge_request_text_replaces_client_installation_id() -> None:
         separators=(",", ":"),
     )
 
-    updated_text = service._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+    updated_text = service._http_bridge_text_with_account_stamp(session, request_state, text_data)
 
     assert json.loads(updated_text)["client_metadata"] == {
         "x-codex-installation-id": "account-installation",
@@ -9672,7 +9673,7 @@ def test_http_bridge_request_text_rejects_installation_metadata_size_overflow(
         transport="http",
         request_text='{"type":"response.create","input":"x"}',
     )
-    stamped_text = service._http_bridge_text_with_account_installation_id(
+    stamped_text = service._http_bridge_text_with_account_stamp(
         session,
         request_state,
         request_state.request_text or "{}",
@@ -9686,7 +9687,7 @@ def test_http_bridge_request_text_rejects_installation_metadata_size_overflow(
     monkeypatch.setattr(response_create_module, "responses_body_limit_bytes", lambda: max_bytes)
 
     with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
-        service._http_bridge_text_with_account_installation_id(
+        service._http_bridge_text_with_account_stamp(
             session,
             request_state,
             request_state.request_text or "{}",
@@ -9700,18 +9701,18 @@ def test_submit_http_bridge_request_uses_bridge_installation_metadata_helper() -
     source = inspect.getsource(proxy_service.ProxyService._submit_http_bridge_request_with_handoff)
 
     assert "_response_create_text_with_account_installation_id(" not in source
-    assert source.count("_http_bridge_text_with_account_installation_id(") >= 3
+    assert source.count("_http_bridge_text_with_account_stamp(") >= 3
 
 
 _real_json_loads = json.loads
 
 
-def _reference_text_with_account_installation_id(text_data: str, codex_installation_id: str | None) -> str:
+def _reference_text_with_account_stamp(text_data: str, stamp: UpstreamAccountStamp) -> str:
     """The pre-splice decode/rewrite/encode implementation, kept as the byte oracle."""
     payload = _real_json_loads(text_data)
     if not isinstance(payload, dict):
         return text_data
-    apply_codex_installation_metadata(payload, codex_installation_id)
+    apply_upstream_account_stamp(payload, stamp)
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
 
 
@@ -9746,21 +9747,21 @@ def _prepare_stamp_fixture(
     )
 
 
-def test_http_bridge_installation_stamp_decodes_frame_once_across_sequential_calls(
+def test_http_bridge_account_stamp_decodes_frame_once_across_sequential_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     session = _make_bridge_session()
     session.account.codex_installation_id = "account-installation"
     request_state, text_data = _prepare_stamp_fixture(service)
-    expected = _reference_text_with_account_installation_id(text_data, "account-installation")
+    expected = _reference_text_with_account_stamp(text_data, UpstreamAccountStamp("account-installation", None))
     decoded = _count_json_loads(monkeypatch)
 
-    first = service._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+    first = service._http_bridge_text_with_account_stamp(session, request_state, text_data)
     decodes_after_first = len(decoded)
-    second = service._http_bridge_text_with_account_installation_id(session, request_state, first)
-    third = service._http_bridge_text_with_account_installation_id(session, request_state, second)
-    fourth = service._http_bridge_text_with_account_installation_id(session, request_state, third)
+    second = service._http_bridge_text_with_account_stamp(session, request_state, first)
+    third = service._http_bridge_text_with_account_stamp(session, request_state, second)
+    fourth = service._http_bridge_text_with_account_stamp(session, request_state, third)
 
     assert first == expected
     assert second is first and third is first and fourth is first
@@ -9769,12 +9770,12 @@ def test_http_bridge_installation_stamp_decodes_frame_once_across_sequential_cal
     assert [text for text in decoded if len(text) >= 1024] == []
     assert decoded and all(text.startswith("{") for text in decoded)
     assert len(decoded) == decodes_after_first
-    assert http_bridge_request_submit_module._text_without_account_installation_id(
+    assert http_bridge_request_submit_module._text_without_account_stamp(
         first
-    ) == http_bridge_request_submit_module._text_without_account_installation_id(text_data)
+    ) == http_bridge_request_submit_module._text_without_account_stamp(text_data)
 
 
-def test_http_bridge_installation_stamp_memo_misses_on_account_swap_and_text_rewrite(
+def test_http_bridge_account_stamp_memo_misses_on_account_swap_and_text_rewrite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
@@ -9783,39 +9784,39 @@ def test_http_bridge_installation_stamp_memo_misses_on_account_swap_and_text_rew
     request_state, text_data = _prepare_stamp_fixture(service)
     decoded = _count_json_loads(monkeypatch)
 
-    stamped_a = service._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+    stamped_a = service._http_bridge_text_with_account_stamp(session, request_state, text_data)
     decodes = len(decoded)
     assert decodes > 0
-    assert service._http_bridge_text_with_account_installation_id(session, request_state, stamped_a) is stamped_a
+    assert service._http_bridge_text_with_account_stamp(session, request_state, stamped_a) is stamped_a
     assert len(decoded) == decodes
 
     session.account.codex_installation_id = "account-b"
-    stamped_b = service._http_bridge_text_with_account_installation_id(session, request_state, stamped_a)
+    stamped_b = service._http_bridge_text_with_account_stamp(session, request_state, stamped_a)
     assert stamped_b is not stamped_a
-    assert stamped_b == _reference_text_with_account_installation_id(stamped_a, "account-b")
+    assert stamped_b == _reference_text_with_account_stamp(stamped_a, UpstreamAccountStamp("account-b", None))
     assert _real_json_loads(stamped_b)["client_metadata"]["x-codex-installation-id"] == "account-b"
     assert len(decoded) > decodes
     decodes = len(decoded)
 
     cast(Any, session.account).codex_installation_id = None
-    unstamped = service._http_bridge_text_with_account_installation_id(session, request_state, stamped_b)
-    assert unstamped == _reference_text_with_account_installation_id(stamped_b, None)
+    unstamped = service._http_bridge_text_with_account_stamp(session, request_state, stamped_b)
+    assert unstamped == _reference_text_with_account_stamp(stamped_b, UpstreamAccountStamp(None, None))
     assert "x-codex-installation-id" not in _real_json_loads(unstamped)["client_metadata"]
     assert len(decoded) > decodes
     decodes = len(decoded)
 
     session.account.codex_installation_id = "account-b"
-    restamped = service._http_bridge_text_with_account_installation_id(session, request_state, unstamped)
+    restamped = service._http_bridge_text_with_account_stamp(session, request_state, unstamped)
     assert restamped == stamped_b
     assert len(decoded) > decodes
 
     rewritten = http_bridge_request_submit_module._text_with_operation_id(restamped, "op_rewrite")
     decoded.clear()
-    stamped_rewritten = service._http_bridge_text_with_account_installation_id(session, request_state, rewritten)
-    assert stamped_rewritten == _reference_text_with_account_installation_id(rewritten, "account-b")
+    stamped_rewritten = service._http_bridge_text_with_account_stamp(session, request_state, rewritten)
+    assert stamped_rewritten == _reference_text_with_account_stamp(rewritten, UpstreamAccountStamp("account-b", None))
     decodes = len(decoded)
     assert decodes > 0
-    assert service._http_bridge_text_with_account_installation_id(session, request_state, stamped_rewritten) is (
+    assert service._http_bridge_text_with_account_stamp(session, request_state, stamped_rewritten) is (
         stamped_rewritten
     )
     assert len(decoded) == decodes
@@ -9823,7 +9824,7 @@ def test_http_bridge_installation_stamp_memo_misses_on_account_swap_and_text_rew
     assert [text for text in decoded if len(text) >= 1024] == []
 
 
-def test_http_bridge_installation_stamp_memoizes_fresh_text_and_size_check(
+def test_http_bridge_account_stamp_memoizes_fresh_text_and_size_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
@@ -9849,28 +9850,28 @@ def test_http_bridge_installation_stamp_memoizes_fresh_text_and_size_check(
     )
     decoded = _count_json_loads(monkeypatch)
 
-    stamped = service._http_bridge_text_with_account_installation_id(session, request_state, text_data)
+    stamped = service._http_bridge_text_with_account_stamp(session, request_state, text_data)
     stamped_fresh = request_state.fresh_upstream_request_text
-    assert stamped_fresh == _reference_text_with_account_installation_id(fresh_text, "account-installation")
+    assert stamped_fresh == _reference_text_with_account_stamp(
+        fresh_text, UpstreamAccountStamp("account-installation", None)
+    )
     assert size_checks == [stamped_fresh]
     decodes = len(decoded)
     assert decodes > 0
 
     for _ in range(3):
-        assert service._http_bridge_text_with_account_installation_id(session, request_state, stamped) is stamped
+        assert service._http_bridge_text_with_account_stamp(session, request_state, stamped) is stamped
     assert request_state.fresh_upstream_request_text is stamped_fresh
     assert size_checks == [stamped_fresh]
     assert len(decoded) == decodes
 
     # The pre-admission retry path submits the fresh text itself as the request text.
-    assert (
-        service._http_bridge_text_with_account_installation_id(session, request_state, stamped_fresh) is stamped_fresh
-    )
+    assert service._http_bridge_text_with_account_stamp(session, request_state, stamped_fresh) is stamped_fresh
     assert len(decoded) == decodes
 
     # A new fresh object (equal bytes) is a different stamp target and is size-checked again.
     request_state.fresh_upstream_request_text = "".join(stamped_fresh)
-    assert service._http_bridge_text_with_account_installation_id(session, request_state, stamped) is stamped
+    assert service._http_bridge_text_with_account_stamp(session, request_state, stamped) is stamped
     assert request_state.fresh_upstream_request_text is not None
     assert size_checks == [stamped_fresh, request_state.fresh_upstream_request_text]
     assert len(decoded) > decodes
@@ -9882,10 +9883,10 @@ def test_http_bridge_installation_stamp_memoizes_fresh_text_and_size_check(
     monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 64, raising=False)
     monkeypatch.setattr(response_create_module, "responses_body_limit_bytes", lambda: 64)
     with pytest.raises(proxy_service.ProxyResponseError):
-        service._http_bridge_text_with_account_installation_id(session, request_state, stamped)
-    assert request_state.installation_stamp_fresh_text is not oversized_fresh
+        service._http_bridge_text_with_account_stamp(session, request_state, stamped)
+    assert request_state.account_stamp_fresh_text is not oversized_fresh
     with pytest.raises(proxy_service.ProxyResponseError):
-        service._http_bridge_text_with_account_installation_id(session, request_state, stamped)
+        service._http_bridge_text_with_account_stamp(session, request_state, stamped)
 
 
 _STAMP_SPLICE_METADATA = st.dictionaries(
@@ -9907,15 +9908,19 @@ _STAMP_SPLICE_TURN_METADATA = st.one_of(
     turn_metadata=_STAMP_SPLICE_TURN_METADATA,
     include_client_installation_id=st.booleans(),
     codex_installation_id=st.sampled_from(["account-installation", None, ""]),
+    cyber_access_program=st.sampled_from([None, "standard", "daybreak_blue"]),
+    client_access_programs=st.sampled_from(["absent", "trailing", "leading"]),
     position=st.sampled_from(["first", "middle", "last", "absent"]),
     extra=hypothesis_json_values,
 )
 @settings(deadline=None, max_examples=300)
-def test_http_bridge_installation_stamp_splice_matches_reference_bytes(
+def test_http_bridge_account_stamp_splice_matches_reference_bytes(
     metadata: dict[str, Any],
     turn_metadata: str | None,
     include_client_installation_id: bool,
     codex_installation_id: str | None,
+    cyber_access_program: str | None,
+    client_access_programs: str,
     position: str,
     extra: Any,
 ) -> None:
@@ -9925,6 +9930,8 @@ def test_http_bridge_installation_stamp_splice_matches_reference_bytes(
     if include_client_installation_id:
         client_metadata["x-codex-installation-id"] = "client-installation"
     payload: dict[str, Any] = {}
+    if client_access_programs == "leading":
+        payload["access_programs"] = {"cyber": "daybreak_red"}
     if position == "first":
         payload["client_metadata"] = client_metadata
     payload.update({"model": "gpt-5.4", "input": [{"role": "user", "content": "caf\u00e9 \U0001f600"}], "extra": extra})
@@ -9933,19 +9940,22 @@ def test_http_bridge_installation_stamp_splice_matches_reference_bytes(
     payload.update({"reasoning": {"effort": "high"}, "store": False, "type": "response.create"})
     if position == "last":
         payload["client_metadata"] = client_metadata
+    if client_access_programs == "trailing":
+        payload["access_programs"] = {"cyber": "daybreak_red"}
     text_data = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    stamp = UpstreamAccountStamp(codex_installation_id, cyber_access_program)
 
-    expected = _reference_text_with_account_installation_id(text_data, codex_installation_id)
-    stamped = http_bridge_request_submit_module._text_with_account_installation_id(text_data, codex_installation_id)
-    spliced = http_bridge_request_submit_module._splice_account_installation_id(text_data, codex_installation_id)
+    expected = _reference_text_with_account_stamp(text_data, stamp)
+    stamped = http_bridge_request_submit_module._text_with_account_stamp(text_data, stamp)
+    spliced = http_bridge_request_submit_module._splice_account_stamp(text_data, stamp)
 
     assert stamped == expected
-    assert http_bridge_request_submit_module._text_with_account_installation_id(stamped, codex_installation_id) == (
-        expected
-    )
-    if position in {"first", "middle"}:
+    assert http_bridge_request_submit_module._text_with_account_stamp(stamped, stamp) == expected
+    if position in {"first", "middle"} or client_access_programs == "leading":
         assert spliced is None
-    elif text_data.count('"client_metadata"') == (1 if position == "last" else 0):
+    elif text_data.count('"client_metadata"') == (1 if position == "last" else 0) and text_data.count(
+        '"access_programs"'
+    ) == (1 if client_access_programs == "trailing" else 0):
         # Trailing or absent top-level key with no look-alike elsewhere: the splice must run.
         assert spliced == expected
         if spliced == text_data:

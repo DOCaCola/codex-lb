@@ -4303,8 +4303,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                 error.code if error else None,
                 error.type if error else None,
             )
-            terminal_error_message = error.message if error else None
-            if _is_security_work_authorization_required_error(terminal_error_code, terminal_error_message):
+            if _is_security_work_authorization_required_error(terminal_error_code):
                 can_retry_security_work = (
                     not is_http_bridge_account_neutral_replay(
                         kind=session.key.affinity_kind,

@@ -69,6 +69,7 @@ from app.modules.proxy.load_balancer import (
 )
 from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.usage.repository import AdditionalUsageRepository
+from tests.account_helpers import account_fixture
 
 pytestmark = pytest.mark.integration
 _TEST_SYNC_TIMEOUT_SECONDS = 5.0
@@ -11531,7 +11532,7 @@ async def test_http_bridge_stale_gate_retires_after_leading_rate_limit_telemetry
         headers={},
         affinity=proxy_module._AffinityPolicy(key="stale-after-rate-limits"),
         request_model="gpt-5.6-sol",
-        account=cast(Account, SimpleNamespace(id="acct-stale-rate-limits", status=AccountStatus.ACTIVE)),
+        account=cast(Account, account_fixture(id="acct-stale-rate-limits", status=AccountStatus.ACTIVE)),
         upstream=cast(proxy_module.UpstreamWebSocket, upstream),
         upstream_control=proxy_module._WebSocketUpstreamControl(),
         pending_requests=deque([request_state]),
@@ -11638,7 +11639,7 @@ async def test_http_bridge_stale_gate_direct_retirement_quarantines_wedged_reatt
         headers={},
         affinity=proxy_module._AffinityPolicy(key="quarantine-direct-retire-all-stale"),
         request_model="gpt-5.6-sol",
-        account=cast(Account, SimpleNamespace(id="acct-quarantine-direct-retire", status=AccountStatus.ACTIVE)),
+        account=cast(Account, account_fixture(id="acct-quarantine-direct-retire", status=AccountStatus.ACTIVE)),
         upstream=cast(proxy_module.UpstreamWebSocket, upstream),
         upstream_control=proxy_module._WebSocketUpstreamControl(),
         pending_requests=deque([wedged_reattach]),
@@ -12920,12 +12921,12 @@ async def test_v1_responses_http_bridge_forks_follower_when_account_assignment_c
             create_started.set()
             await _wait_for_event(release_create)
             session = _make_dummy_bridge_session(key)
-            cast(Any, session).account = SimpleNamespace(id=stale_account_id, status=AccountStatus.ACTIVE)
+            cast(Any, session).account = account_fixture(id=stale_account_id, status=AccountStatus.ACTIVE)
             session.queued_request_count = 1
             session.upstream_control.retire_after_drain = True
             return session
         session = _make_dummy_bridge_session(key)
-        cast(Any, session).account = SimpleNamespace(id=fresh_account_id, status=AccountStatus.ACTIVE)
+        cast(Any, session).account = account_fixture(id=fresh_account_id, status=AccountStatus.ACTIVE)
         return session
 
     monkeypatch.setattr(proxy_module.ProxyService, "_create_http_bridge_session", fake_create_http_bridge_session)
@@ -14504,7 +14505,7 @@ async def test_retry_http_bridge_precreated_request_releases_pending_lock_before
             max_age_seconds=300,
         ),
         request_model="gpt-5.1",
-        account=cast(Account, SimpleNamespace(id="acct-retry", status=AccountStatus.ACTIVE)),
+        account=cast(Account, account_fixture(id="acct-retry", status=AccountStatus.ACTIVE)),
         upstream=cast(proxy_module.UpstreamWebSocket, _SilentUpstreamWebSocket()),
         upstream_control=proxy_module._WebSocketUpstreamControl(),
         pending_requests=deque(),
@@ -14576,7 +14577,7 @@ async def test_retry_http_bridge_precreated_request_ignores_existing_response_id
             max_age_seconds=300,
         ),
         request_model="gpt-5.1",
-        account=cast(Account, SimpleNamespace(id="acct-race", status=AccountStatus.ACTIVE)),
+        account=cast(Account, account_fixture(id="acct-race", status=AccountStatus.ACTIVE)),
         upstream=cast(proxy_module.UpstreamWebSocket, _SilentUpstreamWebSocket()),
         upstream_control=proxy_module._WebSocketUpstreamControl(),
         pending_requests=deque(),

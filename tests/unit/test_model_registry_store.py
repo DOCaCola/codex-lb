@@ -69,6 +69,7 @@ def _rich_snapshot(*, fetched_at: float | None = None) -> ModelRegistrySnapshot:
         account_catalogs_authoritative=True,
         bootstrap_floor_active=True,
         suppressed_model_slugs=frozenset({"gpt-withdrawn"}),
+        model_cyber_access_program_accounts={"gpt-new": {"daybreak_blue": frozenset({"acc-1"})}},
     )
 
 
@@ -151,6 +152,7 @@ class TestMalformedSetBackedFields:
             # Tier maps delegate to the same set decoder.
             (("model_service_tier_plans", "gpt-new", "priority"), "pro"),
             (("model_service_tier_accounts", "gpt-new", "priority"), "acc-1"),
+            (("model_cyber_access_program_accounts", "gpt-new", "daybreak_blue"), "acc-1"),
         ],
     )
     def test_wrong_typed_set_backed_field_raises(self, path: tuple[str, ...], bad_value: object) -> None:

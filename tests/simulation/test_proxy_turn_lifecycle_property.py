@@ -370,7 +370,7 @@ class _RecordingProxyService(proxy_service.ProxyService):
     def _get_work_admission(self) -> WorkAdmissionController:
         return self._retry_work_admission
 
-    def _http_bridge_text_with_account_installation_id(
+    def _http_bridge_text_with_account_stamp(
         self,
         session: Any,
         request_state: Any,

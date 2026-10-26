@@ -5983,7 +5983,7 @@ def test_response_create_client_metadata_strips_installation_id_without_account_
 
 
 def test_websocket_installation_metadata_stamping_matches_full_reencode() -> None:
-    account = cast(Any, SimpleNamespace(id="acc_ws_installation", codex_installation_id="account-installation"))
+    stamp = proxy_module.UpstreamAccountStamp("account-installation", "standard")
     trailing = json.dumps(
         {
             "type": "response.create",
@@ -6005,12 +6005,13 @@ def test_websocket_installation_metadata_stamping_matches_full_reencode() -> Non
 
     for text in (trailing, leading, absent):
         payload = json.loads(text)
-        proxy_module.apply_codex_installation_metadata(payload, "account-installation")
+        proxy_module.apply_upstream_account_stamp(payload, stamp)
         expected = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-        stamped = websocket_mixin._websocket_text_with_account_installation_id(text, account)
+        stamped = websocket_mixin._text_with_account_stamp(text, stamp)
         assert stamped == expected
         assert json.loads(stamped)["client_metadata"]["x-codex-installation-id"] == "account-installation"
-        assert websocket_mixin._websocket_text_with_account_installation_id(stamped, account) == expected
+        assert json.loads(stamped)["access_programs"] == {"cyber": "standard"}
+        assert websocket_mixin._text_with_account_stamp(stamped, stamp) == expected
 
 
 def test_websocket_installation_metadata_stamping_rechecks_response_create_size(monkeypatch):
@@ -6024,10 +6025,9 @@ def test_websocket_installation_metadata_stamping_rechecks_response_create_size(
         transport="websocket",
         request_text='{"type":"response.create","input":"x"}',
     )
-    account = cast(Any, SimpleNamespace(id="acc_ws_installation_size", codex_installation_id="account-installation"))
-    stamped_text = websocket_mixin._websocket_text_with_account_installation_id(
+    stamped_text = websocket_mixin._text_with_account_stamp(
         request_state.request_text or "{}",
-        account,
+        proxy_module.UpstreamAccountStamp("account-installation", None),
     )
     max_bytes = len(stamped_text.encode("utf-8")) - 1
     assert len((request_state.request_text or "").encode("utf-8")) < max_bytes
@@ -21424,7 +21424,7 @@ async def test_stream_responses_retries_security_work_warning_on_authorized_acco
                         "response": {
                             "id": "resp_cyber_fail",
                             "error": {
-                                "code": "invalid_request_error",
+                                "code": "cyber_policy",
                                 "type": "invalid_request_error",
                                 "message": cyber_message,
                             },
@@ -21464,7 +21464,7 @@ async def test_stream_responses_retries_security_work_warning_on_authorized_acco
         regular_account.id,
         authorized_account.id,
     ]
-    assert request_logs.calls[0]["error_code"] == "security_work_authorization_required"
+    assert request_logs.calls[0]["error_code"] == "cyber_policy"
     assert request_logs.calls[1]["status"] == "success"
     assert regular_lease in released_leases
     assert authorized_lease in released_leases
@@ -21557,7 +21557,7 @@ async def test_stream_responses_refuses_account_bound_security_work_retry(monkey
                         "response": {
                             "id": "resp_cyber_account_bound",
                             "error": {
-                                "code": "invalid_request_error",
+                                "code": "cyber_policy",
                                 "type": "invalid_request_error",
                                 "message": cyber_message,
                             },
@@ -21599,12 +21599,11 @@ async def test_stream_responses_refuses_account_bound_security_work_retry(monkey
 
 
 @pytest.mark.asyncio
-async def test_stream_responses_treats_missing_security_work_pool_as_optional(monkeypatch):
+async def test_stream_responses_forwards_original_error_without_security_work_pool(monkeypatch):
     settings = _make_proxy_settings()
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     regular_account = _make_account("acc_regular_security_optional")
-    fallback_account = _make_account("acc_fallback_security_optional")
     cyber_message = (
         "This chat was flagged for possible cybersecurity risk. "
         "If this seems wrong, try rephrasing your request. "
@@ -21619,7 +21618,6 @@ async def test_stream_responses_treats_missing_security_work_pool_as_optional(mo
                 error_message="No accounts marked as authorized for security work",
                 error_code="no_security_work_authorized_accounts",
             ),
-            AccountSelection(account=fallback_account, error_message=None),
         ]
     )
 
@@ -21632,28 +21630,23 @@ async def test_stream_responses_treats_missing_security_work_pool_as_optional(mo
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
         del payload, headers, access_token, base_url, raise_for_status
-        if account_id == regular_account.chatgpt_account_id:
-            yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "type": "response.failed",
-                        "response": {
-                            "id": "resp_cyber_optional",
-                            "error": {
-                                "code": "invalid_request_error",
-                                "type": "invalid_request_error",
-                                "message": cyber_message,
-                            },
-                        },
-                    }
-                )
-                + "\n\n"
-            )
-            return
+        assert account_id == regular_account.chatgpt_account_id
         yield (
-            'data: {"type":"response.completed","response":'
-            '{"id":"resp_ok_optional","usage":{"input_tokens":1,"output_tokens":1}}}\n\n'
+            "data: "
+            + json.dumps(
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "id": "resp_cyber_optional",
+                        "error": {
+                            "code": "cyber_policy",
+                            "type": "invalid_request_error",
+                            "message": cyber_message,
+                        },
+                    },
+                }
+            )
+            + "\n\n"
         )
 
     monkeypatch.setattr(proxy_service, "core_stream_responses", fake_stream)
@@ -21671,22 +21664,18 @@ async def test_stream_responses_treats_missing_security_work_pool_as_optional(mo
     assert retry_warning["warning"]["action"] == "retry_security_work_authorized"
     assert missing_pool_warning["type"] == "codex_lb.warning"
     assert missing_pool_warning["warning"]["code"] == "no_security_work_authorized_accounts"
-    assert missing_pool_warning["warning"]["action"] == "continue_normal_selection"
-    assert event["type"] == "response.completed"
+    assert missing_pool_warning["warning"]["action"] == "forward_original_security_work_error"
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == "cyber_policy"
+    assert event["response"]["error"]["message"] == cyber_message
     assert [call.kwargs["require_security_work_authorized"] for call in select_account.await_args_list] == [
         False,
         True,
-        False,
     ]
     assert select_account.await_args_list[1].kwargs["exclude_account_ids"] == {regular_account.id}
-    assert select_account.await_args_list[2].kwargs["exclude_account_ids"] == {regular_account.id}
     assert await service.drain_persistence_tasks(timeout_seconds=1)
-    assert [call["account_id"] for call in request_logs.calls] == [
-        regular_account.id,
-        fallback_account.id,
-    ]
-    assert request_logs.calls[0]["error_code"] == "security_work_authorization_required"
-    assert request_logs.calls[1]["status"] == "success"
+    assert [call["account_id"] for call in request_logs.calls] == [regular_account.id, None]
+    assert [call["error_code"] for call in request_logs.calls] == ["cyber_policy", "cyber_policy"]
 
 
 @pytest.mark.asyncio
@@ -21708,7 +21697,6 @@ async def test_stream_responses_security_work_retry_exhaustion_logs_useragent(mo
                 error_message="No accounts marked as authorized for security work",
                 error_code="no_security_work_authorized_accounts",
             ),
-            AccountSelection(account=None, error_message="No available accounts", error_code="no_accounts"),
         ]
     )
 
@@ -21729,7 +21717,7 @@ async def test_stream_responses_security_work_retry_exhaustion_logs_useragent(mo
                     "response": {
                         "id": "resp_cyber_exhausted",
                         "error": {
-                            "code": "invalid_request_error",
+                            "code": "cyber_policy",
                             "type": "invalid_request_error",
                             "message": cyber_message,
                         },
@@ -21753,103 +21741,13 @@ async def test_stream_responses_security_work_retry_exhaustion_logs_useragent(mo
 
     event = json.loads(chunks[-1].split("data: ", 1)[1])
     assert event["type"] == "response.failed"
-    assert event["response"]["error"]["code"] == "security_work_authorization_required"
+    assert event["response"]["error"]["code"] == "cyber_policy"
+    assert select_account.await_count == 2
     assert await service.drain_persistence_tasks(timeout_seconds=1)
     assert request_logs.calls[-1]["account_id"] is None
-    assert request_logs.calls[-1]["error_code"] == "security_work_authorization_required"
+    assert request_logs.calls[-1]["error_code"] == "cyber_policy"
     assert request_logs.calls[-1]["useragent"] == "CodexCLI/1.2.3 linux"
     assert request_logs.calls[-1]["useragent_group"] == "CodexCLI"
-
-
-@pytest.mark.asyncio
-async def test_stream_responses_missing_security_work_pool_preserves_failover_budget(monkeypatch):
-    settings = _make_proxy_settings()
-    request_logs = _RequestLogsRecorder()
-    service = proxy_service.ProxyService(_repo_factory(request_logs))
-    regular_account = _make_account("acc_regular_security_budget")
-    transient_account = _make_account("acc_transient_security_budget")
-    success_account = _make_account("acc_success_security_budget")
-    cyber_message = (
-        "This chat was flagged for possible cybersecurity risk. "
-        "If this seems wrong, try rephrasing your request. "
-        "To get authorized for security work, join the Trusted Access for Cyber program. "
-        "https://chatgpt.com/cyber"
-    )
-    select_account = AsyncMock(
-        side_effect=[
-            AccountSelection(account=regular_account, error_message=None),
-            AccountSelection(
-                account=None,
-                error_message="No accounts marked as authorized for security work",
-                error_code="no_security_work_authorized_accounts",
-            ),
-            AccountSelection(account=transient_account, error_message=None),
-            AccountSelection(account=success_account, error_message=None),
-        ]
-    )
-
-    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
-    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
-    monkeypatch.setattr(service._load_balancer, "select_account", select_account)
-    monkeypatch.setattr(service._load_balancer, "record_error", AsyncMock())
-    monkeypatch.setattr(service._load_balancer, "record_errors", AsyncMock())
-    monkeypatch.setattr(service._load_balancer, "record_success", AsyncMock())
-    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(side_effect=lambda account, **kwargs: account))
-
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
-        del payload, headers, access_token, base_url, raise_for_status
-        if account_id == regular_account.chatgpt_account_id:
-            yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "type": "response.failed",
-                        "response": {
-                            "id": "resp_cyber_budget",
-                            "error": {
-                                "code": "invalid_request_error",
-                                "type": "invalid_request_error",
-                                "message": cyber_message,
-                            },
-                        },
-                    }
-                )
-                + "\n\n"
-            )
-            return
-        if account_id == transient_account.chatgpt_account_id:
-            raise proxy_module.ProxyResponseError(
-                500,
-                openai_error("server_error", "transient upstream error", error_type="server_error"),
-            )
-        yield (
-            'data: {"type":"response.completed","response":'
-            '{"id":"resp_ok_budget","usage":{"input_tokens":1,"output_tokens":1}}}\n\n'
-        )
-
-    monkeypatch.setattr(proxy_service, "core_stream_responses", fake_stream)
-
-    payload = ResponsesRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": [], "stream": True})
-
-    chunks = [chunk async for chunk in service.stream_responses(payload, {"session_id": "sid-stream"})]
-
-    event = json.loads(chunks[-1].split("data: ", 1)[1])
-    assert event["type"] == "response.completed"
-    assert [call.kwargs["require_security_work_authorized"] for call in select_account.await_args_list] == [
-        False,
-        True,
-        False,
-        False,
-    ]
-    assert select_account.await_args_list[2].kwargs["exclude_account_ids"] == {regular_account.id}
-    assert select_account.await_args_list[3].kwargs["exclude_account_ids"] == {
-        regular_account.id,
-        transient_account.id,
-    }
-    assert await service.drain_persistence_tasks(timeout_seconds=1)
-    assert request_logs.calls[0]["account_id"] == regular_account.id
-    assert request_logs.calls[-1]["account_id"] == success_account.id
-    assert request_logs.calls[-1]["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -21890,7 +21788,7 @@ async def test_stream_responses_does_not_move_file_pinned_security_work_request(
                     "response": {
                         "id": "resp_cyber_file",
                         "error": {
-                            "code": "invalid_request_error",
+                            "code": "cyber_policy",
                             "type": "invalid_request_error",
                             "message": cyber_message,
                         },
@@ -21926,7 +21824,7 @@ async def test_stream_responses_does_not_move_file_pinned_security_work_request(
     assert len(chunks) == 1
     event = json.loads(chunks[0].split("data: ", 1)[1])
     assert event["type"] == "response.failed"
-    assert event["response"]["error"]["code"] == "security_work_authorization_required"
+    assert event["response"]["error"]["code"] == "cyber_policy"
     assert select_account.await_count == 1
     only_call = select_account.await_args_list[0]
     assert only_call.kwargs["account_ids"] is None
@@ -22043,7 +21941,7 @@ async def test_http_bridge_retries_security_work_warning_on_authorized_account(m
                 "id": "resp_security_failed",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -22716,7 +22614,7 @@ async def test_http_bridge_keeps_previous_response_pinned_security_work_error(mo
                 "id": "resp_security_previous_pinned",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -22788,7 +22686,7 @@ async def test_http_bridge_recovery_lane_does_not_retry_security_work_on_another
                 "id": "resp_security_recovery",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -22879,7 +22777,7 @@ async def test_http_bridge_refuses_file_backed_proxy_anchor_security_work_retry(
                 "id": "resp_security_file_anchor",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -22934,7 +22832,7 @@ async def test_websocket_keeps_previous_response_pinned_security_work_error(monk
         "response": {
             "status": "failed",
             "error": {
-                "code": "invalid_request_error",
+                "code": "cyber_policy",
                 "type": "invalid_request_error",
                 "message": cyber_message,
             },
@@ -22998,7 +22896,7 @@ async def test_websocket_does_not_retry_security_work_after_exposed_sequence(mon
         "response": {
             "status": "failed",
             "error": {
-                "code": "invalid_request_error",
+                "code": "cyber_policy",
                 "type": "invalid_request_error",
                 "message": cyber_message,
             },
@@ -23105,7 +23003,7 @@ async def test_http_bridge_reports_missing_security_work_pool_before_original_wa
                 "id": "resp_security_missing_pool",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -23293,7 +23191,7 @@ async def test_http_bridge_security_retry_clears_codex_affinity_and_turn_aliases
     monkeypatch.setattr(service, "_reconnect_http_bridge_session", fake_reconnect)
     monkeypatch.setattr(
         service,
-        "_http_bridge_text_with_account_installation_id",
+        "_http_bridge_text_with_account_stamp",
         lambda _session, _request_state, text: text,
     )
     monkeypatch.setattr(proxy_http_bridge_request_submit, "_send_http_bridge_request_text_with_archive_id", AsyncMock())
@@ -23367,7 +23265,7 @@ async def test_http_bridge_security_retry_retires_rebound_session_when_resend_fa
     monkeypatch.setattr(service, "_retire_http_bridge_after_drain_if_ready", retire)
     monkeypatch.setattr(
         service,
-        "_http_bridge_text_with_account_installation_id",
+        "_http_bridge_text_with_account_stamp",
         lambda _session, _request_state, text: text,
     )
     monkeypatch.setattr(
@@ -23662,7 +23560,7 @@ async def test_http_bridge_does_not_replay_security_work_warning_after_response_
                 "id": "resp_security_created",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -23724,7 +23622,7 @@ async def test_compact_responses_retries_security_work_warning_on_authorized_acc
             raise proxy_module.ProxyResponseError(
                 400,
                 openai_error(
-                    "invalid_request_error",
+                    "cyber_policy",
                     cyber_message,
                     error_type="invalid_request_error",
                 ),
@@ -23750,12 +23648,11 @@ async def test_compact_responses_retries_security_work_warning_on_authorized_acc
 
 
 @pytest.mark.asyncio
-async def test_compact_responses_treats_missing_security_work_pool_as_optional(monkeypatch):
+async def test_compact_responses_forwards_original_error_without_security_work_pool(monkeypatch):
     settings = _make_proxy_settings()
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     regular_account = _make_account("acc_compact_security_regular_optional")
-    fallback_account = _make_account("acc_compact_security_fallback_optional")
     select_account = AsyncMock(
         side_effect=[
             AccountSelection(account=regular_account, error_message=None),
@@ -23764,7 +23661,6 @@ async def test_compact_responses_treats_missing_security_work_pool_as_optional(m
                 error_message="No accounts marked as authorized for security work",
                 error_code="no_security_work_authorized_accounts",
             ),
-            AccountSelection(account=fallback_account, error_message=None),
         ]
     )
     cyber_message = (
@@ -23783,34 +23679,31 @@ async def test_compact_responses_treats_missing_security_work_pool_as_optional(m
 
     async def fake_compact(payload, headers, access_token, account_id):
         del payload, headers, access_token
-        if account_id == regular_account.chatgpt_account_id:
-            raise proxy_module.ProxyResponseError(
-                400,
-                openai_error(
-                    "invalid_request_error",
-                    cyber_message,
-                    error_type="invalid_request_error",
-                ),
-            )
-        return OpenAIResponsePayload.model_validate({"output": []})
+        assert account_id == regular_account.chatgpt_account_id
+        raise proxy_module.ProxyResponseError(
+            400,
+            openai_error(
+                "cyber_policy",
+                cyber_message,
+                error_type="invalid_request_error",
+            ),
+        )
 
     monkeypatch.setattr(proxy_service, "core_compact_responses", fake_compact)
 
     payload = ResponsesCompactRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": []})
 
-    result = await service.compact_responses(payload, {"session_id": "sid-compact"})
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await service.compact_responses(payload, {"session_id": "sid-compact"})
 
-    assert result.model_extra == {"output": []}
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.payload["error"]["code"] == "cyber_policy"
+    assert exc_info.value.payload["error"]["message"] == cyber_message
     assert [call.kwargs["require_security_work_authorized"] for call in select_account.await_args_list] == [
         False,
         True,
-        False,
     ]
     assert select_account.await_args_list[1].kwargs["exclude_account_ids"] == {regular_account.id}
-    assert select_account.await_args_list[2].kwargs["exclude_account_ids"] == {regular_account.id}
-    assert await service.drain_persistence_tasks(timeout_seconds=1)
-    assert [call["account_id"] for call in request_logs.calls] == [fallback_account.id]
-    assert request_logs.calls[0]["status"] == "success"
 
 
 @pytest.mark.asyncio

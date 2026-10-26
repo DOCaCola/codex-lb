@@ -60,6 +60,8 @@ class ModelRegistrySnapshot:
     account_catalogs_authoritative: bool = False
     bootstrap_floor_active: bool = False
     suppressed_model_slugs: frozenset[str] = field(default_factory=frozenset)
+    # slug -> cyber access program -> accounts whose catalog advertises it.
+    model_cyber_access_program_accounts: dict[str, dict[str, frozenset[str]]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -533,6 +535,16 @@ def _model_service_tier_keys(model: UpstreamModel) -> frozenset[str]:
     return frozenset(tiers)
 
 
+def _model_cyber_access_programs(model: UpstreamModel) -> frozenset[str]:
+    access_programs = model.raw.get("available_access_programs")
+    if not isinstance(access_programs, dict):
+        return frozenset()
+    cyber = access_programs.get("cyber")
+    if not isinstance(cyber, list):
+        return frozenset()
+    return frozenset(program for program in cyber if isinstance(program, str) and program)
+
+
 def _merge_service_tier_metadata(existing: UpstreamModel, incoming: UpstreamModel) -> UpstreamModel:
     """Combine two same-slug models so the speed/service-tier metadata is the
     union of both. ``incoming`` stays the base (last-writer-wins for every other
@@ -685,6 +697,17 @@ class ModelRegistry:
             return None
         return tier_accounts.get(normalized_service_tier, frozenset())
 
+    def cyber_access_programs_for_account(self, slug: str, account_id: str) -> frozenset[str]:
+        """Cyber access programs ``account_id``'s own catalog advertises for ``slug``."""
+        if self._snapshot is None:
+            return frozenset()
+        program_accounts = self._snapshot.model_cyber_access_program_accounts.get(
+            slug
+        ) or self._snapshot.model_cyber_access_program_accounts.get(slug.strip().lower())
+        if program_accounts is None:
+            return frozenset()
+        return frozenset(program for program, account_ids in program_accounts.items() if account_id in account_ids)
+
     def model_advertises_service_tier(self, slug: str, service_tier: str | None) -> bool:
         """Report whether the catalog lists ``service_tier`` for ``slug`` at all.
 
@@ -803,6 +826,7 @@ class ModelRegistry:
                 model_plans: dict[str, set[str]] = {}
                 model_service_tier_plans: dict[str, dict[str, set[str]]] = {}
                 model_service_tier_accounts: dict[str, dict[str, set[str]]] = {}
+                model_cyber_access_program_accounts: dict[str, dict[str, set[str]]] = {}
                 model_accounts: dict[str, set[str]] = {}
                 account_plans: dict[str, str] = {}
                 suppressed_model_slugs: set[str] = (
@@ -932,6 +956,15 @@ class ModelRegistry:
                                         model_service_tier_plans.setdefault(slug, {}).setdefault(
                                             service_tier, set()
                                         ).add(plan_type)
+                    for slug, program_accounts in previous.model_cyber_access_program_accounts.items():
+                        if slug not in previous.models:
+                            continue
+                        for program, account_ids in program_accounts.items():
+                            stale_program_accounts = account_ids & stale_account_ids
+                            if stale_program_accounts:
+                                model_cyber_access_program_accounts.setdefault(slug, {}).setdefault(
+                                    program, set()
+                                ).update(stale_program_accounts)
 
                 # Merge newly fetched results, aggregating service-tier metadata
                 # across plans refreshed in this pass. Stale plan slugs still map
@@ -962,6 +995,10 @@ class ModelRegistry:
                                 model_service_tier_accounts.setdefault(model.slug, {}).setdefault(
                                     service_tier, set()
                                 ).add(account_id)
+                            for program in _model_cyber_access_programs(model):
+                                model_cyber_access_program_accounts.setdefault(model.slug, {}).setdefault(
+                                    program, set()
+                                ).add(account_id)
 
                 frozen_model_plans: dict[str, frozenset[str]] = {
                     slug: frozenset(plans) for slug, plans in model_plans.items()
@@ -973,6 +1010,10 @@ class ModelRegistry:
                 frozen_model_service_tier_accounts: dict[str, dict[str, frozenset[str]]] = {
                     slug: {service_tier: frozenset(account_ids) for service_tier, account_ids in tier_accounts.items()}
                     for slug, tier_accounts in model_service_tier_accounts.items()
+                }
+                frozen_model_cyber_access_program_accounts: dict[str, dict[str, frozenset[str]]] = {
+                    slug: {program: frozenset(account_ids) for program, account_ids in program_accounts.items()}
+                    for slug, program_accounts in model_cyber_access_program_accounts.items()
                 }
                 frozen_model_accounts = {slug: frozenset(account_ids) for slug, account_ids in model_accounts.items()}
                 authoritative_account_catalogs = per_account_results is not None and set(
@@ -1032,6 +1073,7 @@ class ModelRegistry:
                     account_catalogs_authoritative=authoritative_account_catalogs,
                     bootstrap_floor_active=bootstrap_floor_active,
                     suppressed_model_slugs=frozenset(suppressed_model_slugs),
+                    model_cyber_access_program_accounts=frozen_model_cyber_access_program_accounts,
                 )
                 self._metadata_models = metadata_models
             except Exception:

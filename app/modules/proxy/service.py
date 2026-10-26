@@ -888,19 +888,15 @@ _WEBSOCKET_PREVIOUS_RESPONSE_ACCOUNT_CACHE_LIMIT = 4096
 _WEBSOCKET_CONTINUITY_CACHE_LIMIT = 4096
 _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE = "security_work_authorization_required"
 _NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE = "no_security_work_authorized_accounts"
-_SECURITY_WORK_AUTHORIZATION_REQUIRED_HINTS = (
-    "flagged for possible cybersecurity risk",
-    "authorized for security work",
-    "chatgpt.com/cyber",
-)
+_SECURITY_WORK_AUTHORIZATION_ERROR_CODES = frozenset({"cyber_policy", _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE})
 _SECURITY_WORK_RETRY_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work. "
     "codex-lb is retrying on an account marked as authorized for security work."
 )
 _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. codex-lb is continuing with normal account selection; the upstream request may still fail until "
-    "an account with Trusted Access for Cyber is marked as security-work-authorized."
+    "security work. codex-lb is forwarding the original upstream error; mark an account with Trusted Access for "
+    "Cyber as security-work-authorized to route these requests to it."
 )
 
 
@@ -2397,14 +2393,8 @@ def _security_work_advisory_event(
     }
 
 
-def _is_security_work_authorization_required_error(code: str | None, message: str | None) -> bool:
-    normalized_code = (code or "").strip().lower()
-    if normalized_code == _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE:
-        return True
-    normalized_message = (message or "").strip().lower()
-    if not normalized_message:
-        return False
-    return all(hint in normalized_message for hint in _SECURITY_WORK_AUTHORIZATION_REQUIRED_HINTS)
+def _is_security_work_authorization_required_error(code: str | None) -> bool:
+    return code in _SECURITY_WORK_AUTHORIZATION_ERROR_CODES
 
 
 def _raise_proxy_budget_exhausted() -> NoReturn:

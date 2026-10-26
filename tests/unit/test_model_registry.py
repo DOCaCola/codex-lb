@@ -545,6 +545,45 @@ async def test_plan_types_for_model_service_tier_rejects_missing_authoritative_t
 
 
 @pytest.mark.asyncio
+async def test_cyber_access_programs_follow_each_account_catalog():
+    daybreak = replace(
+        _model("gpt-6-astra"),
+        raw={"available_access_programs": {"cyber": ["standard", "daybreak_blue", "daybreak_red"]}},
+    )
+    standard = replace(_model("gpt-6-astra"), raw={"available_access_programs": {"cyber": ["standard"]}})
+    no_metadata = replace(_model("gpt-6-astra"), raw={})
+
+    registry = ModelRegistry(ttl_seconds=60.0)
+    await registry.update(
+        {"pro": [daybreak]},
+        per_account_results={
+            "account-daybreak": ("pro", [daybreak]),
+            "account-standard": ("pro", [standard]),
+            "account-none": ("pro", [no_metadata]),
+        },
+        active_account_plans={"account-daybreak": "pro", "account-standard": "pro", "account-none": "pro"},
+    )
+
+    assert registry.cyber_access_programs_for_account("gpt-6-astra", "account-daybreak") == frozenset(
+        {"standard", "daybreak_blue", "daybreak_red"}
+    )
+    assert registry.cyber_access_programs_for_account(" GPT-6-Astra ", "account-standard") == frozenset({"standard"})
+    assert registry.cyber_access_programs_for_account("gpt-6-astra", "account-none") == frozenset()
+    assert registry.cyber_access_programs_for_account("gpt-6-astra", "account-unknown") == frozenset()
+
+    # An account whose catalog refresh failed keeps its last-known programs.
+    await registry.update(
+        {"pro": [standard]},
+        per_account_results={"account-standard": ("pro", [standard])},
+        active_account_plans={"account-daybreak": "pro", "account-standard": "pro"},
+    )
+
+    assert registry.cyber_access_programs_for_account("gpt-6-astra", "account-daybreak") == frozenset(
+        {"standard", "daybreak_blue", "daybreak_red"}
+    )
+
+
+@pytest.mark.asyncio
 async def test_account_ids_for_model_tracks_complete_account_catalogs():
     shared = _model("gpt-5.4")
     sol = _model("gpt-5.6-sol")

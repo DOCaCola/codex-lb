@@ -61,7 +61,7 @@ async def test_process_websocket_security_retry_releases_response_create_gate() 
                 "id": "resp_ws_security_gate",
                 "status": "failed",
                 "error": {
-                    "code": "invalid_request_error",
+                    "code": "cyber_policy",
                     "type": "invalid_request_error",
                     "message": cyber_message,
                 },
@@ -233,7 +233,7 @@ async def test_direct_websocket_security_replay_reacquires_create_admission(
                             "id": "resp_ws_security_gate_denied",
                             "status": "failed",
                             "error": {
-                                "code": "invalid_request_error",
+                                "code": "cyber_policy",
                                 "type": "invalid_request_error",
                                 "message": cyber_message,
                             },

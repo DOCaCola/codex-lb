@@ -785,6 +785,26 @@ def apply_codex_installation_metadata(payload: dict[str, JsonValue], codex_insta
         payload.pop("client_metadata", None)
 
 
+@dataclass(frozen=True, slots=True)
+class UpstreamAccountStamp:
+    """Request fields codex-lb derives from the upstream account a request is sent on."""
+
+    codex_installation_id: str | None
+    cyber_access_program: str | None
+
+
+def apply_cyber_access_program(payload: dict[str, JsonValue], cyber_access_program: str | None) -> None:
+    """Replace ``access_programs`` with the selected account's cyber program, appended last."""
+    payload.pop("access_programs", None)
+    if cyber_access_program is not None:
+        payload["access_programs"] = {"cyber": cyber_access_program}
+
+
+def apply_upstream_account_stamp(payload: dict[str, JsonValue], stamp: UpstreamAccountStamp) -> None:
+    apply_codex_installation_metadata(payload, stamp.codex_installation_id)
+    apply_cyber_access_program(payload, stamp.cyber_access_program)
+
+
 def apply_codex_installation_headers(
     headers: Mapping[str, str],
     codex_installation_id: str | None,
@@ -3636,6 +3656,7 @@ async def stream_responses(
     route_trace: UpstreamProxyRouteTrace | None = None,
     allow_direct_egress: bool = True,
     codex_installation_id: str | None = None,
+    cyber_access_program: str | None = None,
     enforce_openai_sdk_contract: bool = True,
     codex_lb_account_id: str | None = None,
     suppress_live_usage: bool = False,
@@ -3671,6 +3692,7 @@ async def stream_responses(
                     route_trace=route_trace,
                     allow_direct_egress=effective_allow_direct_egress,
                     codex_installation_id=codex_installation_id,
+                    cyber_access_program=cyber_access_program,
                     enforce_openai_sdk_contract=enforce_openai_sdk_contract,
                     codex_lb_account_id=codex_lb_account_id,
                     suppress_live_usage=suppress_live_usage,
@@ -3757,6 +3779,7 @@ async def _stream_responses_with_session(
     route_trace: UpstreamProxyRouteTrace | None = None,
     allow_direct_egress: bool = True,
     codex_installation_id: str | None = None,
+    cyber_access_program: str | None = None,
     enforce_openai_sdk_contract: bool = True,
     codex_lb_account_id: str | None = None,
     suppress_live_usage: bool = False,
@@ -3816,7 +3839,10 @@ async def _stream_responses_with_session(
     payload_dict = payload.to_payload()
     ensure_native_provider_history(payload_dict)
     payload_dict = sanitize_native_responses_input(payload_dict)
-    apply_codex_installation_metadata(payload_dict, codex_installation_id)
+    apply_upstream_account_stamp(
+        payload_dict,
+        UpstreamAccountStamp(codex_installation_id=codex_installation_id, cyber_access_program=cyber_access_program),
+    )
     # ``shared`` (the default) returns immediately, so the bytes below are
     # unchanged. ``isolated`` must land here: above the http/websocket fork, so
     # one call covers HTTP streaming, non-streaming HTTP and ``response.create``,
@@ -4902,6 +4928,7 @@ async def compact_responses(
     allow_direct_egress: bool = True,
     synthesize_routing_hint: bool = False,
     thread_cache_identity: ThreadCacheIdentity | None = None,
+    cyber_access_program: str | None = None,
 ) -> CompactResponsePayload:
     async with lease_http_session(session) as client_session:
 
@@ -4919,6 +4946,7 @@ async def compact_responses(
                 allow_direct_egress=allow_direct_egress,
                 synthesize_routing_hint=synthesize_routing_hint,
                 thread_cache_identity=thread_cache_identity,
+                cyber_access_program=cyber_access_program,
             )
 
         try:
@@ -4949,6 +4977,7 @@ class _CompactCommandTransport:
     allow_direct_egress: bool = False
     synthesize_routing_hint: bool = False
     thread_cache_identity: ThreadCacheIdentity | None = None
+    cyber_access_program: str | None = None
 
     async def execute(self) -> CompactResponsePayload:
         settings = with_dashboard_overrides(get_settings())
@@ -4982,6 +5011,7 @@ class _CompactCommandTransport:
         payload_dict["store"] = False
         ensure_native_provider_history(payload_dict)
         payload_dict = sanitize_native_responses_input(payload_dict)
+        apply_cyber_access_program(payload_dict, self.cyber_access_program)
         payload_dict["stream"] = True
         payload_dict = await _inline_input_image_urls(
             payload_dict,

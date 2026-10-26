@@ -31,6 +31,7 @@ from app.core.usage.request_operation import RequestOperation
 from app.db.models import Account, AccountStatus
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.support import _call_with_supported_optional_kwargs, _request_log_client_fields
+from app.modules.proxy.capability_routing import cyber_access_program_for_account
 from app.modules.proxy.helpers import _header_account_id, _normalize_error_code, _parse_openai_error
 from app.modules.proxy.request_policy import (
     apply_prohibit_fast_mode,
@@ -371,6 +372,7 @@ class _WarmupMixin:
                     "allow_direct_egress": route is None,
                     "route_trace": route_trace,
                     "chatgpt_account_id": account_header_id,
+                    "cyber_access_program": cyber_access_program_for_account(live_account, payload.model),
                 },
             )
             if route_trace.mode is not None:

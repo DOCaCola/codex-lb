@@ -5,10 +5,12 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.core.clients.proxy import CODEX_LB_REQUIRED_CAPABILITY_HEADER, ProxyResponseError
+from app.core.clients.proxy import CODEX_LB_REQUIRED_CAPABILITY_HEADER, ProxyResponseError, UpstreamAccountStamp
 from app.core.errors import openai_error
+from app.core.openai.model_registry import get_model_registry
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
+from app.db.models import Account
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy.capability_lineage import (
     CapabilityLineageAlias,
@@ -26,6 +28,10 @@ CAPABILITY_ROUTING_UNAVAILABLE_CODE = "capability_routing_unavailable"
 CAPABILITY_ROUTING_UNAVAILABLE_MESSAGE = "Required capability routing is unavailable; retry later."
 
 _TERMINAL_WINDOW_SLOT_RE = re.compile(r":\d+$")
+
+# Codex prefers Daybreak blue over red when a model advertises both.
+_DAYBREAK_ACCESS_PROGRAMS = ("daybreak_blue", "daybreak_red")
+_STANDARD_ACCESS_PROGRAM = "standard"
 
 
 class RoutingCapability(StrEnum):
@@ -102,6 +108,32 @@ class CapabilityRouter:
             require_security_work_authorized=required,
             aliases=normalized_aliases,
         )
+
+
+def cyber_access_program_for_account(account: Account, model: str | None) -> str | None:
+    """Return the cyber program a stock Codex client would send on ``account`` for ``model``.
+
+    Codex sends a Daybreak program when Daybreak is enabled and the catalog advertises one, otherwise
+    ``standard`` when advertised, otherwise nothing. Programs are account entitlements, so the account's own
+    catalog decides, and the account's security-work authorization stands in for the Daybreak setting.
+    """
+    if model is None:
+        return None
+    programs = get_model_registry().cyber_access_programs_for_account(model, account.id)
+    if not programs:
+        return None
+    if account.security_work_authorized:
+        for program in _DAYBREAK_ACCESS_PROGRAMS:
+            if program in programs:
+                return program
+    return _STANDARD_ACCESS_PROGRAM if _STANDARD_ACCESS_PROGRAM in programs else None
+
+
+def upstream_account_stamp(account: Account, model: str | None) -> UpstreamAccountStamp:
+    return UpstreamAccountStamp(
+        codex_installation_id=account.codex_installation_id,
+        cyber_access_program=cyber_access_program_for_account(account, model),
+    )
 
 
 def capability_lineage_aliases(
