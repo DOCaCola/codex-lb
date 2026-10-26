@@ -74,9 +74,11 @@ def translate_messages_request(
     body: Mapping[str, JsonValue],
     *,
     model: str,
+    fast: bool,
     identity: MessagesIdentity,
     envelope_key: bytes,
 ) -> TranslatedMessages:
+    """Translate a Messages request; `fast` is a Fast selector chosen through the model alias."""
     _reject_unsupported_fields(body, model)
     tools_value = body.get("tools") or []
     if not isinstance(tools_value, list):
@@ -111,7 +113,7 @@ def translate_messages_request(
     text_format = _text_format(body.get("output_config"))
     if text_format is not None:
         payload["text"] = {"format": text_format}
-    if body.get("speed") == "fast":
+    if fast or body.get("speed") == "fast":
         payload["service_tier"] = "priority"
     return TranslatedMessages(
         payload=payload,

@@ -274,6 +274,56 @@ async def test_count_tokens_and_rejections_stay_local(async_client, monkeypatch)
     assert "stop_sequences" in rejected.json()["error"]["message"]
 
 
+async def test_fast_selector_serves_priority_tier(async_client, monkeypatch):
+    await _import_account(async_client)
+    seen: list[dict] = []
+
+    async def fake_stream(payload, headers, access_token, account_id, **kwargs):
+        seen.append(payload.to_payload())
+        for event in _upstream_turn("Fast"):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    body = {"max_tokens": 1000, "messages": [{"role": "user", "content": "Hi"}]}
+
+    response = await async_client.post(
+        "/v1/messages", json={**body, "model": "clb-claude-gpt-5.6-sol~fast"}, headers=CLAUDE_CODE_HEADERS
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["model"] == "clb-claude-gpt-5.6-sol~fast"
+    assert (seen[0]["model"], seen[0]["service_tier"]) == ("gpt-5.6-sol", "priority")
+    async with SessionLocal() as session:
+        log = (await session.scalars(select(RequestLog))).one()
+    assert (log.model, log.requested_service_tier) == ("gpt-5.6-sol", "priority")
+
+    rejected = await async_client.post(
+        "/v1/messages", json={**body, "model": "clb-claude-gpt-5.4~fast"}, headers=CLAUDE_CODE_HEADERS
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["error"] == {
+        "type": "invalid_request_error",
+        "message": "Model 'gpt-5.4' has no Fast Mode",
+    }
+    assert len(seen) == 1
+
+
+async def test_fast_rows_follow_fast_mode_prohibition(async_client, monkeypatch):
+    import app.modules.proxy.api as proxy_api
+
+    await _import_account(async_client)
+
+    async def prohibited() -> bool:
+        return True
+
+    monkeypatch.setattr(proxy_api, "_prohibit_fast_mode_enabled", prohibited)
+    response = await async_client.get("/v1/models", params={"limit": 1000}, headers={"anthropic-version": "2023-06-01"})
+
+    ids = [entry["id"] for entry in response.json()["data"]]
+    assert "clb-claude-gpt-5.6-sol" in ids
+    assert not any(model_id.endswith("~fast") for model_id in ids)
+
+
 @pytest.fixture
 def openrouter_catalog(monkeypatch):
     catalog = CatalogResponse.model_validate(
@@ -441,6 +491,14 @@ async def test_claude_code_discovers_messages_servable_models(async_client, open
     assert (claude["max_input_tokens"], claude["max_tokens"]) == (200_000, 64_000)
     routed = next(entry for entry in body["data"] if entry["id"] == "clb-claude-openrouter~svendor~stest")
     assert routed["description"] == "OpenRouter via codex-lb"
+    fast = ids[ids.index("clb-claude-gpt-5.6-sol") + 1]
+    assert fast == "clb-claude-gpt-5.6-sol~fast"
+    fast_entry = next(entry for entry in body["data"] if entry["id"] == fast)
+    assert fast_entry["display_name"].endswith(" · Fast")
+    assert fast_entry["description"] == "OpenAI account via codex-lb · Fast"
+    assert "clb-claude-gpt-5.4~fast" not in ids
+    assert [model_id for model_id in ids if model_id.endswith("~fast") and "openrouter" in model_id] == []
+    assert "claude-opus-5~fast" not in ids
 
     openai_list = (await async_client.get("/v1/models")).json()
     assert openai_list["object"] == "list"

@@ -408,6 +408,10 @@ IDs containing `claude`, so other models appear under an alias such as `clb-clau
 `clb-claude-openrouter~svendor~smodel` (`~s` stands for `/`), with the real model as the name shown. The alias and the
 plain name select the same model, and the request log shows the real name.
 
+Claude Code's `/fast` toggle only works against Anthropic directly. For OpenAI models that support Fast, `/model`
+instead lists a "· Fast" entry (`clb-claude-gpt-5.6-sol~fast`) that runs the model on the priority tier. These entries
+are hidden while Fast Mode is prohibited or when the API key enforces a service tier.
+
 Claude Code assumes a default context window for models it does not know. Set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the
 window of your routed models to compact later; if the window is exceeded first, codex-lb's "prompt is too long" reply
 still triggers compaction.

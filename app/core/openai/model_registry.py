@@ -545,6 +545,11 @@ def _model_cyber_access_programs(model: UpstreamModel) -> frozenset[str]:
     return frozenset(program for program in cyber if isinstance(program, str) and program)
 
 
+def model_offers_fast_mode(model: UpstreamModel) -> bool:
+    """Whether the catalog lists the Fast (priority) tier for ``model``."""
+    return "priority" in _model_service_tier_keys(model)
+
+
 def _merge_service_tier_metadata(existing: UpstreamModel, incoming: UpstreamModel) -> UpstreamModel:
     """Combine two same-slug models so the speed/service-tier metadata is the
     union of both. ``incoming`` stays the base (last-writer-wins for every other

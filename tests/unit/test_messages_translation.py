@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from app.core.messages.alias import decode_discovery_alias, discovery_alias
+from app.core.messages.alias import ModelSelection, decode_discovery_alias, discovery_alias
 from app.core.messages.envelope import ReasoningEnvelope, seal_reasoning, strip_proxy_thinking
 from app.core.messages.errors import MessagesRequestError, anthropic_error
 from app.core.messages.stream import MessagesStreamProjector, aggregate_message
@@ -23,8 +23,10 @@ SESSION = MessagesIdentity(session_id="11111111-1111-4111-8111-111111111111", ag
 LONG_NAME = "mcp__" + "very_long_server_name_" * 3 + "__lookup"
 
 
-def _translate(body: dict, *, identity: MessagesIdentity = SESSION, model: str = MODEL):
-    return translate_messages_request({"model": model, **body}, model=model, identity=identity, envelope_key=KEY)
+def _translate(body: dict, *, identity: MessagesIdentity = SESSION, model: str = MODEL, fast: bool = False):
+    return translate_messages_request(
+        {"model": model, **body}, model=model, fast=fast, identity=identity, envelope_key=KEY
+    )
 
 
 def _signature(model: str = MODEL, item_id: str = "rs_1", encrypted: str = "enc-1") -> str:
@@ -503,16 +505,33 @@ def test_token_estimate_bounds_attachments():
 )
 def test_discovery_alias_round_trip(model, alias):
     assert discovery_alias(model) == alias
-    assert decode_discovery_alias(alias) == model
+    assert decode_discovery_alias(alias) == ModelSelection(model)
     assert "claude" in alias and not alias.startswith("claude-")
+    fast_alias = discovery_alias(model, fast=True)
+    assert fast_alias == alias + "~fast"
+    assert decode_discovery_alias(fast_alias) == ModelSelection(model, fast=True)
 
 
 def test_discovery_alias_leaves_model_names_and_rejects_invalid_aliases():
-    assert decode_discovery_alias("claude-opus-5-5") == "claude-opus-5-5"
-    assert decode_discovery_alias("gpt-6.1-sol") == "gpt-6.1-sol"
-    for invalid in ("clb-claude-", "clb-claude-gpt~x", "clb-claude-gpt~"):
+    assert decode_discovery_alias("claude-opus-5-5") == ModelSelection("claude-opus-5-5")
+    assert decode_discovery_alias("gpt-6.1-sol") == ModelSelection("gpt-6.1-sol")
+    # An escaped tilde before "fast" belongs to the model name, not the Fast marker.
+    assert decode_discovery_alias("clb-claude-lab~tfast") == ModelSelection("lab~fast")
+    for invalid in (
+        "clb-claude-",
+        "clb-claude-gpt~x",
+        "clb-claude-gpt~",
+        "clb-claude-~fast",
+        "clb-claude-gpt~fast~fast",
+    ):
         with pytest.raises(MessagesRequestError):
             decode_discovery_alias(invalid)
+
+
+def test_fast_selector_requests_priority_tier():
+    assert "service_tier" not in _translate({"messages": [{"role": "user", "content": "Hi"}]}).payload
+    fast = _translate({"messages": [{"role": "user", "content": "Hi"}]}, fast=True)
+    assert fast.payload["service_tier"] == "priority"
 
 
 def test_projection_reports_requested_model_and_seals_routed_model():

@@ -166,6 +166,7 @@ from app.core.openai.model_registry import (
     UpstreamModel,
     get_model_registry,
     is_public_model,
+    model_offers_fast_mode,
 )
 from app.core.openai.models import (
     CompactResponsePayload,
@@ -1916,13 +1917,24 @@ async def claude_messages(
             status_code=400,
         )
     try:
-        model = decode_discovery_alias(requested_model)
+        selection = decode_discovery_alias(requested_model)
     except MessagesRequestError as exc:
         return _logged_error_json_response(request, 400, anthropic_error_body("invalid_request_error", str(exc)))
-    model = effective_model_for_api_key(api_key, model) or model
+    model = effective_model_for_api_key(api_key, selection.model) or selection.model
+    if selection.fast and not _model_offers_fast_mode(model):
+        return _logged_error_json_response(
+            request, 400, anthropic_error_body("invalid_request_error", f"Model '{model}' has no Fast Mode")
+        )
     if not model.startswith(("anthropic/", "claude-")):
         return await _messages_with_responses_model(
-            request, payload, model, context, api_key, reported_model=requested_model, count_tokens=count_tokens
+            request,
+            payload,
+            model,
+            context,
+            api_key,
+            fast=selection.fast,
+            reported_model=requested_model,
+            count_tokens=count_tokens,
         )
     model = model if model.startswith("anthropic/") else "anthropic/" + model
     native_body["model"] = model
@@ -1988,6 +2000,7 @@ async def _messages_with_responses_model(
     context: ProxyContext,
     api_key: ApiKeyData | None,
     *,
+    fast: bool,
     reported_model: str,
     count_tokens: bool,
 ) -> Response:
@@ -1996,7 +2009,7 @@ async def _messages_with_responses_model(
     try:
         validate_model_access(api_key, model)
         translated = translate_messages_request(
-            body, model=model, identity=messages_identity(body, request.headers), envelope_key=key
+            body, model=model, fast=fast, identity=messages_identity(body, request.headers), envelope_key=key
         )
         responses_payload = V1ResponsesRequest.model_validate(translated.payload)
     except MessagesRequestError as exc:
@@ -2550,6 +2563,11 @@ async def _prohibit_fast_mode_enabled() -> bool:
 
 def _is_fast_mode_model_alias(model: str | None) -> bool:
     return model_alias_requests_fast_mode(model)
+
+
+def _model_offers_fast_mode(model: str) -> bool:
+    entry = get_model_registry().get_models_with_fallback().get(model)
+    return entry is not None and model_offers_fast_mode(entry)
 
 
 async def _rate_limit_headers_for_request(
@@ -4335,6 +4353,8 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
     listed.extend(model for model in source_models if model.source_kind != "claude")
     # Claude Code has no visibility field; the list is its picker, so catalog-hidden models stay out.
     listed = [model for model in listed if _model_visibility(model) == "list"]
+    # Claude Code can only pick a model, so Fast is a sibling row; it is omitted where it would have no effect.
+    fast_rows = not await _prohibit_fast_mode_enabled() and (api_key is None or api_key.enforced_service_tier is None)
 
     data: list[dict[str, JsonValue]] = []
     for model in listed:
@@ -4353,6 +4373,15 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
         if max_tokens is not None:
             entry["max_tokens"] = max_tokens
         data.append(entry)
+        if fast_rows and model.slug in native_models and model_offers_fast_mode(model):
+            data.append(
+                {
+                    **entry,
+                    "id": discovery_alias(model.slug, fast=True),
+                    "display_name": f"{model.display_name} · Fast",
+                    "description": f"{entry['description']} · Fast",
+                }
+            )
     return JSONResponse(
         content={
             "data": data,
