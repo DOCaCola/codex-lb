@@ -28,7 +28,7 @@ from app.modules.claude.profile import RequestProfile, recognize_native
 from app.modules.claude.protocol import ADVANCED_TOOL_USE_BETA, THINKING_DISPLAY_UPDATES_BETA, defers_tools
 from app.modules.claude.recovery import THINKING_BINDING_BETA, bind_replayed_thinking
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.request import has_native_identity, project_request
+from app.modules.claude.request import has_native_identity, project_request, unforce_tool_choice
 from app.modules.claude.resources import ResourceScope, resolve_origins, resource_ids
 from app.modules.claude.routing import ClaudePoolUnavailable, select_account
 from app.modules.claude.schemas import CLAUDE_BASE_URL, AccountState, ClaudePlanType
@@ -217,6 +217,13 @@ class ClaudeDispatchPreparer:
         transformations = projected.transformations
         if "cache_ttl_order" in transformations:
             logger.info("claude_cache_ttl_order_normalized source_id=%s", account.source_id)
+        if unforce_tool_choice(projected.body):
+            transformations += ("tool_choice_auto",)
+            logger.info(
+                "claude_tool_choice_projection source_id=%s model=%s reason=forced_unsupported",
+                account.source_id,
+                projected.body["model"],
+            )
         retains_thinking = translated and retain_thinking(projected.body)
         if translated:
             cache_translated(projected.body, instruction_turn=projected.instruction_turn)

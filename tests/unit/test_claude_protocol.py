@@ -276,6 +276,41 @@ def test_forced_tool_choice_still_rejects_thinking(choice):
         project(request(tools=[LOOKUP_TOOL], tool_choice=choice, reasoning={"effort": "high"}), max_output_tokens=64000)
 
 
+@pytest.mark.parametrize("model", ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5-20261001"])
+@pytest.mark.parametrize("choice", [{"type": "required"}, {"type": "function", "name": "lookup"}])
+def test_forced_tool_choice_with_thinking_is_accepted_where_dispatch_unforces_it(model, choice):
+    body = project(
+        request(model=model, tools=[LOOKUP_TOOL], tool_choice=choice, reasoning={"effort": "high"}),
+        max_output_tokens=64000,
+    ).body
+    assert body["thinking"]["type"] == "adaptive"
+    assert body["tool_choice"]["type"] in ("any", "tool")
+
+
+@pytest.mark.parametrize(
+    "model,choice,changed,sent",
+    [
+        (
+            "claude-opus-5-5",
+            {"type": "tool", "name": "lookup", "disable_parallel_tool_use": True},
+            True,
+            {"type": "auto", "disable_parallel_tool_use": True},
+        ),
+        ("claude-sonnet-5-5-20261001", {"type": "any"}, True, {"type": "auto"}),
+        ("claude-opus-5-5", {"type": "none"}, False, {"type": "none"}),
+        ("claude-haiku-5-5", {"type": "any"}, False, {"type": "any"}),
+        ("claude-opus-5", {"type": "tool", "name": "lookup"}, False, {"type": "tool", "name": "lookup"}),
+    ],
+)
+def test_unforce_tool_choice_only_for_models_that_reject_forced_use(model, choice, changed, sent):
+    from app.modules.claude.request import unforce_tool_choice
+
+    body: dict[str, JsonValue] = {"model": model, "tools": [{"name": "lookup"}], "tool_choice": choice}
+    assert unforce_tool_choice(body) is changed
+    assert body["tool_choice"] == sent
+    assert body["tools"] == [{"name": "lookup"}]
+
+
 def test_tool_choice_directive_with_extra_fields_is_rejected():
     with pytest.raises(ClientPayloadError, match="Unsupported tool choice"):
         project(request(tools=[LOOKUP_TOOL], tool_choice={"type": "none", "name": "lookup"}), max_output_tokens=64000)

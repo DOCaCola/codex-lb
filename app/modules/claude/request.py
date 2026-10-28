@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import JsonValue
 
-from app.modules.claude.capabilities import supports_mid_system
+from app.modules.claude.capabilities import rejects_forced_tool_choice, supports_mid_system
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import CLI_IDENTITY, MID_SYSTEM_BETA, RequestProfile
 
@@ -66,6 +66,24 @@ def project_request(
     if not profile.native and _preserve_cache_ttl_order(logical, projection.body):
         return replace(projection, transformations=(*projection.transformations, "cache_ttl_order"))
     return projection
+
+
+def unforce_tool_choice(body: dict[str, JsonValue]) -> bool:
+    """Downgrade forced tool use to ``auto`` for models that reject it.
+
+    Applies to native, translated and token-counting bodies alike, so a client
+    asking for a forced call still gets a valid request with the same tools and
+    parallelism control. Returns whether the body changed.
+    """
+    choice = body.get("tool_choice")
+    model = body.get("model")
+    if not isinstance(choice, dict) or choice.get("type") not in ("any", "tool") or not isinstance(model, str):
+        return False
+    if not rejects_forced_tool_choice(model):
+        return False
+    choice["type"] = "auto"
+    choice.pop("name", None)
+    return True
 
 
 def _cache_controls(body: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:

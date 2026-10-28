@@ -358,6 +358,65 @@ async def test_prepare_native_billing_first_preserves_cache_layout(pool):
     assert len(array(logical["messages"])) == 1
 
 
+@pytest.mark.parametrize("endpoint,translated", [("messages", True), ("messages", False), ("count_tokens", False)])
+async def test_prepare_unforces_tool_choice_for_claude_5_5(pool, async_client, monkeypatch, endpoint, translated):
+    from app.modules.claude.dispatch import ClaudeDispatchPreparer
+    from app.modules.claude.repository import ClaudeRepository
+
+    monkeypatch.setattr(
+        ClaudeClient,
+        "catalog",
+        AsyncMock(return_value=[CatalogModel(id="claude-opus-5-5", display_name="Opus", capabilities=ADAPTIVE_XHIGH)]),
+    )
+    for source_id in pool:
+        await async_client.post(f"/api/claude-accounts/{source_id}/refresh")
+        await async_client.patch(
+            f"/api/claude-accounts/{source_id}", json={"selections": [{"model": "claude-opus-5-5"}]}
+        )
+    logical: dict[str, JsonValue] = {
+        "model": "anthropic/claude-opus-5-5",
+        "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+        "tool_choice": {"type": "tool", "name": "lookup", "disable_parallel_tool_use": True},
+        "thinking": {"type": "adaptive"},
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    if endpoint == "messages":
+        logical["max_tokens"] = 100
+    async with SessionLocal() as session:
+        prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
+            logical,
+            key(),
+            conversation_id=f"unforced-{endpoint}-{translated}",
+            incoming_headers={},
+            endpoint=endpoint,
+            translated=translated,
+        )
+    assert prepared.body["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+    assert prepared.body["thinking"] == {"type": "adaptive"}
+    assert "tool_choice_auto" in prepared.transformations
+    assert at(logical, "tool_choice", "type") == "tool"
+
+
+async def test_prepare_keeps_forced_tool_choice_where_supported(pool):
+    from app.modules.claude.dispatch import ClaudeDispatchPreparer
+    from app.modules.claude.repository import ClaudeRepository
+
+    choice: dict[str, JsonValue] = {"type": "tool", "name": "lookup"}
+    logical: dict[str, JsonValue] = {
+        "model": MODEL,
+        "max_tokens": 100,
+        "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+        "tool_choice": choice,
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    async with SessionLocal() as session:
+        prepared = await ClaudeDispatchPreparer(ClaudeRepository(session)).prepare(
+            logical, key(), conversation_id="forced", incoming_headers={}, endpoint="messages", translated=True
+        )
+    assert prepared.body["tool_choice"] == choice
+    assert "tool_choice_auto" not in prepared.transformations
+
+
 async def test_prepare_rechecks_pause_after_credential_refresh(pool):
     from app.modules.claude.dispatch import ClaudeDispatchPreparer
     from app.modules.claude.repository import ClaudeRepository

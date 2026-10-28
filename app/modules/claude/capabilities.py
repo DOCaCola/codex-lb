@@ -74,6 +74,9 @@ _ADAPTIVE_ONLY_BINDING_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-
 _PROGRESS_DISPLAY_MODELS = frozenset(
     {"claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-sonnet-5", "claude-sonnet-5-5"}
 )
+# Models that reject forced tool use (``tool_choice`` ``any`` or ``tool``) with HTTP 400; ``auto`` and ``none``
+# remain valid (Anthropic's Claude 5.5 migration notes; CLIProxyAPI NormalizeClaudeToolChoice, issue #7000).
+_UNFORCED_TOOL_CHOICE_MODELS = frozenset({"claude-opus-5-5", "claude-sonnet-5-5"})
 
 
 def _base_model(model: str) -> str:
@@ -92,6 +95,11 @@ def supports_mid_system(model: str) -> bool:
 def uses_progress_display(model: str) -> bool:
     """Whether the model writes progress updates that ``display: "updates"`` returns as readable text."""
     return _base_model(model) in _PROGRESS_DISPLAY_MODELS
+
+
+def rejects_forced_tool_choice(model: str) -> bool:
+    """Whether upstream rejects ``tool_choice`` ``any``/``tool`` for this model."""
+    return _base_model(model) in _UNFORCED_TOOL_CHOICE_MODELS
 
 
 def accepts_thinking_binding(model: str, thinking_type: object) -> bool:

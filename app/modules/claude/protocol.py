@@ -24,7 +24,13 @@ from app.core.openai.additional_tools import (
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
 from app.core.utils.request_id import get_request_id
-from app.modules.claude.capabilities import EFFORT_LEVELS, ReasoningSpec, supports_mid_system, uses_progress_display
+from app.modules.claude.capabilities import (
+    EFFORT_LEVELS,
+    ReasoningSpec,
+    rejects_forced_tool_choice,
+    supports_mid_system,
+    uses_progress_display,
+)
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_contract
 from app.modules.claude.model_limits import default_output_tokens
 from app.modules.claude.search import deferred_search, search_replay, search_tool
@@ -737,7 +743,12 @@ def project_responses(
         if thinking and display is None and uses_progress_display(str(payload.get("model"))):
             # Progress updates answer the user between tool calls; the model default omits their text.
             body["thinking"]["display"] = "updates"
-        if thinking and (choice == "required" or isinstance(choice, dict)):
+        # Models that reject forced tool use receive ``auto`` at dispatch, which thinking accepts.
+        if (
+            thinking
+            and (choice == "required" or isinstance(choice, dict))
+            and not rejects_forced_tool_choice(str(payload.get("model")))
+        ):
             raise invalid("Claude thinking cannot be combined with a forced tool choice", "tool_choice")
     text = payload.get("text")
     if isinstance(text, dict):
