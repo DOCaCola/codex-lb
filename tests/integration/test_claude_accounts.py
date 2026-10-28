@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.crypto import TokenEncryptor
-from app.db.models import ClaudeAccount
+from app.db.models import ClaudeAccount, ClaudeResourceOrigin
 from app.db.session import SessionLocal
 from app.modules.claude.auth import ClaudeAuth
 from app.modules.claude.client import ClaudeClient, TokenOutcomeUncertain, TokenRejected
 from app.modules.claude.credentials import ClaudeError, decrypt_credentials
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.schemas import CatalogModel, Credentials, UsageSnapshot
+from app.modules.claude.schemas import AccountState, AuthenticatedProfile, CatalogModel, Credentials, UsageSnapshot
 
 pytestmark = pytest.mark.integration
 
@@ -147,7 +147,163 @@ async def test_reconnect_preserves_identity_and_invalidates_old_refresh_generati
     body["credentials"]["claudeAiOauth"]["accessToken"] = "other-account"
     rejected = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
     assert rejected.status_code == 400
-    assert "same authenticated Claude account" in rejected.text
+    assert rejected.json()["error"]["code"] == "claude_reconnect_account_mismatch"
+
+
+@pytest.mark.parametrize("oauth", [False, True], ids=["import", "oauth"])
+@pytest.mark.parametrize(
+    "account_uuid,organization_uuid,legacy,code",
+    [
+        ("different-account", "org-test", False, "claude_reconnect_account_mismatch"),
+        ("access-secret", "new-organization", False, "claude_reconnect_organization_changed"),
+        ("access-secret", "new-organization", True, "claude_reconnect_identity_unverified"),
+    ],
+)
+async def test_reconnect_reports_identity_component_without_mutation(
+    async_client, monkeypatch, caplog, oauth, account_uuid, organization_uuid, legacy, code
+):
+    source_id = (await async_client.post("/api/claude-accounts/import", json=import_body())).json()["id"]
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        if legacy:
+            row.provider_account_uuid = None
+        row.credential_status = "reauth_required"
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            ClaudeResourceOrigin(
+                resource_hash="retained-resource",
+                source_id=source_id,
+                created_at=now,
+                expires_at=now + timedelta(days=1),
+            )
+        )
+        await session.commit()
+        before = (
+            row.credentials_encrypted,
+            row.identity_fingerprint,
+            row.provider_account_uuid,
+            row.generation,
+            row.state_json,
+            row.grant_fingerprint,
+            row.version,
+        )
+    monkeypatch.setattr(
+        ClaudeClient,
+        "profile",
+        AsyncMock(
+            return_value=AuthenticatedProfile.model_validate(
+                {
+                    "account": {"uuid": account_uuid},
+                    "organization": {"uuid": organization_uuid},
+                }
+            )
+        ),
+    )
+    body = import_body()
+    body.pop("name")
+    body["credentials"]["claudeAiOauth"].update(accessToken="replacement-access", refreshToken="replacement-refresh")
+    if oauth:
+        monkeypatch.setattr(
+            ClaudeClient,
+            "exchange",
+            AsyncMock(
+                return_value=Credentials(
+                    access_token="replacement-access",
+                    refresh_token="replacement-refresh",
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                    scopes=["user:inference", "user:profile"],
+                )
+            ),
+        )
+        started = await async_client.post(
+            "/api/claude-accounts/oauth/start",
+            json={
+                "name": "Claude test",
+                "sourceId": source_id,
+                "acknowledgeExclusiveRefresh": True,
+            },
+        )
+        assert started.status_code == 200, started.text
+        response = await async_client.post(
+            "/api/claude-accounts/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "test-code",
+            },
+        )
+    else:
+        response = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == code
+    if code == "claude_reconnect_organization_changed":
+        assert "same Claude account, but a different organization" in response.json()["error"]["message"]
+    records = [record.getMessage() for record in caplog.records if "claude_reconnect_rejected" in record.getMessage()]
+    assert records == [f"claude_reconnect_rejected source_id={source_id} reason={code}"]
+    for private in ("replacement-access", "replacement-refresh", account_uuid, organization_uuid):
+        assert private not in response.text
+        assert private not in records[0]
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        assert (
+            row.credentials_encrypted,
+            row.identity_fingerprint,
+            row.provider_account_uuid,
+            row.generation,
+            row.state_json,
+            row.grant_fingerprint,
+            row.version,
+        ) == before
+        assert row.credential_status == "reauth_required"
+        origin = await session.get(ClaudeResourceOrigin, "retained-resource")
+        assert origin is not None and origin.source_id == source_id
+
+
+async def test_reconnect_after_expiry_and_max_to_pro_preserves_identity(async_client, monkeypatch):
+    body = import_body()
+    body["credentials"]["claudeAiOauth"].update(
+        subscriptionType="claude_max",
+        rateLimitTier="default_claude_max_5x",
+    )
+    source_id = (await async_client.post("/api/claude-accounts/import", json=body)).json()["id"]
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        original_identity = row.identity_fingerprint
+        row.credential_status = "reauth_required"
+        row.expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
+        await session.commit()
+    monkeypatch.setattr(
+        ClaudeClient,
+        "profile",
+        AsyncMock(
+            return_value=AuthenticatedProfile.model_validate(
+                {
+                    "account": {"uuid": "access-secret"},
+                    "organization": {"uuid": "org-test"},
+                }
+            )
+        ),
+    )
+    body.pop("name")
+    body["credentials"]["claudeAiOauth"].update(
+        accessToken="new-access",
+        refreshToken="new-refresh",
+        subscriptionType="claude_pro",
+        rateLimitTier="default_claude_pro",
+    )
+    response = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == source_id
+    assert response.json()["credentialStatus"] == "ready"
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, source_id)
+        assert row is not None
+        assert row.identity_fingerprint == original_identity
+        assert row.generation == 2
+        subscription = AccountState.model_validate_json(row.state_json).subscription
+        assert subscription is not None and subscription.rate_limit_tier == "default_claude_pro"
 
 
 async def test_enrollment_binds_provider_account_uuid_and_backfills_existing_rows(async_client):

@@ -14,6 +14,33 @@ from app.modules.claude.schemas import AuthenticatedProfile, Credentials
 from app.modules.claude.version import ClaudeVersionService
 
 
+class ReconnectIdentityMismatch(ClaudeError):
+    """A verified fingerprint mismatch, classified using the saved account UUID."""
+
+    def __init__(self, saved_account_uuid: str | None, incoming_account_uuid: str) -> None:
+        if saved_account_uuid is None:
+            self.code = "claude_reconnect_identity_unverified"
+            message = (
+                "Reconnect identity differs from the enrolled identity; the saved account UUID is unavailable, "
+                "so an account change cannot be distinguished from an organization change. "
+                "Existing credentials were not replaced."
+            )
+        elif saved_account_uuid != incoming_account_uuid:
+            self.code = "claude_reconnect_account_mismatch"
+            message = (
+                "Reconnect authenticated a different Claude account. Sign in with the original account "
+                "or add this account separately. Existing credentials were not replaced."
+            )
+        else:
+            self.code = "claude_reconnect_organization_changed"
+            message = (
+                "Reconnect authenticated the same Claude account, but a different organization. "
+                "Existing conversations may contain resources owned by the previous organization; "
+                "reconnect cannot transfer that ownership. Existing credentials were not replaced."
+            )
+        super().__init__(message)
+
+
 async def authenticated_profile(
     client: ClaudeClient, repository: ClaudeRepository, credentials: Credentials
 ) -> AuthenticatedProfile:

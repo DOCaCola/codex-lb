@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -17,7 +18,7 @@ from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
-from app.modules.claude.identity import authenticated_profile, profile_identity
+from app.modules.claude.identity import ReconnectIdentityMismatch, authenticated_profile, profile_identity
 from app.modules.claude.metadata import (
     CLAIM_LEASE,
     FETCH_TIMEOUT_SECONDS,
@@ -54,6 +55,8 @@ from app.modules.claude.schemas import (
 from app.modules.claude.subscription import quota_weight, subscription_plan
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.service import ModelSourceNotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeService:
@@ -177,7 +180,9 @@ class ClaudeService:
         profile = await authenticated_profile(self.client, self.repository, credentials)
         identity = profile_identity(profile)
         if identity != row.identity_fingerprint:
-            raise ClaudeError("Reconnect must use the same authenticated Claude account and organization")
+            error = ReconnectIdentityMismatch(row.provider_account_uuid, profile.account.uuid)
+            logger.warning("claude_reconnect_rejected source_id=%s reason=%s", source_id, error.code)
+            raise error
         try:
             changed = await self.repository.session.scalar(
                 update(ClaudeAccount)

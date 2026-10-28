@@ -12,6 +12,7 @@ from app.core.auth.dependencies import (
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
 from app.dependencies import get_claude_service
 from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.identity import ReconnectIdentityMismatch
 from app.modules.claude.reset_schemas import ConsumeGrant, ConsumeView, GrantsView
 from app.modules.claude.resets import ClaudeResets
 from app.modules.claude.schemas import (
@@ -126,6 +127,8 @@ async def complete_oauth(
 ) -> ClaudeAccountResponse:
     try:
         result = await service.complete_oauth(payload)
+    except ReconnectIdentityMismatch as exc:
+        raise DashboardBadRequestError(str(exc), code=exc.code) from exc
     except ClaudeError as exc:
         raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_account_created", result.id)
@@ -200,6 +203,8 @@ async def reconnect_account(
         result = await service.reconnect(source_id, payload)
     except ModelSourceNotFoundError as exc:
         raise DashboardNotFoundError(str(exc)) from exc
+    except ReconnectIdentityMismatch as exc:
+        raise DashboardBadRequestError(str(exc), code=exc.code) from exc
     except ClaudeError as exc:
         raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_account_reconnected", source_id)

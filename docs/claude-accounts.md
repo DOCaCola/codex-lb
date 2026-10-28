@@ -105,6 +105,13 @@ must authenticate the same account and organization. A different account should
 be added separately. Importing an expired file defers identity verification until
 refresh succeeds; an unverified account which cannot refresh must be re-enrolled.
 
+Reconnect errors distinguish a different authenticated account
+(`claude_reconnect_account_mismatch`) from the same account under a different
+organization (`claude_reconnect_organization_changed`). A legacy entry without a
+saved account UUID reports `claude_reconnect_identity_unverified` if its combined
+identity differs. Rejected reconnects leave existing credentials and ownership
+unchanged. Expiry or a subscription-tier change alone does not block reconnect.
+
 The global version control follows stable Claude Code releases daily, or can pin
 an exact version for rollback. It changes the advertised CLI version, not the
 installed software or the compatibility policy.

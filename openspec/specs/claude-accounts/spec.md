@@ -102,6 +102,29 @@ Operators SHALL enroll Claude accounts through expiring single-use PKCE authoriz
 - **WHEN** a different current grant authenticates an already enrolled account and organization
 - **THEN** enrollment rejects the duplicate using authenticated identity rather than the access token or display name
 
+### Requirement: Reconnect identity diagnostics
+Credential import and OAuth reconnect SHALL distinguish a different authenticated
+account, a different organization for the same verified account, and an identity
+mismatch whose saved account UUID is unavailable. Rejections SHALL preserve saved
+credentials, identity and ownership. Logs SHALL contain only the local source ID
+and mismatch category, excluding tokens, provider UUIDs and profile contents.
+
+#### Scenario: Same account with a different organization
+- **WHEN** reconnect returns the saved account UUID but a different identity fingerprint
+- **THEN** the dashboard returns `claude_reconnect_organization_changed` and explains that the account matches but its organization differs
+
+#### Scenario: Different authenticated account
+- **WHEN** reconnect returns an account UUID different from the saved UUID
+- **THEN** the dashboard returns `claude_reconnect_account_mismatch`
+
+#### Scenario: Legacy identity mismatch
+- **WHEN** the identity fingerprint differs and no account UUID was saved
+- **THEN** the dashboard returns `claude_reconnect_identity_unverified` without claiming either component matches
+
+#### Scenario: Subscription change with stable identity
+- **WHEN** reconnect supplies current credentials for the same account and organization after expiry and a subscription change
+- **THEN** reconnect succeeds without requiring the previous subscription tier
+
 ### Requirement: Refresh rotation ownership
 Refresh MUST use durable cross-worker ownership and generation checks. Explicit invalidation MUST require reauthentication; definitive transient rejections MUST permit a later retry after backoff. Uncertain consumption MUST NOT blindly replay the refresh token, and known expired access tokens MUST NOT be dispatched.
 
