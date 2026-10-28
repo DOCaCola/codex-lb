@@ -14645,6 +14645,7 @@ def _assert_ws_single_response_lifecycle_completed(
     [
         ("server_is_overloaded", "Our servers are currently overloaded. Please try again later."),
         ("model_at_capacity", "Selected model is at capacity. Please try a different model."),
+        ("turn_rate_limit_exceeded", "Codex is at capacity, please try again later"),
     ],
 )
 def test_backend_responses_websocket_retries_accepted_output_free_capacity_error_on_another_account(
@@ -14683,6 +14684,48 @@ def test_backend_responses_websocket_retries_accepted_output_free_capacity_error
 
     _assert_ws_single_response_lifecycle_completed(events, disconnect)
     failover.assert_retried_on_another_account()
+    assert len(first_upstream.sent_text) == 1
+    assert len(recovered_upstream.sent_text) == 1
+    assert json.loads(recovered_upstream.sent_text[0])["input"] == json.loads(first_upstream.sent_text[0])["input"]
+
+
+def test_backend_responses_websocket_moves_a_precreated_model_admission_limit_to_another_account(
+    app_instance,
+    monkeypatch,
+):
+    """Upstream refuses the turn before ``response.created`` with
+    ``turn_rate_limit_exceeded`` ("Codex is at capacity", 429 + Retry-After).
+    The account keeps refusing that model until the deadline, so the replay
+    must exclude it instead of reconnecting there, and the account takes no
+    health penalty: its other models are unaffected."""
+    first_upstream = _SequencedUpstreamWebSocket(
+        [],
+        deferred_message_batches=[
+            [
+                _ws_event(
+                    {
+                        "type": "error",
+                        "status": 429,
+                        "error": {
+                            "type": "rate_limit_error",
+                            "code": "turn_rate_limit_exceeded",
+                            "message": "Codex is at capacity, please try again later",
+                        },
+                        "headers": {"retry-after": "256"},
+                    }
+                )
+            ]
+        ],
+    )
+    recovered_upstream = _recovered_upstream("resp_ws_admission_limit_recovered")
+    failover = _TwoAccountWebSocketFailover(first_upstream, recovered_upstream)
+    failover.install(monkeypatch)
+
+    events, disconnect = failover.run(app_instance)
+
+    _assert_ws_single_response_lifecycle_completed(events, disconnect)
+    failover.assert_retried_on_another_account()
+    assert failover.stream_errors == [(failover.FIRST_ACCOUNT_ID, "turn_rate_limit_exceeded")]
     assert len(first_upstream.sent_text) == 1
     assert len(recovered_upstream.sent_text) == 1
     assert json.loads(recovered_upstream.sent_text[0])["input"] == json.loads(first_upstream.sent_text[0])["input"]

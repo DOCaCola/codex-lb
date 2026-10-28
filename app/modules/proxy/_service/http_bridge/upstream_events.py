@@ -1045,8 +1045,11 @@ async def _wait_before_http_bridge_model_capacity_retry(
     the wait branch passes ``signal_startup_wait=False`` for it: re-signalling
     would re-arm the startup wait behind a stream that is already open (spec:
     "Accepted public streams are replayed without keepalives").
+
+    Only the selected-model capacity message waits: a model admission limit
+    is per account, so its replay goes to another account immediately.
     """
-    if request_state is None or not is_upstream_model_capacity_error(error_message):
+    if request_state is None or not is_upstream_model_capacity_error(error_message, code=None):
         return True
 
     deadline = request_state.bridge_request_deadline
@@ -2870,7 +2873,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                     and early_retry_error_code is not None
                     and early_retry_error_code != _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
                     and not is_previous_response_not_found_event
-                    and is_upstream_model_capacity_error(error_message)
+                    and is_upstream_model_capacity_error(error_message, code=early_retry_error_code)
                     and _websocket_request_can_replay_before_visible_output(matched_request_state)
                     and _http_bridge_accepted_capacity_retry_allowed(matched_request_state)
                 )
@@ -3504,7 +3507,7 @@ class _HTTPBridgeUpstreamEventsMixin:
             and retry_error_code != _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
             and not is_previous_response_not_found_event
             and status_request_state is not None
-            and is_upstream_model_capacity_error(retry_error_message)
+            and is_upstream_model_capacity_error(retry_error_message, code=retry_error_code)
             and _websocket_request_can_replay_before_visible_output(status_request_state)
             and _http_bridge_accepted_capacity_retry_allowed(status_request_state)
         )

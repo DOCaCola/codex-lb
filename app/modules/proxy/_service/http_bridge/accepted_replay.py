@@ -40,7 +40,7 @@ from app.modules.proxy._service.support import (
     _websocket_request_is_accepted_lifecycle_only,
     _WebSocketRequestState,
 )
-from app.modules.proxy.helpers import is_upstream_model_capacity_error
+from app.modules.proxy.helpers import MODEL_ADMISSION_LIMIT_CODES, is_upstream_model_capacity_error
 
 logger = logging.getLogger("app.modules.proxy.service")
 
@@ -55,6 +55,9 @@ _ACCEPTED_CAPACITY_REPLAY_REPORTED_CODES = {
     "server_is_overloaded": "server_is_overloaded",
     "overloaded_error": "overloaded_error",
     "model_at_capacity": "server_is_overloaded",
+    # Model-scoped: reported under its own code so the health write skips the
+    # account penalty an overload code would apply.
+    **{code: code for code in MODEL_ADMISSION_LIMIT_CODES},
 }
 # Quota and rate-limit codes keep their stronger classification after
 # acceptance even when the message names the selected-model capacity: an
@@ -265,7 +268,10 @@ def _websocket_accepted_output_free_retry_error_code(
         replay_code: str | None = ENCRYPTED_CONTENT_REJECTION_CODE
     elif error_code in _ACCEPTED_REPLAY_FAIL_CLOSED_ERROR_CODES:
         replay_code = None
-    elif is_upstream_model_capacity_error(error_message) or error_code in _ACCEPTED_CAPACITY_REPLAY_ERROR_CODES:
+    elif (
+        is_upstream_model_capacity_error(error_message, code=error_code)
+        or error_code in _ACCEPTED_CAPACITY_REPLAY_ERROR_CODES
+    ):
         replay_code = _ACCEPTED_CAPACITY_REPLAY_REPORTED_CODES.get(error_code or "", "server_is_overloaded")
     else:
         replay_code = None

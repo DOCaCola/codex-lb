@@ -524,6 +524,7 @@ from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
 from app.modules.proxy.helpers import (
+    MODEL_ADMISSION_LIMIT_CODES,
     _header_account_id,
     _normalize_error_code,
     _parse_openai_error,
@@ -6624,8 +6625,11 @@ class _WebSocketMixin:
                     # body); otherwise it goes to the owner that accepted the
                     # turn, which the dispatch binding requires on the reconnect.
                     _prepare_websocket_anchored_replay_body(request_state)
-                if accepted_lifecycle_replay and _websocket_accepted_replay_may_exclude_account(request_state):
-                    # The accepted turn failed on this account; move the
+                if (
+                    accepted_lifecycle_replay or retry_error_code in MODEL_ADMISSION_LIMIT_CODES
+                ) and _websocket_accepted_replay_may_exclude_account(request_state):
+                    # The accepted turn failed on this account, or the account
+                    # refused the model until its Retry-After; move the
                     # account-neutral replay to another one like the bridge does.
                     # A replay still pinned to its owner, or whose Codex session
                     # may resolve to a hard sticky owner, reconnects there instead.
@@ -6636,9 +6640,10 @@ class _WebSocketMixin:
                 if accepted_lifecycle_replay:
                     # The accepted request still holds its API-key reservation:
                     # the health write waits for its settlement (bridge parity).
-                    # Pre-created replays keep the immediate write; they are not
-                    # excluded from the reconnect and rely on the penalty to
-                    # steer selection away from this account.
+                    # Pre-created replays keep the immediate write; apart from a
+                    # model admission limit they are not excluded from the
+                    # reconnect and rely on the penalty to steer selection away
+                    # from this account.
                     await _record_or_defer_websocket_accepted_replay_health(
                         proxy,
                         request_state,

@@ -339,6 +339,7 @@ from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
 from app.modules.proxy.helpers import (
+    MODEL_ADMISSION_LIMIT_CODES,
     _is_account_model_unsupported_error,
     _normalize_error_code,
     _parse_openai_error,
@@ -1138,7 +1139,11 @@ def _websocket_precreated_retry_error_code(
         if _websocket_response_id(None, payload) is not None:
             return None
         return _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
-    if is_upstream_model_capacity_error(error_message):
+    if error_code in MODEL_ADMISSION_LIMIT_CODES:
+        if _websocket_response_id(None, payload) is not None:
+            return None
+        return error_code
+    if is_upstream_model_capacity_error(error_message, code=error_code):
         if error_code in {
             "rate_limit_exceeded",
             "usage_limit_reached",
@@ -1305,7 +1310,11 @@ def _websocket_owner_pinned_quota_error_code(
         _websocket_event_error_type(event_type, payload),
     )
     error_message = _websocket_event_error_message(event_type, payload)
-    if is_upstream_model_capacity_error(error_message):
+    if error_code in MODEL_ADMISSION_LIMIT_CODES:
+        if _websocket_response_id(None, payload) is not None:
+            return None
+        return error_code
+    if is_upstream_model_capacity_error(error_message, code=error_code):
         if error_code in {
             "rate_limit_exceeded",
             "usage_limit_reached",

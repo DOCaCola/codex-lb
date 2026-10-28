@@ -398,6 +398,7 @@ from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
 from app.modules.proxy.helpers import (
+    MODEL_ADMISSION_LIMIT_CODES,
     _normalize_error_code,
     classify_upstream_failure,
     is_account_neutral_safety_policy_rejection,
@@ -580,7 +581,7 @@ def _should_retry_transient_stream_error(
         return False
     if code in _facade()._TRANSIENT_RETRY_CODES:
         return True
-    if is_upstream_model_capacity_error(message):
+    if is_upstream_model_capacity_error(message, code=code):
         if code in _MODEL_CAPACITY_LIMIT_CODES:
             return False
         return True
@@ -1199,6 +1200,17 @@ async def _handle_stream_error(
     ):
         _facade().logger.info(
             "Skipped account error penalty for model-scoped upstream rejection account_id=%s request_id=%s code=%s",
+            "<redacted>" if privacy_policy.redacts_sensitive_details else account.id,
+            get_request_id(),
+            code,
+        )
+        return classified
+    if code in MODEL_ADMISSION_LIMIT_CODES:
+        # One model's per-turn admission on this account, not its health: the
+        # turn moves to another account and the account keeps serving its
+        # other models. The Retry-After reaches the client with the frame.
+        _facade().logger.info(
+            "Skipped account error penalty for model admission limit account_id=%s request_id=%s code=%s",
             "<redacted>" if privacy_policy.redacts_sensitive_details else account.id,
             get_request_id(),
             code,

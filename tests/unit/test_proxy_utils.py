@@ -511,6 +511,40 @@ async def test_model_scoped_rejection_classification_still_fails_over() -> None:
     assert classified["failure_class"] == "retryable_transient"
 
 
+@pytest.mark.parametrize("http_status", [None, 429])
+@pytest.mark.asyncio
+async def test_model_admission_limit_moves_the_turn_without_penalizing_the_account(http_status: int | None) -> None:
+    """``turn_rate_limit_exceeded`` limits one model on one account while its quota
+    is intact: it is retryable elsewhere and records no account health at all,
+    including the HTTP 429 burst backoff."""
+    load_balancer = SimpleNamespace(
+        record_error=AsyncMock(),
+        record_errors=AsyncMock(),
+        mark_rate_limit=AsyncMock(),
+        mark_quota_exceeded=AsyncMock(),
+        mark_permanent_failure=AsyncMock(),
+        _runtime={},
+    )
+    proxy = SimpleNamespace(_load_balancer=load_balancer)
+
+    classified = await streaming_helpers_module._handle_stream_error(
+        proxy,
+        cast(Account, SimpleNamespace(id="acc-1")),
+        {"message": "Codex is at capacity, please try again later", "type": "rate_limit_error"},
+        "turn_rate_limit_exceeded",
+        http_status,
+        retry_after_seconds=256.0,
+    )
+
+    assert classified["failure_class"] == "retryable_transient"
+    load_balancer.record_error.assert_not_awaited()
+    load_balancer.record_errors.assert_not_awaited()
+    load_balancer.mark_rate_limit.assert_not_awaited()
+    load_balancer.mark_quota_exceeded.assert_not_awaited()
+    load_balancer.mark_permanent_failure.assert_not_awaited()
+    assert load_balancer._runtime == {}
+
+
 @pytest.mark.asyncio
 async def test_genuine_upstream_error_still_penalizes_account() -> None:
     """Negative control: a real ChatGPT upstream failure keeps penalizing."""
@@ -2193,6 +2227,50 @@ def test_websocket_precreated_retry_error_code_preserves_capacity_quota_code():
             has_other_pending_requests=False,
         )
         == "rate_limit_exceeded"
+    )
+
+
+def test_websocket_precreated_retry_error_code_keeps_model_admission_limit_code():
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req_model_admission",
+        model="gpt-6.1-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        awaiting_response_created=True,
+        request_text='{"type":"response.create","model":"gpt-6.1-sol","input":"hello"}',
+    )
+    payload: dict[str, JsonValue] = {
+        "type": "error",
+        "status": 429,
+        "error": {
+            "type": "rate_limit_error",
+            "code": "turn_rate_limit_exceeded",
+            "message": "Codex is at capacity, please try again later",
+        },
+        "headers": {"retry-after": "256"},
+    }
+
+    assert (
+        proxy_service._websocket_precreated_retry_error_code(
+            request_state,
+            event_type="error",
+            payload=payload,
+            has_other_pending_requests=False,
+        )
+        == "turn_rate_limit_exceeded"
+    )
+    # An admission refusal that names an accepted response is not pre-created.
+    accepted_payload = {**payload, "response_id": "resp_accepted"}
+    assert (
+        proxy_service._websocket_precreated_retry_error_code(
+            request_state,
+            event_type="error",
+            payload=accepted_payload,
+            has_other_pending_requests=False,
+        )
+        is None
     )
 
 

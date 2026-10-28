@@ -18107,6 +18107,7 @@ def _assert_single_response_lifecycle_completed(events: list[dict]) -> str:
     [
         ("server_is_overloaded", "Our servers are currently overloaded. Please try again later."),
         ("model_at_capacity", "Selected model is at capacity. Please try a different model."),
+        ("turn_rate_limit_exceeded", "Codex is at capacity, please try again later"),
     ],
 )
 async def test_backend_responses_http_bridge_retries_accepted_output_free_capacity_error_on_another_account(

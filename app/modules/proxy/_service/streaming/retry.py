@@ -1057,7 +1057,7 @@ class _StreamingRetryMixin:
                         and _facade()._should_retry_transient_stream_error(error_code, error_message)
                     )
                     retryable_capacity_rejection = bool(
-                        is_upstream_model_capacity_error(error_message)
+                        is_upstream_model_capacity_error(error_message, code=error_code)
                         and _facade()._should_retry_transient_stream_error(error_code, error_message)
                     )
                     if retryable_connect_failure or retryable_capacity_rejection:
@@ -1150,7 +1150,7 @@ class _StreamingRetryMixin:
                     settlement.error = exc.error
                     settlement.account_health_error = (
                         _facade()._should_penalize_stream_error(exc.code, error_message)
-                        or is_upstream_model_capacity_error(error_message)
+                        or is_upstream_model_capacity_error(error_message, code=exc.code)
                         or exc.account_health_error
                     )
                     if settlement.account_health_error:

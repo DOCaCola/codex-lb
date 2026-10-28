@@ -59,6 +59,13 @@ _TRANSIENT_CODES = frozenset(
     {"server_error", "upstream_error", "stream_incomplete", "overloaded_error", "server_is_overloaded"}
 )
 _MODEL_CAPACITY_MESSAGE_MARKERS = ("selected model is at capacity",)
+# Per-turn admission limit upstream applies to one model on one account while
+# that account's quota is intact ("Codex is at capacity", HTTP 429 with a
+# Retry-After of seconds to minutes). The same account keeps refusing the model
+# until the deadline; another account serves the turn now. It says nothing
+# about the account's other models, so it moves the turn without penalizing
+# the account.
+MODEL_ADMISSION_LIMIT_CODES = frozenset({"turn_rate_limit_exceeded"})
 _SAFETY_BLOCK_MESSAGE_PREFIX = "This request was blocked by our safety systems."
 _MODEL_UNSUPPORTED_MESSAGE_RE = re.compile(
     r"^The '.+' model is not supported when using Codex with a ChatGPT account\.$"
@@ -114,7 +121,10 @@ def _is_account_model_unsupported_error(
     return normalized_message == expected_message
 
 
-def is_upstream_model_capacity_error(message: str | None) -> bool:
+def is_upstream_model_capacity_error(message: str | None, *, code: str | None) -> bool:
+    """Upstream refused the turn for model capacity, by admission-limit code or capacity message."""
+    if code in MODEL_ADMISSION_LIMIT_CODES:
+        return True
     if message is None:
         return False
     normalized_message = " ".join(message.lower().split())
@@ -166,7 +176,7 @@ def classify_upstream_failure(
         failure_class = "rate_limit"
     elif (
         error_code in _TRANSIENT_CODES
-        or is_upstream_model_capacity_error(error.get("message"))
+        or is_upstream_model_capacity_error(error.get("message"), code=error_code)
         or (http_status is not None and http_status >= 500)
     ):
         failure_class = "retryable_transient"

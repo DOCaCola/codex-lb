@@ -1184,6 +1184,49 @@ async def test_native_codex_stream_code_less_429_retry_success_emits_no_capacity
 
 
 @pytest.mark.asyncio
+async def test_stream_model_admission_limit_429_moves_to_another_account_without_penalty(async_client, monkeypatch):
+    """``turn_rate_limit_exceeded`` ("Codex is at capacity") refuses one model on one
+    account until its Retry-After. The turn walks to another account at once and
+    the refusing account stays active for its other models."""
+    account_a_id = await _import_account(async_client, "acc_admission_a", "admission_a@example.com")
+    await _import_account(async_client, "acc_admission_b", "admission_b@example.com")
+    slept = _record_burst_backoff_sleeps(monkeypatch)
+    seen_account_ids: list[str | None] = []
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        seen_account_ids.append(account_id)
+        if account_id == "acc_admission_a":
+            raise ProxyResponseError(
+                429,
+                {
+                    "error": {
+                        "type": "rate_limit_error",
+                        "code": "turn_rate_limit_exceeded",
+                        "message": "Codex is at capacity, please try again later",
+                    }
+                },
+                failure_phase="status",
+            )
+        yield _success_sse_event("resp_admission_ok")
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {"model": "gpt-5.1", "instructions": "hi", "input": [], "stream": True}
+    async with async_client.stream("POST", "/backend-api/codex/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    events = _extract_events(lines)
+    assert len([e for e in events if e.get("type") == "response.completed"]) == 1
+    assert seen_account_ids == ["acc_admission_a", "acc_admission_b"]
+    assert slept == []
+    async with SessionLocal() as session:
+        refusing_account = await session.get(Account, account_a_id)
+        assert refusing_account is not None
+        assert refusing_account.status == AccountStatus.ACTIVE
+
+
+@pytest.mark.asyncio
 async def test_stream_http_502_unknown_code_fails_over_to_second_account(async_client, monkeypatch):
     await _import_account(async_client, "acc_h502_a", "h502_a@example.com")
     await _import_account(async_client, "acc_h502_b", "h502_b@example.com")
