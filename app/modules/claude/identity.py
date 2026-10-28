@@ -7,11 +7,33 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import ClaudeAccount
+from app.db.session import get_background_session
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.schemas import AuthenticatedProfile, Credentials
+from app.modules.claude.schemas import AccountState, AuthenticatedProfile, Credentials
 from app.modules.claude.version import ClaudeVersionService
+from app.modules.model_sources.forwarding import ModelSourceForwardingError
+
+
+async def require_current_identity(source_id: str, identity_generation: int) -> None:
+    """Prepared requests cannot start a new attempt after their identity was replaced."""
+    async with get_background_session() as session:
+        account = await session.get(ClaudeAccount, source_id)
+        if (
+            account is None
+            or AccountState.model_validate_json(account.state_json).identity_generation != identity_generation
+        ):
+            raise ModelSourceForwardingError(
+                status_code=409,
+                payload={
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "claude_identity_changed",
+                        "message": "Claude credentials were replaced; retry with the current account identity.",
+                    }
+                },
+            )
 
 
 class ReconnectIdentityMismatch(ClaudeError):

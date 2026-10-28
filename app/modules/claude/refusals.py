@@ -36,9 +36,18 @@ def _response_id(item: JsonValue) -> str | None:
     return match.group(1) if match else None
 
 
-async def record_refused_response(client_scope: str, response_id: str, source_id: str) -> None:
+async def record_refused_response(
+    client_scope: str, response_id: str, source_id: str, *, identity_generation: int = 1
+) -> None:
     """Persist before the terminal event reaches a client that retries immediately."""
-    await record_keys((_key(client_scope, response_id),), source_id)
+    # A refusal is a property of delivered output, not permission to reuse native
+    # resources. Keep it even when that output's credentials have been replaced.
+    await record_keys(
+        (_key(client_scope, response_id),),
+        source_id,
+        identity_generation=identity_generation,
+        require_current_identity=False,
+    )
 
 
 async def omit_refused_output(payload: dict[str, JsonValue], client_scope: str) -> dict[str, JsonValue]:

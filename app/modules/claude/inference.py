@@ -135,7 +135,10 @@ async def prepare_responses(
             )
         selected = next(row for row in account.source.models if row.model == model)
         assert selected.max_output_tokens is not None  # Only resolved catalog models are eligible.
-        projected = replay.project(logical, source_id=account.source_id, model=model)
+        identity_generation = AccountState.model_validate_json(account.state_json).identity_generation
+        projected = replay.project(
+            logical, source_id=account.source_id, model=model, identity_generation=identity_generation
+        )
         if chat_history is not None:
             continuation.payload["input"] = cast(JsonValue, projected["input"])
             continuation.chat_input = chat_history.items
@@ -159,6 +162,12 @@ async def prepare_responses(
         prepared = replace(
             prepared, require_complete_history=require_complete_history, session_id=continuation.session_id
         )
+        if prepared.identity_generation != identity_generation:
+            raise ClientPayloadError(
+                "Claude account identity changed during preparation; retry with current credentials",
+                param="input",
+                code="invalid_provider_history",
+            )
         detach_session_objects(session)
     continuation.source_id = prepared.source.id
     reasoning = logical.get("reasoning")
@@ -169,7 +178,7 @@ async def prepare_responses(
     return ClaudeAttempt(
         prepared,
         ResponsesProjection(
-            OpaqueScope(prepared.source.id, model, client_scope),
+            OpaqueScope(prepared.source.id, model, client_scope, prepared.identity_generation),
             projection.tools,
             opaque,
             search_enabled=projection.search_enabled,

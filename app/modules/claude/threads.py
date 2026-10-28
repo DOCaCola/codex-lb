@@ -55,13 +55,19 @@ class MessageThread:
             ) from exc
 
 
-async def record_message(scope: ResourceScope, source_id: str, value: dict[str, JsonValue]) -> None:
+async def record_message(
+    scope: ResourceScope, source_id: str, value: dict[str, JsonValue], *, identity_generation: int = 1
+) -> None:
     """Record each returned thread message before its ID reaches the caller."""
     message = value.get("message") if value.get("type") == "message_start" else value
     identifier = message.get("id") if isinstance(message, dict) else None
     if not isinstance(identifier, str) or not identifier:
         raise ClaudeError("Claude thread response requires a nonempty message ID")
-    await record_keys(scope.keys(frozenset({identifier}), kind="message_thread"), source_id)
+    await record_keys(
+        scope.keys(frozenset({identifier}), kind="message_thread"),
+        source_id,
+        identity_generation=identity_generation,
+    )
 
 
 def normalize_thread_error(body: dict[str, JsonValue], error: ModelSourceForwardingError) -> ModelSourceForwardingError:

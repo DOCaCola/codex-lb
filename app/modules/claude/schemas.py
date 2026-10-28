@@ -218,6 +218,8 @@ class MetadataRefreshState(BaseModel):
 
 
 class AccountState(BaseModel):
+    # First credential generation belonging to the current provider identity.
+    identity_generation: int = Field(default=1, ge=1)
     subscription: SubscriptionMetadata | None = None
     subscription_updated_at: datetime | None = None
     subscription_error: str | None = None
@@ -308,6 +310,7 @@ class OAuthStart(DashboardModel):
 
 
 class ClaudeReconnect(DashboardModel):
+    replace_identity: bool = False
     credentials: CredentialFile = Field(repr=False)
     acknowledge_exclusive_refresh: Literal[True]
 
@@ -319,5 +322,6 @@ class OAuthStarted(DashboardModel):
 
 
 class OAuthComplete(DashboardModel):
+    replace_identity: bool = False
     state: str = Field(min_length=32, max_length=128)
     code: SecretStr = Field(min_length=1, max_length=4096)

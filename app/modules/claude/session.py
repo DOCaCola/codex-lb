@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.time import utcnow
 from app.db.models import ClaudeAccount, ClaudeSessionOwner
 from app.db.session import get_background_session
+from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.quota_evidence import lock_account
 from app.modules.claude.resources import ResourceScope, touch_origins
+from app.modules.claude.schemas import AccountState
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 NATIVE_SESSION_TTL = timedelta(hours=1)
@@ -34,6 +37,7 @@ class NativeSessionBinding:
     model: str
     retained_owner: str | None
     resource_keys: tuple[str, ...] = ()
+    identity_generation: int = 1
 
     @property
     def resource_scope(self) -> ResourceScope:
@@ -42,9 +46,12 @@ class NativeSessionBinding:
     async def commit(self, source_id: str) -> None:
         """Persist affinity only after admission, without overwriting a concurrent binding."""
         if self.resource_keys:
-            await touch_origins(self.resource_keys, source_id)
+            await touch_origins(self.resource_keys, source_id, identity_generation=self.identity_generation)
             return
         async with get_background_session() as session:
+            account = await lock_account(session, source_id)
+            if AccountState.model_validate_json(account.state_json).identity_generation != self.identity_generation:
+                raise ClaudeError("Claude account identity changed during admission; retry with current credentials")
             ownership = NativeSessionOwnership(
                 session, client_scope=self.client_scope, conversation_id=self.conversation_id, model=self.model
             )

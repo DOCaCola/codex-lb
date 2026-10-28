@@ -101,9 +101,20 @@ eligible conversation affinity still take precedence. Unknown quota is not zero 
 blocks applicable models. API-equivalent costs are not subscription charges.
 
 An uncertain rotating refresh requires reconnect with a fresh grant. Reconnect
-must authenticate the same account and organization. A different account should
-be added separately. Importing an expired file defers identity verification until
-refresh succeeds; an unverified account which cannot refresh must be re-enrolled.
+checks that the account and organization match. To deliberately replace a changed
+identity on the same dashboard entry, select **Replace the saved identity if this
+sign-in differs** in the reconnect dialog, then sign in or import current credentials.
+The option is off by default. Add a separate entry instead to keep both accounts.
+
+Replacement keeps the account ID, name, colour, pause state, routing policy, model
+selections and historical usage. It clears current quota/subscription observations,
+cooldowns and session affinity. Old native resources cannot move to the replacement;
+completed translated search becomes readable history, while an active search needs
+portable context. Refused-output markers remain effective. Catalogue and quota
+discovery restart on the next scheduled refresh (normally within a minute for enabled
+accounts), or through **Refresh**. A reconnect with unchanged identity retains ownership.
+Importing an expired file for a new account defers identity verification until refresh succeeds;
+replacement requires current credentials and a verified profile.
 
 Reconnect errors distinguish a different authenticated account
 (`claude_reconnect_account_mismatch`) from the same account under a different

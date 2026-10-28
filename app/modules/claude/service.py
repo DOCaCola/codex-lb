@@ -13,7 +13,15 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import AccountRoutingPolicy, ClaudeAccount, ClaudeOAuthFlow, ModelSource, ModelSourceModel
+from app.db.models import (
+    AccountRoutingPolicy,
+    ClaudeAccount,
+    ClaudeCooldown,
+    ClaudeOAuthFlow,
+    ClaudeSessionOwner,
+    ModelSource,
+    ModelSourceModel,
+)
 from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.client import ClaudeClient
@@ -112,7 +120,11 @@ class ClaudeService:
         )
         if flow.source_id is not None:
             assert flow.generation is not None
-            return await self._replace(flow.source_id, flow.generation, credentials)
+            return await self._replace(
+                flow.source_id, flow.generation, credentials, replace_identity=payload.replace_identity
+            )
+        if payload.replace_identity:
+            raise ClaudeError("Identity replacement requires an existing account")
         return await self._create(flow.name, credentials)
 
     async def _create(
@@ -161,7 +173,13 @@ class ClaudeService:
     async def reconnect(self, source_id: str, payload: ClaudeReconnect) -> ClaudeAccountResponse:
         row = await self._get(source_id)
         imported = payload.credentials.claudeAiOauth
-        return await self._replace(source_id, row.generation, imported.credentials(), imported.subscription_metadata())
+        return await self._replace(
+            source_id,
+            row.generation,
+            imported.credentials(),
+            imported.subscription_metadata(),
+            replace_identity=payload.replace_identity,
+        )
 
     async def _replace(
         self,
@@ -169,9 +187,11 @@ class ClaudeService:
         generation: int,
         credentials: Credentials,
         subscription: SubscriptionMetadata | None = None,
+        *,
+        replace_identity: bool = False,
     ) -> ClaudeAccountResponse:
         row = await self._get(source_id)
-        if row.identity_fingerprint is None:
+        if row.identity_fingerprint is None and not replace_identity:
             raise ClaudeError(
                 "Account identity has not been verified; refresh it before reconnecting, or remove it and enroll again"
             )
@@ -179,7 +199,9 @@ class ClaudeService:
             raise ClaudeError("Reconnect requires a current credential file or a new OAuth sign-in")
         profile = await authenticated_profile(self.client, self.repository, credentials)
         identity = profile_identity(profile)
-        if identity != row.identity_fingerprint:
+        previous_identity = row.identity_fingerprint
+        identity_changed = identity != previous_identity
+        if identity_changed and not replace_identity:
             error = ReconnectIdentityMismatch(row.provider_account_uuid, profile.account.uuid)
             logger.warning("claude_reconnect_rejected source_id=%s reason=%s", source_id, error.code)
             raise error
@@ -189,12 +211,13 @@ class ClaudeService:
                 .where(
                     ClaudeAccount.source_id == source_id,
                     ClaudeAccount.generation == generation,
-                    ClaudeAccount.identity_fingerprint == identity,
+                    ClaudeAccount.identity_fingerprint == previous_identity,
                 )
                 .values(
                     credentials_encrypted=encrypt_credentials(credentials, self.encryptor),
                     grant_fingerprint=grant_fingerprint(credentials),
                     provider_account_uuid=profile.account.uuid,
+                    identity_fingerprint=identity,
                     expires_at=credentials.expires_at.replace(tzinfo=None),
                     credential_status="ready",
                     generation=generation + 1,
@@ -209,6 +232,14 @@ class ClaudeService:
             if changed is not None:
 
                 def replace_subscription(state: AccountState) -> AccountState:
+                    if identity_changed:
+                        # Keep operator choices, not the previous identity's live observations.
+                        state = AccountState(
+                            identity_generation=generation + 1,
+                            all_models=state.all_models,
+                            selections=state.selections,
+                            reasoning_restrictions=state.reasoning_restrictions,
+                        )
                     if subscription is not None:
                         state.subscription = subscription
                     state.subscription_updated_at = None
@@ -217,12 +248,18 @@ class ClaudeService:
                     return state
 
                 await self.repository.mutate_state(source_id, generation + 1, replace_subscription)
+                if identity_changed:
+                    for table in (ClaudeCooldown, ClaudeSessionOwner):
+                        await self.repository.session.execute(delete(table).where(table.source_id == source_id))
+                    await self.repository.sources.replace_models(row.source, [], commit=False)
             await self.repository.session.commit()
         except IntegrityError as exc:
             await self.repository.session.rollback()
             raise ClaudeError("The replacement grant is already enrolled") from exc
         if changed is None:
             raise ClaudeError("Claude credentials changed during reconnect; start a new enrollment")
+        if identity_changed:
+            logger.info("claude_identity_replaced source_id=%s generation=%d", source_id, generation + 1)
         return self._response(await self._get(source_id))
 
     async def update(self, source_id: str, payload: ClaudeUpdate) -> ClaudeAccountResponse:

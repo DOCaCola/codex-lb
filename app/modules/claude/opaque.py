@@ -21,6 +21,7 @@ class SignedBlock(BaseModel):
     block: dict[str, JsonValue]
     # A progress update whose text was also delivered as a visible commentary message.
     presented: bool = False
+    identity_generation: int = 1
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class OpaqueScope:
     source_id: str
     model: str
     client_scope: str
+    identity_generation: int = 1
 
 
 class ClaudeOpaqueState:
@@ -43,6 +45,7 @@ class ClaudeOpaqueState:
             client_scope=scope.client_scope,
             block=block,
             presented=presented,
+            identity_generation=scope.identity_generation,
         )
         return PREFIX + self.encryptor.encrypt(envelope.model_dump_json()).decode("ascii")
 

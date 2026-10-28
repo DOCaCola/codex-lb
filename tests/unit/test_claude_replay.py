@@ -1,9 +1,10 @@
+import json
 from copy import deepcopy
 
 import pytest
 
 from app.core.openai.exceptions import ClientPayloadError
-from app.modules.claude.opaque import OpaqueScope
+from app.modules.claude.opaque import PREFIX, OpaqueScope
 from app.modules.claude.replay import authenticate_replay
 from app.modules.model_sources.compaction import source_compaction_instruction
 from tests.unit.test_claude_protocol import TASK_INPUT, codec, scope
@@ -57,6 +58,21 @@ def search_history(opaque, *, completed=True):
     return {"input": items}
 
 
+def test_pre_replacement_envelopes_belong_to_original_identity():
+    opaque = codec()
+    token = PREFIX + opaque.encryptor.encrypt(
+        json.dumps(
+            {
+                "source_id": scope().source_id,
+                "model": scope().model,
+                "client_scope": scope().client_scope,
+                "block": {"type": "thinking", "thinking": "earlier detail", "signature": "signed"},
+            }
+        )
+    ).decode("ascii")
+    assert opaque.authenticate(token, client_scope=scope().client_scope).identity_generation == 1
+
+
 @pytest.mark.parametrize("kind", ["thinking", "redacted_thinking"])
 @pytest.mark.parametrize("completed", [True, False], ids=["completed", "active"])
 def test_signed_thinking_moves_unchanged_and_projection_is_immutable(kind, completed):
@@ -79,7 +95,7 @@ def test_active_search_cannot_move():
     payload = search_history(opaque, completed=False)
     replay = read(payload, opaque)
     assert replay.owner_source_id == "source-a"
-    with pytest.raises(ClientPayloadError, match="original account and model") as moved:
+    with pytest.raises(ClientPayloadError, match="original account identity and model") as moved:
         replay.project(payload, source_id="source-b", model=scope().model)
     assert (moved.value.code, moved.value.param) == ("nonportable_provider_history", "input[1]")
     with pytest.raises(ClientPayloadError, match="original model") as switched:

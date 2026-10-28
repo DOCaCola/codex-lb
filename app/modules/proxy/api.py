@@ -5976,7 +5976,11 @@ async def _dispatch_source_responses_response(
             assert recovery.source_id is not None
             # The attempt helper has already settled and released admission.
             await record_refusals(
-                recovery.source_id, payload.model, refusals, requested_at=recovery.budget.requested_at
+                recovery.source_id,
+                payload.model,
+                refusals,
+                requested_at=recovery.budget.requested_at,
+                credential_generation=recovery.credential_generation,
             )
             recovery.excluded.add(recovery.source_id)
             recovery.retry_source_id = None

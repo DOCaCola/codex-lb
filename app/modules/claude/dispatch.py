@@ -53,6 +53,7 @@ class PreparedClaudeRequest:
     credential_generation: int
     plan_type: ClaudePlanType
     native_binding: NativeSessionBinding | None
+    identity_generation: int = 1
     budget: SendBudget = field(default_factory=SendBudget, compare=False)
     require_complete_history: bool = False
     reasoning_effort: str | None = None
@@ -248,6 +249,7 @@ class ClaudeDispatchPreparer:
             stream=projected.body.get("stream") is True,
         )
         source_id = account.source_id
+        identity_generation = AccountState.model_validate_json(account.state_json).identity_generation
         snapshot = await self.auth.snapshot(source_id)
         # A pause or quota refresh may have committed while token
         # rotation was in flight. Re-read instead of using the earlier ORM view.
@@ -262,6 +264,12 @@ class ClaudeDispatchPreparer:
             reasoning_effort=reasoning_effort,
         )
         # The serving account's provider UUID is bound by the snapshot above.
+        if AccountState.model_validate_json(account.state_json).identity_generation != identity_generation:
+            raise ClaudeError("Claude account identity changed during preparation; retry with current credentials")
+        if resource_keys:
+            # Resolution preceded account selection. Replacement in between must
+            # not bind those resources to the new identity at the same source ID.
+            await resolve_origins(session, resource_keys)
         assert account.provider_account_uuid is not None
         if project_session(
             projected.body,
@@ -284,6 +292,7 @@ class ClaudeDispatchPreparer:
             logical_body=deepcopy(logical),
             conversation_id=conversation_id,
             credential_generation=snapshot.generation,
+            identity_generation=identity_generation,
             plan_type=subscription_plan(AccountState.model_validate_json(account.state_json).subscription),
             reasoning_effort=reasoning_effort,
             native_binding=NativeSessionBinding(
@@ -292,6 +301,7 @@ class ClaudeDispatchPreparer:
                 model=model,
                 retained_owner=retained_owner,
                 resource_keys=resource_keys,
+                identity_generation=identity_generation,
             )
             if endpoint == "messages"
             else None,

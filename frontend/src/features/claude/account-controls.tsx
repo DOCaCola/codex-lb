@@ -47,6 +47,7 @@ export function ClaudeAccountControls({
   const [reconnectId, setReconnectId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
+  const [replaceIdentity, setReplaceIdentity] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [flow, setFlow] = useState<OAuthStarted | null>(null);
   const [code, setCode] = useState("");
@@ -74,6 +75,7 @@ export function ClaudeAccountControls({
     setFlow(null);
     setName("");
     setAcknowledged(false);
+    setReplaceIdentity(false);
   }
   function created(result: ClaudeAccount) {
     close();
@@ -315,6 +317,23 @@ export function ClaudeAccountControls({
             I will not use this refresh grant in another client. Concurrent
             refresh consumers can invalidate access.
           </label>
+          {reconnectId && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={replaceIdentity}
+                disabled={busy}
+                onChange={(event) => setReplaceIdentity(event.target.checked)}
+              />
+              <span>
+                Replace the saved identity if this sign-in differs.
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Keeps this account’s settings and statistics. Clears old quota and
+                  session ownership; active server-owned tools may need a new turn.
+                </span>
+              </span>
+            </label>
+          )}
           {flow ? (
             <div className="space-y-3">
               <a
@@ -343,6 +362,7 @@ export function ClaudeAccountControls({
                       await api.complete.mutateAsync({
                         state: flow.state,
                         code: code.trim(),
+                        replaceIdentity: !!reconnectId && replaceIdentity,
                       }),
                     ),
                   )
@@ -401,6 +421,7 @@ export function ClaudeAccountControls({
                         ? await api.reconnect.mutateAsync({
                             id: reconnectId,
                             credentials,
+                            replaceIdentity,
                           })
                         : await api.enroll.mutateAsync({
                             name: name.trim(),

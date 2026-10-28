@@ -222,12 +222,15 @@ async def record_refusals(
     refusals: tuple[Refusal, ...],
     *,
     requested_at: datetime | None = None,
+    credential_generation: int | None = None,
 ) -> None:
     now = datetime.now(UTC)
     requested_at = requested_at or now
     async with get_background_session() as session:
         account = await lock_account(session, source_id)
         state = AccountState.model_validate_json(account.state_json)
+        if credential_generation is not None and credential_generation < state.identity_generation:
+            return
         for refusal in refusals:
             if refusal.until <= now:
                 continue

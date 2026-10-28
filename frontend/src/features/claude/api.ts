@@ -98,7 +98,7 @@ export const startOAuth = (body: {
   acknowledgeExclusiveRefresh: true;
   sourceId?: string;
 }) => post(`${path}/oauth/start`, OAuthStartedSchema, { body });
-export const completeOAuth = (body: { state: string; code: string }) =>
+export const completeOAuth = (body: { state: string; code: string; replaceIdentity?: boolean }) =>
   post(`${path}/oauth/complete`, ClaudeAccountSchema, { body });
 export const updateAccount = (id: string, body: ClaudeUpdate) =>
   patch(`${path}/${encodeURIComponent(id)}`, ClaudeAccountSchema, { body });
@@ -108,7 +108,7 @@ export const deleteAccount = (id: string) =>
   del(`${path}/${encodeURIComponent(id)}`);
 export const reconnectAccount = (
   id: string,
-  body: { credentials: unknown; acknowledgeExclusiveRefresh: true },
+  body: { credentials: unknown; acknowledgeExclusiveRefresh: true; replaceIdentity?: boolean },
 ) =>
   post(`${path}/${encodeURIComponent(id)}/reconnect`, ClaudeAccountSchema, {
     body,

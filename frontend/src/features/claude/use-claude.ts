@@ -24,10 +24,11 @@ export function useClaude() {
   });
   const start = useMutation({ mutationFn: api.startOAuth });
   const reconnect = useMutation({
-    mutationFn: ({ id, credentials }: { id: string; credentials: unknown }) =>
+    mutationFn: ({ id, credentials, replaceIdentity }: { id: string; credentials: unknown; replaceIdentity?: boolean }) =>
       api.reconnectAccount(id, {
         credentials,
         acknowledgeExclusiveRefresh: true,
+        replaceIdentity,
       }),
     onSuccess: invalidate,
   });

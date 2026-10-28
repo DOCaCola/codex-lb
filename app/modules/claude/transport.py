@@ -21,6 +21,7 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.claude.cache_lineage import CACHE_LINEAGE
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.dispatch import PreparedClaudeRequest
+from app.modules.claude.identity import require_current_identity
 from app.modules.claude.native import NativeObserver, usage_totals
 from app.modules.claude.observations import record_headers
 from app.modules.claude.recovery import historical_recovery
@@ -97,6 +98,7 @@ async def _open_responses(
     from app.modules.claude.threads import MessageThread, normalize_thread_error, record_message
 
     thread = MessageThread.parse(prepared.body) if projection is None else None
+    await require_current_identity(prepared.source.id, prepared.identity_generation)
     # SSE is also used for downstream non-stream requests. It provides native
     # liveness pings during long thinking without inventing output progress.
     payload = cast(dict[str, JsonValue], {**prepared.body, "stream": True})
@@ -256,9 +258,17 @@ async def _open_responses(
                         if prepared.native_binding is not None:
                             if thread is not None and event.get("type") == "message_start":
                                 await record_message(
-                                    prepared.native_binding.resource_scope, prepared.source.id, safe_event
+                                    prepared.native_binding.resource_scope,
+                                    prepared.source.id,
+                                    safe_event,
+                                    identity_generation=prepared.identity_generation,
                                 )
-                            await record_origins(prepared.native_binding.resource_scope, prepared.source.id, safe_event)
+                            await record_origins(
+                                prepared.native_binding.resource_scope,
+                                prepared.source.id,
+                                safe_event,
+                                identity_generation=prepared.identity_generation,
+                            )
                         yield (
                             format_sse_event(cast(dict[str, JsonValue], safe_event)).encode()
                             if event.get("type") == "error"
@@ -270,7 +280,10 @@ async def _open_responses(
                     for converted in projection.consume(safe_event):
                         if converted["type"] == "response.failed" and projection.refused_delivered_output:
                             await record_refused_response(
-                                projection.scope.client_scope, projection.response_id, prepared.source.id
+                                projection.scope.client_scope,
+                                projection.response_id,
+                                prepared.source.id,
+                                identity_generation=prepared.identity_generation,
                             )
                         encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
                         observer.feed(encoded)
@@ -348,6 +361,8 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
 async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool = False) -> SourceResponsesCompletion:
     from app.modules.claude.threads import MessageThread, normalize_thread_error, record_message
 
+    await require_current_identity(prepared.source.id, prepared.identity_generation)
+
     thread = MessageThread.parse(prepared.body) if not count_tokens else None
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
@@ -411,12 +426,14 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                         prepared.native_binding.resource_scope,
                         prepared.source.id,
                         cast(dict[str, PydanticJsonValue], data),
+                        identity_generation=prepared.identity_generation,
                     )
                     if thread is not None:
                         await record_message(
                             prepared.native_binding.resource_scope,
                             prepared.source.id,
                             cast(dict[str, PydanticJsonValue], data),
+                            identity_generation=prepared.identity_generation,
                         )
                 if not count_tokens:
                     CACHE_LINEAGE.observe(

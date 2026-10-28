@@ -13,9 +13,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import ClaudeResourceOrigin
+from app.db.models import ClaudeAccount, ClaudeResourceOrigin
 from app.db.session import get_background_session
 from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.quota_evidence import lock_account
+from app.modules.claude.schemas import AccountState
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 RESOURCE_TTL = timedelta(days=30)
@@ -91,11 +93,20 @@ async def resolve_origins(session: AsyncSession, keys: tuple[str, ...]) -> str |
     owners = {row.source_id for row in rows}
     if len(owners) != 1:
         raise ClaudeError("Native Claude history contains conflicting resource owners")
-    return owners.pop()
+    owner = owners.pop()
+    account = await session.get(ClaudeAccount, owner, populate_existing=True)
+    assert account is not None
+    identity_generation = AccountState.model_validate_json(account.state_json).identity_generation
+    if any(row.identity_generation != identity_generation for row in rows):
+        raise ResourceOriginMissing("Native Claude resource belongs to a replaced identity; resend portable context")
+    return owner
 
 
-async def touch_origins(keys: tuple[str, ...], source_id: str) -> None:
+async def touch_origins(keys: tuple[str, ...], source_id: str, *, identity_generation: int = 1) -> None:
     async with get_background_session() as session:
+        account = await lock_account(session, source_id)
+        if AccountState.model_validate_json(account.state_json).identity_generation != identity_generation:
+            raise ResourceOriginMissing("Native Claude resource identity changed during admission")
         now = utcnow()
         touched = list(
             await session.scalars(
@@ -103,6 +114,7 @@ async def touch_origins(keys: tuple[str, ...], source_id: str) -> None:
                 .where(
                     ClaudeResourceOrigin.resource_hash.in_(keys),
                     ClaudeResourceOrigin.source_id == source_id,
+                    ClaudeResourceOrigin.identity_generation == identity_generation,
                     ClaudeResourceOrigin.expires_at > now,
                 )
                 .values(expires_at=now + RESOURCE_TTL)
@@ -114,17 +126,25 @@ async def touch_origins(keys: tuple[str, ...], source_id: str) -> None:
         await session.commit()
 
 
-async def record_origins(scope: ResourceScope, source_id: str, value: dict[str, JsonValue]) -> None:
+async def record_origins(
+    scope: ResourceScope, source_id: str, value: dict[str, JsonValue], *, identity_generation: int = 1
+) -> None:
     """Commit before publishing native output; failures must never trigger replay."""
-    await record_keys(scope.keys(resource_ids(value)), source_id)
+    await record_keys(scope.keys(resource_ids(value)), source_id, identity_generation=identity_generation)
 
 
-async def record_keys(keys: tuple[str, ...], source_id: str) -> None:
+async def record_keys(
+    keys: tuple[str, ...], source_id: str, *, identity_generation: int = 1, require_current_identity: bool = True
+) -> None:
     """Persist account ownership without storing provider identifiers or contents."""
     try:
         if not keys:
             return
         async with get_background_session() as session:
+            if require_current_identity:
+                account = await lock_account(session, source_id)
+                if AccountState.model_validate_json(account.state_json).identity_generation != identity_generation:
+                    raise ClaudeError("Claude account identity changed before resource persistence")
             now = utcnow()
             if session.get_bind().dialect.name == "postgresql":
                 from sqlalchemy.dialects.postgresql import insert
@@ -144,11 +164,18 @@ async def record_keys(keys: tuple[str, ...], source_id: str) -> None:
             for key in keys:
                 written = await session.scalar(
                     insert(ClaudeResourceOrigin)
-                    .values(resource_hash=key, source_id=source_id, created_at=now, expires_at=now + RESOURCE_TTL)
+                    .values(
+                        resource_hash=key,
+                        source_id=source_id,
+                        identity_generation=identity_generation,
+                        created_at=now,
+                        expires_at=now + RESOURCE_TTL,
+                    )
                     .on_conflict_do_update(
                         index_elements=[ClaudeResourceOrigin.resource_hash],
                         set_={"expires_at": now + RESOURCE_TTL},
-                        where=ClaudeResourceOrigin.source_id == source_id,
+                        where=(ClaudeResourceOrigin.source_id == source_id)
+                        & (ClaudeResourceOrigin.identity_generation == identity_generation),
                     )
                     .returning(ClaudeResourceOrigin.resource_hash)
                 )

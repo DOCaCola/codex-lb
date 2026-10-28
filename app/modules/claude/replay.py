@@ -247,7 +247,9 @@ class ClaudeReplay:
     # Summarization reads completed thinking that cannot keep its signature.
     readable_history: bool
 
-    def project(self, payload: dict[str, JsonValue], *, source_id: str, model: str) -> dict[str, JsonValue]:
+    def project(
+        self, payload: dict[str, JsonValue], *, source_id: str, model: str, identity_generation: int = 1
+    ) -> dict[str, JsonValue]:
         items = payload.get("input")
         if not isinstance(items, list):
             return payload
@@ -260,14 +262,19 @@ class ClaudeReplay:
         foreign_deferred: set[str] = set()
         for block in self.blocks:
             envelope = block.envelope
-            native = (envelope.source_id, envelope.model) == (source_id, model)
+            native = (envelope.source_id, envelope.model, envelope.identity_generation) == (
+                source_id,
+                model,
+                identity_generation,
+            )
             if envelope.block["type"] == "web_search":
                 if native:
                     native_searches.add(search_replay(envelope.block)[0])
                     continue
                 if block.strict:
                     raise ClientPayloadError(
-                        "Active Claude search requires its original account and model",
+                        "Active Claude search requires its original account identity and model; "
+                        "resend portable context",
                         param=f"input[{block.index}]",
                         code="nonportable_provider_history",
                     )

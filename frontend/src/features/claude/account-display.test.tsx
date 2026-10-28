@@ -267,6 +267,35 @@ describe("Claude shared account surfaces", () => {
       screen.getByRole("button", { name: "Sign in with Claude" }),
     ).toBeEnabled();
   });
+  it.each([false, true])("requires explicit identity replacement consent (%s)", async (replaceIdentity) => {
+    const completions: unknown[] = [];
+    server.use(
+      http.post("/api/claude-accounts/oauth/start", () => HttpResponse.json({
+        state: "test-state", authorizationUrl: "https://claude.ai/authorize", expiresAt: "2030-01-01T00:00:00Z",
+      })),
+      http.post("/api/claude-accounts/oauth/complete", async ({ request }) => {
+        completions.push(await request.json());
+        return HttpResponse.json(account);
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ClaudeAccountControls account={account} readOnly={false} onCreated={vi.fn()}>
+        {({ detail }) => detail}
+      </ClaudeAccountControls>
+    </QueryClientProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    const replace = screen.getByRole("checkbox", { name: /Replace the saved identity/ });
+    expect(replace).not.toBeChecked();
+    if (replaceIdentity) await userEvent.click(replace);
+    await userEvent.click(screen.getByRole("checkbox", { name: /I will not use this refresh grant/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign in with Claude" }));
+    await userEvent.type(await screen.findByLabelText("Authorization code"), "new-code");
+    await userEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
+    expect(completions).toEqual([{ state: "test-state", code: "new-code", replaceIdentity }]);
+    await userEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(screen.getByRole("checkbox", { name: /Replace the saved identity/ })).not.toBeChecked();
+  });
   it("pauses through the account API and blocks mutations for read-only users", async () => {
     const changes: unknown[] = [];
     server.use(
