@@ -207,7 +207,9 @@ def _stream(
 async def test_buffered_native_burst_preserves_responses_result(
     tmp_path: Path, routed: bool, response_kind: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(native_module, "_NATIVE_STREAM_QUEUE_LIMIT", 64)
+    monkeypatch.setattr(
+        native_module, "_NATIVE_STREAM_QUEUE_BYTES_LIMIT", 64 * native_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES
+    )
     handshake = json.loads(
         (Path(__file__).resolve().parents[2] / "crates/codex-lb-protocol/tests/fixtures/handshake-v1.json").read_text()
     )
@@ -892,7 +894,12 @@ async def test_native_compact_large_result_is_fragmented_and_stops_before_late_f
     native_worker: SubprocessNativeEgressClient,
     routed: bool,
 ) -> None:
-    monkeypatch.setattr(native_module, "_NATIVE_STREAM_QUEUE_LIMIT", 64)
+    # Room for 64 maximal 16 KiB IPC fragments.
+    monkeypatch.setattr(
+        native_module,
+        "_NATIVE_STREAM_QUEUE_BYTES_LIMIT",
+        64 * (16 * 1024 + native_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES),
+    )
     items = [{"index": i, "padding": "한글" * 4096, "integer": 10**70} for i in range(96)]
     blocks = [
         json.dumps({"type": "response.output_item.done", "output_index": i, "item": item}, ensure_ascii=False)
@@ -1407,7 +1414,12 @@ async def test_native_interpretation_drains_large_fragments_without_python_norma
     native_worker: SubprocessNativeEgressClient,
     routed: bool,
 ) -> None:
-    monkeypatch.setattr(native_module, "_NATIVE_STREAM_QUEUE_LIMIT", 2)
+    # Room for two maximal 16 KiB IPC fragments.
+    monkeypatch.setattr(
+        native_module,
+        "_NATIVE_STREAM_QUEUE_BYTES_LIMIT",
+        2 * (16 * 1024 + native_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES),
+    )
     block = 'data: {"type":"response.text.delta","delta":' + json.dumps("한글😀" * 12000) + "}\n\n"
     expected = proxy_module._normalize_sse_event_block(block)
     terminal = 'data: {"type":"response.completed","response":{"id":"done"}}\n\n'

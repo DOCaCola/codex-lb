@@ -45,21 +45,23 @@ _REQUIRED_NATIVE_CAPABILITIES = frozenset(
 _NATIVE_EVENT_LINE_LIMIT = 24 * 1024 * 1024
 # Per-request bound between the helper reader (one task draining the helper's
 # stdout for every in-flight request) and each request's consumer. The bound
-# is a *byte budget* with a generous event cap: framed SSE deltas are tens of
-# bytes each and arrive in bursts of hundreds when upstream flushes reasoning
-# output, while a non-SSE body (an image generation JSON) is a handful of
-# large chunks. Either shape must fit while a healthy consumer is merely late
-# for a scheduling turn on a saturated event loop; only a consumer that truly
-# stops draining (dead client) trips the bound and is failed so it cannot hold
-# the shared reader hostage.
-_NATIVE_STREAM_QUEUE_LIMIT = 4096
+# is a memory budget, not an event count: framed SSE deltas are tens of bytes
+# each and upstream may deliver a whole held-back answer as one burst of
+# thousands of them, while a non-SSE body (an image generation JSON) is a
+# handful of large chunks. Either shape must fit while a healthy consumer is
+# merely late; only a consumer that truly stops draining (dead client) trips
+# the bound and is failed so it cannot hold the shared reader hostage.
 _NATIVE_STREAM_QUEUE_BYTES_LIMIT = 32 * 1024 * 1024
 # Per-WebSocket bound between the pump and the relay. Same shape as the stream
-# queue: a Responses turn is hundreds of small deltas, and the relay pauses
+# queue: a Responses turn is thousands of small deltas, and the relay pauses
 # briefly per message (locks, downstream sends). The pump never blocks on it,
 # so send acknowledgements keep resolving while messages wait.
-_NATIVE_WEBSOCKET_MESSAGE_QUEUE_LIMIT = 4096
 _NATIVE_WEBSOCKET_MESSAGE_QUEUE_BYTES_LIMIT = 32 * 1024 * 1024
+# Memory a queued payload-bearing item holds beyond its payload bytes: the
+# event dict or message object, its string headers and, for interpreted
+# Responses frames, the decoded payload's containers. Charging it keeps many
+# tiny items inside the same memory budget as a few large ones.
+_NATIVE_QUEUED_ITEM_OVERHEAD_BYTES = 1024
 _NATIVE_CANCEL_TIMEOUT_SECONDS = 2.0
 _NATIVE_WEBSOCKET_COMMAND_TIMEOUT_SECONDS = 30.0
 
@@ -104,45 +106,50 @@ def _websocket_message_size(item: NativeWebSocketMessage | BaseException) -> int
 
 
 class _ByteBudgetQueue[ItemT](asyncio.Queue[ItemT]):
-    """``asyncio.Queue`` whose ``put_nowait`` also trips on a queued-bytes budget.
+    """Unbounded-count ``asyncio.Queue`` whose ``put_nowait`` trips on a memory budget.
 
-    The item cap and the byte budget both surface as ``QueueFull``, so callers'
-    existing overflow handling covers both without any change to the put/get
-    call sites.
+    Each payload-bearing item is charged its payload bytes plus a fixed
+    per-item overhead, so a burst of thousands of tiny deltas and a few large
+    chunks are bounded by the same measure. The budget surfaces as
+    ``QueueFull``, so callers' existing overflow handling is unchanged.
     """
 
-    def __init__(self, *, max_items: int, max_bytes: int, item_size: Callable[[ItemT], int]) -> None:
-        super().__init__(maxsize=max_items)
+    def __init__(self, *, max_bytes: int, item_size: Callable[[ItemT], int]) -> None:
+        super().__init__()
         self._max_bytes = max_bytes
         self._item_size = item_size
         self.queued_bytes = 0
+
+    def _charged_size(self, item: ItemT) -> int:
+        size = self._item_size(item)
+        return size + _NATIVE_QUEUED_ITEM_OVERHEAD_BYTES if size else 0
 
     def put_nowait(self, item: ItemT) -> None:
         # The byte budget is enforced against the projected total, so a queue
         # just under budget rejects an item that would carry it past, while a
         # zero-byte item (``end``/``error``/``cancelled``, a bare close, or a
-        # failure object) is always accepted as long as the item cap has room
-        # so a complete response is never discarded at the boundary. An item
-        # arriving at an empty queue is always accepted (event and frame size
-        # caps bound it separately) so a lone large item is never a failure.
-        size = self._item_size(item)
+        # failure object) is always accepted so a complete response is never
+        # discarded at the boundary; such control items are bounded by the
+        # protocol, not by upstream output. An item arriving at an empty queue
+        # is always accepted (event and frame size caps bound it separately)
+        # so a lone large item is never a failure.
+        size = self._charged_size(item)
         if size and not self.empty() and self.queued_bytes + size > self._max_bytes:
             raise asyncio.QueueFull
         super().put_nowait(item)
 
     def _put(self, item: ItemT) -> None:
         super()._put(item)
-        self.queued_bytes += self._item_size(item)
+        self.queued_bytes += self._charged_size(item)
 
     def _get(self) -> ItemT:
         item = super()._get()
-        self.queued_bytes -= self._item_size(item)
+        self.queued_bytes -= self._charged_size(item)
         return item
 
 
 def _new_stream_queue() -> _ByteBudgetQueue[dict[str, object] | BaseException]:
     return _ByteBudgetQueue[dict[str, object] | BaseException](
-        max_items=_NATIVE_STREAM_QUEUE_LIMIT,
         max_bytes=_NATIVE_STREAM_QUEUE_BYTES_LIMIT,
         item_size=_event_payload_size,
     )
@@ -150,7 +157,6 @@ def _new_stream_queue() -> _ByteBudgetQueue[dict[str, object] | BaseException]:
 
 def _new_websocket_message_queue() -> _ByteBudgetQueue[NativeWebSocketMessage | BaseException]:
     return _ByteBudgetQueue(
-        max_items=_NATIVE_WEBSOCKET_MESSAGE_QUEUE_LIMIT,
         max_bytes=_NATIVE_WEBSOCKET_MESSAGE_QUEUE_BYTES_LIMIT,
         item_size=_websocket_message_size,
     )

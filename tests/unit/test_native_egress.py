@@ -441,7 +441,11 @@ async def test_client_close_is_idempotent_and_prevents_restart(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_buffered_body_burst_reaches_active_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(native_egress_module, "_NATIVE_STREAM_QUEUE_LIMIT", 64)
+    monkeypatch.setattr(
+        native_egress_module,
+        "_NATIVE_STREAM_QUEUE_BYTES_LIMIT",
+        64 * native_egress_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES,
+    )
     helper = tmp_path / "native-helper"
     _write_helper(
         helper,
@@ -1209,25 +1213,23 @@ for command in commands():
         await client.aclose()
 
 
-def test_bounded_event_queue_trips_on_bytes_or_events_and_releases_bytes_on_get() -> None:
-    queue = native_egress_module._ByteBudgetQueue(
-        max_items=4, max_bytes=10, item_size=native_egress_module._event_payload_size
-    )
+def test_bounded_event_queue_trips_on_bytes_and_releases_bytes_on_get(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Payload accounting in isolation; the per-item overhead has its own test.
+    monkeypatch.setattr(native_egress_module, "_NATIVE_QUEUED_ITEM_OVERHEAD_BYTES", 0)
+    queue = native_egress_module._ByteBudgetQueue(max_bytes=10, item_size=native_egress_module._event_payload_size)
     queue.put_nowait({"type": "chunk", "data": "abcd"})
     queue.put_nowait({"type": "sse", "text": "efgh"})
-    assert queue.queued_bytes == 8 and not queue.full()
+    assert queue.queued_bytes == 8
     # The incoming event counts: 8 queued + 3 would exceed the 10-byte budget.
     with pytest.raises(asyncio.QueueFull):
         queue.put_nowait({"type": "chunk", "data": "klm"})
     queue.put_nowait({"type": "chunk", "data": "ij"})  # exactly 10 bytes fills the budget
     assert queue.queued_bytes == 10
-    # A zero-byte terminal at exactly the budget is still accepted (event cap has room)...
+    # Zero-byte terminals at exactly the budget are still accepted.
     queue.put_nowait({"type": "end"})
-    assert queue.full()  # ...and 4 events is the event cap.
-    with pytest.raises(asyncio.QueueFull):
-        queue.put_nowait({"type": "cancelled"})
+    queue.put_nowait({"type": "cancelled"})
     assert queue.get_nowait() == {"type": "chunk", "data": "abcd"}
-    assert queue.queued_bytes == 6 and not queue.full()
+    assert queue.queued_bytes == 6
     with pytest.raises(asyncio.QueueFull):
         queue.put_nowait({"type": "chunk", "data": "wxyz!"})  # 6 + 5 > 10
     queue.put_nowait({"type": "chunk", "data": "wxyz"})  # 6 + 4 == 10
@@ -1269,13 +1271,30 @@ def test_bounded_event_queue_trips_on_bytes_or_events_and_releases_bytes_on_get(
     # A lone event larger than the whole budget is accepted at an empty queue
     # (the SSE event size cap bounds it), so a single big chunk never fails;
     # anything but a zero-byte event is then rejected until it drains.
-    big = native_egress_module._ByteBudgetQueue(
-        max_items=8, max_bytes=10, item_size=native_egress_module._event_payload_size
-    )
+    big = native_egress_module._ByteBudgetQueue(max_bytes=10, item_size=native_egress_module._event_payload_size)
     big.put_nowait({"type": "chunk", "data": "x" * 64})
     with pytest.raises(asyncio.QueueFull):
         big.put_nowait({"type": "chunk", "data": "y"})
     big.put_nowait({"type": "end"})
+
+
+def test_bounded_event_queue_charges_per_item_overhead_instead_of_counting_events() -> None:
+    overhead = native_egress_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES
+    queue = native_egress_module._ByteBudgetQueue(
+        max_bytes=3 * (overhead + 1), item_size=native_egress_module._event_payload_size
+    )
+    for _ in range(3):
+        queue.put_nowait({"type": "chunk", "data": "x"})
+    assert queue.queued_bytes == 3 * (overhead + 1)
+    # Many tiny items exhaust the budget through their overhead alone.
+    with pytest.raises(asyncio.QueueFull):
+        queue.put_nowait({"type": "chunk", "data": "x"})
+    # Control and terminal items carry no payload and are never charged.
+    for _ in range(10_000):
+        queue.put_nowait({"type": "end"})
+    assert queue.queued_bytes == 3 * (overhead + 1)
+    queue.get_nowait()
+    assert queue.queued_bytes == 2 * (overhead + 1)
 
 
 def test_websocket_message_size_counts_retained_payload_bytes() -> None:
@@ -1341,20 +1360,21 @@ def _responses_websocket_request() -> NativeWebSocketRequest:
 
 @pytest.mark.asyncio
 async def test_native_websocket_burst_drains_and_acknowledges_while_messages_are_queued(tmp_path: Path) -> None:
-    """A Responses turn bursts hundreds of deltas before the relay reads. The
-    former 64-message cap failed exactly this healthy-but-late consumer."""
+    """Upstream can release a whole held-back answer as one burst of thousands
+    of deltas before the relay reads. The former 64- and later 4096-message
+    caps failed exactly this healthy-but-late consumer."""
     helper = tmp_path / "native-helper"
-    _write_helper(helper, _websocket_burst_helper_source(frames=2000, frame_text="delta", acknowledge=True))
+    _write_helper(helper, _websocket_burst_helper_source(frames=8000, frame_text="delta", acknowledge=True))
     client = SubprocessNativeEgressClient(helper)
     websocket = await client.websocket(_responses_websocket_request())
 
-    # The acknowledgement follows all 2000 messages; it must resolve while
+    # The acknowledgement follows all 8000 messages; it must resolve while
     # every one of them is still waiting for the consumer.
     await asyncio.wait_for(websocket.send_text('{"type":"response.create"}'), timeout=5.0)
-    assert websocket._messages.qsize() == 2000
+    assert websocket._messages.qsize() == 8000
 
-    sequences = [(await websocket.receive()).routing for _ in range(2000)]
-    assert sequences == [NativeWebSocketRoutingMetadata("r1", index) for index in range(2000)]
+    sequences = [(await websocket.receive()).routing for _ in range(8000)]
+    assert sequences == [NativeWebSocketRoutingMetadata("r1", index) for index in range(8000)]
     assert websocket._messages.queued_bytes == 0
     await websocket.close()
     await asyncio.wait_for(client.aclose(), timeout=2.0)
@@ -1364,7 +1384,7 @@ async def test_native_websocket_burst_drains_and_acknowledges_while_messages_are
 async def test_native_websocket_stalled_consumer_fails_at_the_message_byte_budget(tmp_path: Path) -> None:
     helper = tmp_path / "native-helper"
     # Each interpreted ~1 MiB frame counts twice (text plus decoded payload),
-    # so 24 frames exceed the 32 MiB budget while staying under the event cap.
+    # so 24 frames exceed the 32 MiB budget.
     _write_helper(
         helper,
         _websocket_burst_helper_source(frames=24, frame_text="x" * (1024 * 1024), acknowledge=False),
@@ -1389,7 +1409,11 @@ async def test_burst_of_small_events_does_not_trip_the_queue_while_the_consumer_
     """Hundreds of tiny framed deltas buffered in the helper pipe must not fail
     a healthy consumer (the pre-budget 64-event cap did exactly that on a
     saturated event loop, #2167)."""
-    monkeypatch.setattr(native_egress_module, "_NATIVE_STREAM_QUEUE_LIMIT", 64)
+    monkeypatch.setattr(
+        native_egress_module,
+        "_NATIVE_STREAM_QUEUE_BYTES_LIMIT",
+        64 * native_egress_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES,
+    )
     helper = tmp_path / "native-helper"
     _write_helper(
         helper,
@@ -1426,9 +1450,10 @@ for command in commands():
 
 @pytest.mark.asyncio
 async def test_response_landing_exactly_on_the_byte_budget_still_completes(tmp_path: Path) -> None:
-    """16 x 2 MiB of base64 payload is exactly the 32 MiB budget; the zero-byte
-    ``end`` that follows must still be accepted so the complete response is
-    delivered once the consumer drains."""
+    """16 chunks of (2 MiB - per-item overhead) base64 payload charge exactly the
+    32 MiB budget; the zero-byte ``end`` that follows must still be accepted so
+    the complete response is delivered once the consumer drains."""
+    assert native_egress_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES == 1024
     helper = tmp_path / "native-helper"
     _write_helper(
         helper,
@@ -1445,8 +1470,8 @@ for command in commands():
         "type": "head", "request_id": request_id, "status": 200,
         "http_version": "HTTP/2.0", "headers": [],
     }), flush=True)
-    chunk = base64.b64encode(b"z" * (3 * 512 * 1024)).decode()  # 2 MiB of base64
-    assert len(chunk) == 2 * 1024 * 1024
+    chunk = base64.b64encode(b"z" * 1572096).decode()  # 2 MiB - 1 KiB of base64
+    assert len(chunk) == 2 * 1024 * 1024 - 1024
     for _ in range(16):
         print(json.dumps({"type": "chunk", "request_id": request_id, "data": chunk}), flush=True)
     print(json.dumps({"type": "end", "request_id": request_id}), flush=True)
@@ -1456,7 +1481,7 @@ for command in commands():
     response = await client.request(NativeEgressRequest(method="GET", url="https://example.test/exact", headers={}))
     await asyncio.sleep(1.0)  # let the whole body queue up before the consumer reads
     body = await asyncio.wait_for(response.read(), timeout=10.0)
-    assert len(body) == 16 * 3 * 512 * 1024
+    assert len(body) == 16 * 1572096
     await asyncio.wait_for(client.aclose(), timeout=2.0)
 
 

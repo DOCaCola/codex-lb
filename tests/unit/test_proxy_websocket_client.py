@@ -25,6 +25,7 @@ from websockets.frames import Close
 from websockets.http11 import Response
 
 import app.core.clients.http as http_module
+import app.core.clients.native_egress as native_egress_module
 import app.core.clients.proxy_websocket as proxy_websocket_module
 from app.core.clients.codex import UPSTREAM_WEBSOCKET_LIVENESS, CodexTransportError, CodexWebSocketResult
 from app.core.clients.native_egress import (
@@ -387,7 +388,9 @@ async def test_native_protocol_error_diagnostic_omits_exception_text(caplog):
 
 
 @pytest.mark.asyncio
-async def test_native_message_queue_overflow_reaches_receive_diagnostic(caplog):
+async def test_native_message_queue_overflow_reaches_receive_diagnostic(caplog, monkeypatch):
+    overhead = native_egress_module._NATIVE_QUEUED_ITEM_OVERHEAD_BYTES
+    monkeypatch.setattr(native_egress_module, "_NATIVE_WEBSOCKET_MESSAGE_QUEUE_BYTES_LIMIT", 4 * overhead)
     events = asyncio.Queue()
     client = SimpleNamespace(_abort_request=AsyncMock(), _finish_request=Mock())
     native = NativeEgressWebSocket(
@@ -400,7 +403,7 @@ async def test_native_message_queue_overflow_reaches_receive_diagnostic(caplog):
         events=events,
     )
     adapter = NativeUpstreamWebSocket(native)
-    for _ in range(native._messages.maxsize + 1):
+    for _ in range(4):
         events.put_nowait({"type": "websocket_text", "text": "private-payload"})
     await asyncio.wait_for(native._pump_task, timeout=2)
     message = await adapter.receive()
