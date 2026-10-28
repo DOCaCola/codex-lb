@@ -191,11 +191,18 @@ def classify_upstream_failure(
     )
 
 
-def is_upstream_burst_rejection(*, failure_class: FailureClass, http_status: int | None) -> bool:
+def is_upstream_burst_rejection(*, error_code: str, failure_class: FailureClass, http_status: int | None) -> bool:
     """True for a code-less upstream HTTP 429: a per-account burst/concurrency
     rejection that ``classify_upstream_failure`` files as ``retryable_transient``
-    (coded 429s land in ``rate_limit`` / ``quota`` and are not bursts)."""
-    return http_status == 429 and failure_class == "retryable_transient"
+    (coded 429s land in ``rate_limit`` / ``quota`` and are not bursts).
+
+    A model admission limit is the one coded 429 filed as transient. It refuses
+    one model until its ``Retry-After`` of seconds to minutes, which neither
+    the account-wide burst cooldown nor the seconds-long same-account retry can
+    wait out, so it is not a burst: its own model cooldown moves the turn."""
+    return (
+        http_status == 429 and failure_class == "retryable_transient" and error_code not in MODEL_ADMISSION_LIMIT_CODES
+    )
 
 
 def _header_account_id(account_id: str | None) -> str | None:

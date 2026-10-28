@@ -50,6 +50,13 @@ class RuntimeState:
     # owners and hard continuity owners are untouched. Replica-local, never
     # persisted, independent of ``cooldown_until`` / persisted RATE_LIMITED.
     burst_backoff_until: float | None = None
+    # Model admission cooldown (``turn_rate_limit_exceeded``, see
+    # ``_load_balancer/overload_backoff.py``): model -> deadline until which
+    # upstream refuses that model on the account. For that model only, fresh
+    # selection avoids the account and soft sticky owners are released
+    # request-locally; hard continuity owners are untouched. Replica-local,
+    # never persisted, no account health.
+    model_admission_until: dict[str, float] | None = None
     # Recent upstream outcome window (see ``_load_balancer/error_rate.py``):
     # minute bucket -> [successes, failures], pruned to the configured window.
     # Feeds the selection weight multiplier; replica-local, never persisted.

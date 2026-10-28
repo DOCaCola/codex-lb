@@ -295,6 +295,7 @@ async def test_established_owner_on_slow_account_is_kept_and_deterministic_strat
     for _ in range(40):
         states = [_state("slow", multiplier=TTFT_WEIGHT_FLOOR), _state("fast")]
         outcome = await balancer._select_with_stickiness(
+            model=None,
             states=states,
             account_map=account_map,
             sticky_key="owned-key",

@@ -103,6 +103,7 @@ async def _invoke_stickiness(
     account_map = {s.account_id: cast(Account, AsyncMock()) for s in states}
 
     outcome = await lb._select_with_stickiness(
+        model=None,
         states=states,
         account_map=account_map,
         sticky_key=sticky_key,

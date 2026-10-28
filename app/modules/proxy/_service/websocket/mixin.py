@@ -440,6 +440,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _prepare_websocket_request_state_for_account_switch,
     _prepare_websocket_request_state_for_auth_replay,
     _record_or_defer_websocket_accepted_replay_health,
+    _record_terminal_event_model_admission_limit,
     _record_websocket_continuity_completion,
     _record_websocket_empty_prewarm_completion,
     _record_websocket_responses_lite_acceptance,
@@ -524,7 +525,6 @@ from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
 from app.modules.proxy.helpers import (
-    MODEL_ADMISSION_LIMIT_CODES,
     _header_account_id,
     _normalize_error_code,
     _parse_openai_error,
@@ -6365,6 +6365,13 @@ class _WebSocketMixin:
             payload=payload,
             has_other_pending_requests=has_other_pending_requests,
         )
+        await _record_terminal_event_model_admission_limit(
+            proxy,
+            account,
+            model=request_state.model,
+            event_type=event_type,
+            payload=payload,
+        )
         auth_error_code = _websocket_precreated_auth_error_code(
             request_state,
             event_type=event_type,
@@ -6448,6 +6455,7 @@ class _WebSocketMixin:
             event, payload, event_type, downstream_text = _rewrite_websocket_previous_response_owner_unavailable_event(
                 request_state=request_state,
                 upstream_error_code=owner_rejection_code,
+                upstream_error_message=_websocket_event_error_message(event_type, payload) or "Upstream error",
             )
             retry_error_code = None
         if owner_rejection_code is not None and retry_safe_owner_replay and not retry_safe_previous_response_not_found:
@@ -6462,6 +6470,7 @@ class _WebSocketMixin:
                     _rewrite_websocket_previous_response_owner_unavailable_event(
                         request_state=request_state,
                         upstream_error_code=owner_rejection_code,
+                        upstream_error_message=_websocket_event_error_message(event_type, payload) or "Upstream error",
                     )
                 )
                 retry_error_code = None
@@ -6625,14 +6634,15 @@ class _WebSocketMixin:
                     # body); otherwise it goes to the owner that accepted the
                     # turn, which the dispatch binding requires on the reconnect.
                     _prepare_websocket_anchored_replay_body(request_state)
-                if (
-                    accepted_lifecycle_replay or retry_error_code in MODEL_ADMISSION_LIMIT_CODES
-                ) and _websocket_accepted_replay_may_exclude_account(request_state):
-                    # The accepted turn failed on this account, or the account
-                    # refused the model until its Retry-After; move the
+                if accepted_lifecycle_replay and _websocket_accepted_replay_may_exclude_account(request_state):
+                    # The accepted turn failed on this account; move the
                     # account-neutral replay to another one like the bridge does.
                     # A replay still pinned to its owner, or whose Codex session
                     # may resolve to a hard sticky owner, reconnects there instead.
+                    # A model admission limit needs no exclusion: its cooldown,
+                    # recorded when the frame was classified, already steers the
+                    # reselection -- and releases a soft sticky owner -- for this
+                    # model, while a hard owner keeps the turn.
                     request_state.excluded_account_ids.add(account.id)
                     request_state.affinity_policy = replace(request_state.affinity_policy, reallocate_sticky=True)
                 upstream_control.suppress_downstream_event = True
@@ -6640,10 +6650,10 @@ class _WebSocketMixin:
                 if accepted_lifecycle_replay:
                     # The accepted request still holds its API-key reservation:
                     # the health write waits for its settlement (bridge parity).
-                    # Pre-created replays keep the immediate write; apart from a
-                    # model admission limit they are not excluded from the
-                    # reconnect and rely on the penalty to steer selection away
-                    # from this account.
+                    # Pre-created replays keep the immediate write; they are not
+                    # excluded from the reconnect and rely on the penalty (or a
+                    # model admission cooldown) to steer selection away from
+                    # this account.
                     await _record_or_defer_websocket_accepted_replay_health(
                         proxy,
                         request_state,

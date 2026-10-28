@@ -46,6 +46,7 @@ from app.modules.api_keys.service import (
     ApiKeyUsageReservationData,
     LimitRuleInput,
 )
+from app.modules.proxy._load_balancer.overload_backoff import model_admission_limited
 from app.modules.proxy._service import support as proxy_support_module
 from app.modules.proxy._service.websocket import mixin as websocket_mixin_module
 from app.modules.proxy.account_cache import RoutingAvailabilityCache, mark_account_routing_unavailable
@@ -10961,28 +10962,16 @@ def test_backend_responses_websocket_retries_stale_account_model_route_on_anothe
     )
 
 
-def test_backend_responses_websocket_previous_response_usage_limit_returns_upstream_unavailable(
+def _run_anchored_turn_refused_by_its_owner(
     app_instance,
     monkeypatch,
-):
+    owner_refusal: dict[str, Any],
+) -> tuple[dict[str, Any], list[str | None], list[str | None], list[str]]:
+    """Send a turn anchored to a previous response whose owner refuses it with
+    ``owner_refusal``; return the client's frame, the connect models, the
+    preferred accounts and the account-health codes."""
     first_upstream = _FakeUpstreamWebSocket(
-        [
-            _FakeUpstreamMessage(
-                "text",
-                text=json.dumps(
-                    {
-                        "type": "error",
-                        "status": 429,
-                        "error": {
-                            "type": "invalid_request_error",
-                            "code": "usage_limit_reached",
-                            "message": "The usage limit has been reached",
-                        },
-                    },
-                    separators=(",", ":"),
-                ),
-            )
-        ]
+        [_FakeUpstreamMessage("text", text=json.dumps(owner_refusal, separators=(",", ":")))]
     )
     connect_models: list[str | None] = []
     captured_preferred_accounts: list[str | None] = []
@@ -11073,12 +11062,69 @@ def test_backend_responses_websocket_previous_response_usage_limit_returns_upstr
             websocket.send_text(json.dumps(request_payload))
             event = json.loads(websocket.receive_text())
 
+    return event, connect_models, captured_preferred_accounts, handled_error_codes
+
+
+def test_backend_responses_websocket_previous_response_usage_limit_returns_upstream_unavailable(
+    app_instance,
+    monkeypatch,
+):
+    event, connect_models, captured_preferred_accounts, handled_error_codes = _run_anchored_turn_refused_by_its_owner(
+        app_instance,
+        monkeypatch,
+        {
+            "type": "error",
+            "status": 429,
+            "error": {
+                "type": "invalid_request_error",
+                "code": "usage_limit_reached",
+                "message": "The usage limit has been reached",
+            },
+        },
+    )
+
     assert event["type"] == "response.failed"
     assert event["response"]["error"]["code"] == "upstream_unavailable"
     assert event["response"]["error"]["message"] == "Previous response owner account is unavailable; retry later."
     assert connect_models == ["gpt-5.1"]
     assert captured_preferred_accounts == ["acct_ws_proxy_owner"]
     assert handled_error_codes == ["usage_limit_reached"]
+
+
+def test_backend_responses_websocket_previous_response_model_admission_limit_is_promptly_retryable(
+    app_instance,
+    monkeypatch,
+):
+    """The anchor's owner refuses only the model until its Retry-After and the
+    anchor cannot leave it. The client gets upstream's own code and message
+    without the Retry-After: Codex retries an unrecognized coded failure at
+    once, re-sending the full history without the anchor, which the model
+    cooldown then routes to another account. The upstream 429 with its
+    Retry-After would instead hold the turn for the whole window."""
+    event, connect_models, captured_preferred_accounts, handled_error_codes = _run_anchored_turn_refused_by_its_owner(
+        app_instance,
+        monkeypatch,
+        {
+            "type": "error",
+            "status": 429,
+            "error": {
+                "type": "rate_limit_error",
+                "code": "turn_rate_limit_exceeded",
+                "message": "Codex is at capacity, please try again later",
+            },
+            "headers": {"retry-after": "256"},
+        },
+    )
+
+    assert event["type"] == "response.failed"
+    error = event["response"]["error"]
+    assert error["code"] == "turn_rate_limit_exceeded"
+    assert error["message"] == "Codex is at capacity, please try again later"
+    assert "headers" not in error
+    assert "headers" not in event
+    assert connect_models == ["gpt-5.1"]
+    assert captured_preferred_accounts == ["acct_ws_proxy_owner"]
+    assert handled_error_codes == ["turn_rate_limit_exceeded"]
 
 
 def test_backend_responses_websocket_transparent_replay_emits_no_accounts_when_reconnect_fails(
@@ -14364,7 +14410,9 @@ class _TwoAccountWebSocketFailover:
     (bound replay owner, anchored or file-pinned or turn-state preferred
     account), and a raw legacy ``CODEX_SESSION`` row resolved for the request's
     ``legacy_selection_key`` (``hard_sticky_owner_by_legacy_key``, the
-    ``hard_sticky`` narrowing of real sticky selection) -- and refuses the
+    ``hard_sticky`` narrowing of real sticky selection), and it avoids an
+    account cooling for the request's model while another candidate remains
+    unless an owner requires it -- and refuses the
     connect with the same ``previous_response_owner_unavailable`` failure
     ``_connect_proxy_websocket`` emits when no account satisfies all of them. A
     replay that never excludes the failing account lands on that account again
@@ -14385,6 +14433,7 @@ class _TwoAccountWebSocketFailover:
         self.connect_accounts: list[str] = []
         self.excluded_at_connect: list[set[str]] = []
         self.required_at_connect: list[str | None] = []
+        self.cooling_at_connect: list[set[str]] = []
         self.refused_connects: list[dict[str, Any]] = []
         # Raw ``CODEX_SESSION`` rows an old replica persisted for a bare session
         # header are hard ownership in real selection: the owner is the only
@@ -14453,6 +14502,15 @@ class _TwoAccountWebSocketFailover:
                 and (required_account_id is None or account_id == required_account_id)
                 and (hard_sticky_owner_id is None or account_id == hard_sticky_owner_id)
             ]
+            now = self._load_balancer._clock.time()
+            cooling = {
+                account_id
+                for account_id in failover.upstreams_by_account
+                if model_admission_limited(self._load_balancer._runtime.get(account_id), now, request_state.model)
+            }
+            failover.cooling_at_connect.append(cooling)
+            if required_account_id is None and hard_sticky_owner_id is None:
+                candidates = [account_id for account_id in candidates if account_id not in cooling] or candidates
             selected_account_id = candidates[0] if candidates else None
             if selected_account_id is None or not failover.upstreams_by_account[selected_account_id]:
                 if selected_account_id is not None:
@@ -14689,15 +14747,20 @@ def test_backend_responses_websocket_retries_accepted_output_free_capacity_error
     assert json.loads(recovered_upstream.sent_text[0])["input"] == json.loads(first_upstream.sent_text[0])["input"]
 
 
+@pytest.mark.parametrize("with_session_header", [False, True], ids=["no-session", "bare-session"])
 def test_backend_responses_websocket_moves_a_precreated_model_admission_limit_to_another_account(
     app_instance,
     monkeypatch,
+    with_session_header: bool,
 ):
     """Upstream refuses the turn before ``response.created`` with
     ``turn_rate_limit_exceeded`` ("Codex is at capacity", 429 + Retry-After).
-    The account keeps refusing that model until the deadline, so the replay
-    must exclude it instead of reconnecting there, and the account takes no
-    health penalty: its other models are unaffected."""
+    The account keeps refusing that model until the deadline, so the refusal
+    engages the model's cooldown and the replay's reselection leaves the
+    account -- without a request-local exclusion, so it also holds for a
+    Codex session whose legacy row could have been a hard owner (no such row
+    here) and for every concurrent selection. The account takes no health
+    penalty: its other models are unaffected."""
     first_upstream = _SequencedUpstreamWebSocket(
         [],
         deferred_message_batches=[
@@ -14721,10 +14784,17 @@ def test_backend_responses_websocket_moves_a_precreated_model_admission_limit_to
     failover = _TwoAccountWebSocketFailover(first_upstream, recovered_upstream)
     failover.install(monkeypatch)
 
-    events, disconnect = failover.run(app_instance)
+    events, disconnect = failover.run(
+        app_instance,
+        headers=failover.BARE_SESSION_HEADERS if with_session_header else None,
+    )
 
     _assert_ws_single_response_lifecycle_completed(events, disconnect)
-    failover.assert_retried_on_another_account()
+    assert not failover.refused_connects, failover.refused_connects
+    assert failover.connect_accounts == [failover.FIRST_ACCOUNT_ID, failover.SECOND_ACCOUNT_ID]
+    assert failover.cooling_at_connect == [set(), {failover.FIRST_ACCOUNT_ID}]
+    assert failover.excluded_at_connect[-1] == set(), failover.excluded_at_connect
+    assert failover.required_at_connect[-1] is None, failover.required_at_connect
     assert failover.stream_errors == [(failover.FIRST_ACCOUNT_ID, "turn_rate_limit_exceeded")]
     assert len(first_upstream.sent_text) == 1
     assert len(recovered_upstream.sent_text) == 1

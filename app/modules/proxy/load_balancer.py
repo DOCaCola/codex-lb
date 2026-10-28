@@ -1705,6 +1705,7 @@ class LoadBalancer:
         sticky_refresh_skip_deadline: datetime | None = None,
         hard_owner_pool: bool = False,
         redact_sensitive_details: bool = False,
+        model: str | None,
     ) -> _StickySelectionOutcome:
         return await _run_select_with_stickiness(
             states=states,
@@ -1735,6 +1736,7 @@ class LoadBalancer:
             overload_backoff_runtime=self._runtime,
             clock=self._clock,
             redact_sensitive_details=redact_sensitive_details,
+            model=model,
         )
 
     _persist_sticky_mutation = staticmethod(_persist_sticky_mutation)

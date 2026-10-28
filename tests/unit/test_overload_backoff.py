@@ -27,6 +27,8 @@ from app.db.models import Account, AccountStatus, StickySessionKind
 from app.modules.proxy._load_balancer.overload_backoff import (
     BURST_BACKOFF_DEFAULT_SECONDS,
     BURST_BACKOFF_MAX_SECONDS,
+    MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS,
+    MODEL_ADMISSION_COOLDOWN_MAX_SECONDS,
     OVERLOAD_BACKOFF_BASE_SECONDS,
     OVERLOAD_BACKOFF_MAX_SECONDS,
     OVERLOAD_ISOLATION_TRIP_LEVEL,
@@ -39,10 +41,13 @@ from app.modules.proxy._load_balancer.overload_backoff import (
     OverloadIsolationPolicy,
     filter_overload_backoff_candidates,
     isolation_substitute_seed,
+    model_admission_limited,
     overload_backoff_active,
     overload_backoff_seconds,
     overload_isolation_active,
     record_burst_rejection_locked,
+    record_model_admission_limit,
+    record_model_admission_limit_locked,
     record_overload_rejection_locked,
     record_upstream_burst_rejection,
     record_upstream_overload,
@@ -51,6 +56,7 @@ from app.modules.proxy._load_balancer.overload_backoff import (
 from app.modules.proxy._load_balancer.types import RuntimeState
 from app.modules.proxy._service.streaming.retry import _transient_retry_error_code
 from app.modules.proxy._service.support import _http_error_status_from_payload, _TransientStreamError
+from app.modules.proxy._service.websocket.helpers import _record_terminal_event_model_admission_limit
 from app.modules.proxy.load_balancer import LoadBalancer
 from tests.simulation.virtual_time import VirtualClock
 from tests.unit.test_load_balancer_concurrency import (
@@ -86,15 +92,15 @@ def test_window_trips_only_on_the_third_rejection_inside_the_window() -> None:
     runtime = RuntimeState()
     assert record_overload_rejection_locked(runtime, 1000.0) is None
     assert record_overload_rejection_locked(runtime, 1010.0) is None
-    assert not overload_backoff_active(runtime, 1010.0)
+    assert not overload_backoff_active(runtime, 1010.0, model=None)
 
     deadline = record_overload_rejection_locked(runtime, 1020.0)
 
     assert deadline == pytest.approx(1020.0 + OVERLOAD_BACKOFF_BASE_SECONDS)
     assert runtime.overload_backoff_level == 1
     assert runtime.overload_rejections == []
-    assert overload_backoff_active(runtime, 1020.0 + OVERLOAD_BACKOFF_BASE_SECONDS - 1)
-    assert not overload_backoff_active(runtime, 1020.0 + OVERLOAD_BACKOFF_BASE_SECONDS)
+    assert overload_backoff_active(runtime, 1020.0 + OVERLOAD_BACKOFF_BASE_SECONDS - 1, model=None)
+    assert not overload_backoff_active(runtime, 1020.0 + OVERLOAD_BACKOFF_BASE_SECONDS, model=None)
 
 
 def test_soft_rejections_alone_need_double_the_trip_count() -> None:
@@ -102,7 +108,7 @@ def test_soft_rejections_alone_need_double_the_trip_count() -> None:
     # Five soft observations sum to 2.5 -- still below the trip count of 3.
     for i in range(5):
         assert record_overload_rejection_locked(runtime, 1000.0 + i, soft=True) is None
-    assert not overload_backoff_active(runtime, 1005.0)
+    assert not overload_backoff_active(runtime, 1005.0, model=None)
     assert len(runtime.soft_overload_rejections or []) == 5
     assert runtime.overload_rejections == []
 
@@ -119,7 +125,7 @@ def test_soft_and_hard_rejections_combine_toward_one_trip_threshold() -> None:
     assert record_overload_rejection_locked(runtime, 1001.0, soft=True) is None
     assert record_overload_rejection_locked(runtime, 1002.0, soft=True) is None
     # 1 hard + 2 soft = 2.0, below the threshold.
-    assert not overload_backoff_active(runtime, 1002.0)
+    assert not overload_backoff_active(runtime, 1002.0, model=None)
 
     deadline = record_overload_rejection_locked(runtime, 1003.0)
 
@@ -162,7 +168,7 @@ async def test_handle_stream_error_feeds_server_error_terminal_into_the_soft_win
     assert runtime.overload_rejections == []
     # A single soft observation must not engage any cooldown on its own.
     assert runtime.burst_backoff_until is None
-    assert not overload_backoff_active(runtime, clock.time())
+    assert not overload_backoff_active(runtime, clock.time(), model=None)
 
 
 @pytest.mark.asyncio
@@ -186,7 +192,7 @@ async def test_handle_stream_error_ignores_http_coded_server_error_for_the_soft_
     runtime = balancer._runtime.get(account.id)
     assert runtime is None or not runtime.soft_overload_rejections
     assert runtime is None or not runtime.overload_rejections
-    assert runtime is None or not overload_backoff_active(runtime, clock.time())
+    assert runtime is None or not overload_backoff_active(runtime, clock.time(), model=None)
 
 
 @pytest.mark.asyncio
@@ -235,7 +241,7 @@ async def test_handle_stream_error_ignores_a_terminal_renderer_server_error_with
     runtime = balancer._runtime.get(account.id)
     assert runtime is None or not runtime.soft_overload_rejections
     assert runtime is None or not runtime.overload_rejections
-    assert runtime is None or not overload_backoff_active(runtime, clock.time())
+    assert runtime is None or not overload_backoff_active(runtime, clock.time(), model=None)
     # The evidence keyword gates the window only: the ordinary transient
     # penalty these call sites already took is unchanged.
     assert record_error.await_count == 6
@@ -273,7 +279,7 @@ async def test_handle_stream_error_ignores_a_bridge_error_frame_carrying_an_http
 
     runtime = balancer._runtime.get(account.id)
     assert runtime is None or not runtime.soft_overload_rejections
-    assert runtime is None or not overload_backoff_active(runtime, clock.time())
+    assert runtime is None or not overload_backoff_active(runtime, clock.time(), model=None)
 
 
 @pytest.mark.asyncio
@@ -385,7 +391,7 @@ def test_level_decays_after_a_quiet_period() -> None:
 
 
 def _filter(states: list[AccountState], runtime: dict[str, RuntimeState], now: float) -> list[AccountState]:
-    return filter_overload_backoff_candidates(states, runtime, now=now)
+    return filter_overload_backoff_candidates(states, runtime, now=now, model=None)
 
 
 def test_filter_returns_the_overload_free_remainder_or_the_pool_itself() -> None:
@@ -438,7 +444,7 @@ async def test_record_upstream_overload_writes_runtime_under_the_account_lock(ca
         for _ in range(OVERLOAD_TRIP_COUNT - 1):
             await record_upstream_overload(balancer, account)
             clock.advance(1.0)
-        assert not overload_backoff_active(balancer._runtime[account.id], clock.time())
+        assert not overload_backoff_active(balancer._runtime[account.id], clock.time(), model=None)
         assert "overload backoff engaged" not in caplog.text
 
         await record_upstream_overload(balancer, account, redact_account_id=True)
@@ -552,6 +558,7 @@ def _sticky_repo(existing_account_id: str | None) -> AsyncMock:
 async def _select_sticky(balancer: LoadBalancer, states: list[AccountState], repo: AsyncMock):
     account_map = {state.account_id: cast(Account, AsyncMock()) for state in states}
     outcome = await balancer._select_with_stickiness(
+        model=None,
         states=states,
         account_map=account_map,
         sticky_key="fresh-or-owned-key",
@@ -602,6 +609,7 @@ async def test_fresh_sticky_binding_reports_the_pool_it_selected_from() -> None:
 
     async def _outcome(states: list[AccountState], existing: str | None):
         return await balancer._select_with_stickiness(
+            model=None,
             states=states,
             account_map=account_map,
             sticky_key="key",
@@ -642,11 +650,11 @@ def test_isolation_engages_at_the_trip_level_and_holds_for_the_configured_interv
         assert deadline is not None
         if level < OVERLOAD_ISOLATION_TRIP_LEVEL:
             assert deadline - now == pytest.approx(overload_backoff_seconds(level))
-            assert not overload_isolation_active(runtime, now)
+            assert not overload_isolation_active(runtime, now, model=None)
         else:
             assert deadline - now == pytest.approx(1800.0)
-            assert overload_isolation_active(runtime, now)
-            assert overload_backoff_active(runtime, now)
+            assert overload_isolation_active(runtime, now, model=None)
+            assert overload_backoff_active(runtime, now, model=None)
         now = deadline
 
 
@@ -678,7 +686,7 @@ def test_level_does_not_decay_while_the_account_is_held_out() -> None:
     deadline = record_overload_rejection_locked(runtime, now, isolation=policy)
     assert runtime.overload_backoff_level == OVERLOAD_ISOLATION_TRIP_LEVEL + 1
     assert deadline == pytest.approx(now + 1800.0)
-    assert overload_isolation_active(runtime, now)
+    assert overload_isolation_active(runtime, now, model=None)
 
     # A full quiet window after the deadline decays the level as before.
     quiet = RuntimeState(overload_backoff_level=4, overload_last_trip_at=0.0, overload_backoff_until=100.0)
@@ -708,7 +716,7 @@ async def test_record_upstream_overload_logs_isolation_at_the_trip_level(
         assert (
             "Account overload isolation engaged account_id=acc-sustained level=3 isolation_seconds=900" in caplog.text
         )
-        assert overload_isolation_active(runtime, clock.time())
+        assert overload_isolation_active(runtime, clock.time(), model=None)
         assert runtime.overload_backoff_until == pytest.approx(clock.time() + 900.0)
     finally:
         get_settings.cache_clear()
@@ -744,17 +752,23 @@ def test_sticky_owner_reroute_pool_requires_isolation_and_an_overload_free_sibli
     now = 1000.0
     states = [_state("hot"), _state("clean")]
     soft = {"hot": RuntimeState(overload_backoff_until=now + 60.0)}
-    assert sticky_owner_isolation_reroute_pool(states, soft, owner_account_id="hot", now=now) is None
+    assert sticky_owner_isolation_reroute_pool(states, soft, owner_account_id="hot", now=now, model=None) is None
     isolated = {"hot": _isolated_runtime(now)}
-    pool = sticky_owner_isolation_reroute_pool(states, isolated, owner_account_id="hot", now=now)
+    pool = sticky_owner_isolation_reroute_pool(states, isolated, owner_account_id="hot", now=now, model=None)
     assert pool is not None and [state.account_id for state in pool] == ["clean"]
     # Every sibling isolated too: the owner keeps its session.
     both = {"hot": _isolated_runtime(now), "clean": _isolated_runtime(now)}
-    assert sticky_owner_isolation_reroute_pool(states, both, owner_account_id="hot", now=now) is None
-    assert sticky_owner_isolation_reroute_pool([_state("hot")], isolated, owner_account_id="hot", now=now) is None
-    assert sticky_owner_isolation_reroute_pool(states, None, owner_account_id="hot", now=now) is None
+    assert sticky_owner_isolation_reroute_pool(states, both, owner_account_id="hot", now=now, model=None) is None
+    assert (
+        sticky_owner_isolation_reroute_pool([_state("hot")], isolated, owner_account_id="hot", now=now, model=None)
+        is None
+    )
+    assert sticky_owner_isolation_reroute_pool(states, None, owner_account_id="hot", now=now, model=None) is None
     # Expired isolation releases nothing.
-    assert sticky_owner_isolation_reroute_pool(states, isolated, owner_account_id="hot", now=now + 1801.0) is None
+    assert (
+        sticky_owner_isolation_reroute_pool(states, isolated, owner_account_id="hot", now=now + 1801.0, model=None)
+        is None
+    )
 
 
 def test_the_substitute_seed_is_stable_and_owner_scoped() -> None:
@@ -812,9 +826,11 @@ async def _select_sticky_outcome(
     secondary_budget_threshold_pct: float = 100.0,
     preserve_existing_mapping_on_fallback: bool = False,
     preserve_reason_request_local: bool | None = None,
+    model: str | None = None,
 ):
     account_map = {state.account_id: cast(Account, AsyncMock()) for state in states}
     return await balancer._select_with_stickiness(
+        model=model,
         states=states,
         account_map=account_map,
         sticky_key=sticky_key,
@@ -1817,6 +1833,92 @@ async def test_isolated_hard_sticky_owner_is_not_released_or_rebound() -> None:
     await balancer.release_account_lease(selected.lease)
 
 
+_ADMISSION_ERROR = {
+    "type": "rate_limit_error",
+    "code": "turn_rate_limit_exceeded",
+    "message": "Codex is at capacity, please try again later",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "payload", "expected_seconds"),
+    [
+        # The wrapped websocket error event: Retry-After on the frame itself.
+        (
+            "error",
+            {"type": "error", "status": 429, "error": _ADMISSION_ERROR, "headers": {"retry-after": "256"}},
+            256.0,
+        ),
+        # ...or on the error object, which the Codex client reads first.
+        (
+            "error",
+            {
+                "type": "error",
+                "status": 429,
+                "error": {**_ADMISSION_ERROR, "headers": {"Retry-After": "40"}},
+                "headers": {"retry-after": "256"},
+            },
+            40.0,
+        ),
+        # A terminal ``response.failed`` carries it on ``response.error``.
+        (
+            "response.failed",
+            {"type": "response.failed", "response": {"error": {**_ADMISSION_ERROR, "headers": {"retry-after": "75"}}}},
+            75.0,
+        ),
+        # No Retry-After: the default cooldown.
+        (
+            "error",
+            {"type": "error", "status": 429, "error": _ADMISSION_ERROR},
+            MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS,
+        ),
+    ],
+)
+async def test_terminal_event_admission_refusal_engages_the_model_cooldown(
+    event_type: str,
+    payload: dict[str, Any],
+    expected_seconds: float,
+) -> None:
+    clock = VirtualClock(epoch_value=2_000_000_000.0)
+    balancer = LoadBalancer(_mock_repo_factory, clock=clock)
+    proxy = SimpleNamespace(_load_balancer=balancer)
+
+    await _record_terminal_event_model_admission_limit(
+        proxy, _make_account("hot"), model=_COOLING_MODEL, event_type=event_type, payload=payload
+    )
+
+    assert balancer._runtime["hot"].model_admission_until == {
+        _COOLING_MODEL: pytest.approx(clock.time() + expected_seconds)
+    }
+
+
+@pytest.mark.asyncio
+async def test_other_terminal_events_and_model_less_requests_record_no_model_cooldown() -> None:
+    clock = VirtualClock(epoch_value=2_000_000_000.0)
+    balancer = LoadBalancer(_mock_repo_factory, clock=clock)
+    proxy = SimpleNamespace(_load_balancer=balancer)
+    overloaded = {
+        "type": "error",
+        "status": 429,
+        "error": {"type": "server_error", "code": "server_is_overloaded", "message": "overloaded"},
+        "headers": {"retry-after": "30"},
+    }
+    admission = {"type": "error", "status": 429, "error": _ADMISSION_ERROR}
+
+    await _record_terminal_event_model_admission_limit(
+        proxy, _make_account("hot"), model=_COOLING_MODEL, event_type="error", payload=overloaded
+    )
+    await _record_terminal_event_model_admission_limit(
+        proxy, _make_account("hot"), model=None, event_type="error", payload=admission
+    )
+    await _record_terminal_event_model_admission_limit(
+        proxy, _make_account("hot"), model=_COOLING_MODEL, event_type="response.output_text.delta", payload=admission
+    )
+
+    assert "hot" not in balancer._runtime
+
+
 @pytest.mark.asyncio
 async def test_request_local_isolation_release_is_logged_as_retained(
     caplog: pytest.LogCaptureFixture,
@@ -2009,6 +2111,7 @@ async def test_budget_pressured_isolated_owner_is_released_with_the_secondary_bu
     states = [_st("owner", 85.0, None), _st("pressured", 85.0, None), _st("safe", 20.0, clock.time())]
     account_map = {state.account_id: cast(Account, AsyncMock()) for state in states}
     outcome = await balancer._select_with_stickiness(
+        model=None,
         states=states,
         account_map=account_map,
         sticky_key="budget-key",
@@ -2081,6 +2184,7 @@ async def _off_pool_budget_outcome(
     safe: AccountState,
 ):
     return await balancer._select_with_stickiness(
+        model=None,
         states=states,
         account_map=account_map,
         sticky_key=sticky_key,
@@ -2140,17 +2244,20 @@ def test_burst_rejection_locked_clamps_retry_after_and_never_shortens() -> None:
 def test_burst_deadline_activates_backoff_but_not_isolation() -> None:
     now = 1000.0
     runtime = RuntimeState(burst_backoff_until=now + 5.0)
-    assert overload_backoff_active(runtime, now)
-    assert overload_backoff_active(runtime, now + 4.9)
-    assert not overload_backoff_active(runtime, now + 5.0)
-    assert not overload_isolation_active(runtime, now)
+    assert overload_backoff_active(runtime, now, model=None)
+    assert overload_backoff_active(runtime, now + 4.9, model=None)
+    assert not overload_backoff_active(runtime, now + 5.0, model=None)
+    assert not overload_isolation_active(runtime, now, model=None)
     # The soft-owner reroute pool keys on isolation only: a burst keeps the owner.
     states = [_state("hot"), _state("clean")]
-    assert sticky_owner_isolation_reroute_pool(states, {"hot": runtime}, owner_account_id="hot", now=now) is None
+    assert (
+        sticky_owner_isolation_reroute_pool(states, {"hot": runtime}, owner_account_id="hot", now=now, model=None)
+        is None
+    )
     # The candidate filter inherits the burst deadline.
-    kept = filter_overload_backoff_candidates(states, {"hot": runtime}, now=now)
+    kept = filter_overload_backoff_candidates(states, {"hot": runtime}, now=now, model=None)
     assert [state.account_id for state in kept] == ["clean"]
-    assert overload_backoff_active(None, now) is False
+    assert overload_backoff_active(None, now, model=None) is False
 
 
 @pytest.mark.asyncio
@@ -2171,7 +2278,7 @@ async def test_handle_stream_error_codeless_429_engages_burst_cooldown_only(capl
     assert classified["failure_class"] == "retryable_transient"
     runtime = balancer._runtime[account.id]
     assert runtime.burst_backoff_until == pytest.approx(clock.time() + BURST_BACKOFF_DEFAULT_SECONDS)
-    assert overload_backoff_active(runtime, clock.time())
+    assert overload_backoff_active(runtime, clock.time(), model=None)
     # Only the burst deadline is written: no overload window, no rate-limit cooldown, no status flip.
     assert runtime.overload_backoff_until is None
     assert runtime.overload_rejections is None
@@ -2214,7 +2321,7 @@ async def test_handle_stream_error_skips_burst_cooldown_when_already_recorded_at
     assert classified["failure_class"] == "retryable_transient"
     runtime = balancer._runtime[account.id]
     assert runtime.burst_backoff_until == pytest.approx(rejected_at + BURST_BACKOFF_DEFAULT_SECONDS)
-    assert not overload_backoff_active(runtime, clock.time())
+    assert not overload_backoff_active(runtime, clock.time(), model=None)
     record_error.assert_awaited_once_with(account)
     mark_rate_limit.assert_not_awaited()
 
@@ -2380,3 +2487,176 @@ async def test_fresh_sticky_binding_avoids_bursting_account_but_established_owne
     alone = await _select_sticky(balancer, [_state("hot")], _sticky_repo(None))
     assert alone.account is not None
     assert alone.account.account_id == "hot"
+
+
+_COOLING_MODEL = "gpt-6.1-sol"
+
+
+def _model_cooling_runtime(now: float, *, seconds: float = 120.0) -> RuntimeState:
+    return RuntimeState(model_admission_until={_COOLING_MODEL: now + seconds})
+
+
+def test_model_admission_cooldown_honors_retry_after_up_to_the_cap_and_never_shortens() -> None:
+    runtime = RuntimeState()
+
+    applied = record_model_admission_limit_locked(runtime, 100.0, model="m", retry_after_seconds=None)
+    assert applied == MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS
+    assert runtime.model_admission_until == {"m": 100.0 + MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS}
+
+    # A shorter Retry-After while already cooling never shortens the deadline.
+    assert record_model_admission_limit_locked(runtime, 101.0, model="m", retry_after_seconds=8) == 8.0
+    assert runtime.model_admission_until == {"m": 100.0 + MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS}
+
+    # Upstream's Retry-After is honored as sent, including minutes...
+    assert record_model_admission_limit_locked(runtime, 102.0, model="m", retry_after_seconds=515) == 515.0
+    assert runtime.model_admission_until == {"m": 617.0}
+    # ...up to the cap.
+    assert (
+        record_model_admission_limit_locked(runtime, 103.0, model="m", retry_after_seconds=86_400)
+        == MODEL_ADMISSION_COOLDOWN_MAX_SECONDS
+    )
+    assert runtime.model_admission_until == {"m": 103.0 + MODEL_ADMISSION_COOLDOWN_MAX_SECONDS}
+
+    # Expired models are dropped, so the map only holds models still cooling.
+    record_model_admission_limit_locked(runtime, 5_000.0, model="other", retry_after_seconds=10)
+    assert runtime.model_admission_until == {"other": 5_010.0}
+
+
+def test_model_admission_cooldown_isolates_the_account_for_its_model_only() -> None:
+    now = 1_000.0
+    runtime = _model_cooling_runtime(now, seconds=30.0)
+    runtimes = {"hot": runtime}
+    states = [_state("hot"), _state("clean")]
+
+    assert model_admission_limited(runtime, now, _COOLING_MODEL)
+    assert not model_admission_limited(runtime, now, "other-model")
+    assert not model_admission_limited(runtime, now, None)
+    assert not model_admission_limited(runtime, now + 30.0, _COOLING_MODEL)
+
+    # For the cooling model it is both a fresh-admission backoff and an
+    # isolation (soft sticky owners reroute); other models are untouched.
+    assert overload_backoff_active(runtime, now, model=_COOLING_MODEL)
+    assert overload_isolation_active(runtime, now, model=_COOLING_MODEL)
+    assert not overload_backoff_active(runtime, now, model="other-model")
+    assert not overload_isolation_active(runtime, now, model="other-model")
+
+    kept = filter_overload_backoff_candidates(states, runtimes, now=now, model=_COOLING_MODEL)
+    assert [state.account_id for state in kept] == ["clean"]
+    assert filter_overload_backoff_candidates(states, runtimes, now=now, model="other-model") is states
+    # The pool is never emptied: a lone cooling account still serves the turn.
+    alone = [_state("hot")]
+    assert filter_overload_backoff_candidates(alone, runtimes, now=now, model=_COOLING_MODEL) is alone
+
+    pool = sticky_owner_isolation_reroute_pool(states, runtimes, owner_account_id="hot", now=now, model=_COOLING_MODEL)
+    assert pool is not None and [state.account_id for state in pool] == ["clean"]
+    assert (
+        sticky_owner_isolation_reroute_pool(states, runtimes, owner_account_id="hot", now=now, model="other-model")
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_record_model_admission_limit_writes_only_the_model_cooldown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = VirtualClock(epoch_value=2_000_000_000.0)
+    balancer = LoadBalancer(_mock_repo_factory, clock=clock)
+    account = _make_account("hot")
+
+    caplog.set_level(logging.WARNING, logger="app.modules.proxy._load_balancer.overload_backoff")
+    await record_model_admission_limit(balancer, account, model=_COOLING_MODEL, retry_after_seconds=90)
+
+    runtime = balancer._runtime["hot"]
+    assert runtime.model_admission_until == {_COOLING_MODEL: pytest.approx(clock.time() + 90.0)}
+    # No account health, overload window, burst cooldown or quota cooldown.
+    assert runtime.error_count == 0
+    assert runtime.cooldown_until is None
+    assert runtime.burst_backoff_until is None
+    assert runtime.overload_backoff_until is None
+    assert runtime.overload_rejections is None
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Model admission cooldown engaged account_id=hot model=gpt-6.1-sol" in message for message in messages
+    ), messages
+
+
+@pytest.mark.asyncio
+async def test_fresh_selection_avoids_an_account_cooling_for_the_requested_model_only() -> None:
+    clock = VirtualClock(epoch_value=2_000_000_000.0)
+    hot = _make_account("acc-model-hot")
+    clean = _make_account("acc-model-clean")
+    balancer = LoadBalancer(
+        lambda: _repo_factory(_StubAccountsRepository([hot, clean]), _StubUsageRepository({}, {})),
+        clock=clock,
+    )
+    balancer._runtime[hot.id] = _model_cooling_runtime(clock.time())
+
+    # Equal weights: 40 draws all landing on ``clean`` is 2**-40 by chance.
+    for _ in range(40):
+        result = await balancer.select_account(model=_COOLING_MODEL)
+        assert result.account is not None
+        assert result.account.id == clean.id
+
+    selected: set[str] = set()
+    for _ in range(40):
+        result = await balancer.select_account(model="other-model")
+        assert result.account is not None
+        selected.add(result.account.id)
+    assert hot.id in selected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind",
+    [StickySessionKind.PROMPT_CACHE, StickySessionKind.STICKY_THREAD, StickySessionKind.CODEX_SESSION],
+)
+async def test_soft_sticky_owner_cooling_for_the_model_is_released_request_locally(
+    kind: StickySessionKind,
+) -> None:
+    """The owner refuses only this model until its deadline: a sibling serves
+    the turn and the mapping keeps pointing at the owner, so the thread
+    returns once the cooldown passes. Turns for other models stay home."""
+    clock = VirtualClock(epoch_value=2_000_000_000.0)
+    balancer = LoadBalancer(_mock_repo_factory, clock=clock)
+    balancer._runtime["hot"] = _model_cooling_runtime(clock.time())
+    states = [_state("hot"), _state("clean")]
+
+    outcome = await _select_sticky_outcome(balancer, states, _sticky_repo("hot"), kind=kind, model=_COOLING_MODEL)
+    assert outcome.selection.account is not None
+    assert outcome.selection.account.account_id == "clean"
+    _assert_owner_retained(outcome, "hot")
+
+    other = await _select_sticky_outcome(balancer, states, _sticky_repo("hot"), kind=kind, model="other-model")
+    assert other.selection.account is not None
+    assert other.selection.account.account_id == "hot"
+
+    clock.advance(121.0)
+    home = await _select_sticky_outcome(balancer, states, _sticky_repo("hot"), kind=kind, model=_COOLING_MODEL)
+    assert home.selection.account is not None
+    assert home.selection.account.account_id == "hot"
+
+
+@pytest.mark.asyncio
+async def test_hard_sticky_owner_cooling_for_the_model_keeps_the_turn() -> None:
+    """A hard continuity owner holds state the turn depends on, so the
+    cooldown neither serves the turn elsewhere nor touches its row; the
+    refusal reaches the client with upstream's Retry-After instead."""
+    from tests.unit.test_load_balancer_concurrency import _make_cap_spillover_balancer
+
+    balancer, owner, alternate, sticky_repo = _make_cap_spillover_balancer("model-cooling-hard-owner")
+    assert alternate is not None
+    balancer._runtime[owner.id] = _model_cooling_runtime(balancer._clock.time())
+    sticky_repo.account_ids_by_key = {"hard-session": owner.id}
+
+    selected = await balancer.select_account(
+        sticky_key="hard-session",
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        routing_strategy="usage_weighted",
+        lease_kind="stream",
+        model=_COOLING_MODEL,
+    )
+    assert selected.account is not None, selected.error_message
+    assert selected.account.id == owner.id
+    assert sticky_repo.upserts == []
+    assert sticky_repo.deleted == []
+    await balancer.release_account_lease(selected.lease)

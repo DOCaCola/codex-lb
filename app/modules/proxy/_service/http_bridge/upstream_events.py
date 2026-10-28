@@ -127,6 +127,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _pop_terminal_websocket_request_state,
     _prepare_websocket_request_state_for_account_switch,
     _previous_response_id_from_not_found_message,
+    _record_terminal_event_model_admission_limit,
     _release_websocket_response_create_gate,
     _response_output_item_done_tool_call,
     _rewrite_websocket_continuity_corruption_event,
@@ -3456,6 +3457,14 @@ class _HTTPBridgeUpstreamEventsMixin:
             payload=payload,
             has_other_pending_requests=has_other_pending_requests,
         )
+        if status_request_state is not None:
+            await _record_terminal_event_model_admission_limit(
+                self,
+                session.account,
+                model=status_request_state.model,
+                event_type=event_type,
+                payload=payload,
+            )
         # An explicit refusal of replayed ciphertext is remembered whether or
         # not this request can still be replayed: the client's next attempt
         # goes through the native sanitizer, which removes it. The replay
@@ -3690,6 +3699,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                         _rewrite_websocket_previous_response_owner_unavailable_event(
                             request_state=status_request_state,
                             upstream_error_code=owner_pinned_quota_error,
+                            upstream_error_message=retry_error_message or "Upstream error",
                         )
                     )
                     event_block = f"data: {rewritten_text}\n\n"

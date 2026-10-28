@@ -61,6 +61,20 @@ bindings to a sibling. It is deliberately *not* an isolation trigger:
 established soft sticky owners keep their session through a burst. The
 overload rejection window and ``overload_backoff_until`` are never written by
 the burst path.
+
+**Model admission cooldown** (``record_model_admission_limit``): upstream's
+per-turn admission limit (``turn_rate_limit_exceeded``, "Codex is at
+capacity") refuses one *model* on one account until its ``Retry-After`` while
+the account keeps serving its other models. Every request for that model that
+re-enters the account is refused again until the deadline, so the cooldown is
+keyed by model (``RuntimeState.model_admission_until``) and, for that model
+only, acts like isolation: fresh selection avoids the account and soft sticky
+owners are released request-locally, keeping their mapping so the thread
+returns once the deadline passes. Hard continuity owners stay pinned, and the
+pool is never emptied -- when every candidate is cooling, the turn goes where
+it would have gone and the client receives upstream's refusal and
+``Retry-After``. It writes no account health (CLIProxyAPI 9a35fa12 cools only
+the model on the credential, likewise).
 """
 
 from __future__ import annotations
@@ -121,6 +135,13 @@ OVERLOAD_ISOLATION_TRIP_LEVEL = 3
 BURST_BACKOFF_DEFAULT_SECONDS = 5.0
 BURST_BACKOFF_MAX_SECONDS = 30.0
 
+# Model admission cooldown bounds. Upstream sends a ``Retry-After`` with the
+# refusal (observed 8-515 s); it is honored up to the cap. A refusal without
+# one cools the model for the default, the interval agent-lb applies to the
+# same refusal.
+MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS = 15.0
+MODEL_ADMISSION_COOLDOWN_MAX_SECONDS = 600.0
+
 
 @dataclass(frozen=True, slots=True)
 class OverloadIsolationPolicy:
@@ -149,18 +170,37 @@ def overload_backoff_seconds(level: int) -> float:
     return min(OVERLOAD_BACKOFF_MAX_SECONDS, OVERLOAD_BACKOFF_BASE_SECONDS * (2**exponent))
 
 
-def overload_backoff_active(runtime: RuntimeState | None, now: float) -> bool:
-    """Whether fresh admissions should avoid the account (soft backoff, isolation or burst cooldown)."""
+def model_admission_limited(runtime: RuntimeState | None, now: float, model: str | None) -> bool:
+    """Whether upstream refuses ``model`` on the account until a deadline still ahead.
+
+    A request without a model is not subject to any model's cooldown.
+    """
+    if runtime is None or model is None or runtime.model_admission_until is None:
+        return False
+    deadline = runtime.model_admission_until.get(model)
+    return deadline is not None and now < deadline
+
+
+def overload_backoff_active(runtime: RuntimeState | None, now: float, *, model: str | None) -> bool:
+    """Whether fresh admissions of ``model`` should avoid the account (soft
+    backoff, isolation, burst cooldown or the model's admission cooldown)."""
     if runtime is None:
         return False
     if runtime.overload_backoff_until is not None and now < runtime.overload_backoff_until:
         return True
-    return runtime.burst_backoff_until is not None and now < runtime.burst_backoff_until
+    if runtime.burst_backoff_until is not None and now < runtime.burst_backoff_until:
+        return True
+    return model_admission_limited(runtime, now, model)
 
 
-def overload_isolation_active(runtime: RuntimeState | None, now: float) -> bool:
-    """Whether the account is in the isolation stage (soft sticky owners reroute too)."""
-    return runtime is not None and runtime.overload_isolated_until is not None and now < runtime.overload_isolated_until
+def overload_isolation_active(runtime: RuntimeState | None, now: float, *, model: str | None) -> bool:
+    """Whether soft sticky owners of ``model`` turns reroute too: the account is
+    in the isolation stage, or upstream refuses ``model`` on it until a deadline."""
+    if runtime is None:
+        return False
+    if runtime.overload_isolated_until is not None and now < runtime.overload_isolated_until:
+        return True
+    return model_admission_limited(runtime, now, model)
 
 
 def record_overload_rejection_locked(
@@ -246,7 +286,7 @@ async def record_upstream_overload(
         now = float(balancer._clock.time())
         runtime = runtime_map.setdefault(account.id, RuntimeState())
         deadline = record_overload_rejection_locked(runtime, now, isolation=isolation, soft=soft)
-        isolated = deadline is not None and overload_isolation_active(runtime, now)
+        isolated = deadline is not None and overload_isolation_active(runtime, now, model=None)
     if deadline is None:
         return
     account_label = "<redacted>" if redact_account_id else account.id
@@ -314,14 +354,80 @@ async def record_upstream_burst_rejection(
     )
 
 
+def record_model_admission_limit_locked(
+    runtime: RuntimeState,
+    now: float,
+    *,
+    model: str,
+    retry_after_seconds: float | None,
+) -> float:
+    """Engage (or extend) ``model``'s admission cooldown observed at ``now``; return the applied seconds.
+
+    ``retry_after_seconds`` (upstream ``Retry-After``) is honored up to
+    ``MODEL_ADMISSION_COOLDOWN_MAX_SECONDS``; a refusal without one applies
+    ``MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS``. A refusal while already
+    cooling extends, never shortens, the deadline. Expired entries are dropped
+    so the map holds only models still cooling. Caller holds the balancer's
+    per-account lock.
+    """
+    requested = MODEL_ADMISSION_COOLDOWN_DEFAULT_SECONDS if retry_after_seconds is None else float(retry_after_seconds)
+    seconds = min(MODEL_ADMISSION_COOLDOWN_MAX_SECONDS, requested)
+    cooling = {
+        cooled_model: deadline
+        for cooled_model, deadline in (runtime.model_admission_until or {}).items()
+        if deadline > now
+    }
+    cooling[model] = max(cooling.get(model, 0.0), now + seconds)
+    runtime.model_admission_until = cooling
+    return seconds
+
+
+async def record_model_admission_limit(
+    balancer: Any,
+    account: Account,
+    *,
+    model: str,
+    retry_after_seconds: float | None,
+    redact_account_id: bool = False,
+) -> None:
+    """Record upstream refusing ``model`` on ``account`` until its ``Retry-After``.
+
+    Taken where each surface first recognizes the refusal, before the turn is
+    replayed, so the replay and every concurrent selection already see it.
+    The account-health funnel is deliberately not the recording point: a
+    keyed request defers its health write until usage settlement, which
+    would start the cooldown only after the replacement turn had finished.
+    Writes only ``RuntimeState.model_admission_until`` (replica-local, never
+    persisted, no account health).
+    """
+    lock = await balancer._get_account_lock(account.id)
+    async with lock:
+        now = float(balancer._clock.time())
+        runtime = balancer._runtime.setdefault(account.id, RuntimeState())
+        applied = record_model_admission_limit_locked(
+            runtime,
+            now,
+            model=model,
+            retry_after_seconds=retry_after_seconds,
+        )
+    logger.warning(
+        "Model admission cooldown engaged account_id=%s model=%s cooldown_seconds=%.1f retry_after_seconds=%s",
+        "<redacted>" if redact_account_id else account.id,
+        model,
+        applied,
+        retry_after_seconds,
+    )
+
+
 def filter_overload_backoff_candidates(
     states: list[AccountState],
     runtime_by_account_id: Mapping[str, RuntimeState],
     *,
     now: float,
+    model: str | None,
 ) -> list[AccountState]:
-    """Return the candidates not in overload backoff, or ``states`` itself
-    when that would leave nothing (or change nothing).
+    """Return the candidates not in overload backoff for ``model``, or
+    ``states`` itself when that would leave nothing (or change nothing).
 
     Callers select from the returned list first and, when the configured
     strategy rejects every remaining candidate, select again from the
@@ -331,7 +437,11 @@ def filter_overload_backoff_candidates(
     here, so the backoff can only ever *reorder* preference: it cannot turn
     usable capacity into ``No available accounts`` or an account-cap error.
     """
-    kept = [state for state in states if not overload_backoff_active(runtime_by_account_id.get(state.account_id), now)]
+    kept = [
+        state
+        for state in states
+        if not overload_backoff_active(runtime_by_account_id.get(state.account_id), now, model=model)
+    ]
     if not kept or len(kept) == len(states):
         return states
     return kept
@@ -343,20 +453,22 @@ def sticky_owner_isolation_reroute_pool(
     *,
     owner_account_id: str,
     now: float,
+    model: str | None,
 ) -> list[AccountState] | None:
     """Return the overload-free pool a *soft* sticky owner should be rerouted
     into, or ``None`` when the owner keeps its session.
 
-    The owner is released only while it is in the isolation stage (not on a
-    soft backoff) and the pool still holds another candidate outside the
-    overload window; the caller must verify the strategy actually selects
-    from the returned pool before abandoning the owner.
+    The owner is released only while it is in the isolation stage or cooling
+    for ``model`` (not on a soft backoff) and the pool still holds another
+    candidate outside the overload window; the caller must verify the
+    strategy actually selects from the returned pool before abandoning the
+    owner.
     """
     if runtime_by_account_id is None:
         return None
-    if not overload_isolation_active(runtime_by_account_id.get(owner_account_id), now):
+    if not overload_isolation_active(runtime_by_account_id.get(owner_account_id), now, model=model):
         return None
-    pool = filter_overload_backoff_candidates(states, runtime_by_account_id, now=now)
+    pool = filter_overload_backoff_candidates(states, runtime_by_account_id, now=now, model=model)
     if pool is states:
         return None
     return pool

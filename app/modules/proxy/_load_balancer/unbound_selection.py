@@ -255,6 +255,7 @@ async def run_unbound_selection_path(
                     selection_states,
                     owner._runtime,
                     now=selection_now,
+                    model=request.model,
                 )
                 effective_states = overload_free_states
                 result = _select_from(overload_free_states)

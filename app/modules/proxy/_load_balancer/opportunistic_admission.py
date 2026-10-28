@@ -157,6 +157,9 @@ def detached_runtime_snapshot(
             soft_overload_rejections=(
                 None if runtime.soft_overload_rejections is None else list(runtime.soft_overload_rejections)
             ),
+            model_admission_until=(
+                None if runtime.model_admission_until is None else dict(runtime.model_admission_until)
+            ),
             outcome_buckets=(
                 None
                 if runtime.outcome_buckets is None

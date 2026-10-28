@@ -24,6 +24,8 @@ from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
     _as_image_fetch_session,
     _inline_content_images,
     _inline_input_image_urls,
+    _retry_after_seconds_from_header,
+    _safe_retry_after_header,
     _ws_transport_payload_budget_bytes,
     filter_inbound_headers,
     pop_compact_timeout_overrides,
@@ -75,6 +77,7 @@ from app.db.models import (
     Account,
     AccountStatus,  # noqa: F401
 )
+from app.modules.proxy._load_balancer.overload_backoff import record_model_admission_limit
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -1435,6 +1438,51 @@ def _websocket_event_error_payload(
     return None
 
 
+def _terminal_event_retry_after_seconds(event_type: str | None, payload: dict[str, JsonValue]) -> int | None:
+    """Upstream ``Retry-After`` carried by a terminal frame, read where the Codex
+    client reads it: the error object's ``headers``, then the frame's own
+    ``headers`` (the wrapped websocket ``error`` event)."""
+    error = _websocket_event_error_payload(event_type, payload)
+    for headers in (error.get("headers") if error is not None else None, payload.get("headers")):
+        if isinstance(headers, dict):
+            seconds = _retry_after_seconds_from_header(_safe_retry_after_header(headers))
+            if seconds is not None:
+                return seconds
+    return None
+
+
+async def _record_terminal_event_model_admission_limit(
+    proxy: Any,
+    account: Account,
+    *,
+    model: str | None,
+    event_type: str | None,
+    payload: dict[str, JsonValue] | None,
+) -> None:
+    """Engage ``model``'s admission cooldown on ``account`` when a terminal frame
+    is upstream's per-model admission refusal (``turn_rate_limit_exceeded``).
+
+    Called where each surface classifies the frame, before any replay or
+    fail-closed branch, so the replay's reselection and every concurrent
+    selection already avoid the account for this model. A request without a
+    model is subject to no model's cooldown, so it records nothing.
+    """
+    if model is None or payload is None:
+        return
+    error_code = _normalize_error_code(
+        _websocket_event_error_code(event_type, payload),
+        _websocket_event_error_type(event_type, payload),
+    )
+    if error_code not in MODEL_ADMISSION_LIMIT_CODES:
+        return
+    await record_model_admission_limit(
+        proxy._load_balancer,
+        account,
+        model=model,
+        retry_after_seconds=_terminal_event_retry_after_seconds(event_type, payload),
+    )
+
+
 def _sanitize_public_websocket_event_payload(
     payload: dict[str, JsonValue],
     *,
@@ -1740,7 +1788,18 @@ def _rewrite_websocket_previous_response_owner_unavailable_event(
     *,
     request_state: _WebSocketRequestState,
     upstream_error_code: str,
+    upstream_error_message: str,
 ) -> tuple[OpenAIEvent | None, dict[str, JsonValue] | None, str | None, str]:
+    """Fail an anchored turn its owner refused and that cannot leave the owner.
+
+    A model admission limit keeps its own code and message: the owner refused
+    only this model until its ``Retry-After``, and the client's retry re-sends
+    the full history without the anchor, which the model cooldown then routes
+    to another account. Surfacing it without the ``Retry-After`` is what makes
+    that retry prompt -- Codex retries an unrecognized coded failure at once,
+    but waits out a ``Retry-After`` on the turn. Every other owner refusal is
+    reported as the owner being unavailable.
+    """
     request_state.failure_phase_override = "upstream"
     request_state.failure_detail_override = "owner_account_unavailable"
     request_state.upstream_error_code_override = upstream_error_code
@@ -1751,9 +1810,16 @@ def _rewrite_websocket_previous_response_owner_unavailable_event(
         session_id=request_state.session_id,
         upstream_error_code=upstream_error_code,
     )
+    if upstream_error_code in MODEL_ADMISSION_LIMIT_CODES:
+        rewritten_code, rewritten_message = upstream_error_code, upstream_error_message
+    else:
+        rewritten_code, rewritten_message = (
+            "upstream_unavailable",
+            "Previous response owner account is unavailable; retry later.",
+        )
     rewritten_event_payload = response_failed_event(
-        "upstream_unavailable",
-        "Previous response owner account is unavailable; retry later.",
+        rewritten_code,
+        rewritten_message,
         error_type="server_error",
         response_id=_websocket_downstream_response_id(request_state),
     )

@@ -285,6 +285,7 @@ class StickySelectionOwner(Protocol):
         sticky_refresh_skip_deadline: datetime | None = None,
         hard_owner_pool: bool = False,
         redact_sensitive_details: bool = False,
+        model: str | None,
     ) -> _StickySelectionOutcome: ...
 
     async def release_account_lease(self, lease: AccountLease | None) -> None: ...
@@ -664,7 +665,7 @@ async def run_sticky_selection_path(
             # An isolated soft owner may be released to a sibling by the
             # overload isolation stage (see ``_run_select_with_stickiness``).
             owner_overload_isolated = isinstance(sticky_existing_account_id, str) and overload_isolation_active(
-                owner._runtime.get(sticky_existing_account_id), owner._clock.time()
+                owner._runtime.get(sticky_existing_account_id), owner._clock.time(), model=request.model
             )
             if hard_sticky:
                 # A resolved hard Codex mapping is an ownership
@@ -950,6 +951,7 @@ async def run_sticky_selection_path(
                         # branch; a preferred account keeps the fallback off.
                         hard_owner_pool=required_account_is_owner,
                         redact_sensitive_details=redact_sensitive_details,
+                        model=request.model,
                     )
                     result = sticky_outcome.selection
                     if (
@@ -1463,6 +1465,7 @@ async def _select_with_stickiness(
     hard_owner_pool: bool = False,
     clock: Clock,
     redact_sensitive_details: bool = False,
+    model: str | None,
 ) -> _StickySelectionOutcome:
     if not sticky_key or not sticky_repo:
         return _StickySelectionOutcome(
@@ -1590,10 +1593,12 @@ async def _select_with_stickiness(
         if (
             initial_preferred is not None
             and overload_backoff_runtime is not None
-            and overload_backoff_active(overload_backoff_runtime.get(initial_preferred.account_id), clock.time())
+            and overload_backoff_active(
+                overload_backoff_runtime.get(initial_preferred.account_id), clock.time(), model=model
+            )
         ):
             preference_free_pool = filter_overload_backoff_candidates(
-                states, overload_backoff_runtime, now=clock.time()
+                states, overload_backoff_runtime, now=clock.time(), model=model
             )
             if preference_free_pool is not states:
                 alternative = _choose_from(preference_free_pool)
@@ -1727,6 +1732,7 @@ async def _select_with_stickiness(
                     overload_backoff_runtime,
                     owner_account_id=pinned.account_id,
                     now=now,
+                    model=model,
                 )
 
             if overload_reroute_pool is not None:
@@ -1962,7 +1968,7 @@ async def _select_with_stickiness(
         and not persist_fallback
         and not reallocate_sticky
         and overload_backoff_runtime is not None
-        and overload_isolation_active(overload_backoff_runtime.get(existing), clock.time())
+        and overload_isolation_active(overload_backoff_runtime.get(existing), clock.time(), model=model)
     )
     if owner_isolated_off_pool and isinstance(existing, str):
         existing_owner_state = next(
@@ -1996,7 +2002,9 @@ async def _select_with_stickiness(
         chosen = overload_reroute
     else:
         if overload_backoff_runtime is not None:
-            fallback_candidates = filter_overload_backoff_candidates(states, overload_backoff_runtime, now=clock.time())
+            fallback_candidates = filter_overload_backoff_candidates(
+                states, overload_backoff_runtime, now=clock.time(), model=model
+            )
         chosen = _choose_from(fallback_candidates)
         if chosen.account is None and fallback_candidates is not states:
             fallback_candidates = states
@@ -2041,7 +2049,7 @@ async def _select_with_stickiness(
         and not owner_isolated_off_pool
         and persist_fallback
         and overload_backoff_runtime is not None
-        and overload_isolation_active(overload_backoff_runtime.get(existing), clock.time())
+        and overload_isolation_active(overload_backoff_runtime.get(existing), clock.time(), model=model)
     ):
         # An isolated owner whose mapping is being rebound rather than kept:
         # past recovering, dropped before selection ran (``_selectable_accounts``

@@ -484,6 +484,10 @@ def _rewrite_websocket_previous_response_owner_unavailable_event(*args: Any, **k
     return _service_global("_rewrite_websocket_previous_response_owner_unavailable_event")(*args, **kwargs)
 
 
+def _record_terminal_event_model_admission_limit(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_record_terminal_event_model_admission_limit")(*args, **kwargs)
+
+
 def _http_error_status_from_payload(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_http_error_status_from_payload")(*args, **kwargs)
 

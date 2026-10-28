@@ -226,13 +226,39 @@ class TestClassifyUpstreamFailure:
 class TestIsUpstreamBurstRejection:
     def test_truth_table(self) -> None:
         # Only a code-less HTTP 429 (classified retryable_transient) is a burst.
-        assert is_upstream_burst_rejection(failure_class="retryable_transient", http_status=429) is True
-        assert is_upstream_burst_rejection(failure_class="rate_limit", http_status=429) is False
-        assert is_upstream_burst_rejection(failure_class="quota", http_status=429) is False
-        assert is_upstream_burst_rejection(failure_class="non_retryable", http_status=429) is False
-        assert is_upstream_burst_rejection(failure_class="retryable_transient", http_status=500) is False
-        assert is_upstream_burst_rejection(failure_class="retryable_transient", http_status=503) is False
-        assert is_upstream_burst_rejection(failure_class="retryable_transient", http_status=None) is False
+        assert (
+            is_upstream_burst_rejection(
+                error_code="upstream_error", failure_class="retryable_transient", http_status=429
+            )
+            is True
+        )
+        assert (
+            is_upstream_burst_rejection(error_code="upstream_error", failure_class="rate_limit", http_status=429)
+            is False
+        )
+        assert is_upstream_burst_rejection(error_code="upstream_error", failure_class="quota", http_status=429) is False
+        assert (
+            is_upstream_burst_rejection(error_code="upstream_error", failure_class="non_retryable", http_status=429)
+            is False
+        )
+        assert (
+            is_upstream_burst_rejection(
+                error_code="upstream_error", failure_class="retryable_transient", http_status=500
+            )
+            is False
+        )
+        assert (
+            is_upstream_burst_rejection(
+                error_code="upstream_error", failure_class="retryable_transient", http_status=503
+            )
+            is False
+        )
+        assert (
+            is_upstream_burst_rejection(
+                error_code="upstream_error", failure_class="retryable_transient", http_status=None
+            )
+            is False
+        )
 
     def test_composes_with_classify_for_the_prod_shape(self) -> None:
         # Prod: upstream 429 body carries only a message -> code normalizes to
@@ -247,7 +273,26 @@ class TestIsUpstreamBurstRejection:
             phase="connect",
         )
         assert codeless["failure_class"] == "retryable_transient"
-        assert is_upstream_burst_rejection(failure_class=codeless["failure_class"], http_status=codeless["http_status"])
+        assert is_upstream_burst_rejection(
+            error_code=codeless["error_code"],
+            failure_class=codeless["failure_class"],
+            http_status=codeless["http_status"],
+        )
+        # A model admission limit is the coded 429 filed as transient. It is
+        # waited out by its own per-model cooldown, never by the account-wide
+        # burst cooldown or a seconds-long same-account retry.
+        admission = classify_upstream_failure(
+            error_code="turn_rate_limit_exceeded",
+            error=UpstreamError(message="Codex is at capacity, please try again later"),
+            http_status=429,
+            phase="connect",
+        )
+        assert admission["failure_class"] == "retryable_transient"
+        assert not is_upstream_burst_rejection(
+            error_code=admission["error_code"],
+            failure_class=admission["failure_class"],
+            http_status=admission["http_status"],
+        )
         coded = classify_upstream_failure(
             error_code="rate_limit_exceeded",
             error=UpstreamError(message="Try again in 1.5s"),
@@ -255,7 +300,9 @@ class TestIsUpstreamBurstRejection:
             phase="connect",
         )
         assert coded["failure_class"] == "rate_limit"
-        assert not is_upstream_burst_rejection(failure_class=coded["failure_class"], http_status=coded["http_status"])
+        assert not is_upstream_burst_rejection(
+            error_code=coded["error_code"], failure_class=coded["failure_class"], http_status=coded["http_status"]
+        )
 
 
 class TestIsUpstreamUsageLimitRejection:
@@ -346,7 +393,11 @@ class TestUsageLimitClassificationDeliveryForm:
 
         assert result["failure_class"] == "rate_limit"
         assert (
-            is_upstream_burst_rejection(failure_class=result["failure_class"], http_status=result["http_status"])
+            is_upstream_burst_rejection(
+                error_code=result["error_code"],
+                failure_class=result["failure_class"],
+                http_status=result["http_status"],
+            )
             is False
         )
 

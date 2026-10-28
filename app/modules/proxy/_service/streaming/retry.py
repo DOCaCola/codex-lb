@@ -764,6 +764,7 @@ class _StreamingRetryMixin:
                     phase="first_event",
                 )
                 burst_cooldown_recorded = is_upstream_burst_rejection(
+                    error_code=failed_code,
                     failure_class=classified["failure_class"],
                     http_status=http_status,
                 )
@@ -2664,6 +2665,7 @@ class _StreamingRetryMixin:
                                     phase="first_event",
                                 )
                                 burst = is_upstream_burst_rejection(
+                                    error_code=code,
                                     failure_class=classified["failure_class"],
                                     http_status=tex.status_code,
                                 )
@@ -3398,6 +3400,7 @@ class _StreamingRetryMixin:
                             )
                             candidates_remaining = max_attempts - attempt - 1
                             burst = is_upstream_burst_rejection(
+                                error_code=current_error_code,
                                 failure_class=classified["failure_class"],
                                 http_status=retry_exc.status_code,
                             )

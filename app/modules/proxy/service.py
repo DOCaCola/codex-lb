@@ -672,6 +672,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _prepare_websocket_request_state_for_account_switch,  # noqa: F401
     _prepare_websocket_request_state_for_auth_replay,  # noqa: F401
     _prepare_websocket_request_state_for_visible_output_replay,  # noqa: F401
+    _record_terminal_event_model_admission_limit,  # noqa: F401
     _record_websocket_continuity_completion,  # noqa: F401
     _record_websocket_responses_lite_acceptance,  # noqa: F401
     _release_websocket_response_create_gate,  # noqa: F401

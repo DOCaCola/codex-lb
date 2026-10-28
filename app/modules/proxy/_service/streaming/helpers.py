@@ -1207,8 +1207,9 @@ async def _handle_stream_error(
         return classified
     if code in MODEL_ADMISSION_LIMIT_CODES:
         # One model's per-turn admission on this account, not its health: the
-        # turn moves to another account and the account keeps serving its
-        # other models. The Retry-After reaches the client with the frame.
+        # account keeps serving its other models. The model's cooldown that
+        # moves the turn was recorded where the refusal was recognized, ahead
+        # of this (possibly settlement-deferred) write.
         _facade().logger.info(
             "Skipped account error penalty for model admission limit account_id=%s request_id=%s code=%s",
             "<redacted>" if privacy_policy.redacts_sensitive_details else account.id,

@@ -53,6 +53,7 @@ from app.db.models import (
     AccountStatus,  # noqa: F401
 )
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
+from app.modules.proxy._load_balancer.overload_backoff import record_model_admission_limit
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -348,6 +349,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _pop_terminal_websocket_request_state,  # noqa: F401
     _prepare_websocket_request_state_for_auth_replay,  # noqa: F401
     _prepare_websocket_request_state_for_visible_output_replay,  # noqa: F401
+    _record_terminal_event_model_admission_limit,
     _record_websocket_continuity_completion,  # noqa: F401
     _release_websocket_response_create_gate,  # noqa: F401
     _rewrite_websocket_continuity_corruption_event,  # noqa: F401
@@ -389,6 +391,7 @@ from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
 from app.modules.proxy.helpers import (
+    MODEL_ADMISSION_LIMIT_CODES,
     _header_account_id,
     _normalize_error_code,
     _parse_openai_error,
@@ -642,6 +645,13 @@ class _StreamingMixin(_StreamingRetryMixin):
                         raw_error_type,
                     )
                 code = _classify_terminal_stream_error_frame(event_type, first_payload, code, raw_error_message)
+                await _record_terminal_event_model_admission_limit(
+                    proxy,
+                    account,
+                    model=model,
+                    event_type=event_type,
+                    payload=first_payload,
+                )
                 rewritten_error = _facade()._rewrite_previous_response_stream_error(
                     previous_response_id=payload.previous_response_id,
                     preferred_account_id=preferred_account_id,
@@ -927,6 +937,18 @@ class _StreamingMixin(_StreamingRetryMixin):
             response_create_lease.release()
             failure_metadata = _facade()._request_log_failure_metadata(exc)
             error = _parse_openai_error(exc.payload)
+            if _normalize_error_code(error.code if error else None, error.type if error else None) in (
+                MODEL_ADMISSION_LIMIT_CODES
+            ):
+                # Recorded per attempt, before the retry loop reselects, so the
+                # replacement and every concurrent selection avoid the account
+                # for this model (see ``record_model_admission_limit``).
+                await record_model_admission_limit(
+                    proxy._load_balancer,
+                    account,
+                    model=model,
+                    retry_after_seconds=exc.retry_after_seconds,
+                )
             rewritten_error = _facade()._rewrite_previous_response_stream_error(
                 previous_response_id=payload.previous_response_id,
                 preferred_account_id=preferred_account_id,
