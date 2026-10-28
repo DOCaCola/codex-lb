@@ -4,18 +4,25 @@ The mapping follows CLIProxyAPI's Codex/Claude translator, including its product
 64-character tool name and call ID limits, JSON Schema dialect cleanup, Claude Code billing
 attribution removal, PDF documents, hosted web search, and system messages placed after
 pending tool outputs. Reasoning continuity uses the signed envelope in `envelope`.
+
+The requested effort is projected onto the target model's supported levels like CLIProxyAPI's cross-family
+thinking validation (`internal/thinking/validate.go`): Claude effort values and disabled thinking do not map
+onto every OpenAI model's levels, so the nearest supported level is sent, the lower one on a tie.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.core.messages.envelope import is_proxy_signature, open_reasoning
 from app.core.messages.errors import MessagesRequestError
 from app.core.types import JsonValue
+
+logger = logging.getLogger(__name__)
 
 _NAME_LIMIT = 64
 _BILLING_ATTRIBUTION_PREFIX = "x-anthropic-billing-header:"
@@ -41,6 +48,8 @@ _SCHEMA_VALUE_KEYWORDS = (
     "unevaluatedProperties",
 )
 _BUDGET_EFFORTS = ((512, "minimal"), (1024, "low"), (8192, "medium"), (24576, "high"))
+# Wire efforts from lowest to highest; `none` is the bottom rung, so disabled thinking projects to the lowest level.
+_EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +86,12 @@ def translate_messages_request(
     fast: bool,
     identity: MessagesIdentity,
     envelope_key: bytes,
+    reasoning_levels: Sequence[str],
 ) -> TranslatedMessages:
-    """Translate a Messages request; `fast` is a Fast selector chosen through the model alias."""
+    """Translate a Messages request; `fast` is a Fast selector chosen through the model alias.
+
+    `reasoning_levels` are the efforts the target model's catalog entry supports; empty leaves effort unprojected.
+    """
     _reject_unsupported_fields(body, model)
     tools_value = body.get("tools") or []
     if not isinstance(tools_value, list):
@@ -100,7 +113,7 @@ def translate_messages_request(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = _tool_choice(body.get("tool_choice"), web_search_names)
-    reasoning = _reasoning(body)
+    reasoning = _reasoning(body, model=model, reasoning_levels=reasoning_levels)
     if reasoning:
         payload["reasoning"] = reasoning
     max_tokens = body.get("max_tokens")
@@ -296,7 +309,7 @@ def _tool_choice(tool_choice: JsonValue, web_search_names: set[str]) -> JsonValu
     return "auto"
 
 
-def _reasoning(body: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+def _reasoning(body: Mapping[str, JsonValue], *, model: str, reasoning_levels: Sequence[str]) -> dict[str, JsonValue]:
     thinking = body.get("thinking")
     thinking_type = thinking.get("type") if isinstance(thinking, dict) else None
     output_config = body.get("output_config")
@@ -313,7 +326,27 @@ def _reasoning(body: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
     display = thinking.get("display") if isinstance(thinking, dict) else None
     if thinking_type != "disabled" and display != "omitted":
         reasoning["summary"] = "auto"
+    effort = reasoning.get("effort")
+    if isinstance(effort, str):
+        projected = _project_effort(effort, reasoning_levels)
+        if projected != effort:
+            reasoning["effort"] = projected
+            logger.info(
+                "messages_reasoning_effort_projected model=%s requested_effort=%s projected_effort=%s",
+                model,
+                effort,
+                projected,
+            )
     return reasoning
+
+
+def _project_effort(effort: str, reasoning_levels: Sequence[str]) -> str:
+    """The supported level nearest to `effort`, the lower one on a tie; unknown efforts pass through."""
+    supported = [_EFFORT_ORDER.index(level) for level in reasoning_levels if level in _EFFORT_ORDER]
+    if not supported or effort not in _EFFORT_ORDER or effort in reasoning_levels:
+        return effort
+    requested = _EFFORT_ORDER.index(effort)
+    return _EFFORT_ORDER[min(supported, key=lambda rank: (abs(rank - requested), rank))]
 
 
 def _text_format(output_config: JsonValue) -> dict[str, JsonValue] | None:

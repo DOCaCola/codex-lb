@@ -21,11 +21,26 @@ KEY = b"k" * 32
 MODEL = "gpt-6.1-sol"
 SESSION = MessagesIdentity(session_id="11111111-1111-4111-8111-111111111111", agent_id="main")
 LONG_NAME = "mcp__" + "very_long_server_name_" * 3 + "__lookup"
+GPT6_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultra")
+GPT55_LEVELS = ("low", "medium", "high", "xhigh")
+GLM_LEVELS = ("low", "high", "max")
 
 
-def _translate(body: dict, *, identity: MessagesIdentity = SESSION, model: str = MODEL, fast: bool = False):
+def _translate(
+    body: dict,
+    *,
+    identity: MessagesIdentity = SESSION,
+    model: str = MODEL,
+    fast: bool = False,
+    reasoning_levels: tuple[str, ...] = (),
+):
     return translate_messages_request(
-        {"model": model, **body}, model=model, fast=fast, identity=identity, envelope_key=KEY
+        {"model": model, **body},
+        model=model,
+        fast=fast,
+        identity=identity,
+        envelope_key=KEY,
+        reasoning_levels=reasoning_levels,
     )
 
 
@@ -285,6 +300,29 @@ def test_tool_choice_web_search_and_controls():
 def test_thinking_maps_to_reasoning(thinking, expected):
     payload = _translate({"messages": [{"role": "user", "content": "Hi"}], "thinking": thinking}).payload
     assert payload.get("reasoning") == expected
+
+
+@pytest.mark.parametrize(
+    ("body", "levels", "expected"),
+    [
+        # Disabled thinking: no OpenAI model accepts `none`, so the lowest level is sent.
+        ({"thinking": {"type": "disabled"}}, GPT6_LEVELS, {"effort": "low"}),
+        ({"thinking": {"type": "enabled", "budget_tokens": 512}}, GPT6_LEVELS, {"effort": "low", "summary": "auto"}),
+        # `max` above a model's highest level falls to that level.
+        ({"output_config": {"effort": "max"}}, GPT55_LEVELS, {"effort": "xhigh", "summary": "auto"}),
+        ({"output_config": {"effort": "max"}}, GPT6_LEVELS, {"effort": "max", "summary": "auto"}),
+        # Gaps in a source model's levels: the nearest level, the lower one on a tie.
+        ({"output_config": {"effort": "medium"}}, GLM_LEVELS, {"effort": "low", "summary": "auto"}),
+        ({"output_config": {"effort": "xhigh"}}, GLM_LEVELS, {"effort": "high", "summary": "auto"}),
+        ({"thinking": {"type": "disabled"}}, GLM_LEVELS, {"effort": "low"}),
+        # A model without declared levels and unknown efforts keep the requested value.
+        ({"thinking": {"type": "disabled"}}, (), {"effort": "none"}),
+        ({"output_config": {"effort": "turbo"}}, GPT6_LEVELS, {"effort": "turbo", "summary": "auto"}),
+    ],
+)
+def test_reasoning_effort_projects_onto_model_levels(body, levels, expected):
+    payload = _translate({"messages": [{"role": "user", "content": "Hi"}], **body}, reasoning_levels=levels).payload
+    assert payload["reasoning"] == expected
 
 
 def test_identity_scopes_prompt_cache_key():

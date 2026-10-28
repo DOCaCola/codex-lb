@@ -337,6 +337,7 @@ def openrouter_catalog(monkeypatch):
                     "pricing": {"prompt": "0.000001", "completion": "0.000002"},
                     "top_provider": {"context_length": 200_000, "max_completion_tokens": 32000},
                     "supported_parameters": ["tools", "reasoning"],
+                    "reasoning": {"mandatory": True, "supported_efforts": ["low", "high", "max"]},
                 }
             ]
         }
@@ -433,6 +434,90 @@ async def test_claude_code_request_served_by_openrouter_source(async_client, ope
     assert log.conversation_id == SESSION
     assert log.request_operation == "messages"
     assert log.cost_usd == pytest.approx(0.001)
+
+
+async def test_claude_code_effort_projects_onto_native_model_levels(async_client, monkeypatch):
+    await _import_account(async_client)
+    seen: list[dict] = []
+
+    async def fake_stream(payload, headers, access_token, account_id, **kwargs):
+        seen.append(payload.to_payload())
+        for event in _upstream_turn("Hello"):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    # gpt-5.4 supports low through xhigh: `max` falls to xhigh and disabled thinking to low.
+    for control in ({"output_config": {"effort": "max"}}, {"thinking": {"type": "disabled"}}):
+        response = await async_client.post(
+            "/v1/messages",
+            json={"model": "gpt-5.4", "max_tokens": 1000, "messages": [{"role": "user", "content": "Hi"}], **control},
+            headers=CLAUDE_CODE_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+
+    assert [payload["reasoning"]["effort"] for payload in seen] == ["xhigh", "low"]
+
+
+async def test_claude_code_effort_projects_onto_source_model_levels(async_client, openrouter_catalog):
+    requests: list[dict] = []
+
+    async def upstream(request):
+        requests.append(await request.json())
+        message = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "Hi", "annotations": []}],
+        }
+        events = [
+            {
+                "type": "response.created",
+                "response": {"id": "resp_source", "object": "response", "status": "in_progress", "output": []},
+            },
+            {"type": "response.output_item.done", "output_index": 0, "item": message},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_source",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [message],
+                    "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+                },
+            },
+        ]
+        return web.Response(
+            text="".join(f"data: {json.dumps(event)}\n\n" for event in events), content_type="text/event-stream"
+        )
+
+    async with stub_source_upstreams() as start:
+        url = await start(upstream)
+        created = await async_client.post("/api/openrouter-accounts", json={"name": "OR", "apiKey": "secret-test"})
+        account_id = created.json()["id"]
+        await async_client.patch(
+            f"/api/openrouter-accounts/{account_id}", json={"selections": [{"model": "vendor/test"}]}
+        )
+        async with SessionLocal() as session:
+            source = await session.get(ModelSource, account_id)
+            assert source is not None
+            source.base_url = url
+            await session.commit()
+        # The model supports low, high and max with mandatory reasoning.
+        for control in ({"output_config": {"effort": "medium"}}, {"thinking": {"type": "disabled"}}):
+            response = await async_client.post(
+                "/v1/messages",
+                json={
+                    "model": "clb-claude-openrouter~svendor~stest",
+                    "max_tokens": 1000,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    **control,
+                },
+                headers=CLAUDE_CODE_HEADERS,
+            )
+            assert response.status_code == 200, response.text
+
+    assert [body["reasoning"]["effort"] for body in requests] == ["low", "low"]
 
 
 async def test_claude_code_discovers_messages_servable_models(async_client, openrouter_catalog):

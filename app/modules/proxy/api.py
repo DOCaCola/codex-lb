@@ -2009,7 +2009,12 @@ async def _messages_with_responses_model(
     try:
         validate_model_access(api_key, model)
         translated = translate_messages_request(
-            body, model=model, fast=fast, identity=messages_identity(body, request.headers), envelope_key=key
+            body,
+            model=model,
+            fast=fast,
+            identity=messages_identity(body, request.headers),
+            envelope_key=key,
+            reasoning_levels=await _messages_model_reasoning_levels(model, api_key),
         )
         responses_payload = V1ResponsesRequest.model_validate(translated.payload)
     except MessagesRequestError as exc:
@@ -2037,6 +2042,26 @@ async def _messages_with_responses_model(
         model=model, reported_model=reported_model, tool_names=translated.tool_names, envelope_key=key
     )
     return await messages_response(response, projector, stream=translated.stream, clock=clock_for(context.service))
+
+
+async def _messages_model_reasoning_levels(model: str, api_key: ApiKeyData | None) -> tuple[str, ...]:
+    """The efforts the catalog entry serving `model` supports: a native model, else an enabled source model.
+
+    A model in neither catalog has no levels; dispatch then rejects it as unavailable.
+    """
+    catalog_model = get_model_registry().get_models_with_fallback().get(model)
+    if catalog_model is None:
+        catalog_model = next(
+            (
+                source_model
+                for source_model in await _list_enabled_source_catalog_models(api_key, require_responses=True)
+                if source_model.slug == model
+            ),
+            None,
+        )
+    if catalog_model is None:
+        return ()
+    return tuple(level.effort for level in catalog_model.supported_reasoning_levels)
 
 
 @v1_router.get("/usage", response_model=V1UsageResponse)
