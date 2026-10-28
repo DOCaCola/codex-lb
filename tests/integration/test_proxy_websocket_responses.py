@@ -16019,3 +16019,72 @@ def test_backend_responses_websocket_re_sends_an_anchored_accepted_failure_in_a_
     assert "previous_response_id" not in replayed_payload
     assert replayed_payload["input"] == [failover.HISTORICAL_INPUT, failover.FOLLOW_UP_INPUT]
     assert other_account_upstream.sent_text == []
+
+
+@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
+@pytest.mark.parametrize(
+    "include",
+    [
+        ["reasoning.encrypted_content", "output.encrypted_content"],
+        ["unknown.encrypted_content"],
+        "output.encrypted_content",
+    ],
+)
+def test_websocket_output_token_replay_contract(app_instance, monkeypatch, path, include):
+    output = {
+        "type": "message",
+        "id": "msg_replay",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "Recorded."}],
+        "encrypted_content": "message-ciphertext",
+    }
+    upstreams = []
+
+    async def connect(*_args, **_kwargs):
+        messages = [
+            {"type": "response.created", "response": {"id": "resp_replay", "status": "in_progress"}},
+            {"type": "response.output_item.done", "output_index": 0, "item": output},
+            {
+                "type": "response.completed",
+                "response": {"id": "resp_replay", "status": "completed", "output": [output]},
+            },
+        ]
+        upstream = _FakeUpstreamWebSocket([_FakeUpstreamMessage("text", text=json.dumps(event)) for event in messages])
+        upstreams.append(upstream)
+        return account_fixture(id="acct_replay"), upstream
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", AsyncMock(return_value=None))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        proxy_module, "get_settings_cache", lambda: SimpleNamespace(get=AsyncMock(return_value=_websocket_settings()))
+    )
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", connect)
+    valid = include == ["reasoning.encrypted_content", "output.encrypted_content"]
+    history = [{"role": "user", "content": "Record it."}]
+    with TestClient(app_instance) as client:
+        for _ in range(2 if valid else 1):
+            with client.websocket_connect(path) as websocket:
+                websocket.send_json(
+                    {
+                        "type": "response.create",
+                        "model": "gpt-6-astra",
+                        "instructions": "",
+                        "input": history,
+                        "include": include,
+                    }
+                )
+                first = websocket.receive_json()
+                if not valid:
+                    assert first["type"] == "error" and first["status"] == 400
+                    assert first["error"]["param"] == "include"
+                    assert upstreams == []
+                    continue
+                assert first["type"] == "response.created"
+                assert websocket.receive_json()["item"] == output
+                terminal = websocket.receive_json()
+                assert terminal["response"]["output"] == [output]
+                sent = json.loads(upstreams[-1].sent_text[0])
+                assert sent["include"] == include
+                assert sent["input"] == history
+                history = [*history, output, {"role": "user", "content": "Continue."}]

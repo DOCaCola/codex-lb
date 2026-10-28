@@ -766,10 +766,10 @@ def test_responses_accepts_known_include_values():
         "model": "gpt-5.1",
         "instructions": "hi",
         "input": [],
-        "include": ["reasoning.encrypted_content", "web_search_call.action.sources"],
+        "include": ["reasoning.encrypted_content", "output.encrypted_content", "web_search_call.action.sources"],
     }
     request = ResponsesRequest.model_validate(payload)
-    assert request.include == ["reasoning.encrypted_content", "web_search_call.action.sources"]
+    assert request.to_payload()["include"] == payload["include"]
 
 
 def test_responses_accepts_previous_response_id_without_conversation():

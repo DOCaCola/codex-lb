@@ -4294,3 +4294,100 @@ async def test_v1_responses_disconnect_stamp_reaches_traced_response_through_rea
         "request_id=req_delivery_trace_stamp surface=responses outcome=terminal_after_disconnect "
         "terminal=response.completed"
     ) in records[0].getMessage()
+
+
+@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_output_token_replay_include_and_ciphertext_round_trip(async_client, monkeypatch, path, stream):
+    auth = _make_auth_json("replay-account", "replay@example.com")
+    imported = await async_client.post(
+        "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth), "application/json")}
+    )
+    assert imported.status_code == 200
+    output = [
+        {
+            "type": "message",
+            "id": "msg_replay",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "Recorded."}],
+            "encrypted_content": "message-ciphertext",
+        },
+        {
+            "type": "function_call",
+            "id": "fc_replay",
+            "call_id": "call_replay",
+            "name": "record",
+            "arguments": "{}",
+            "status": "completed",
+            "encrypted_content": "tool-ciphertext",
+        },
+    ]
+    captured = []
+
+    async def upstream(payload, *_args, **_kwargs):
+        captured.append(payload.to_payload())
+        response = {
+            "id": f"resp_replay_{len(captured)}",
+            "object": "response",
+            "status": "completed",
+            "output": output,
+            "usage": {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10},
+        }
+        yield (
+            "data: "
+            + json.dumps({"type": "response.created", "response": {**response, "output": [], "status": "in_progress"}})
+            + "\n\n"
+        )
+        for index, item in enumerate(output):
+            yield (
+                "data: "
+                + json.dumps({"type": "response.output_item.done", "output_index": index, "item": item})
+                + "\n\n"
+            )
+        yield "data: " + json.dumps({"type": "response.completed", "response": response}) + "\n\n"
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", upstream)
+    includes = ["reasoning.encrypted_content", "output.encrypted_content"]
+    history = [{"role": "user", "content": "Record it."}]
+    for _ in range(2):
+        response = await async_client.post(
+            path,
+            json={
+                "model": "gpt-6-astra",
+                "instructions": "",
+                "input": history,
+                "include": includes,
+                "stream": stream,
+            },
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            events = list(_iter_sse_events(response.text.splitlines()))
+            assert [event["item"] for event in events if event["type"] == "response.output_item.done"] == output
+            received = next(event["response"]["output"] for event in events if event["type"] == "response.completed")
+        else:
+            received = response.json()["output"]
+        assert received == output
+        assert captured[-1]["include"] == includes
+        history = [*history, *received, {"type": "function_call_output", "call_id": "call_replay", "output": "done"}]
+    assert captured[1]["input"][1:3] == output
+
+
+@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
+@pytest.mark.parametrize("include", [["unknown.encrypted_content"], "output.encrypted_content"])
+async def test_output_token_replay_does_not_relax_include_validation(async_client, monkeypatch, path, include):
+    upstream = AsyncMock(side_effect=AssertionError("invalid include must not dispatch"))
+    monkeypatch.setattr(proxy_module, "core_stream_responses", upstream)
+    response = await async_client.post(
+        path,
+        json={
+            "model": "gpt-6-astra",
+            "instructions": "",
+            "input": [],
+            "include": include,
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == "include"
+    upstream.assert_not_called()
