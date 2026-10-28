@@ -16,6 +16,20 @@ from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 
+class ClaudeIdentityChanged(ClaudeError):
+    """Explicit replacement raced a request; a retry prepares the current identity."""
+
+    code = "claude_identity_changed"
+    status_code = 503
+
+    def __init__(self) -> None:
+        super().__init__("Claude credentials were replaced during this request; retry it.")
+
+    @property
+    def response_headers(self) -> dict[str, str]:
+        return {"Retry-After": "1"}
+
+
 async def require_current_identity(source_id: str, identity_generation: int) -> None:
     """Prepared requests cannot start a new attempt after their identity was replaced."""
     async with get_background_session() as session:
@@ -24,15 +38,11 @@ async def require_current_identity(source_id: str, identity_generation: int) -> 
             account is None
             or AccountState.model_validate_json(account.state_json).identity_generation != identity_generation
         ):
+            error = ClaudeIdentityChanged()
             raise ModelSourceForwardingError(
-                status_code=409,
-                payload={
-                    "error": {
-                        "type": "invalid_request_error",
-                        "code": "claude_identity_changed",
-                        "message": "Claude credentials were replaced; retry with the current account identity.",
-                    }
-                },
+                status_code=error.status_code,
+                payload={"error": {"type": error.error_type, "code": error.code, "message": str(error)}},
+                retry_after="1",
             )
 
 
@@ -45,20 +55,22 @@ class ReconnectIdentityMismatch(ClaudeError):
             message = (
                 "Reconnect identity differs from the enrolled identity; the saved account UUID is unavailable, "
                 "so an account change cannot be distinguished from an organization change. "
-                "Existing credentials were not replaced."
+                "Existing credentials were not replaced. To use this sign-in for this entry, "
+                "reconnect with Replace the saved identity selected."
             )
         elif saved_account_uuid != incoming_account_uuid:
             self.code = "claude_reconnect_account_mismatch"
             message = (
-                "Reconnect authenticated a different Claude account. Sign in with the original account "
-                "or add this account separately. Existing credentials were not replaced."
+                "Reconnect authenticated a different Claude account. Sign in with the original account, "
+                "select Replace the saved identity to use this sign-in for this entry, or add it separately. "
+                "Existing credentials were not replaced."
             )
         else:
             self.code = "claude_reconnect_organization_changed"
             message = (
                 "Reconnect authenticated the same Claude account, but a different organization. "
-                "Existing conversations may contain resources owned by the previous organization; "
-                "reconnect cannot transfer that ownership. Existing credentials were not replaced."
+                "Existing credentials were not replaced. Select Replace the saved identity to use this "
+                "organization for this entry; resources owned by the previous organization stay unavailable."
             )
         super().__init__(message)
 

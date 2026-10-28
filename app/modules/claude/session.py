@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.time import utcnow
 from app.db.models import ClaudeAccount, ClaudeSessionOwner
 from app.db.session import get_background_session
-from app.modules.claude.credentials import ClaudeError
+from app.modules.claude.identity import ClaudeIdentityChanged
 from app.modules.claude.quota_evidence import lock_account
 from app.modules.claude.resources import ResourceScope, touch_origins
 from app.modules.claude.schemas import AccountState
@@ -51,7 +51,7 @@ class NativeSessionBinding:
         async with get_background_session() as session:
             account = await lock_account(session, source_id)
             if AccountState.model_validate_json(account.state_json).identity_generation != self.identity_generation:
-                raise ClaudeError("Claude account identity changed during admission; retry with current credentials")
+                raise ClaudeIdentityChanged()
             ownership = NativeSessionOwnership(
                 session, client_scope=self.client_scope, conversation_id=self.conversation_id, model=self.model
             )

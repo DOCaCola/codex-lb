@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -63,6 +64,33 @@ def test_parallel_parameter_contract(supported, value, responses):
     assert [level.effort for level in catalog.supported_reasoning_levels] == ["low", "medium", "xhigh"]
     assert catalog.default_reasoning_level == "xhigh"
     assert json.loads(provider.models[0].raw_metadata_json)["supported_parameters"][0] == "tools"
+
+
+def test_responses_projection_drops_openai_output_replay():
+    reasoning = {"type": "reasoning", "summary": [], "encrypted_content": "reasoning-state"}
+    message = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Done."}],
+        "encrypted_content": "message-state",
+    }
+    call = {"type": "function_call", "call_id": "call", "name": "read", "arguments": "{}", "encrypted_content": "call"}
+    user = {"role": "user", "content": "Next."}
+    payload = {
+        "model": "openrouter/qwen/test:free",
+        "include": ["reasoning.encrypted_content", "output.encrypted_content"],
+        "input": [reasoning, message, call, user],
+    }
+    original = deepcopy(payload)
+    result = project_request(source(["tools"]), payload, responses=True)
+    assert result["include"] == ["reasoning.encrypted_content"]
+    assert result["input"] == [
+        reasoning,
+        {key: value for key, value in message.items() if key != "encrypted_content"},
+        {key: value for key, value in call.items() if key != "encrypted_content"},
+        user,
+    ]
+    assert payload == original
 
 
 @pytest.mark.parametrize("code", [404, "model_not_found", None])

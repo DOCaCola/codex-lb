@@ -23,6 +23,7 @@ from app.modules.claude.caching import (
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.failover import SendBudget
+from app.modules.claude.identity import ClaudeIdentityChanged
 from app.modules.claude.profile import RequestProfile, recognize_native
 from app.modules.claude.protocol import ADVANCED_TOOL_USE_BETA, THINKING_DISPLAY_UPDATES_BETA, defers_tools
 from app.modules.claude.recovery import THINKING_BINDING_BETA, bind_replayed_thinking
@@ -108,6 +109,19 @@ class ClaudeDispatchPreparer:
         preferred_owner = None
         requires_owner = False
         resource_keys: tuple[str, ...] = ()
+        scope = ResourceScope(api_key.id if api_key else "anonymous", model)
+        server_keys: tuple[str, ...] = ()
+        thread_keys: tuple[str, ...] = ()
+
+        async def resource_owners() -> set[str | None]:
+            # Thread state answers with the replayable thread_not_found contract.
+            owners: set[str | None] = set()
+            if thread is not None and thread_keys:
+                owners.add(await thread.owner(session, scope))
+            if server_keys:
+                owners.add(await resolve_origins(session, server_keys))
+            return owners
+
         thread_only = False
         if not translated or endpoint == "messages":
             native_ownership = NativeSessionOwnership(
@@ -116,14 +130,9 @@ class ClaudeDispatchPreparer:
                 conversation_id=conversation_id,
                 model=model,
             )
-            scope = ResourceScope(api_key.id if api_key else "anonymous", model)
             server_keys = () if translated else scope.keys(resource_ids(logical))
             thread_keys = thread.keys(scope) if thread is not None else ()
-            owners: set[str | None] = set()
-            if thread is not None and thread_keys:
-                owners.add(await thread.owner(session, scope))
-            if server_keys:
-                owners.add(await resolve_origins(session, server_keys))
+            owners = await resource_owners()
             if len(owners) > 1:
                 raise ClaudeError("Native Claude history contains conflicting resource owners")
             requires_owner = bool(owners)
@@ -263,13 +272,13 @@ class ClaudeDispatchPreparer:
             require_streaming=logical.get("stream") is True,
             reasoning_effort=reasoning_effort,
         )
+        if resource_keys:
+            # Resolution preceded account selection and credential preparation.
+            # Resources of a replaced identity cannot bind to its successor.
+            await resource_owners()
         # The serving account's provider UUID is bound by the snapshot above.
         if AccountState.model_validate_json(account.state_json).identity_generation != identity_generation:
-            raise ClaudeError("Claude account identity changed during preparation; retry with current credentials")
-        if resource_keys:
-            # Resolution preceded account selection. Replacement in between must
-            # not bind those resources to the new identity at the same source ID.
-            await resolve_origins(session, resource_keys)
+            raise ClaudeIdentityChanged()
         assert account.provider_account_uuid is not None
         if project_session(
             projected.body,

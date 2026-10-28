@@ -110,9 +110,13 @@ Replacement keeps the account ID, name, colour, pause state, routing policy, mod
 selections and historical usage. It clears current quota/subscription observations,
 cooldowns and session affinity. Old native resources cannot move to the replacement;
 completed translated search becomes readable history, while an active search needs
-portable context. Refused-output markers remain effective. Catalogue and quota
-discovery restart on the next scheduled refresh (normally within a minute for enabled
-accounts), or through **Refresh**. A reconnect with unchanged identity retains ownership.
+portable context. Refused-output markers remain effective. Selected models stay
+routable while catalogue and quota rediscovery runs on the next scheduled refresh
+(normally within a minute for enabled accounts), or through **Refresh**. A request
+that was being prepared while the identity was replaced fails with retryable
+`claude_identity_changed` (HTTP 503, `Retry-After: 1`); a continuation of a native
+thread owned by the old identity reports `thread_not_found` so the client resends
+its history. A reconnect with unchanged identity retains ownership.
 Importing an expired file for a new account defers identity verification until refresh succeeds;
 replacement requires current credentials and a verified profile.
 
@@ -121,7 +125,8 @@ Reconnect errors distinguish a different authenticated account
 organization (`claude_reconnect_organization_changed`). A legacy entry without a
 saved account UUID reports `claude_reconnect_identity_unverified` if its combined
 identity differs. Rejected reconnects leave existing credentials and ownership
-unchanged. Expiry or a subscription-tier change alone does not block reconnect.
+unchanged; each of these errors names the replacement option. Expiry or a
+subscription-tier change alone does not block reconnect.
 
 The global version control follows stable Claude Code releases daily, or can pin
 an exact version for rollback. It changes the advertised CLI version, not the

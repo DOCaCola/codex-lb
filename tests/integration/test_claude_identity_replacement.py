@@ -5,11 +5,13 @@ import pytest
 
 from app.db.models import ClaudeAccount, ClaudeCooldown, ClaudeQuotaHistory, ClaudeResourceOrigin, ClaudeSessionOwner
 from app.db.session import SessionLocal
+from app.modules.claude.auth import ClaudeAuth
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.failover import Refusal, record_refusals
-from app.modules.claude.identity import require_current_identity
+from app.modules.claude.identity import ClaudeIdentityChanged, require_current_identity
 from app.modules.claude.observations import record_headers
+from app.modules.claude.profile import CLI_IDENTITY
 from app.modules.claude.refusals import omit_refused_output, record_refused_response
 from app.modules.claude.resources import ResourceOriginMissing, ResourceScope, record_keys, resolve_origins
 from app.modules.claude.schemas import AccountState, AuthenticatedProfile, Credentials
@@ -26,6 +28,62 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 def stub(monkeypatch):
     install_profile_stub(monkeypatch)
+
+
+def native_payload(thread=None):
+    body = {
+        "model": MODEL,
+        "system": CLI_IDENTITY,
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 100,
+        "stream": True,
+    }
+    if thread is not None:
+        body["thread"] = thread
+    return body
+
+
+async def test_replacement_keeps_account_routable_until_catalog_refresh(async_client, monkeypatch, pool):
+    await async_client.patch(f"/api/claude-accounts/{pool[1]}", json={"isEnabled": False})
+    assert (await reconnect(async_client, monkeypatch, pool[0])).status_code == 200
+    async with SessionLocal() as session:
+        state = AccountState.model_validate_json((await session.get(ClaudeAccount, pool[0])).state_json)
+        assert state.identity_generation == 2 and state.catalog and state.catalog_updated_at is None
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=native_payload())
+    assert response.status_code == 200, response.text
+    assert [capture[0] for capture in captured] == [pool[0]]
+
+
+@pytest.mark.parametrize("thread", [False, True])
+async def test_replacement_during_preparation_is_retryable_or_replayable(async_client, monkeypatch, pool, thread):
+    captured, _ = install_upstream(monkeypatch)
+    if thread:
+        created = await async_client.post(
+            "/v1/messages", headers=native_headers(), json=native_payload({"type": "create"})
+        )
+        assert created.status_code == 200, created.text
+    sent = len(captured)
+    original = ClaudeAuth.snapshot
+
+    async def replace_during_snapshot(self, source_id, **kwargs):
+        async with SessionLocal() as session:
+            row = await session.get(ClaudeAccount, source_id)
+            state = AccountState.model_validate_json(row.state_json)
+            state.identity_generation = row.generation + 1
+            row.state_json = state.model_dump_json()
+            await session.commit()
+        return await original(self, source_id, **kwargs)
+
+    monkeypatch.setattr(ClaudeAuth, "snapshot", replace_during_snapshot)
+    request = native_payload({"type": "continue", "previous_message_id": "msg_fixture"} if thread else None)
+    response = await async_client.post("/v1/messages", headers=native_headers(), json=request)
+    if thread:
+        assert response.status_code == 404 and response.json()["error"]["code"] == "thread_not_found"
+    else:
+        assert response.status_code == 503 and response.json()["error"]["code"] == "claude_identity_changed"
+        assert response.headers["retry-after"] == "1"
+    assert len(captured) == sent
 
 
 async def start_reconnect(client, source_id):
@@ -230,7 +288,7 @@ async def test_admission_cannot_rebind_old_identity_or_resource(async_client, mo
     await record_keys(keys, source_id, identity_generation=1)
     assert (await reconnect(async_client, monkeypatch, source_id)).status_code == 200
     binding = NativeSessionBinding("client", "conversation", MODEL, None, identity_generation=1)
-    with pytest.raises(ClaudeError, match="identity changed"):
+    with pytest.raises(ClaudeIdentityChanged):
         await binding.commit(source_id)
     binding = NativeSessionBinding("client", "conversation", MODEL, None, keys, identity_generation=2)
     with pytest.raises(ClaudeError, match="origin expired"):

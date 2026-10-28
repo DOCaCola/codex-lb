@@ -72,6 +72,16 @@ OpenRouter requests MUST preserve supported custom tools, namespaces, reasoning 
 - **WHEN** a selected account returns a retryable error before content delivery and another permitted account serves that model
 - **THEN** the request may proceed through that eligible account without changing the model or duplicating settlement
 
+### Requirement: OpenAI output replay stays with OpenAI
+OpenRouter Responses projection SHALL remove the `output.encrypted_content` include
+value and `encrypted_content` from non-reasoning input items before strict
+parameter routing. Other include values, reasoning items and visible history SHALL
+be forwarded unchanged. The caller's payload SHALL NOT be mutated.
+
+#### Scenario: Codex switches to an OpenRouter model
+- **WHEN** a Codex request for an OpenRouter model includes output.encrypted_content and history with OpenAI message and tool-call ciphertext
+- **THEN** OpenRouter receives the visible history and reasoning include without the OpenAI output ciphertext or its include value
+
 ### Requirement: Unified account presentation
 OpenRouter accounts SHALL appear in the existing dashboard account card/list collection and Accounts master/detail list, without a separate provider section. The UI SHALL use consistent surfaces, typography, status badges and privacy behavior. Provider-specific monitoring MUST retain its units, unknown/stale states and timestamps; dollar balances MUST NOT be counted as Codex subscription quotas.
 

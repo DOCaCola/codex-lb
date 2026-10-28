@@ -234,11 +234,13 @@ class ClaudeService:
                 def replace_subscription(state: AccountState) -> AccountState:
                     if identity_changed:
                         # Keep operator choices, not the previous identity's live observations.
+                        # The catalog keeps the account routable but is due for rediscovery.
                         state = AccountState(
                             identity_generation=generation + 1,
                             all_models=state.all_models,
                             selections=state.selections,
                             reasoning_restrictions=state.reasoning_restrictions,
+                            catalog=state.catalog,
                         )
                     if subscription is not None:
                         state.subscription = subscription
@@ -251,7 +253,6 @@ class ClaudeService:
                 if identity_changed:
                     for table in (ClaudeCooldown, ClaudeSessionOwner):
                         await self.repository.session.execute(delete(table).where(table.source_id == source_id))
-                    await self.repository.sources.replace_models(row.source, [], commit=False)
             await self.repository.session.commit()
         except IntegrityError as exc:
             await self.repository.session.rollback()

@@ -1189,7 +1189,7 @@ When an HTTP bridge session receives an anonymous upstream `previous_response_no
 - **AND** the downstream error code is not `previous_response_not_found`
 
 ### Requirement: WebSocket full-resend previous-response misses retry without stale anchor
-When a direct WebSocket `response.create` request includes both `previous_response_id` and a self-contained full resend payload, the service MUST retain a safe replay body without `previous_response_id`. If upstream rejects the anchor with `previous_response_not_found` before `response.created`, the service MUST reconnect and replay the retained full payload as a fresh turn instead of forwarding the raw upstream invalid-request error. A payload that only carries incremental tool outputs for tool calls that are not also present in the same request is not self-contained and MUST NOT be replayed as a fresh turn without `previous_response_id`.
+When a direct WebSocket `response.create` request includes both `previous_response_id` and a self-contained full resend payload, the service MUST retain a safe replay body without `previous_response_id`. If upstream rejects the anchor with `previous_response_not_found` before `response.created`, the service MUST reconnect and replay the retained full payload as a fresh turn instead of forwarding the raw upstream invalid-request error. A payload that only carries incremental tool outputs for tool calls that are not also present in the same request is not self-contained and MUST NOT be replayed as a fresh turn without `previous_response_id`. A payload whose `previous_response_id` names an empty-output prewarm completed on the same connection is self-contained only if its input begins with that prewarm's input; otherwise it MUST NOT be replayed as a fresh turn without `previous_response_id`, because the prewarm alone carried that context.
 
 #### Scenario: full-resend WebSocket follow-up loses just-completed anchor
 - **WHEN** a WebSocket `/v1/responses` or `/backend-api/codex/responses` follow-up has `previous_response_id`
@@ -1205,6 +1205,19 @@ When a direct WebSocket `response.create` request includes both `previous_respon
 - **AND** upstream emits `previous_response_not_found` before assigning a response id
 - **THEN** the service MUST NOT replay that payload as a fresh turn without `previous_response_id`
 - **AND** the downstream client receives a retryable continuity failure rather than a fabricated fresh turn
+
+#### Scenario: delta chained to an empty prewarm is not replayed as a fresh turn
+- **GIVEN** a direct WebSocket handshake carries `x-codex-turn-metadata` with `request_kind: "prewarm"`
+- **AND** a `generate: false` request on that connection completed with zero output tokens
+- **WHEN** the next request sets `previous_response_id` to that prewarm and its input does not begin with the prewarm's input
+- **AND** the upstream closes or rejects the anchor before `response.created`
+- **THEN** the service MUST NOT replay that payload without `previous_response_id`
+- **AND** the downstream client receives a retryable failure rather than a turn answered without the prewarm's context
+
+#### Scenario: full resend chained to an empty prewarm stays replayable
+- **GIVEN** an empty-output prewarm completed on the connection
+- **WHEN** the next request sets `previous_response_id` to that prewarm and its input begins with the prewarm's input
+- **THEN** the service MAY replay that payload without `previous_response_id` after an upstream close or anchor rejection
 
 ### Requirement: Parameterless invalid previous-response errors use continuity recovery
 
@@ -2256,7 +2269,7 @@ contains a persisted response anchor rather than using alias enumeration order.
 
 ### Requirement: Responses account selection accounts for in-flight pressure
 
-For Responses API requests, usage-based routing MUST include immediate in-process account pressure in addition to persisted usage. Account selection MUST account for in-flight response-create work, active streams, leased token/cost estimates, recent selection pressure, account health, and configured account-local caps. Selection and lease acquisition MUST be atomic with respect to other in-process selections, and the critical section MUST NOT perform database calls, network calls, sleeps, or other blocking I/O.
+For Responses API requests, usage-based routing MUST include immediate in-process account pressure in addition to persisted usage. Account selection MUST account for in-flight response-create work, active streams, leased token/cost estimates, recent selection pressure, account health, and configured account-local caps. Selection and lease acquisition MUST be atomic with respect to other in-process selections, and the critical section MUST NOT perform database calls, network calls, sleeps, or other blocking I/O. Every pressure term added to an account's used percent MUST be expressed in percentage points; the leased token/cost estimate term MUST be the configured lease token weight multiplied by the leased token estimate divided by the maximum per-request lease estimate, so that one maximum-size lease adds exactly the configured weight in points on every plan, and MUST NOT be scaled by plan capacity constants. Runtime pressure MUST NOT by itself take an account whose persisted usage for a window is below 100 percent to 100 percent effective usage for that window: in-flight work may lower an account's score relative to its peers but MUST NOT erase its persisted remaining capacity.
 
 #### Scenario: Concurrent burst spreads before upstream usage refreshes
 
@@ -2278,6 +2291,21 @@ For Responses API requests, usage-based routing MUST include immediate in-proces
 - **WHEN** account selection holds the balancer runtime lock
 - **THEN** the implementation performs only in-memory scoring and lease mutation
 - **AND** database, network, sleep, or bridge queue waits happen outside that lock
+
+#### Scenario: One in-flight stream does not exhaust a Plus account
+
+- **GIVEN** a Plus account with persisted weekly usage of 38 percent
+- **AND** the account holds one stream lease carrying the maximum per-request token estimate
+- **WHEN** usage-based routing builds the account's selection state
+- **THEN** the account's effective weekly used percent is above 38 and below 100
+- **AND** its relative-availability remaining credits are greater than zero
+
+#### Scenario: Lease pressure preserves the persisted usage order
+
+- **GIVEN** two Plus accounts with persisted weekly usage of 95 and 38 percent and equal reset times
+- **AND** each holds one stream lease with the same token estimate
+- **WHEN** a new unbound request is routed with `relative_availability`
+- **THEN** the 38 percent account is selected
 
 ### Requirement: Account leases release on all terminal paths
 

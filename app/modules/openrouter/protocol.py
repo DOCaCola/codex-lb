@@ -7,6 +7,28 @@ from app.core.types import JsonValue
 from app.db.models import ModelSource
 from app.modules.openrouter.schemas import OPENROUTER_KIND
 
+# Codex requests OpenAI output ciphertext when its provider is named OpenAI, and
+# retains that ciphertext in history after a model switch. OpenRouter cannot
+# replay OpenAI-account state, and strict parameter routing must not treat it
+# as a provider requirement. Reasoning items keep their existing projection.
+OUTPUT_REPLAY_INCLUDE = "output.encrypted_content"
+
+
+def _without_output_replay(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    projected = dict(payload)
+    include = projected.get("include")
+    if isinstance(include, list):
+        projected["include"] = [entry for entry in include if entry != OUTPUT_REPLAY_INCLUDE]
+    items = projected.get("input")
+    if isinstance(items, list):
+        projected["input"] = [
+            {key: value for key, value in item.items() if key != "encrypted_content"}
+            if isinstance(item, dict) and item.get("type") != "reasoning"
+            else item
+            for item in items
+        ]
+    return projected
+
 
 def project_request(source: ModelSource, payload: dict[str, JsonValue], *, responses: bool) -> dict[str, JsonValue]:
     if source.kind != OPENROUTER_KIND:
@@ -28,6 +50,7 @@ def project_request(source: ModelSource, payload: dict[str, JsonValue], *, respo
             )
         projected.pop("parallel_tool_calls", None)
     if responses:
+        projected = _without_output_replay(projected)
         if projected.get("previous_response_id") or projected.get("conversation"):
             raise ClientPayloadError(
                 "Resend complete history without previous_response_id or conversation",

@@ -88,7 +88,7 @@ are not backfilled. OpenRouter's upstream transport badge reads **Up HTTP**.
 
 Codex can keep WebSockets enabled. The client socket terminates at codex-lb; native OpenRouter Responses requests use HTTPS/SSE upstream. The same routing, client-key policy, admission and usage settlement apply to both client transports. Custom tools and namespaces are preserved.
 
-OpenRouter Responses is stateless: codex-lb sends `store:false` and materialized history, never an upstream `previous_response_id`. Private replay retention uses the existing one-hour TTL, 1,000-entry limit, 256 MiB per-entry limit and 1 GiB total disk budget. Completion is retained before being delivered, so immediate tool continuations can resolve it. Client identity must remain stable across reconnects. Expired or unavailable history asks the client for a full resend; it never silently discards context.
+OpenRouter Responses is stateless: codex-lb sends `store:false` and materialized history, never an upstream `previous_response_id`. OpenAI output replay stays with OpenAI: the `output.encrypted_content` include and OpenAI ciphertext on message and tool-call items are removed before forwarding. Private replay retention uses the existing one-hour TTL, 1,000-entry limit, 256 MiB per-entry limit and 1 GiB total disk budget. Completion is retained before being delivered, so immediate tool continuations can resolve it. Client identity must remain stable across reconnects. Expired or unavailable history asks the client for a full resend; it never silently discards context.
 
 Both compact endpoints and terminal compaction triggers ask the selected model to summarize. Proxy-owned summaries remain portable; unreadable provider-specific checkpoints are rejected.
 

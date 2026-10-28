@@ -4495,20 +4495,28 @@ It MUST NOT expose account identity.
 
 A row whose prompt exceeds its cache reads by more than 20,000 tokens SHALL carry the first matching event, compared
 with the previous row that carries a prompt: `first` without one; `compaction` when either is a compaction;
-`model_switch`; `account_switch` when account or model source differs; `idle_expiry` when the gap from the previous
-request's end exceeds 5 minutes, or 1 hour when the row wrote to the 1-hour cache; `bust` when reads are below 10% of
-the previous prompt and the prompt is 0.95–1.2 times it; `growth` when reads are at least 90% of it; otherwise
-`miss`. The previous row of a page's oldest row MUST be loaded so classification does not depend on pagination.
+`model_switch`; `account_switch` when account or model source differs; `idle_expiry` when the row has a known
+cache lifetime and the gap from the previous request's end exceeds it; `bust` when reads are below 10% of the
+previous prompt and the prompt is 0.95–1.2 times it; `growth` when reads are at least 90% of it; otherwise `miss`.
+Only Claude rows have a known lifetime: 5 minutes, or 1 hour when the row wrote to the 1-hour cache. Codex account
+rows MUST NOT be classified as `idle_expiry`, because signed-in Codex accounts retain their cache indefinitely; other
+model sources report no lifetime. The previous row of a page's oldest row MUST be loaded so classification does not
+depend on pagination.
 
 Conversation Details SHALL show the trace below the model table as a timeline: elapsed-time bar relative to the
 longest loaded request, coloured by cache-read share (at least 80%, at least 30%, below, unmeasured), event tag with
 its explanation, error code for failed rows, and a control to load further pages.
 
 #### Scenario: A conversation resumes after its cache expired
-- **WHEN** a request follows the previous one by 40 minutes on the same model and account and reads none of its
+- **WHEN** a Claude request follows the previous one by 10 minutes on the same model and source and reads none of its
   120K-token prompt from the 5-minute cache
 - **THEN** its trace row carries `idle_expiry` with the idle gap
 - **AND** Conversation Details shows it with the low cache band and an "idle expiry" tag
+
+#### Scenario: A Codex conversation resumes cold after a break
+- **WHEN** a Codex request follows the previous one by 3 hours on the same model and account and reads none of its
+  similarly sized prompt
+- **THEN** its trace row carries `bust`, not `idle_expiry`
 
 #### Scenario: Paging the trace
 - **WHEN** a conversation has more rows than one page

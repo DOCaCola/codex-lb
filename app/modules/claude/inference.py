@@ -16,6 +16,7 @@ from app.db.session import detach_session_objects, get_background_session
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.chat_replay import ChatHistory, plan_chat_replay
 from app.modules.claude.dispatch import ClaudeDispatchPreparer, PreparedClaudeRequest
+from app.modules.claude.identity import ClaudeIdentityChanged
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.protocol import project_responses
 from app.modules.claude.refusals import omit_refused_output
@@ -163,11 +164,7 @@ async def prepare_responses(
             prepared, require_complete_history=require_complete_history, session_id=continuation.session_id
         )
         if prepared.identity_generation != identity_generation:
-            raise ClientPayloadError(
-                "Claude account identity changed during preparation; retry with current credentials",
-                param="input",
-                code="invalid_provider_history",
-            )
+            raise ClaudeIdentityChanged()
         detach_session_objects(session)
     continuation.source_id = prepared.source.id
     reasoning = logical.get("reasoning")
