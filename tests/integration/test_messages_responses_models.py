@@ -357,6 +357,7 @@ async def test_claude_code_request_served_by_openrouter_source(async_client, ope
     requests: list[dict] = []
 
     async def upstream(request):
+        assert "Content-Encoding" not in request.headers
         body = await request.json()
         requests.append(body)
         call = {

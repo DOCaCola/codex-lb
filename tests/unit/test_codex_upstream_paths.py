@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
+import zstandard
 from aiohttp import web
 from aiohttp.client_reqrep import ConnectionKey
 from aiohttp.test_utils import TestServer
@@ -36,6 +37,12 @@ from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
 from tests.unit._proxy_test_helpers import runtime_basic_auth_url
 
 pytestmark = pytest.mark.unit
+
+
+def _compressed_payload(call: dict[str, Any]) -> dict[str, Any]:
+    assert call["headers"]["Content-Encoding"] == "zstd"
+    assert int(call["headers"]["Content-Length"]) == len(call["data"])
+    return json.loads(zstandard.ZstdDecompressor().decompress(call["data"]))
 
 
 class _CodexClient:
@@ -557,9 +564,9 @@ async def test_compact_responses_uses_codex_client_when_route_is_resolved(route:
     ]
     assert client.calls[0]["url"].endswith("/backend-api/codex/responses")
     assert client.calls[0]["route"] is route
-    assert client.calls[0]["json"]["model"] == "gpt-5.2"
-    assert client.calls[0]["json"]["store"] is False
-    assert client.calls[0]["json"]["stream"] is True
+    assert _compressed_payload(client.calls[0])["model"] == "gpt-5.2"
+    assert _compressed_payload(client.calls[0])["store"] is False
+    assert _compressed_payload(client.calls[0])["stream"] is True
     assert client.calls[0]["headers"]["Accept"] == "text/event-stream"
     assert trace.endpoint_id == "ep_1"
 
@@ -595,7 +602,7 @@ async def test_compact_responses_omits_foreign_reasoning_for_native_upstream(
         codex_client=cast(Any, client),
     )
 
-    assert client.calls[0]["json"]["input"] == [{"type": "compaction_trigger"}]
+    assert _compressed_payload(client.calls[0])["input"] == [{"type": "compaction_trigger"}]
 
 
 @pytest.mark.asyncio
@@ -640,7 +647,7 @@ async def test_compact_responses_routed_buffered_sse_keeps_compact_protocol(rout
         codex_client=cast(Any, client),
     )
 
-    sent_input = client.calls[0]["json"]["input"]
+    sent_input = _compressed_payload(client.calls[0])["input"]
     assert sent_input[-1] == {"type": "compaction_trigger"}
     assert sum(1 for item in sent_input if isinstance(item, dict) and item.get("type") == "compaction_trigger") == 1
     assert response.id == "resp_compact_buffered"
@@ -1021,7 +1028,7 @@ async def test_stream_responses_omits_foreign_reasoning_for_native_upstream(
         )
     ]
 
-    assert client.calls[0]["json"]["input"] == [{"type": "message", "role": "user", "content": "continue"}]
+    assert _compressed_payload(client.calls[0])["input"] == [{"type": "message", "role": "user", "content": "continue"}]
     assert "foreign plaintext" in str(payload.to_payload()["input"])
 
 
@@ -1095,9 +1102,9 @@ async def test_stream_responses_retries_once_without_ciphertext_upstream_refused
 
     assert events == ['data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n']
     assert len(client.calls) == 2
-    assert "refused-stream-ciphertext" in json.dumps(client.calls[0]["json"])
-    assert "refused-stream-ciphertext" not in json.dumps(client.calls[1]["json"])
-    assert client.calls[1]["json"]["input"][-1]["output"] == [
+    assert "refused-stream-ciphertext" in json.dumps(_compressed_payload(client.calls[0]))
+    assert "refused-stream-ciphertext" not in json.dumps(_compressed_payload(client.calls[1]))
+    assert _compressed_payload(client.calls[1])["input"][-1]["output"] == [
         {"type": "input_text", "text": "[encrypted content omitted]"}
     ]
 
@@ -1157,8 +1164,8 @@ async def test_compact_responses_retries_once_without_ciphertext_upstream_refuse
     )
 
     assert len(client.calls) == 2
-    assert "refused-compact-ciphertext" in json.dumps(client.calls[0]["json"])
-    assert "refused-compact-ciphertext" not in json.dumps(client.calls[1]["json"])
+    assert "refused-compact-ciphertext" in json.dumps(_compressed_payload(client.calls[0]))
+    assert "refused-compact-ciphertext" not in json.dumps(_compressed_payload(client.calls[1]))
 
 
 @pytest.mark.asyncio
@@ -1907,7 +1914,7 @@ async def test_routed_stream_tolerates_response_without_release(route: ResolvedU
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("transport", "trace_payload", "image_generation", "expected_preparation_dumps"),
-    [("http", False, False, 0), ("http", True, False, 1), ("auto", False, False, 1), ("auto", False, True, 0)],
+    [("http", False, False, 1), ("http", True, False, 1), ("auto", False, False, 2), ("auto", False, True, 1)],
     ids=["no-payload-consumer", "raw-payload-trace", "auto-size-budget", "auto-image-generation"],
 )
 async def test_stream_responses_python_http_prepares_only_consumed_json(
@@ -1950,13 +1957,14 @@ async def test_stream_responses_python_http_prepares_only_consumed_json(
         }
     )
     expected_payload = payload.to_payload()
-    expected_body = json.dumps(expected_payload).encode("utf-8")
+    expected_body = json.dumps(expected_payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     assert len(expected_body) > 1_000_000
     upstream_bodies: list[bytes] = []
     terminal = 'data: {"type":"response.completed","response":{"id":"resp_preparation"}}\n\n'
 
     async def respond(request: web.Request) -> web.Response:
-        upstream_bodies.append(await request.read())
+        assert request.headers["Content-Encoding"] == "zstd"
+        upstream_bodies.append(zstandard.ZstdDecompressor().decompress(await request.read()))
         return web.Response(text=terminal, content_type="text/event-stream")
 
     origin = web.Application(client_max_size=4 * 1024 * 1024)
@@ -1973,14 +1981,15 @@ async def test_stream_responses_python_http_prepares_only_consumed_json(
     else:
         assert len(expected_body) < proxy_module._ws_transport_payload_budget_bytes()
     monkeypatch.setattr(proxy_module, "discover_native_egress_client", lambda: None)
-    # Observe only the JSON calls of the modules that prepare the body, leaving
-    # aiohttp's real request serializer and all preparation/stream code unchanged.
+    # Observe JSON preparation; aiohttp receives the already-compressed bytes.
     preparation_json = MagicMock(wraps=json)
     monkeypatch.setattr(proxy_module, "json", preparation_json)
     monkeypatch.setattr(encoded_json_module, "json", preparation_json)
     caplog.set_level(logging.INFO, logger=proxy_module.__name__)
 
-    async with TestServer(origin) as server, aiohttp.ClientSession() as session:
+    server = TestServer(origin)
+    await server.start_server(auto_decompress=False)
+    async with server, aiohttp.ClientSession() as session:
         events = [
             event
             async for event in stream_responses(

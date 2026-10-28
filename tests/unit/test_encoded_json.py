@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import zstandard
 
 import app.core.clients.proxy as proxy_module
 import app.core.clients.proxy_websocket as ws_client
@@ -243,5 +244,6 @@ async def test_http_handoff_sends_the_body_a_full_serialization_would_send(
     assert sources[0] is not None
     assert sources[1] is None
     assert handoff_body == reference_body
-    assert json.loads(handoff_body)["stream"] is True
-    assert "type" not in json.loads(handoff_body)
+    decoded = json.loads(zstandard.ZstdDecompressor().decompress(handoff_body))
+    assert decoded["stream"] is True
+    assert "type" not in decoded

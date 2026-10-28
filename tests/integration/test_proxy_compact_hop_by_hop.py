@@ -5,6 +5,7 @@ import json
 from typing import cast
 
 import pytest
+import zstandard
 
 import app.core.clients.proxy as proxy_client_module
 from tests.integration.compact_test_helpers import _make_auth_json
@@ -46,11 +47,19 @@ class _JsonSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         timeout=None,
     ):
-        self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        self.calls.append(
+            {
+                "url": url,
+                "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                "data": data,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
         return self._response
 
 

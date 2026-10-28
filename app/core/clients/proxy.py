@@ -62,6 +62,7 @@ from app.core.clients.native_egress import (
     NativeSseOptions,
     discover_native_egress_client,
 )
+from app.core.clients.request_compression import prepare_compressed_json
 from app.core.clients.stream_errors import StreamEventTooLargeError, StreamIdleTimeoutError
 from app.core.clients.thread_cache_identity import (
     ThreadCacheIdentity,
@@ -175,6 +176,7 @@ CODEX_0150_RESPONSES_WEBSOCKET_WIRE_PROFILE: Final = CodexWireProfile(
 IGNORE_INBOUND_HEADERS = {
     "authorization",
     "chatgpt-account-id",
+    "content-encoding",
     "content-length",
     "host",
     "forwarded",
@@ -3903,7 +3905,7 @@ async def _stream_responses_with_session(
     )
     payload_json = (
         encode_json_object(payload_dict, request_body_source)
-        if active_native_egress_client is not None or "upstream_payload" in settings.trace_channels
+        if transport == "http" or "upstream_payload" in settings.trace_channels
         else None
     )
     if transport == "websocket":
@@ -3979,6 +3981,11 @@ async def _stream_responses_with_session(
     ) -> AsyncGenerator[str, None]:
         nonlocal status_code, last_stream_activity_at, error_code, error_message, seen_terminal
 
+        # This function is exclusive to native ChatGPT accounts. Prepare once
+        # before the routed/direct and Rust/Python forks so every sender of this
+        # attempt uses the same compressed bytes, as the Codex client does.
+        request_body, current_headers = await prepare_compressed_json(cast(str, payload_json), current_headers)
+
         if route is not None:
             owns_codex_client = codex_client is None
             active_codex_client = codex_client or CodexClient(
@@ -3987,7 +3994,7 @@ async def _stream_responses_with_session(
             raw_resp: Any = None
             try:
                 request_kwargs: dict[str, Any] = {
-                    "json": payload_dict,
+                    "data": request_body,
                     "headers": current_headers,
                     "skip_auto_headers": frozenset({aiohttp.hdrs.ACCEPT_ENCODING}),
                     "timeout": remaining_request_timeout or request_total_timeout,
@@ -4155,7 +4162,7 @@ async def _stream_responses_with_session(
                             method="POST",
                             url=url,
                             headers=current_headers,
-                            body=cast(str, payload_json).encode("utf-8"),
+                            body=request_body,
                             timeout_seconds=current_timeout.total or request_total_timeout,
                             connect_timeout_seconds=current_timeout.sock_connect,
                             response_head_timeout_seconds=current_timeout.sock_read,
@@ -4175,7 +4182,7 @@ async def _stream_responses_with_session(
                     return
             async with client_session.post(
                 url,
-                json=payload_dict,
+                data=request_body,
                 headers=current_headers,
                 skip_auto_headers=frozenset({aiohttp.hdrs.ACCEPT_ENCODING}),
                 timeout=current_timeout,
@@ -4349,11 +4356,7 @@ async def _stream_responses_with_session(
 
         transport = "http"
         payload_dict = http_payload_dict
-        payload_json = (
-            encode_json_object(payload_dict, request_body_source)
-            if "upstream_payload" in settings.trace_channels
-            else None
-        )
+        payload_json = encode_json_object(payload_dict, request_body_source)
         upstream_headers = _build_upstream_headers(
             headers,
             access_token,
@@ -5042,6 +5045,8 @@ class _CompactCommandTransport:
             if exc.param is not None:
                 error["error"]["param"] = exc.param
             raise ProxyResponseError(400, error) from exc
+        payload_json = encode_json_object(payload_dict)
+        request_body, upstream_headers = await prepare_compressed_json(payload_json, upstream_headers)
         now = time.monotonic()
         compact_timeout_seconds = _remaining_total_timeout(
             compact_timeout_seconds,
@@ -5077,9 +5082,7 @@ class _CompactCommandTransport:
             headers=upstream_headers,
             method="POST",
             payload_summary=_summarize_json_payload(payload_dict),
-            payload_json=json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
-            if "upstream_payload" in settings.trace_channels
-            else None,
+            payload_json=payload_json if "upstream_payload" in settings.trace_channels else None,
         )
         archive_json(
             direction="codex_to_server",
@@ -5108,7 +5111,7 @@ class _CompactCommandTransport:
                             method="POST",
                             url=url,
                             headers=upstream_headers,
-                            body=json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":")).encode("utf-8"),
+                            body=request_body,
                             timeout_seconds=compact_timeout_seconds,
                             connect_timeout_seconds=effective_connect_timeout,
                             response_head_timeout_seconds=compact_timeout_seconds,
@@ -5123,7 +5126,7 @@ class _CompactCommandTransport:
                         yield native_response
                     return
             async with self.session.post(
-                url, json=payload_dict, headers=upstream_headers, timeout=timeout
+                url, data=request_body, headers=upstream_headers, timeout=timeout
             ) as python_response:
                 yield python_response
 
@@ -5144,7 +5147,7 @@ class _CompactCommandTransport:
             raw_response: Any = None
             try:
                 request_kwargs: dict[str, Any] = {
-                    "json": payload_dict,
+                    "data": request_body,
                     "headers": upstream_headers,
                     "timeout": timeout,
                     "buffer_response": False,

@@ -16,6 +16,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+import zstandard
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from httpx import Headers
@@ -9639,8 +9640,11 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     tool_type,
     resume_websocket,
 ):
+    import app.core.clients.proxy as core_proxy
     from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
     from app.core.clients.responses_transport import ResponsesTransport
+    from app.core.openai.requests import ResponsesRequest
+    from app.core.utils.encoded_json import decode_json_object
     from app.core.utils.sse import format_sse_event
     from app.modules.proxy.replay_store import HTTPFallbackReplayStore
 
@@ -9703,7 +9707,7 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
         sockets.append(socket)
         return socket
 
-    async def stream_http(text):
+    async def http_events(text):
         http_bodies.append(json.loads(text))
         response_id = f"resp_large_{len(http_bodies)}"
         completed_output: list[JsonValue] = list(output if len(http_bodies) == 1 else next_output)
@@ -9727,6 +9731,49 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
                 },
             }
             yield format_sse_event(event_payload)
+
+    class HttpResponse:
+        status = 200
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self, body):
+            self.body = body
+            self.content = self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def iter_chunked(self, size):
+            async for event in http_events(self.body):
+                yield event.encode()
+
+    class HttpSession:
+        def post(self, url, *, data, headers, **kwargs):
+            assert headers["Content-Encoding"] == "zstd"
+            assert int(headers["Content-Length"]) == len(data)
+            body = zstandard.ZstdDecompressor().decompress(data)
+            assert len(body) > limit
+            return HttpResponse(body)
+
+    async def stream_http(text):
+        source = decode_json_object(text)
+        payload = dict(source.values)
+        payload.pop("type")
+        async for event in core_proxy.stream_responses(
+            ResponsesRequest.model_validate(payload),
+            {},
+            "token",
+            "acct_size",
+            session=cast(Any, HttpSession()),
+            upstream_stream_transport_override="http",
+            request_body_source=source,
+        ):
+            yield event
+
+    monkeypatch.setattr(core_proxy, "discover_native_egress_client", lambda: None)
 
     async def select_account(self, headers, **kwargs):
         return account_fixture(id="acct_size", codex_installation_id="installation"), ResponsesTransport(

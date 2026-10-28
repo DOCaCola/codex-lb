@@ -23,6 +23,7 @@ from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.auth.refresh import RefreshError
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
 from app.core.clients.http import lease_http_session
+from app.core.clients.request_compression import prepare_compressed_json
 from app.core.clients.usage import (
     ConsumeRateLimitResetCreditResponse,
     UsageFetchError,
@@ -903,9 +904,10 @@ class AccountsService:
             total=PROBE_REQUEST_TIMEOUT_SECONDS,
             sock_connect=PROBE_CONNECT_TIMEOUT_SECONDS,
         )
+        request_body, headers = await prepare_compressed_json(json.dumps(body, separators=(",", ":")), headers)
         try:
             async with lease_http_session() as session:
-                async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
+                async with session.post(url, headers=headers, data=request_body, timeout=timeout) as resp:
                     # Initiating the request is enough to wake the upstream
                     # rate-limiter; we do not consume the SSE body.
                     return resp.status

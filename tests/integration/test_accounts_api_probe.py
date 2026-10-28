@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import zstandard
 from sqlalchemy import inspect
 
 from app.core.auth import generate_unique_account_id
@@ -369,7 +370,9 @@ async def test_probe_route_omits_unsupported_output_limit(async_client, monkeypa
 
     class _Session:
         def post(self, _url: str, **kwargs: Any):
-            payload = kwargs["json"]
+            assert kwargs["headers"]["Content-Encoding"] == "zstd"
+            assert int(kwargs["headers"]["Content-Length"]) == len(kwargs["data"])
+            payload = json.loads(zstandard.ZstdDecompressor().decompress(kwargs["data"]))
             captured["payload"] = payload
             return _Response(400 if "max_output_tokens" in payload else 200)
 

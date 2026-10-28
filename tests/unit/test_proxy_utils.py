@@ -23,6 +23,7 @@ from unittest.mock import call as mock_call
 import aiohttp
 import anyio
 import pytest
+import zstandard
 from aiohttp.client_exceptions import ClientConnectorCertificateError
 from aiohttp.client_reqrep import ConnectionKey, RequestInfo
 from fastapi import WebSocket
@@ -2393,7 +2394,7 @@ def test_filter_inbound_headers_strips_auth_and_account():
     assert "Authorization" not in filtered
     assert "chatgpt-account-id" not in filtered
     assert "X-Codex-Installation-Id" not in filtered
-    assert filtered["Content-Encoding"] == "gzip"
+    assert "Content-Encoding" not in filtered
     assert filtered["Content-Type"] == "application/json"
     assert filtered["X-Request-Id"] == "req_1"
 
@@ -7738,11 +7739,19 @@ class _CompactSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         timeout=None,
     ):
-        self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        self.calls.append(
+            {
+                "url": url,
+                "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                "data": data,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
         return self._response
 
 
@@ -7783,7 +7792,7 @@ class _SseSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
@@ -7791,7 +7800,8 @@ class _SseSession:
         self.calls.append(
             {
                 "url": url,
-                "json": json,
+                "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                "data": data,
                 "headers": headers,
                 "skip_auto_headers": skip_auto_headers,
                 "timeout": timeout,
@@ -7919,12 +7929,12 @@ class _TimeoutSseSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
-        del url, json, headers, skip_auto_headers, timeout
+        del url, data, headers, skip_auto_headers, timeout
         raise asyncio.TimeoutError
 
 
@@ -7958,12 +7968,12 @@ class _TimeoutAfterHeadersSseSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
-        del url, json, headers, skip_auto_headers, timeout
+        del url, data, headers, skip_auto_headers, timeout
         return _TimeoutAfterHeadersSseResponse()
 
 
@@ -7979,12 +7989,12 @@ class _SilentBeforeHeadersSseSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
-        del url, json, headers, skip_auto_headers
+        del url, data, headers, skip_auto_headers
         self.timeouts.append(timeout)
         self._clock["now"] += self._silence_seconds
         raise aiohttp.SocketTimeoutError("Timeout on reading data from socket")
@@ -8037,12 +8047,12 @@ class _ActiveThenTotalTimeoutSseSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
     ):
-        del url, json, headers, skip_auto_headers, timeout
+        del url, data, headers, skip_auto_headers, timeout
         return _ActiveThenTotalTimeoutSseResponse(self._clock)
 
 
@@ -8051,7 +8061,7 @@ class _TimeoutCompactSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         timeout=None,
     ):
@@ -8185,7 +8195,7 @@ class _WsSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         skip_auto_headers: frozenset[str] | None = None,
         timeout=None,
@@ -8193,7 +8203,8 @@ class _WsSession:
         self.post_calls.append(
             {
                 "url": url,
-                "json": json,
+                "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                "data": data,
                 "headers": headers,
                 "skip_auto_headers": skip_auto_headers,
                 "timeout": timeout,
@@ -8916,10 +8927,15 @@ async def test_stream_responses_prefers_idle_timeout_when_total_deadline_ties_af
         trace_channels = frozenset()
         proxy_request_budget_seconds = 600.0
 
-    monotonic_values = iter([100.0, 100.0, 100.0, 100.0, 700.01])
+    clock = {"now": 100.0}
+
+    async def timeout_after_deadline(self):
+        clock["now"] = 700.01
+        raise asyncio.TimeoutError
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
-    monkeypatch.setattr(proxy_module.time, "monotonic", lambda: next(monotonic_values, 700.01))
+    monkeypatch.setattr(proxy_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(_TimeoutChunkIterator, "__anext__", timeout_after_deadline)
     monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
     monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_complete", lambda **kwargs: None)
 
@@ -9077,12 +9093,12 @@ async def test_stream_responses_preserves_connect_timeout_retry_provenance(monke
             self,
             url: str,
             *,
-            json=None,
+            data=None,
             headers: dict[str, str] | None = None,
             skip_auto_headers: frozenset[str] | None = None,
             timeout=None,
         ):
-            del url, json, headers, skip_auto_headers, timeout
+            del url, data, headers, skip_auto_headers, timeout
             raise proxy_module.aiohttp.ConnectionTimeoutError("connect timed out")
 
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
@@ -9291,12 +9307,12 @@ async def test_stream_responses_maps_typed_dns_failure_with_failed_session_prove
             self,
             url: str,
             *,
-            json=None,
+            data=None,
             headers: dict[str, str] | None = None,
             skip_auto_headers: frozenset[str] | None = None,
             timeout=None,
         ):
-            del url, json, headers, skip_auto_headers, timeout
+            del url, data, headers, skip_auto_headers, timeout
             key = ConnectionKey("chatgpt.com", 443, True, True, None, None, None)
             raise aiohttp.ClientConnectorError(
                 key,
@@ -9385,12 +9401,12 @@ async def test_stream_responses_keeps_missing_environment_proxy_hostname_endpoin
             self,
             url: str,
             *,
-            json=None,
+            data=None,
             headers: dict[str, str] | None = None,
             skip_auto_headers: frozenset[str] | None = None,
             timeout=None,
         ):
-            del url, json, headers, skip_auto_headers, timeout
+            del url, data, headers, skip_auto_headers, timeout
             key = ConnectionKey("missing-proxy.invalid", 8080, False, False, None, None, None)
             raise aiohttp.ClientProxyConnectionError(
                 key,
@@ -9598,7 +9614,9 @@ async def test_stream_responses_direct_http_prefers_native_egress(monkeypatch: p
     native_request = native_client.calls[0]
     assert getattr(native_request, "method") == "POST"
     assert getattr(native_request, "url") == "https://chatgpt.com/backend-api/codex/responses"
-    assert json.loads(getattr(native_request, "body")) == payload.to_payload()
+    assert json.loads(zstandard.ZstdDecompressor().decompress(getattr(native_request, "body"))) == payload.to_payload()
+    assert getattr(native_request, "headers")["Content-Encoding"] == "zstd"
+    assert getattr(native_request, "headers")["Content-Length"] == str(len(getattr(native_request, "body")))
 
 
 @pytest.mark.asyncio
@@ -9639,6 +9657,7 @@ async def test_stream_responses_direct_http_falls_back_when_native_helper_is_una
     assert events == ['data: {"type":"response.completed","response":{"id":"resp_python"}}\n\n']
     assert len(native_client.calls) == 1
     assert len(session.calls) == 1
+    assert getattr(native_client.calls[0], "body") is session.calls[0]["data"]
 
 
 @pytest.mark.asyncio
@@ -13052,9 +13071,17 @@ async def test_compact_responses_without_trigger_canonicalization_hits_upstream_
         def __init__(self) -> None:
             self.calls: list[dict[str, object]] = []
 
-        def post(self, url: str, *, json=None, headers=None, timeout=None):
-            self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
-            upstream_payload = cast(dict[str, object], json)
+        def post(self, url: str, *, data=None, headers=None, timeout=None):
+            self.calls.append(
+                {
+                    "url": url,
+                    "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                    "data": data,
+                    "headers": headers,
+                    "timeout": timeout,
+                }
+            )
+            upstream_payload = cast(dict[str, object], self.calls[-1]["json"])
             compact_input = cast(list[dict[str, object]], upstream_payload["input"])
             trigger_count = sum(1 for item in compact_input if item.get("type") == "compaction_trigger")
             if trigger_count > 1:
@@ -42688,11 +42715,19 @@ async def test_compact_unsafe_network_failure_rotates_generation_for_next_reques
             self,
             url: str,
             *,
-            json=None,
+            data=None,
             headers: dict[str, str] | None = None,
             timeout=None,
         ):
-            self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+            self.calls.append(
+                {
+                    "url": url,
+                    "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                    "data": data,
+                    "headers": headers,
+                    "timeout": timeout,
+                }
+            )
             cause = OSError(errno.ENETUNREACH, "Network is unreachable")
             if failure_path == "request_client_error":
                 raise aiohttp.ClientPayloadError("request failed after dispatch") from cause

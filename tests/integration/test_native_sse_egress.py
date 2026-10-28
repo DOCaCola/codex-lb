@@ -14,12 +14,14 @@ from urllib.parse import urlsplit
 import aiohttp
 import anyio
 import pytest
+import zstandard
 
 import app.core.clients.native_egress as native_module
 import app.core.clients.proxy as proxy_module
 from app.core.clients.codex import CodexClient
-from app.core.clients.native_egress import SubprocessNativeEgressClient
+from app.core.clients.native_egress import NativeEgressRequest, SubprocessNativeEgressClient
 from app.core.clients.proxy import ProxyResponseError, compact_responses, override_stream_timeouts, stream_responses
+from app.core.config.settings import Settings
 from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
@@ -468,6 +470,8 @@ async def test_cancelling_native_stream_after_partial_event_keeps_peer_request_u
         body: bytes,
     ) -> None:
         await _start_chunked_response(writer)
+        assert b"content-encoding: zstd" in _head.lower()
+        body = zstandard.ZstdDecompressor().decompress(body)
         if b"cancel-after-partial" in body:
             await _write_chunk(writer, first)
             await _write_chunk(writer, b'data: {"type":"response.output_text.delta"')
@@ -601,7 +605,8 @@ async def test_native_non_streaming_response_body_stays_raw(
 
     assert len(requests) == 1
     assert b"accept: application/json\r\n" in requests[0][0].lower()
-    assert json.loads(requests[0][1])["stream"] is False
+    assert b"content-encoding: zstd" in requests[0][0].lower()
+    assert json.loads(zstandard.ZstdDecompressor().decompress(requests[0][1]))["stream"] is False
     assert _payload(events[0]) == {"type": "response.completed", "response": response}
 
 
@@ -846,6 +851,96 @@ _COMPACT_EVENTS = (
     b'{"object":"response","id":"resp_compact","output":[]}}\n\n'
 )
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True], ids=["aiohttp", "fake-native"])
+@pytest.mark.parametrize("compact", [False, True], ids=["stream", "compact"])
+@pytest.mark.parametrize("status", [200, 400, 415])
+async def test_responses_compression_reaches_http_upstream_without_uncompressed_retry(
+    monkeypatch: pytest.MonkeyPatch, native: bool, compact: bool, status: int
+) -> None:
+    requests: list[tuple[bytes, bytes]] = []
+    native_requests: list[NativeEgressRequest] = []
+    traced: list[str] = []
+
+    async def handler(reader, writer, head, body):
+        requests.append((head, body))
+        await _start_chunked_response(
+            writer, status=f"{status} Test", content_type="application/json" if status >= 400 else "text/event-stream"
+        )
+        await _write_chunk(
+            writer,
+            b'{"error":{"message":"encoding rejected","type":"invalid_request_error","code":"invalid_request_error"}}'
+            if status >= 400
+            else _COMPACT_EVENTS,
+        )
+        await _finish_chunks(writer)
+
+    def trace(**kwargs):
+        traced.append(kwargs["payload_json"])
+
+    async with _serve_http(handler) as base_url, aiohttp.ClientSession() as wire_session:
+
+        class FakeNativeClient:
+            async def request(self, request):
+                native_requests.append(request)
+                return await wire_session.post(request.url, headers=request.headers, data=request.body)
+
+        native_client = FakeNativeClient() if native else None
+        monkeypatch.setattr(proxy_module, "discover_native_egress_client", lambda: native_client)
+        settings = Settings(upstream_base_url=base_url, trace="upstream_payload")
+        monkeypatch.setattr(proxy_module, "get_settings", lambda: settings)
+        monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", trace)
+        session = cast(aiohttp.ClientSession, _UnexpectedPythonSession()) if native else wire_session
+        # A stale client encoding must be stripped before preparing either HTTP path.
+        headers = {"Content-Encoding": "gzip", "Content-Length": "999", "originator": "codex_cli_rs"}
+
+        async def send():
+            if compact:
+                return await compact_responses(
+                    ResponsesCompactRequest(model="gpt-5.4", instructions="Summarize.", input="history"),
+                    headers,
+                    "test-token",
+                    "test-account",
+                    session=session,
+                )
+            return [
+                event
+                async for event in stream_responses(
+                    _request("history"),
+                    headers,
+                    "test-token",
+                    "test-account",
+                    session=session,
+                    base_url=base_url,
+                    upstream_stream_transport_override="http",
+                    raise_for_status=True,
+                )
+            ]
+
+        if status >= 400:
+            with pytest.raises(ProxyResponseError) as caught:
+                await asyncio.wait_for(send(), timeout=5)
+            assert caught.value.status_code == status
+        else:
+            assert await asyncio.wait_for(send(), timeout=5)
+
+    assert len(requests) == 1
+    head, body = requests[0]
+    assert head.startswith(b"POST /codex/responses HTTP/")
+    assert b"content-encoding: zstd\r\n" in head.lower()
+    assert b"content-type: application/json\r\n" in head.lower()
+    assert f"content-length: {len(body)}\r\n".encode() in head.lower()
+    assert len(traced) == 1
+    assert zstandard.ZstdDecompressor().decompress(body) == traced[0].encode()
+    if native:
+        assert len(native_requests) == 1
+        assert native_requests[0].body == body
+        assert native_requests[0].headers["Content-Encoding"] == "zstd"
+    else:
+        assert native_requests == []
+
+
 _COMPACT_CASES = json.loads(
     (Path(__file__).resolve().parents[2] / "crates/codex-lb-responses/tests/fixtures/compact-v1.json").read_text()
 )
@@ -983,7 +1078,8 @@ async def test_native_compact_frames_and_returns_before_body_eof(
     monkeypatch.setattr(proxy_module, "_compact_response_payload_from_sse", forbidden_python_scan)
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, _head: bytes, body: bytes) -> None:
-        requests.append(json.loads(body))
+        assert b"content-encoding: zstd" in _head.lower()
+        requests.append(json.loads(zstandard.ZstdDecompressor().decompress(body)))
         await _start_chunked_response(writer, content_type=content_type)
         for offset in range(0, len(_COMPACT_EVENTS), 17):
             await _write_chunk(writer, _COMPACT_EVENTS[offset : offset + 17])
@@ -1203,6 +1299,8 @@ async def test_native_compact_cancellation_closes_owned_resources_and_keeps_peer
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, _head: bytes, body: bytes) -> None:
         await _start_chunked_response(writer)
+        assert b"content-encoding: zstd" in _head.lower()
+        body = zstandard.ZstdDecompressor().decompress(body)
         if b"cancel-compact" in body:
             await _write_chunk(writer, b'data: {"type":"response.created"')
             partial.set()

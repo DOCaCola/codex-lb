@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import zstandard
 from sqlalchemy.exc import OperationalError
 
 from app.core.crypto import TokenEncryptor
@@ -345,10 +347,13 @@ async def test_send_probe_request_uses_shared_http_client(monkeypatch):
     assert captured["url"].endswith("/backend-api/codex/responses")
     assert captured["headers"]["Authorization"] == f"Bearer {_PROBE_TOKEN_PLAINTEXT}"
     assert captured["headers"]["chatgpt-account-id"] == _CHATGPT_ACCOUNT_ID
-    assert captured["json"]["model"] == "gpt-5.5-test"
-    assert "max_output_tokens" not in captured["json"]
-    assert captured["json"]["stream"] is True
-    assert captured["json"]["store"] is False
+    assert captured["headers"]["Content-Encoding"] == "zstd"
+    assert int(captured["headers"]["Content-Length"]) == len(captured["data"])
+    body = json.loads(zstandard.ZstdDecompressor().decompress(captured["data"]))
+    assert body["model"] == "gpt-5.5-test"
+    assert "max_output_tokens" not in body
+    assert body["stream"] is True
+    assert body["store"] is False
     assert captured["timeout"].total == 30.0
     assert captured["timeout"].connect is None
     assert captured["timeout"].sock_connect == 10.0

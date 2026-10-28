@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
+import zstandard
 from sqlalchemy import select
 
 import app.core.clients.proxy as proxy_client_module
@@ -96,11 +97,19 @@ class _JsonSession:
         self,
         url: str,
         *,
-        json=None,
+        data=None,
         headers: dict[str, str] | None = None,
         timeout=None,
     ):
-        self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        self.calls.append(
+            {
+                "url": url,
+                "json": json.loads(zstandard.ZstdDecompressor().decompress(data)),
+                "data": data,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
         return self._response
 
 
