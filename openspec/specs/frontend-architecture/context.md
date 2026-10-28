@@ -169,3 +169,9 @@ The product-boundary regression renders the real `/dashboard` App route with the
 ## Import multiple auth files
 
 Sequential imports reuse the existing single-file request and refresh hook. A batch of A, B, C that fails on B retains B and C for retry and never resubmits A. Selection and submission are disabled while a request is in flight. The API and OAuth flows remain unchanged.
+
+## Plan tag palette
+
+The shared `PlanBadge` owns explicit light/dark text, background, and border tokens for account plans and recognized rate-limit metadata keys. It matches the approved color study, with an 8% text-color mix for hovered backgrounds. Labels and snapshot normalization remain with the request table, preserving provider translations. For example, Claude Max 5× is rose and Max 20× is cobalt; Codex and Claude Pro both use violet.
+
+Unknown and newly encountered keys retain their display labels with neutral colors distinct from Free's slate. Null/blank snapshots remain unbadged placeholders. Color supports the visible text rather than replacing it, and account chart/logo colors remain independent. Browser regression checks cover the compiled CSS and hover contrast in both themes; the request-table suite covers unknown, missing, and cross-provider presentation. The normative contract is in [spec.md](./spec.md).

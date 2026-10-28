@@ -1,0 +1,18 @@
+.plan-badge {
+  --plan-text: var(--plan-light-text);
+  --plan-background: var(--plan-light-background);
+  --plan-border: var(--plan-light-border);
+  color: var(--plan-text);
+  background-color: var(--plan-background);
+  border-color: var(--plan-border);
+}
+
+.dark .plan-badge {
+  --plan-text: var(--plan-dark-text);
+  --plan-background: var(--plan-dark-background);
+  --plan-border: var(--plan-dark-border);
+}
+
+.plan-badge:hover {
+  background-color: color-mix(in srgb, var(--plan-background) 92%, var(--plan-text));
+}

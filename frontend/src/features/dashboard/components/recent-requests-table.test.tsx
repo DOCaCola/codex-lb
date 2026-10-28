@@ -260,6 +260,55 @@ describe("Provider identity and readable models", () => {
   });
 });
 
+describe("plan badge colors", () => {
+  it("gives all known plan keys their own colors in both themes", () => {
+    const plans = [
+      "free", "plus", "prolite", "pro", "team", "business", "enterprise", "edu",
+      "max", "max_5x", "max_20x", "unknown",
+      "guest", "go", "free_workspace", "education", "quorum", "k12",
+    ];
+    const { container } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={
+      plans.map((planType, id) => createRequestLogEntry({ id, requestId: `plan-${id}`, planType }))
+    } />);
+    const badges = [...container.querySelectorAll<HTMLElement>(".plan-badge")];
+    expect(badges).toHaveLength(plans.length);
+    for (const theme of ["light", "dark"]) {
+      for (const token of ["text", "background", "border"]) {
+        const colors = badges.map(badge => badge.style.getPropertyValue(`--plan-${theme}-${token}`));
+        expect(colors).not.toContain("");
+        expect(new Set(colors).size).toBe(plans.length);
+      }
+    }
+  });
+
+  it("shares normalized plan colors across providers and separates unknown from Free", () => {
+    const { container } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
+      createRequestLogEntry({ id: 1, requestId: "native", planType: " PRO " }),
+      createRequestLogEntry({ id: 2, requestId: "claude", planType: "pro", modelSourceKind: "claude" }),
+      createRequestLogEntry({ id: 3, requestId: "unknown", planType: "unknown", modelSourceKind: "claude" }),
+      createRequestLogEntry({ id: 4, requestId: "new", planType: "future_tier" }),
+      createRequestLogEntry({ id: 5, requestId: "free", planType: "free" }),
+    ]} />);
+    const badges = [...container.querySelectorAll<HTMLElement>(".plan-badge")];
+    expect(badges.map(badge => badge.textContent)).toEqual(["Pro", "Pro", "Unknown plan", "Future tier", "Free"]);
+    expect(badges[0].style.cssText).toBe(badges[1].style.cssText);
+    expect(badges[2].style.cssText).toBe(badges[3].style.cssText);
+    expect(badges[2].style.cssText).not.toBe(badges[4].style.cssText);
+  });
+
+  it.each([null, "", "  "])("keeps a missing snapshot %j unbadged", planType => {
+    render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={[
+      createRequestLogEntry({ planType }),
+    ]} />);
+    const columns = screen.getAllByRole("columnheader");
+    const planColumn = columns.findIndex(column => column.textContent === "Plan");
+    expect(planColumn).toBeGreaterThanOrEqual(0);
+    const cell = within(screen.getAllByRole("row")[1]).getAllByRole("cell")[planColumn];
+    expect(cell).toHaveTextContent(/^--$/);
+    expect(cell.querySelector("[data-slot=badge]")).toBeNull();
+  });
+});
+
 describe("Claude subscription snapshots", () => {
   it.each([ ["max_20x", "Max 20×"], ["max_5x", "Max 5×"], ["unknown", "Unknown plan"] ])(
     "shows %s consistently in request table and details", (planType, label) => {

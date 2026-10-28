@@ -16,6 +16,7 @@ import { CopyButton } from "@/components/copy-button";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
+import { PlanBadge } from "@/components/plan-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -93,17 +94,6 @@ const TRANSPORT_CLASS_MAP: Record<string, string> = {
   automation:
     "bg-indigo-500/15 text-indigo-700 border-indigo-500/20 hover:bg-indigo-500/20 dark:text-indigo-300",
 };
-
-const PLAN_CLASS_MAP: Record<string, string> = {
-  free: "bg-zinc-500/10 text-zinc-700 border-zinc-500/20 hover:bg-zinc-500/15 dark:text-zinc-300",
-  plus: "bg-emerald-500/15 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-400",
-  team: "bg-sky-500/15 text-sky-700 border-sky-500/20 hover:bg-sky-500/20 dark:text-sky-300",
-  pro: "bg-violet-500/15 text-violet-700 border-violet-500/20 hover:bg-violet-500/20 dark:text-violet-300",
-};
-PLAN_CLASS_MAP.max = PLAN_CLASS_MAP.pro;
-PLAN_CLASS_MAP.max_5x = PLAN_CLASS_MAP.pro;
-PLAN_CLASS_MAP.max_20x = PLAN_CLASS_MAP.pro;
-PLAN_CLASS_MAP.enterprise = PLAN_CLASS_MAP.team;
 
 const REQUEST_KIND_LABELS: Record<string, string> = {
   normal: "Normal",
@@ -483,12 +473,7 @@ export function RecentRequestsTable({
                   </TableCell> : null}
                   {isColumnVisible("plan") ? <TableCell className="align-top">
                     {planType ? (
-                      <Badge
-                        variant="outline"
-                        className={PLAN_CLASS_MAP[planType] ?? PLAN_CLASS_MAP.free}
-                      >
-                        {planLabel}
-                      </Badge>
+                      <PlanBadge plan={planType}>{planLabel}</PlanBadge>
                     ) : (
                       <span className="text-xs text-muted-foreground">--</span>
                     )}

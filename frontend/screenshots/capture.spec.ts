@@ -38,6 +38,66 @@ const THEME_KEY = "codex-lb-theme";
 const SETTLE_MS = 1500;
 
 for (const theme of ["light", "dark"] as const) {
+  test(`distinct plan tag colors — ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1920, height: 1800 });
+    await applyTheme(page, theme);
+    await interceptApi(page);
+    await page.route("**/health/ready", route => fulfill(route, { status: "ok" }));
+    const keys = [
+      "free", "plus", "prolite", "pro", "team", "business", "enterprise", "edu",
+      "max", "max_5x", "max_20x", "unknown",
+      "guest", "go", "free_workspace", "education", "quorum", "k12",
+    ];
+    const requests = keys.map((planType, index) => createRequestLogEntry({
+      id: index + 1, requestId: `plan-${planType}`, planType,
+      modelSourceKind: planType.startsWith("max") || planType === "unknown" ? "claude" : null,
+    }));
+    await page.route("**/api/request-logs?*", route => fulfill(route, createRequestLogsResponse(requests, requests.length, false)));
+    await page.goto(`${BASE_URL}/logs`);
+    const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: "Plan", exact: true }) });
+    await expect(table.locator("tbody tr")).toHaveCount(keys.length);
+    const planColumn = await table.locator("thead th").allTextContents().then(headers => headers.indexOf("Plan"));
+    expect(planColumn).toBeGreaterThanOrEqual(0);
+    const badges = table.locator(`tbody td:nth-child(${planColumn + 1}) [data-slot=badge]`);
+    await expect(badges).toHaveCount(keys.length);
+    await table.screenshot({ path: testInfo.outputPath(`plan-tags-${theme}.png`), animations: "disabled" });
+
+    const colors = await badges.evaluateAll(elements => elements.map(element => {
+      const css = getComputedStyle(element);
+      return [css.color, css.backgroundColor, css.borderColor];
+    }));
+    for (const channel of [0, 1, 2]) {
+      expect(new Set(colors.map(color => color[channel])).size).toBe(keys.length);
+    }
+
+    // Use the browser's color parser to check both normal and hovered colors,
+    // including color-mix(), rather than duplicating CSS theme resolution.
+    for (let index = 0; index < keys.length; index++) {
+      const badge = badges.nth(index);
+      for (const hovered of [false, true]) {
+        if (hovered) await badge.hover();
+        const contrast = await badge.evaluate(element => {
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = 1;
+          const context = canvas.getContext("2d")!;
+          const luminance = (color: string) => {
+            context.fillStyle = color;
+            context.fillRect(0, 0, 1, 1);
+            const rgb = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
+              .map(value => value / 255)
+              .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+            return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+          };
+          const css = getComputedStyle(element);
+          const foreground = luminance(css.color);
+          const background = luminance(css.backgroundColor);
+          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        });
+        expect(contrast, `${keys[index]} ${theme} hovered=${hovered}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   test(`Claude gateway throughput — ${theme}`, async ({ page }, testInfo) => {
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
