@@ -5329,9 +5329,9 @@ async def _disabled_model_source_denial(
         "model_source_disabled",
         f"The model '{matched_model}' is served by an OpenAI-compatible model source that {reason}. "
         "Enable the source and its model in codex-lb, or request a different model.",
-        error_type="upstream_error",
+        error_type="invalid_request_error",
     )
-    return _logged_error_json_response(request, 503, error, headers=headers)
+    return _logged_error_json_response(request, 400, error, headers=headers)
 
 
 async def _select_embeddings_model_source(model: str, api_key: ApiKeyData | None) -> ModelSource | None:
@@ -8238,11 +8238,11 @@ async def _compact_responses(
     if disabled is not None:
         return _logged_error_json_response(
             request,
-            503,
+            400,
             openai_error(
                 "model_source_disabled",
                 "The model source is disabled.",
-                error_type="server_error",
+                error_type="invalid_request_error",
             ),
         )
     try:

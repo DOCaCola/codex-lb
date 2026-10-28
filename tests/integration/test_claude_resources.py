@@ -69,7 +69,7 @@ async def test_native_resource_survives_affinity_expiry_and_rebind(async_client,
     denied = await async_client.post(
         "/v1/messages", headers=native_headers(), json=payload([{"role": "assistant", "content": blocks()}])
     )
-    assert denied.status_code == 503 and "owner" in denied.text
+    assert denied.status_code == 400 and "owner" in denied.text
     assert len(captures_b) == 1
     await async_client.patch(f"/api/claude-accounts/{origin}", json={"isEnabled": True})
     replay, _ = install_upstream(monkeypatch)

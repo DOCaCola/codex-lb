@@ -222,7 +222,7 @@ async def test_thread_with_server_tool_state_keeps_owner_refusal(async_client, p
         {"role": "user", "content": "continue"},
     ]
     response = await async_client.post("/v1/messages", headers=native_headers(), json=body)
-    assert response.status_code == 503, response.text
+    assert response.status_code == 400, response.text
     assert len(captured) == 1
 
 

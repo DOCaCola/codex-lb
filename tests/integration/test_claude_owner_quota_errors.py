@@ -8,6 +8,7 @@ import pytest
 
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
+from app.db.models import ClaudeAccount
 from app.db.session import SessionLocal
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.resources import ResourceScope, record_origins, resolve_origins
@@ -92,11 +93,25 @@ async def test_http_owned_quota_preserves_history_without_dispatch(
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
-@pytest.mark.parametrize("known_deadline", [False, True])
-async def test_websocket_owned_quota_carries_retry_details(async_client, pool, monkeypatch, path, known_deadline):
+@pytest.mark.parametrize("barrier", ["quota_unknown", "quota_known", "owner_credentials", "pool_credentials"])
+async def test_websocket_unavailability_preserves_recovery_contract(async_client, pool, monkeypatch, path, barrier):
     captured, _ = install_upstream(monkeypatch)
-    deadline = datetime.now(UTC) + timedelta(minutes=5) if known_deadline else None
-    await exhaust(pool[0], deadline)
+    deadline = datetime.now(UTC) + timedelta(minutes=5) if barrier == "quota_known" else None
+    terminal = barrier.endswith("credentials")
+    if terminal:
+        async with SessionLocal() as session:
+            for source in pool if barrier == "pool_credentials" else pool[:1]:
+                row = await session.get(ClaudeAccount, source)
+                assert row is not None
+                row.credential_status = "reauth_required"
+            await session.commit()
+    else:
+        await exhaust(pool[0], deadline)
+    history = (
+        [{"role": "user", "content": "Work"}, {"type": "compaction_trigger"}]
+        if barrier == "pool_credentials"
+        else owned_history(pool[0])
+    )
     incoming, outgoing = asyncio.Queue(), asyncio.Queue()
     scope = {
         "type": "websocket",
@@ -115,14 +130,26 @@ async def test_websocket_owned_quota_carries_retry_details(async_client, pool, m
     try:
         await incoming.put({"type": "websocket.connect"})
         assert (await asyncio.wait_for(outgoing.get(), 5))["type"] == "websocket.accept"
-        payload = {"type": "response.create", "model": MODEL, "input": owned_history(pool[0])}
+        payload = {"type": "response.create", "model": MODEL, "input": history}
         for _ in range(2):
             await incoming.put({"type": "websocket.receive", "text": json.dumps(payload)})
             frame = await asyncio.wait_for(outgoing.get(), 5)
             assert frame["type"] == "websocket.send", frame
             event = json.loads(frame["text"])
-            assert event["type"] == "error" and event["status"] == 429, event
-            assert_quota_detail(event["error"], deadline)
+            assert event["type"] == "error" and event["status"] == (400 if terminal else 429), event
+            if terminal:
+                error = event["error"]
+                assert error["type"] == "invalid_request_error"
+                assert error["code"] == (
+                    "claude_pool_unavailable"
+                    if barrier == "pool_credentials"
+                    else "previous_response_owner_unavailable"
+                )
+                assert "resets_at" not in error
+                assert "resets_in_seconds" not in error
+                assert all(source not in frame["text"] for source in pool)
+            else:
+                assert_quota_detail(event["error"], deadline)
             if deadline is None:
                 assert "headers" not in event
             else:
@@ -168,15 +195,15 @@ async def test_native_resource_owner_quota_is_429(async_client, pool, monkeypatc
         assert await resolve_origins(session, resource_scope.keys(frozenset({"srv1"}))) == pool[0]
 
 
-async def test_paused_signed_owner_remains_503(async_client, pool, monkeypatch):
+async def test_paused_signed_owner_fails_without_retry(async_client, pool, monkeypatch):
     captured, _ = install_upstream(monkeypatch)
     await async_client.patch(f"/api/claude-accounts/{pool[0]}", json={"isEnabled": False})
     response = await async_client.post(
         "/backend-api/codex/responses", headers=HEADERS, json={"model": MODEL, "input": owned_history(pool[0])}
     )
-    assert response.status_code == 503, response.text
+    assert response.status_code == 400, response.text
     assert response.json()["error"]["code"] == "previous_response_owner_unavailable"
-    assert response.json()["error"]["type"] == "server_error"
+    assert response.json()["error"]["type"] == "invalid_request_error"
     assert "resets_at" not in response.json()["error"]
     assert "retry-after" not in response.headers
     assert captured == []

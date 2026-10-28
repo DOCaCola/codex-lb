@@ -208,6 +208,14 @@ async def select_account(
             (diagnostic.retry_at for _, diagnostic in candidates if diagnostic.retry_at is not None), default=None
         )
         quota_only = bool(reasons) and all(reason == "quota" for reason in reasons)
+        # These exclusions cannot recover by waiting. A retryable 503 traps
+        # model-switch compaction on the unavailable previous model instead of
+        # letting the client recover using its selected model. A temporary,
+        # unknown or per-attempt exclusion keeps the existing retry contract.
+        operator_action_required = bool(reasons) and all(
+            reason in {"paused", "credentials", "model", "reasoning"} for reason in reasons
+        )
+        unavailable_status = 400 if operator_action_required else 503
         if owner_source_id is not None or quota_only:
             if owner_source_id is not None:
                 message = (
@@ -229,10 +237,10 @@ async def select_account(
                     reasons,
                     retry_at=retry_at.timestamp() if retry_at is not None else None,
                 ),
-                status_code=429 if quota_only else 503,
+                status_code=429 if quota_only else unavailable_status,
                 retry_at=retry_at,
             )
-        if candidates and all(diagnostic.reason == "reasoning" for _, diagnostic in candidates):
+        if reasons and all(reason == "reasoning" for reason in reasons):
             raise ClaudePoolUnavailable(
                 "reasoning_effort_not_allowed",
                 explain_unavailable(
@@ -247,6 +255,7 @@ async def select_account(
                 reasons,
                 retry_at=retry_at.timestamp() if retry_at is not None else None,
             ),
+            status_code=unavailable_status,
             retry_at=retry_at,
         )
     scope = api_key.id if api_key else "anonymous"

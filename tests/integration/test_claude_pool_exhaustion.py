@@ -8,6 +8,7 @@ from app.db.session import SessionLocal
 from app.modules.claude.failover import Refusal, record_refusals
 from app.modules.claude.routing import ClaudePoolUnavailable
 from app.modules.claude.schemas import AccountState, QuotaWindow, UsageSnapshot
+from tests.integration.test_claude_inference import install_upstream
 from tests.integration.test_claude_routing import MODEL, choose, key
 from tests.integration.test_claude_routing import pool as pool
 
@@ -124,7 +125,7 @@ async def test_pool_error_at_http_boundary(async_client, pool, path):
 
 
 @pytest.mark.parametrize("barrier", ["paused", "credentials", "refreshing", "refresh_backoff", "unknown"])
-async def test_non_quota_owner_keeps_503_even_with_observed_exhaustion(pool, barrier):
+async def test_non_quota_owner_classifies_recovery_even_with_observed_exhaustion(pool, barrier):
     now = datetime.now(UTC)
     await exhaust(pool[0], now + timedelta(hours=2))
     async with SessionLocal() as session:
@@ -145,9 +146,81 @@ async def test_non_quota_owner_keeps_503_even_with_observed_exhaustion(pool, bar
     assert await choose(now=now) == pool[1]
     with pytest.raises(ClaudePoolUnavailable) as caught:
         await choose(owner_source_id=pool[0], now=now)
-    assert caught.value.status_code == 503
-    assert caught.value.error_type == "server_error"
+    terminal = barrier in {"paused", "credentials"}
+    assert caught.value.status_code == (400 if terminal else 503)
+    assert caught.value.error_type == ("invalid_request_error" if terminal else "server_error")
     assert caught.value.code == "previous_response_owner_unavailable"
+
+
+@pytest.mark.parametrize("credential_status", ["reauth_required", "uncertain"])
+@pytest.mark.parametrize(
+    "path",
+    ["/v1/messages", "/v1/messages/count_tokens", "/v1/responses", "/backend-api/codex/responses"],
+)
+async def test_terminal_credentials_at_http_boundary(async_client, pool, monkeypatch, credential_status, path):
+    captured, _ = install_upstream(monkeypatch)
+    async with SessionLocal() as session:
+        for source in pool:
+            row = await session.get(ClaudeAccount, source)
+            assert row is not None
+            row.credential_status = credential_status
+        await session.commit()
+    body = {"model": MODEL}
+    if "/messages" in path:
+        body.update(messages=[{"role": "user", "content": "Hello"}], max_tokens=100)
+    else:
+        body.update(input=[{"role": "user", "content": "Hello"}, {"type": "compaction_trigger"}])
+    response = await async_client.post(path, json=body)
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "claude_pool_unavailable"
+    assert error["type"] == "invalid_request_error"
+    assert "credentials: 2" in error["message"]
+    assert "retry-after" not in response.headers
+    assert "resets_at" not in error
+    assert captured == []
+
+
+@pytest.mark.parametrize("alternative", ["paused", "model", "reasoning", "refreshing", "quota", "excluded"])
+async def test_credentials_pool_classification_uses_all_scoped_exclusions(pool, alternative):
+    async with SessionLocal() as session:
+        first = await session.get(ClaudeAccount, pool[0])
+        assert first is not None
+        first.credential_status = "reauth_required"
+        second = await session.get(ClaudeAccount, pool[1])
+        assert second is not None
+        if alternative == "paused":
+            second.source.is_enabled = False
+        elif alternative == "model":
+            for membership in second.source.models:
+                membership.is_enabled = False
+        elif alternative == "reasoning":
+            state = AccountState.model_validate_json(second.state_json)
+            state.reasoning_restrictions[MODEL.removeprefix("anthropic/")] = ["low"]
+            second.state_json = state.model_dump_json()
+        elif alternative == "refreshing":
+            second.refresh_intent = "other-worker"
+        await session.commit()
+    if alternative == "quota":
+        await exhaust(pool[1], datetime.now(UTC) + timedelta(minutes=5))
+    excluded = frozenset({pool[1]}) if alternative == "excluded" else frozenset()
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(excluded_source_ids=excluded, reasoning_effort="high")
+    assert caught.value.status_code == (400 if alternative in {"paused", "model", "reasoning"} else 503)
+
+
+async def test_reasoning_exclusion_does_not_hide_a_retryable_candidate(pool):
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, pool[0])
+        assert row is not None
+        state = AccountState.model_validate_json(row.state_json)
+        state.reasoning_restrictions[MODEL.removeprefix("anthropic/")] = ["low"]
+        row.state_json = state.model_dump_json()
+        await session.commit()
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(excluded_source_ids=frozenset({pool[1]}), reasoning_effort="high")
+    assert caught.value.status_code == 503
+    assert caught.value.code == "claude_pool_unavailable"
 
 
 async def test_excluded_candidate_does_not_turn_mixed_pool_into_quota_only(pool):

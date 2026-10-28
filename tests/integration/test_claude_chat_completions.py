@@ -905,7 +905,7 @@ async def test_disabled_claude_chat_pool_fails_before_subscription(async_client,
         "/v1/chat/completions",
         json={"model": MODEL, "messages": [{"role": "user", "content": "Hello"}]},
     )
-    assert response.status_code == 503
+    assert response.status_code == 400
     assert response.json()["error"]["code"] == "model_source_disabled"
     assert not captured
 

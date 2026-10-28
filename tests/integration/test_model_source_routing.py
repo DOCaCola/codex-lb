@@ -827,9 +827,10 @@ async def test_disabled_source_chat_is_refused_instead_of_hitting_a_subscription
         json={"model": model, "messages": [{"role": "user", "content": "hi"}]},
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 400
     error = response.json()["error"]
     assert error["code"] == "model_source_disabled"
+    assert error["type"] == "invalid_request_error"
     assert model in error["message"]
 
     # Refused before any account was selected, so nothing was dispatched and no
@@ -864,15 +865,25 @@ async def test_disabled_source_model_row_chat_is_refused_instead_of_hitting_a_su
         json={"model": model, "messages": [{"role": "user", "content": "hi"}]},
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 400
     error = response.json()["error"]
     assert error["code"] == "model_source_disabled"
+    assert error["type"] == "invalid_request_error"
     assert "has that model disabled" in error["message"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
-async def test_disabled_source_responses_is_refused_instead_of_hitting_a_subscription(async_client, path):
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/responses",
+        "/backend-api/codex/responses",
+        "/v1/responses/compact",
+        "/backend-api/codex/responses/compact",
+    ],
+)
+@pytest.mark.parametrize("disabled", ["source", "model"])
+async def test_disabled_source_responses_is_refused_instead_of_hitting_a_subscription(async_client, path, disabled):
     await _enable_api_key_auth(async_client)
     model = "disabled-source-responses-model"
     source_id = await _create_model_source(
@@ -882,7 +893,10 @@ async def test_disabled_source_responses_is_refused_instead_of_hitting_a_subscri
         base_url=f"http://127.0.0.1:{_free_port()}/v1",
         supports_responses=True,
     )
-    await _set_source_enabled(async_client, source_id, False)
+    if disabled == "source":
+        await _set_source_enabled(async_client, source_id, False)
+    else:
+        await _disable_source_model(async_client, source_id, model)
     created = await async_client.post("/api/api-keys/", json={"name": "disabled-source-responses-key"})
     assert created.status_code == 200
     key = created.json()["key"]
@@ -890,14 +904,22 @@ async def test_disabled_source_responses_is_refused_instead_of_hitting_a_subscri
     response = await async_client.post(
         path,
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": model, "input": "hi", "stream": True},
+        json={"model": model, "instructions": "", "input": [{"role": "user", "content": "hi"}]},
     )
 
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "model_source_disabled"
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "model_source_disabled"
+    assert error["type"] == "invalid_request_error"
+    assert "resets_at" not in error
+    assert "retry-after" not in response.headers
 
     async with SessionLocal() as session:
         result = await session.execute(select(RequestLog).where(RequestLog.model == model))
+        assert result.scalars().all() == []
+        result = await session.execute(
+            select(ApiKeyUsageReservation).where(ApiKeyUsageReservation.status == "reserved")
+        )
         assert result.scalars().all() == []
 
 

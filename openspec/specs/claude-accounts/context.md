@@ -332,8 +332,9 @@ PostgreSQL runtime qualification remains outstanding.
 
 ### Pool exhaustion and retry hints
 
-Quota-only exhaustion returns429 with rate_limit_error, while mixed/unknown
-unavailability retains503. Paused, model-disabled and credential-invalid accounts
+Quota-only exhaustion returns429 with rate_limit_error on native Messages and
+usage_limit_reached on Responses. Temporary mixed/unknown unavailability retains503;
+operator-only exclusions return400 invalid_request_error. Paused, model-disabled and credential-invalid accounts
 cannot contribute a recovery estimate. Account recovery includes all quota and
 cooldown barriers; unknown quota deadlines suppress that account's estimate.
 For example, shared reset2h plus model cooldown5h cannot advertise2h; an eligible
@@ -983,3 +984,36 @@ readable form and the OpenAI handoff keep the copy and drop the block, so the
 text appears once. Chat Completions still asks for `summarized` and is unchanged.
 Not live-qualified: OAuth acceptance of the beta, which Claude Code and OpenCodex
 send over OAuth.
+
+### Previous-model compaction recovery (2026-10-28)
+
+Codex may compact with the previous model before switching to a model with a
+smaller advertised context window. Its existing current-model recovery cannot run
+while transport retries keep the previous request pending. An expired grant marked
+reauth_required was reported503, causing repeated exponential waits before Astra
+could be tried. Permanent selector exclusions now return 400 invalid_request_error
+with their existing pool/owner code. A refresh in progress, cooldown, per-attempt
+exclusion or unknown condition remains retryable; refreshable token expiry remains
+eligible. Required owners never migrate to another account. Shared source admission
+also reports an explicitly disabled source/model as 400. Upstream error passthrough
+and quota admission are separate contracts.
+
+For example, an Opus-to-Astra switch whose only Claude account requires login now
+reaches the installed Codex client's Astra compaction recovery immediately. The
+gateway does not choose a substitute model: the client knows the selected model,
+owns the original history, and installs the provider-native checkpoint. Other
+clients must implement their own recovery. No emergency model setting is added.
+
+The installed 0.164.0-doca client was checked in a network-isolated copy of the
+affected rollout. Both HTTP and WebSocket made one old-model request, switched to
+Astra after 400 with all 1505 history items retained (transport metadata/image detail
+normalization aside), accepted a replayed native checkpoint and completed the turn.
+A separate live Astra compaction accepted 158409 input tokens, returned a native
+checkpoint, and successfully answered a text-only continuation. Four of five sampled
+historical facts survived; this is evidence of usable recovery, not lossless
+summarization. The actual source chat and production deployment were not modified.
+
+The earlier Claude token count exceeded the client-advertised Astra context
+threshold. That explains the downshift trigger, but is not a hard-capacity proof:
+the live registry reported context_window=272000 and max_context_window=872000, and
+the successful Astra request counted substantially fewer tokens.

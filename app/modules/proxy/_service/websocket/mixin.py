@@ -2057,7 +2057,7 @@ class _WebSocketMixin:
                                     # already attached to the open upstream. Model sources are
                                     # only reachable from the HTTP request path. Ownership
                                     # includes disabled sources, which no subscription account
-                                    # can serve either; over HTTP those meet the 503
+                                    # can serve either; over HTTP those meet the 400
                                     # ``model_source_disabled`` denial.
                                     #
                                     # Gated on an existing upstream on purpose: a first turn has
@@ -4033,7 +4033,7 @@ class _WebSocketMixin:
         # connect fails, and that path routes to the source correctly.
         # Ownership includes disabled sources: no subscription account can
         # serve those either, and the HTTP fallback answers them with the
-        # informative 503 ``model_source_disabled`` denial.
+        # informative 400 ``model_source_disabled`` denial.
         #
         # Evaluated once per connect series rather than inside the failover
         # loop below: source ownership is a property of the requested model, so

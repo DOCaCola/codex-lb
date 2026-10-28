@@ -316,7 +316,7 @@ async def test_account_lifecycle_selection_and_disappearance(async_client, provi
     listed = (await async_client.get("/v1/models")).json()["data"]
     assert "openrouter/vendor/test" not in {item["id"] for item in listed}
     denied = await async_client.post("/v1/responses", json={"model": "openrouter/vendor/test", "input": "Hi"})
-    assert denied.status_code == 503, denied.text
+    assert denied.status_code == 400, denied.text
     assert denied.json()["error"]["code"] == "model_source_disabled"
     # An atomic dialog save can deselect a missing model and still edit its
     # retained reasoning policy. It remains configurable after that save.

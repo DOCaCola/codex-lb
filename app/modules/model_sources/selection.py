@@ -132,7 +132,7 @@ async def responses_model_is_source_owned(
     and dispatching the turn to a subscription account instead produces the
     opaque upstream 400 (``The '<model>' model is not supported when using
     Codex with a ChatGPT account.``). Bouncing the turn to HTTP lands it on the
-    disabled-source denial there, which answers 503 ``model_source_disabled``
+    disabled-source denial there, which answers 400 ``model_source_disabled``
     and names the actual condition. The second, ``only_disabled`` probe runs
     only after the ordinary lookup misses, so enabled sources keep resolving in
     a single query.

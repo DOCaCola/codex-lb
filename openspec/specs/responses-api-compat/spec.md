@@ -9819,12 +9819,12 @@ settlement, one-shot replay, and retry-circuit rules.
 
 The system SHALL NOT dispatch to a subscription account a request whose model
 is served by an OpenAI-compatible model source that an operator has switched
-off. It SHALL refuse such a request with HTTP status `503` and error code
+off. It SHALL refuse such a request with HTTP status `400`, error type `invalid_request_error`, and error code
 `model_source_disabled`.
 
 "Switched off" covers both a disabled source row and a disabled model row on an
 enabled source. The refusal SHALL apply on `/v1/chat/completions`,
-`/v1/responses`, and `/backend-api/codex/responses`.
+`/v1/responses`, `/backend-api/codex/responses`, and their explicit `/compact` endpoints. Terminal refusals SHALL NOT include Retry-After or quota reset fields.
 
 The refusal SHALL be decided by the ordinary source-selection rules with the
 enabled-state filter inverted and nothing else changed: same candidate list
@@ -9857,7 +9857,7 @@ dispatch that never happened.
 
 - **GIVEN** an OpenAI-compatible model source exposes model `m` and is disabled
 - **WHEN** a client calls `POST /v1/chat/completions` with model `m`
-- **THEN** the response is `503` with error code `model_source_disabled`
+- **THEN** the response is `400` with error code `model_source_disabled`
 - **AND** no subscription account is selected for the request
 - **AND** no usage reservation is left held
 
@@ -9865,14 +9865,14 @@ dispatch that never happened.
 
 - **GIVEN** a Responses-capable OpenAI-compatible model source exposes model `m` and is disabled
 - **WHEN** a client calls `POST /v1/responses` or `POST /backend-api/codex/responses` with model `m`
-- **THEN** the response is `503` with error code `model_source_disabled`
+- **THEN** the response is `400` with error code `model_source_disabled`
 - **AND** no subscription account is selected for the request
 
 #### Scenario: A disabled model on an enabled source is refused
 
 - **GIVEN** an enabled OpenAI-compatible model source whose model row for `m` is disabled
 - **WHEN** a client calls `POST /v1/chat/completions` with model `m`
-- **THEN** the response is `503` with error code `model_source_disabled`
+- **THEN** the response is `400` with error code `model_source_disabled`
 
 #### Scenario: A model no source exposes is unaffected
 
@@ -9894,6 +9894,11 @@ dispatch that never happened.
 - **WHEN** the key requests that slug
 - **THEN** the request is not refused with `model_source_disabled`
 - **AND** subscription routing proceeds unchanged
+
+#### Scenario: Explicit compaction on a disabled source
+
+- **WHEN** a client submits explicit compaction for a model owned by a disabled source
+- **THEN** it receives400 invalid_request_error with model_source_disabled without dispatch or a usage reservation
 
 ### Requirement: Stale-anchor error parameters preserve presence and fail closed
 

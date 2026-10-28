@@ -935,7 +935,7 @@ async def test_source_ownership_counts_disabled_sources(monkeypatch: pytest.Monk
     source is enabled or not; dispatching it to a subscription account instead
     yields the opaque upstream 400. Recognizing disabled ownership makes the
     guards bounce the turn to HTTP, where the disabled-source denial answers
-    503 ``model_source_disabled``.
+    400 ``model_source_disabled``.
     """
     catalog = _AliasSourceCatalog(set(), disabled_source_models={"qwen3.8-max"})
     catalog.install(monkeypatch)

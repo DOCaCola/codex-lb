@@ -220,3 +220,13 @@ Cancellation and programming exceptions are not converted into protocol errors.
 If cancellation arrives during settlement, cleanup and the original failure log
 finish before cancellation propagates; no synthetic error goes to the departed
 client. An already delivered terminal is never followed by a second terminal.
+
+### Disabled-source recovery errors (2026-10-28)
+
+An explicitly disabled source or model cannot recover through transport retries.
+Its existing model_source_disabled refusal now uses 400 invalid_request_error on
+Responses, Chat Completions and explicit compaction. This lets a client complete
+its failed old-model attempt and apply its own model-switch recovery. Selection
+precedence, subscription ownership, source scope, file-pinned exclusions and the
+WebSocket transport handoff are unchanged. No usage reservation or upstream request
+is made for the refusal. Temporary source capacity still uses its retryable status.
