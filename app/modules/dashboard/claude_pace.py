@@ -18,7 +18,7 @@ from app.modules.claude.quota import quota_status
 from app.modules.claude.schemas import AccountState
 from app.modules.claude.subscription import quota_weight, subscription_plan
 from app.modules.dashboard.schemas import WeeklyCreditPaceResponse
-from app.modules.dashboard.weekly_pace import PaceAccountInput, build_weekly_pace
+from app.modules.dashboard.weekly_pace import PaceAccountInput, build_weekly_pace, positive_used_percent_delta
 
 SEVEN_DAY_WINDOW_MINUTES = 10_080
 # One Pro account's weekly window in Pro units.
@@ -80,7 +80,7 @@ def build_claude_weekly_pace(
                 history=samples,
             )
         )
-        trailing_demand[account.source_id] = _positive_used_percent_delta(samples)
+        trailing_demand[account.source_id] = positive_used_percent_delta(samples)
 
     return build_weekly_pace(
         accounts=inputs,
@@ -104,10 +104,4 @@ def _sample(row: ClaudeQuotaHistory) -> _QuotaSample:
         used_percent=row.used_percent,
         reset_at=reset_at,
         window_minutes=SEVEN_DAY_WINDOW_MINUTES,
-    )
-
-
-def _positive_used_percent_delta(samples: Sequence[_QuotaSample]) -> float:
-    return sum(
-        max(0.0, current.used_percent - previous.used_percent) for previous, current in zip(samples, samples[1:])
     )

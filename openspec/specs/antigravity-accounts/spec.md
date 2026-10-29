@@ -72,7 +72,7 @@ Antigravity pools SHALL contain only Antigravity accounts. Eligibility MUST requ
 - **THEN** the next turn uses the same account even if another account ranks higher
 
 ### Requirement: Antigravity Responses adaptation
-Responses requests SHALL be sent to `v1internal:streamGenerateContent?alt=sse` with the native envelope: project, `agent/<cascade>/<unix_ms>/<trajectory>/<step>` request ID, `userAgent: antigravity`, `requestType: agent`, the per-account session ID and labels derived from the conversation. The `used_claude` labels SHALL report whether the account has previously dispatched an Anthropic-wire model, and `used_non_gemini_model` SHALL be `true`, as the native CLI reports them. Instructions SHALL become `systemInstruction`; messages, tool calls, tool outputs and images SHALL map to Gemini contents with exactly one adjacent function response per function call, paired by call ID. Tool schemas SHALL be compiled to the Gemini OpenAPI dialect without changing argument literals; invalid tool names SHALL be encoded reversibly. Freeform tools SHALL round-trip raw input exactly and emit custom tool events. `tool_choice` none, auto, required and specific function SHALL keep their semantics.
+Responses requests SHALL be sent to `v1internal:streamGenerateContent?alt=sse` with the native envelope: project, `agent/<cascade>/<unix_ms>/<trajectory>/<step>` request ID, `userAgent: antigravity`, `requestType: agent`, the per-account session ID and labels derived from the conversation. The `used_claude` and `used_claude_conservative` history labels SHALL be omitted, and `used_non_gemini_model` SHALL be `true`, as the native CLI reports it. Instructions SHALL become `systemInstruction`; messages, tool calls, tool outputs and images SHALL map to Gemini contents with exactly one adjacent function response per function call, paired by call ID. Tool schemas SHALL be compiled to the Gemini OpenAPI dialect without changing argument literals; invalid tool names SHALL be encoded reversibly. Freeform tools SHALL round-trip raw input exactly and emit custom tool events. `tool_choice` none, auto, required and specific function SHALL keep their semantics.
 
 #### Scenario: Freeform patch
 - **WHEN** the model calls the freeform `apply_patch` tool
@@ -107,9 +107,36 @@ Upstream errors SHALL be classified from `google.rpc` ErrorInfo and RetryInfo be
 - **WHEN** an account returns a terms-of-service 403
 - **THEN** the account is marked banned, never retried, and the request fails over
 
+### Requirement: Antigravity API-equivalent cost
+Antigravity request logs SHALL carry an API-equivalent cost priced at the public list price of the model family, resolved from the shared pricing catalog by the family ID without the effort suffix: Google's Gemini API prices for Gemini families and Anthropic prices for Claude families. Cached input SHALL use the cached rate and published long-context tiers SHALL apply. A family without a catalog price SHALL record an unknown cost, never zero or a guessed price.
+
+#### Scenario: Long Gemini request
+- **WHEN** a Gemini family request exceeds the family's published long-context threshold
+- **THEN** its logged cost uses the long-context input, cached and output rates
+
+#### Scenario: Unpriced family
+- **WHEN** a family has no price in either public catalog
+- **THEN** its request logs show an unknown cost
+
 ### Requirement: Antigravity dashboard
-The add-account chooser SHALL offer Antigravity sign-in and import under an Antigravity group. Account lists and detail pages SHALL show plan, project, credential and hold state, credits, per-family 5-hour and weekly bars for reported windows, catalog selection, routing policy and trends using the shared account layout. The dashboard quota toggle SHALL include Antigravity with plan-weighted pace.
+The add-account chooser SHALL offer Antigravity sign-in and import under an Antigravity group. Account lists and detail pages SHALL show plan, project, credential and hold state, credits, per-family 5-hour and weekly bars for reported windows, catalog selection, routing policy and trends using the shared account layout.
+
+The dashboard quota toggle SHALL offer an Antigravity view when an Antigravity account exists. That view SHALL show one 5-hour and one weekly card, each with one stacked bar per model family (Gemini, Gemini 4 Argon, Claude & GPT) in Pro units weighted by plan (Pro 1, Ultra 5× 5, Ultra 20× 20), segmented by account colour. Families SHALL NOT be summed into one figure. Each family SHALL show its remaining units, its next reset and the accounts that do not report that window. Beneath the bars the card SHALL list, by name and reason, accounts excluded from pooling: unweighted plan, or stale quota. Quota SHALL be stale when the last poll failed or no poll succeeded within three 5-minute poll intervals; the account response SHALL expose this as `quotaFresh`.
+
+The weekly pace card SHALL show the family that runs out soonest, ranked by runway, then exhaustion time, then remaining headroom, with a per-family breakdown when more than one family is pooled. Pace SHALL use the same plan-weighted, smoothed burn as Claude pace, per family. Families without a pooled weekly window SHALL be omitted. The Top consumers card SHALL list Antigravity requests in the Antigravity view.
 
 #### Scenario: Free account
 - **WHEN** a free account reports only weekly buckets
 - **THEN** only weekly bars are shown for its families
+
+#### Scenario: Families are not summed
+- **WHEN** a Pro account has 40% of its Gemini weekly quota and 90% of its Claude & GPT weekly quota left
+- **THEN** the weekly card shows 0.4 Pro units on the Gemini bar and 0.9 on the Claude & GPT bar, with no combined total
+
+#### Scenario: Stale quota excluded
+- **WHEN** an account's last quota poll failed
+- **THEN** its readings are left out of the bars and pace and the account is listed as stale beneath the bars
+
+#### Scenario: Tightest family leads the pace card
+- **WHEN** the Gemini family will run out in two days and the Claude & GPT family will not run out before reset
+- **THEN** the pace card shows Gemini with a breakdown row for each family

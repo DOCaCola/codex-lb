@@ -115,8 +115,6 @@ class AccountState(BaseModel):
     selections: list[str] = Field(default_factory=list)
     metadata: dict[Literal["account", "catalog", "quota"], MetadataState] = Field(default_factory=dict)
     verification: VerificationNotice | None = None
-    # Installation-scoped CLI telemetry: set by the account's first Anthropic-wire dispatch (agy 1.4.10 captures).
-    used_claude: bool = False
 
 
 class WindowStatus(DashboardModel):
@@ -150,6 +148,7 @@ class AntigravityAccountResponse(DashboardModel):
     quota_weight: int | None
     state: AccountState
     windows: list[WindowStatus]
+    quota_fresh: bool
     cooldowns: list[Cooldown]
 
 

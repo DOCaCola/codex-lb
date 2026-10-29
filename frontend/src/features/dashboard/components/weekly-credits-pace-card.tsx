@@ -1,4 +1,5 @@
 import { Gauge } from "lucide-react";
+import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -13,8 +14,19 @@ import { formatCompactNumber, formatDateTimeInline } from "@/utils/formatters";
 
 type Translate = ReturnType<typeof useTranslation>["t"];
 
+/** One independently limited pool shown under the main pace, e.g. an Antigravity model family. */
+export type PaceBreakdownRow = {
+  key: string;
+  label: string;
+  pace: WeeklyCreditPace;
+  /** The pool the card's runway and schedule describe. */
+  emphasized: boolean;
+};
+
 export type WeeklyCreditsPaceCardProps = {
   pace: WeeklyCreditPace | null;
+  subtitle: string;
+  breakdown?: PaceBreakdownRow[];
 };
 
 function formatUnitValue(value: number, unit: WeeklyCreditPaceUnit): string {
@@ -256,13 +268,47 @@ function ScheduleRow({ pace }: { pace: WeeklyCreditPace }) {
   );
 }
 
+function PaceBreakdown({ rows }: { rows: PaceBreakdownRow[] }) {
+  const { t } = useTranslation();
+  return (
+    <div className="border-t border-dashed pt-3.5" data-testid="pace-breakdown">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1.5 text-xs">
+        {rows.map((row) => {
+          const status = row.pace.runwayStatus ?? "safe";
+          const etaHours = row.pace.depletionEtaHours;
+          return (
+            <Fragment key={row.key}>
+              <span aria-hidden className={cn("h-2 w-2 rounded-full", VERDICT_MARKER_CLASSES[status])} />
+              <span className={cn("truncate", row.emphasized && "font-semibold")}>{row.label}</span>
+              <span className="text-right tabular-nums text-muted-foreground">
+                {t("dashboard.weeklyPace.breakdownLeft", {
+                  percent: formatHeadroomPercent(row.pace.headroomPercent ?? 100 - row.pace.actualUsedPercent),
+                })}
+              </span>
+              <span className="text-right tabular-nums text-muted-foreground">
+                {etaHours != null && Number.isFinite(etaHours)
+                  ? t("dashboard.weeklyPace.runsOutIn", { duration: formatDurationHours(etaHours, t) })
+                  : t("dashboard.weeklyPace.breakdownSteady")}
+              </span>
+            </Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function RunwayWeeklyCreditsPaceCard({
   pace,
+  subtitle,
+  breakdown,
   runwayStatus,
   headroomPercent,
   headroomCredits,
 }: {
   pace: WeeklyCreditPace;
+  subtitle: string;
+  breakdown: PaceBreakdownRow[] | undefined;
   runwayStatus: WeeklyCreditRunwayStatus;
   headroomPercent: number;
   headroomCredits: number;
@@ -301,9 +347,7 @@ function RunwayWeeklyCreditsPaceCard({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t(unit === "credits" ? "dashboard.weeklyPace.subtitleCodex" : "dashboard.weeklyPace.subtitleClaude")}
-          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
         </div>
         <span
           data-testid="weekly-runway-verdict"
@@ -405,12 +449,21 @@ function RunwayWeeklyCreditsPaceCard({
         </div>
 
         <ScheduleRow pace={pace} />
+        {breakdown ? <PaceBreakdown rows={breakdown} /> : null}
       </div>
     </section>
   );
 }
 
-function LegacyWeeklyCreditsPaceCard({ pace }: { pace: WeeklyCreditPace }) {
+function LegacyWeeklyCreditsPaceCard({
+  pace,
+  subtitle,
+  breakdown,
+}: {
+  pace: WeeklyCreditPace;
+  subtitle: string;
+  breakdown: PaceBreakdownRow[] | undefined;
+}) {
   const { t } = useTranslation();
   const statusClass =
     pace.status === "danger"
@@ -429,7 +482,8 @@ function LegacyWeeklyCreditsPaceCard({ pace }: { pace: WeeklyCreditPace }) {
     <section className="rounded-xl border bg-card p-5" aria-label={t("dashboard.weeklyPace.title")}>
       <div className="mb-4 flex justify-between gap-3">
         <div>
-	          <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
+          <h3 className="text-sm font-semibold">{t("dashboard.weeklyPace.title")}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
         </div>
         <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", statusClass)}>
           <Gauge className="h-4 w-4" aria-hidden="true" />
@@ -474,12 +528,13 @@ function LegacyWeeklyCreditsPaceCard({ pace }: { pace: WeeklyCreditPace }) {
 	            <p className="mt-1">{forecastLine(pace, t)}</p>
           </div>
         </div>
+        {breakdown ? <PaceBreakdown rows={breakdown} /> : null}
       </div>
     </section>
   );
 }
 
-export function WeeklyCreditsPaceCard({ pace }: WeeklyCreditsPaceCardProps) {
+export function WeeklyCreditsPaceCard({ pace, subtitle, breakdown }: WeeklyCreditsPaceCardProps) {
   if (!pace) {
     return null;
   }
@@ -490,11 +545,13 @@ export function WeeklyCreditsPaceCard({ pace }: WeeklyCreditsPaceCardProps) {
     return (
       <RunwayWeeklyCreditsPaceCard
         pace={pace}
+        subtitle={subtitle}
+        breakdown={breakdown}
         runwayStatus={pace.runwayStatus}
         headroomPercent={pace.headroomPercent}
         headroomCredits={pace.headroomCredits}
       />
     );
   }
-  return <LegacyWeeklyCreditsPaceCard pace={pace} />;
+  return <LegacyWeeklyCreditsPaceCard pace={pace} subtitle={subtitle} breakdown={breakdown} />;
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AccountAdditionalQuotaSchema, AccountSummarySchema } from "@/features/accounts/schemas";
 import type { AccountSummary } from "@/features/accounts/schemas";
+import { QUOTA_FAMILIES } from "@/features/antigravity/api";
 
 export { AccountAdditionalQuotaSchema, AccountSummarySchema };
 export type { AccountSummary };
@@ -180,6 +181,13 @@ const WeeklyCreditPaceSchema = z.object({
 const DashboardTopConsumersSchema = z.object({
   codex: z.array(WeeklyCreditApiKeyAttributionSchema),
   claude: z.array(WeeklyCreditApiKeyAttributionSchema),
+  antigravity: z.array(WeeklyCreditApiKeyAttributionSchema),
+});
+
+/** Weekly pace of one Antigravity model family; Google limits the families separately. */
+const AntigravityFamilyPaceSchema = z.object({
+  family: z.enum(QUOTA_FAMILIES),
+  pace: WeeklyCreditPaceSchema,
 });
 
 export const DashboardOverviewSchema = z.object({
@@ -203,6 +211,7 @@ export const DashboardOverviewSchema = z.object({
   depletionSecondary: DepletionSchema.nullable().optional(),
   weeklyCreditPace: WeeklyCreditPaceSchema.nullable().optional(),
   claudeWeeklyPace: WeeklyCreditPaceSchema.nullable(),
+  antigravityWeeklyPace: z.array(AntigravityFamilyPaceSchema),
   topConsumers: DashboardTopConsumersSchema,
 });
 
@@ -211,6 +220,7 @@ export const DashboardProjectionsSchema = z.object({
   depletionSecondary: DepletionSchema.nullable().optional(),
   weeklyCreditPace: WeeklyCreditPaceSchema.nullable().optional(),
   claudeWeeklyPace: WeeklyCreditPaceSchema.nullable(),
+  antigravityWeeklyPace: z.array(AntigravityFamilyPaceSchema),
   topConsumers: DashboardTopConsumersSchema,
 });
 
@@ -361,6 +371,7 @@ export type WeeklyCreditPaceStatus = z.infer<typeof WeeklyCreditPaceStatusSchema
 export type WeeklyCreditRunwayStatus = z.infer<typeof WeeklyCreditRunwayStatusSchema>;
 export type WeeklyCreditPaceUnit = z.infer<typeof WeeklyCreditPaceUnitSchema>;
 export type DashboardTopConsumers = z.infer<typeof DashboardTopConsumersSchema>;
+export type AntigravityFamilyPace = z.infer<typeof AntigravityFamilyPaceSchema>;
 
 export const DashboardViewSchema = z.enum(["request-logs", "conversations"]);
 export type DashboardView = z.infer<typeof DashboardViewSchema>;

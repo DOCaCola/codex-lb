@@ -6,6 +6,7 @@ from typing import List, Literal
 from pydantic import Field
 
 from app.modules.accounts.schemas import AccountSummary
+from app.modules.antigravity.schemas import QuotaFamily
 from app.modules.shared.schemas import DashboardModel, RequestCostCoverage
 from app.modules.usage.schemas import MetricsTrends, UsageWindow, UsageWindowResponse
 
@@ -141,6 +142,14 @@ class DashboardTopConsumers(DashboardModel):
 
     codex: list[WeeklyCreditApiKeyAttribution] = Field(default_factory=list)
     claude: list[WeeklyCreditApiKeyAttribution] = Field(default_factory=list)
+    antigravity: list[WeeklyCreditApiKeyAttribution] = Field(default_factory=list)
+
+
+class AntigravityFamilyPace(DashboardModel):
+    """Weekly pace of one Antigravity model family; families are limited separately."""
+
+    family: QuotaFamily
+    pace: WeeklyCreditPaceResponse
 
 
 class DashboardOverviewResponse(DashboardModel):
@@ -154,6 +163,7 @@ class DashboardOverviewResponse(DashboardModel):
     depletion_secondary: DepletionResponse | None = None
     weekly_credit_pace: WeeklyCreditPaceResponse | None = None
     claude_weekly_pace: WeeklyCreditPaceResponse | None = None
+    antigravity_weekly_pace: list[AntigravityFamilyPace] = Field(default_factory=list)
     top_consumers: DashboardTopConsumers
 
 
@@ -162,4 +172,5 @@ class DashboardProjectionsResponse(DashboardModel):
     depletion_secondary: DepletionResponse | None = None
     weekly_credit_pace: WeeklyCreditPaceResponse | None = None
     claude_weekly_pace: WeeklyCreditPaceResponse | None = None
+    antigravity_weekly_pace: list[AntigravityFamilyPace] = Field(default_factory=list)
     top_consumers: DashboardTopConsumers

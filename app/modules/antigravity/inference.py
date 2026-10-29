@@ -105,13 +105,13 @@ def envelope(
     project_id: str,
     session_id: str,
     cascade: str,
-    used_claude: bool,
 ) -> dict[str, JsonValue]:
-    """The native agent envelope; key order, label set and string label values follow the CLI capture.
+    """The native agent envelope; key order and string label values follow the CLI capture.
 
-    `used_claude` is installation history, not the current model: the CLI reports false on its first
-    Claude turn and true afterwards, in any cascade. `used_non_gemini_model` is true on every captured
-    agent request, Gemini included, because each CLI turn first sends a checkpoint request on a Claude model.
+    The CLI's `used_claude`/`used_claude_conservative` history labels are omitted: OmniRoute #16618
+    removes them as part of its fix for content-gated 429s. `used_non_gemini_model` is true on every
+    captured agent request, Gemini included, because each CLI turn first sends a checkpoint request on a
+    Claude model.
     """
     contents = cast(list[dict[str, JsonValue]], request["contents"])
     starts = [index for index, content in enumerate(contents) if _is_turn_start(content)]
@@ -127,7 +127,6 @@ def envelope(
     )
     trajectory = str(uuid.uuid5(uuid.UUID(cascade), f"turn:{len(starts)}"))
     last_step = len(contents) - 1
-    claude_history = "true" if used_claude else "false"
     labels: dict[str, JsonValue] = {
         "cascade_id": cascade,
         "last_step_index": str(last_step),
@@ -135,8 +134,6 @@ def envelope(
         "request_id": f"{trajectory}-{sent}",
         "root_cascade_id": cascade,
         "trajectory_id": trajectory,
-        "used_claude": claude_history,
-        "used_claude_conservative": claude_history,
         "used_non_gemini_model": "true",
     }
     inner: dict[str, JsonValue] = {"contents": request["contents"]}
@@ -154,10 +151,6 @@ def envelope(
         "userAgent": "antigravity",
         "requestType": "agent",
     }
-
-
-def _mark_used_claude(state: AccountState) -> AccountState | None:
-    return None if state.used_claude else state.model_copy(update={"used_claude": True})
 
 
 async def prepare_responses(
@@ -226,10 +219,7 @@ async def prepare_responses(
             project_id=snapshot.project_id,
             session_id=account.session_id,
             cascade=cascade_id(client_scope, conversation_id),
-            used_claude=state.used_claude,
         )
-        if family.anthropic_wire:
-            await AntigravityRepository(session).mutate_state(account.source_id, snapshot.generation, _mark_used_claude)
         await claim_session(session, client_scope, conversation_id, account.source_id)
         await session.commit()
         source = account.source

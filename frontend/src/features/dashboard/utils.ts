@@ -1,10 +1,12 @@
 import { Activity, AlertTriangle, Coins, DollarSign, Flame, MessageSquare, type LucideIcon } from "lucide-react";
 
 import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
+import type { AntigravityAccount, QuotaFamily } from "@/features/antigravity/api";
 import type { ClaudeAccount } from "@/features/claude/api";
 import i18n from "@/i18n";
 import type {
   AccountSummary,
+  AntigravityFamilyPace,
   DashboardOverview,
   DashboardProjections,
   DashboardTopConsumers,
@@ -13,6 +15,7 @@ import type {
   TrendPoint,
   UsageWindow,
   WeeklyCreditPaceStatus,
+  WeeklyCreditRunwayStatus,
 } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import {
@@ -75,7 +78,7 @@ export type {
   WeeklyCreditRunwayStatus,
 } from "@/features/dashboard/schemas";
 
-export type QuotaProvider = "codex" | "claude";
+export type QuotaProvider = "codex" | "claude" | "antigravity";
 
 const proUnitsFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 const smallProUnitsFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -132,6 +135,95 @@ export function buildClaudeQuotaRing(
   return { items, total, remaining: sumRemaining(items), planUnknown, quotaUnknown };
 }
 
+export type AntigravityQuotaWindow = "five_hour" | "weekly";
+
+export type AntigravityFamilyBar = {
+  family: QuotaFamily;
+  /** Remaining Pro units per pooled account. */
+  items: RemainingItem[];
+  /** Pooled capacity in Pro units; zero when no account reports this window. */
+  total: number;
+  remaining: number;
+  /** Earliest reported reset among the pooled readings. */
+  nextResetAt: string | null;
+  /** Pooled accounts that report no reading of this family's window. */
+  notReported: string[];
+};
+
+export type AntigravityQuotaBars = {
+  families: AntigravityFamilyBar[];
+  /** Names of accounts whose plan has no Pro-unit weight. */
+  planUnweighted: string[];
+  /** Names of weighted accounts whose readings come from a failed or missed poll. */
+  quotaUnknown: string[];
+};
+
+const ANTIGRAVITY_FAMILIES: readonly QuotaFamily[] = ["gemini", "argon", "claude"];
+
+/**
+ * One plan-weighted pool per model family. Google limits the families
+ * separately and spending one does not block the others, so they are never
+ * summed into a single figure.
+ */
+export function buildAntigravityQuotaBars(
+  accounts: AntigravityAccount[],
+  windowName: AntigravityQuotaWindow,
+  accountColors: ReadonlyMap<string, string> = new Map(),
+): AntigravityQuotaBars {
+  const planUnweighted = accounts.filter((account) => account.quotaWeight == null).map((account) => account.name);
+  const weighted = accounts.filter((account) => account.quotaWeight != null);
+  const quotaUnknown = weighted.filter((account) => !account.quotaFresh).map((account) => account.name);
+  const pooled = weighted.flatMap((account) =>
+    account.quotaWeight != null && account.quotaFresh ? [{ account, weight: account.quotaWeight }] : [],
+  );
+  const families = ANTIGRAVITY_FAMILIES.map((family): AntigravityFamilyBar => {
+    const items: RemainingItem[] = [];
+    const notReported: string[] = [];
+    let total = 0;
+    let nextResetAt: string | null = null;
+    for (const { account, weight } of pooled) {
+      const reading = account.windows.find((entry) => entry.family === family && entry.window === windowName);
+      if (!reading) {
+        notReported.push(account.name);
+        continue;
+      }
+      const remainingPercent = clampPercent(100 - reading.usedPercent);
+      total += weight;
+      items.push({
+        accountId: account.id,
+        label: account.name,
+        labelSuffix: "",
+        isEmail: false,
+        value: (weight * remainingPercent) / 100,
+        remainingPercent,
+        color: accountColors.get(account.id),
+      });
+      if (reading.resetsAt && (nextResetAt === null || Date.parse(reading.resetsAt) < Date.parse(nextResetAt))) {
+        nextResetAt = reading.resetsAt;
+      }
+    }
+    // Families nobody reports stay empty rather than listing every account as missing.
+    return { family, items, total, remaining: sumRemaining(items), nextResetAt, notReported: total > 0 ? notReported : [] };
+  });
+  return { families, planUnweighted, quotaUnknown };
+}
+
+const RUNWAY_RANK: Record<WeeklyCreditRunwayStatus, number> = { runs_dry: 0, tight: 1, safe: 2 };
+
+/** The family that runs out first: worst runway verdict, then earliest depletion, then least headroom. */
+export function tightestAntigravityPace(paces: AntigravityFamilyPace[]): AntigravityFamilyPace | null {
+  const runwayRank = (entry: AntigravityFamilyPace) =>
+    entry.pace.runwayStatus ? RUNWAY_RANK[entry.pace.runwayStatus] : RUNWAY_RANK.safe;
+  const eta = (entry: AntigravityFamilyPace) => entry.pace.depletionEtaHours ?? Number.POSITIVE_INFINITY;
+  const headroom = (entry: AntigravityFamilyPace) => entry.pace.headroomPercent ?? 100 - entry.pace.actualUsedPercent;
+  return paces.reduce<AntigravityFamilyPace | null>((tightest, entry) => {
+    if (tightest === null) return entry;
+    const order =
+      runwayRank(entry) - runwayRank(tightest) || eta(entry) - eta(tightest) || headroom(entry) - headroom(tightest);
+    return order < 0 ? entry : tightest;
+  }, null);
+}
+
 export type DashboardView = {
   stats: DashboardStat[];
   primaryUsageItems: RemainingItem[];
@@ -144,6 +236,7 @@ export type DashboardView = {
   safeLineSecondary: SafeLineView | null;
   weeklyCreditPace: WeeklyCreditPace | null;
   claudeWeeklyPace: WeeklyCreditPace | null;
+  antigravityWeeklyPace: AntigravityFamilyPace[];
   topConsumers: DashboardTopConsumers;
 };
 
@@ -928,6 +1021,7 @@ export function buildDashboardView(
     weeklyCreditPace:
       overview.weeklyCreditPace ?? projections?.weeklyCreditPace ?? buildWeeklyCreditPace(overview.accounts),
     claudeWeeklyPace: overview.claudeWeeklyPace ?? projections?.claudeWeeklyPace ?? null,
+    antigravityWeeklyPace: overview.antigravityWeeklyPace,
     topConsumers: overview.topConsumers,
   };
 }

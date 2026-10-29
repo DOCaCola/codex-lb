@@ -9,6 +9,7 @@ from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import DashboardSettings, UsageHistory
 from app.modules.accounts.mappers import build_account_summaries
+from app.modules.dashboard.antigravity_pace import build_antigravity_weekly_pace
 from app.modules.dashboard.builders import (
     build_dashboard_overview_summary,
     build_overview_timeframe,
@@ -17,6 +18,7 @@ from app.modules.dashboard.builders import (
 from app.modules.dashboard.claude_pace import build_claude_weekly_pace
 from app.modules.dashboard.repository import DashboardRepository, QuotaProvider
 from app.modules.dashboard.schemas import (
+    AntigravityFamilyPace,
     DashboardMetricsComparison,
     DashboardMetricsComparisonPrevious,
     DashboardOverviewResponse,
@@ -218,6 +220,7 @@ class DashboardService:
             smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
         )
         claude_weekly_pace = await _claude_weekly_pace(self._repo, now, dashboard_settings)
+        antigravity_weekly_pace = await _antigravity_weekly_pace(self._repo, now, dashboard_settings)
         top_consumers = await _top_consumers(self._repo, now)
 
         additional_ts = await self._repo.latest_additional_recorded_at()
@@ -230,6 +233,7 @@ class DashboardService:
             trends=trends,
             weekly_credit_pace=weekly_credit_pace,
             claude_weekly_pace=claude_weekly_pace,
+            antigravity_weekly_pace=antigravity_weekly_pace,
             top_consumers=top_consumers,
         )
 
@@ -276,6 +280,7 @@ class DashboardService:
             depletion_secondary=sec_depletion,
             weekly_credit_pace=weekly_credit_pace,
             claude_weekly_pace=await _claude_weekly_pace(self._repo, now, dashboard_settings),
+            antigravity_weekly_pace=await _antigravity_weekly_pace(self._repo, now, dashboard_settings),
             top_consumers=await _top_consumers(self._repo, now),
         )
 
@@ -298,10 +303,25 @@ async def _claude_weekly_pace(
     )
 
 
+async def _antigravity_weekly_pace(
+    repo: DashboardRepository,
+    now: datetime,
+    dashboard_settings: DashboardSettings,
+) -> list[AntigravityFamilyPace]:
+    return build_antigravity_weekly_pace(
+        accounts=await repo.list_antigravity_accounts(),
+        weekly_history=await repo.antigravity_weekly_history_since(now - DEMAND_WINDOW),
+        now=now,
+        working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
+        smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
+    )
+
+
 async def _top_consumers(repo: DashboardRepository, now: datetime) -> DashboardTopConsumers:
     return DashboardTopConsumers(
         codex=await _provider_top_consumers(repo, now, "codex"),
         claude=await _provider_top_consumers(repo, now, "claude"),
+        antigravity=await _provider_top_consumers(repo, now, "antigravity"),
     )
 
 

@@ -276,7 +276,7 @@ The dashboard SHALL show weekly quota runway when account weekly capacity credit
 
 ### Requirement: Weekly consumer estimated API costs
 
-The dashboard SHALL show a standalone Top consumers card listing the top API keys by requests and by billable tokens over the trailing two hours, with request count, billable tokens, dominant model and compact USD estimated API cost. The overview and projections payloads SHALL provide the lists per provider (`topConsumers.codex` from native Codex requests and `topConsumers.claude` from Claude requests), and the card SHALL show the list of the selected quota provider. Costs SHALL use recorded request costs across all models and existing coverage rules, never a quota-credit conversion. Unknown, free and incomplete costs SHALL remain distinct, with incomplete details in tooltips. Runway calculations and privacy rules SHALL remain unchanged.
+The dashboard SHALL show a standalone Top consumers card listing the top API keys by requests and by billable tokens over the trailing two hours, with request count, billable tokens, dominant model and compact USD estimated API cost. The overview and projections payloads SHALL provide the lists per provider (`topConsumers.codex` from native Codex requests, `topConsumers.claude` from Claude requests and `topConsumers.antigravity` from Antigravity requests), and the card SHALL show the list of the selected quota provider. Costs SHALL use recorded request costs across all models and existing coverage rules, never a quota-credit conversion. Unknown, free and incomplete costs SHALL remain distinct, with incomplete details in tooltips. Runway calculations and privacy rules SHALL remain unchanged.
 
 #### Scenario: Provider-scoped consumers
 - **WHEN** an API key sent only Claude requests in the trailing two hours
@@ -4175,11 +4175,15 @@ The dashboard request log SHALL give each row that first appears through a refre
 - **THEN** the table shows exactly the returned rows in server order with no leftover rows
 
 ### Requirement: Dashboard quota provider toggle
-The dashboard SHALL group the 5-hour ring, weekly ring, weekly pace and Top consumers cards in a Quota section with a Codex | Claude toggle. The toggle SHALL switch all four cards together, persist with the dashboard preferences, and be hidden when no Claude account exists. The cards SHALL lay out in four columns on wide screens, two on medium and one on narrow screens.
+The dashboard SHALL group the 5-hour, weekly, weekly pace and Top consumers cards in a Quota section with a provider toggle offering Codex and each of Claude and Antigravity that has at least one account. The toggle SHALL switch all four cards together, persist with the dashboard preferences, and be hidden when Codex is the only option. A stored provider without accounts SHALL show Codex. The cards SHALL lay out in four columns on wide screens, two on medium and one on narrow screens.
 
 #### Scenario: No Claude accounts
-- **WHEN** no Claude account is configured
+- **WHEN** no Claude or Antigravity account is configured
 - **THEN** the toggle is not shown and the cards show Codex
+
+#### Scenario: Antigravity without Claude
+- **WHEN** an Antigravity account exists and no Claude account exists
+- **THEN** the toggle offers Codex and Antigravity
 
 ### Requirement: Claude quota pooled in Pro units
 Claude quota rings and pace SHALL pool accounts in Pro units weighted by plan: Pro 1, Max 5× 5, Max 20× 20, for both windows. Accounts with any other or unknown plan, or without a current observation for the window, SHALL be excluded and listed by name with the reason beneath the rings. The weights SHALL NOT affect routing.

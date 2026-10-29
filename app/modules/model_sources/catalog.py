@@ -316,6 +316,23 @@ def source_model_cost_usd(
             resolved[1],
         )
         return breakdown.total_usd if breakdown is not None else None
+    if source.kind == "antigravity":
+        from app.core.usage.pricing import UsageTokens, calculate_cost_from_usage, get_pricing_for_model
+        from app.modules.antigravity.constants import MODEL_PREFIX
+
+        # The Gemini API (or Anthropic) list price of the model family: an API-equivalent estimate
+        # that keeps the published context tiers.
+        resolved = get_pricing_for_model(model.removeprefix(MODEL_PREFIX))
+        if resolved is None:
+            return None
+        return calculate_cost_from_usage(
+            UsageTokens(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+            ),
+            resolved[1],
+        )
     input_rate = entry.input_per_1m
     cached_rate = entry.cached_input_per_1m if entry.cached_input_per_1m is not None else input_rate
     output_rate = entry.output_per_1m

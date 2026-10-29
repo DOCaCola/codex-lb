@@ -37,6 +37,7 @@ export function createAntigravityAccount(overrides: Partial<AntigravityAccount> 
       createAntigravityWindow({ family: "claude", window: "five_hour", usedPercent: 70 }),
       createAntigravityWindow({ family: "claude", window: "weekly", usedPercent: 20 }),
     ],
+    quotaFresh: true,
     cooldowns: [],
     ...overrides,
   };

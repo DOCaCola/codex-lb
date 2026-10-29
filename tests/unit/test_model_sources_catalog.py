@@ -6,10 +6,13 @@ import pytest
 
 from app.core.openai.model_registry import MODEL_SOURCE_KIND_OPENAI_COMPATIBLE
 from app.core.types import JsonValue
+from app.core.usage import pricing_catalog
+from app.core.usage.pricing import ModelPrice
 from app.db.models import ModelSource, ModelSourceModel
 from app.modules.model_sources.catalog import (
     DEFAULT_SOURCE_CONTEXT_WINDOW,
     source_model_audio_cost_usd,
+    source_model_cost_usd,
     source_model_reasoning_levels,
     source_model_request_overrides,
     source_model_supported_tool_types,
@@ -517,3 +520,40 @@ def test_declared_summaries_imply_the_chat_path_reasoning_opt_in() -> None:
     /v1/models, so declaring it alone must not leave the chat path stripping."""
     summaries_only = _reasoning_source(json.dumps({"supports_reasoning": True, "supports_reasoning_summaries": True}))
     assert source_model_supports_reasoning(summaries_only, "reasoning-model") is True
+
+
+def test_antigravity_cost_uses_the_family_list_price_with_context_tiers(monkeypatch) -> None:
+    monkeypatch.setattr(pricing_catalog, "_prices", None)
+    pricing_catalog.install_prices(
+        {
+            "gemini-test-pro": ModelPrice(
+                2,
+                12,
+                0.2,
+                long_context_threshold_tokens=200_000,
+                long_context_input_per_1m=4,
+                long_context_output_per_1m=18,
+                long_context_cached_input_per_1m=0.4,
+            )
+        }
+    )
+    source = ModelSource(
+        id="src_agy",
+        name="Antigravity",
+        kind="antigravity",
+        base_url="https://cloudcode-pa.googleapis.com",
+        is_enabled=True,
+        models=[
+            ModelSourceModel(model="antigravity/gemini-test-pro", is_enabled=True),
+            ModelSourceModel(model="antigravity/gemini-unpriced", is_enabled=True),
+        ],
+    )
+
+    def cost(model: str, input_tokens: int) -> float | None:
+        return source_model_cost_usd(
+            source, model, input_tokens=input_tokens, output_tokens=1_000, cached_input_tokens=100_000
+        )
+
+    assert cost("antigravity/gemini-test-pro", 150_000) == pytest.approx(0.1 + 0.02 + 0.012)
+    assert cost("antigravity/gemini-test-pro", 300_000) == pytest.approx(0.8 + 0.04 + 0.018)
+    assert cost("antigravity/gemini-unpriced", 150_000) is None

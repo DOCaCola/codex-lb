@@ -10,7 +10,7 @@ The research for this change lives outside the repository (`antigravity-integrat
 
 **Session and conversation identity.** The native CLI sends one signed-int64 `sessionId` per installation across conversations, so each account gets one random persisted value. Conversation identity goes into `cascade_id`/`root_cascade_id` labels and the request ID, derived from the Codex conversation, so nothing local is keyed on `sessionId`.
 
-**History labels.** The captures show `used_claude`/`used_claude_conservative` as installation history: false on the CLI's first Claude turn and true on every later request in any cascade, whatever its model. `used_non_gemini_model` is true on every captured agent request, Gemini included, because each CLI turn first sends a Claude checkpoint request. An account is our installation, so it persists a `used_claude` flag set by its first Anthropic-wire dispatch. OmniRoute strips these labels (#16618), but only for a passthrough harness that set its own and alongside a prompt rewrite; that is no evidence against the native values.
+**History labels.** The captures show `used_claude`/`used_claude_conservative` as installation history: false on the CLI's first Claude turn and true on every later request in any cascade, whatever its model. `used_non_gemini_model` is true on every captured agent request, Gemini included, because each CLI turn first sends a Claude checkpoint request. OmniRoute #16618 removes both as part of its fix for content-gated 429s. No reference sends them and their server-side meaning is unknown, so we omit them and otherwise keep the native label set.
 
 **Signatures without a server store.** Codex already resends encrypted reasoning items. Gemini thought signatures are sealed into those items with the dispatching account, project, family and client scope, the same way Claude signed thinking travels. The existing source continuation materialises `previous_response_id` history, so no extra replay table is needed.
 
@@ -39,9 +39,11 @@ A Codex turn for `antigravity/gemini-3.8-flash` with effort `medium` on conversa
 
 VALIDATED tool config for Claude entries, catalog effort fields, HTTP/2 wire, Argon/Flash quota coupling on Ultra and cache behaviour across an account move can only be confirmed against a real account and are out of scope for automated tests. The same holds for:
 
-- the server-side meaning of the `used_*` labels (we replicate the 1.4.10 capture values);
+- the server-side meaning of the labels, including whether omitting `used_claude`/`used_claude_conservative` matters;
 - signature placement for Claude-on-Antigravity;
 - acceptance of `pattern` and of array `items` in compiled tool schemas, and of `responseJsonSchema`;
 - the server-side meaning of verification responses.
 
-Out of scope for this change: hosted `web_search` is not offered on Antigravity models; request logs carry no API-equivalent cost because there is no Gemini price table; the dashboard pooled quota rings and weekly pace stay Codex/Claude-only; ban notifications use the existing account state, not the quota webhook; subagent lineage is not projected into the native labels.
+**Dashboard quota.** Antigravity quota is per model family, and the families are separate budgets, so the dashboard shows one bar per family instead of a single ring. Pace reports the family that runs out first. Accounts are pooled in Pro units like Claude; stale or unweighted accounts are named rather than silently skewing the totals.
+
+Out of scope for this change: hosted `web_search` is not offered on Antigravity models; ban notifications use the existing account state, not the quota webhook; subagent lineage is not projected into the native labels.

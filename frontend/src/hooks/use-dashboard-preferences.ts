@@ -111,7 +111,7 @@ function readStoredQuotaProvider(): QuotaProvider | null {
     return null;
   }
   const stored = window.localStorage.getItem(QUOTA_PROVIDER_STORAGE_KEY);
-  return stored === "codex" || stored === "claude" ? stored : null;
+  return stored === "codex" || stored === "claude" || stored === "antigravity" ? stored : null;
 }
 
 function persistQuotaProvider(provider: QuotaProvider): void {

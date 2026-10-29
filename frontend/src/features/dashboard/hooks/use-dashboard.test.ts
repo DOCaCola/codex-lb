@@ -71,7 +71,8 @@ describe("useDashboard", () => {
           },
           trends: { requests: [], tokens: [], cost: [], errorRate: [] },
           claudeWeeklyPace: null,
-          topConsumers: { codex: [], claude: [] },
+          antigravityWeeklyPace: [],
+          topConsumers: { codex: [], claude: [], antigravity: [] },
         });
       }),
     );

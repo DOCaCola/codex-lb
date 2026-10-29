@@ -1,4 +1,4 @@
-"""Public catalog adapters; only validated OpenAI text-token prices enter accounting."""
+"""Public catalog adapters; only validated OpenAI, Anthropic and Google text-token prices enter accounting."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_pric
 BUNDLE_PATH = Path(__file__).with_name("pricing_snapshot.json")
 _FIELDS = {field.name for field in fields(ModelPrice)}
 MAX_CATALOG_BYTES = 16 * 1024 * 1024
+# Google's Gemini API list prices; LiteLLM namespaces them as `gemini/<model>`.
+_LITELLM_PROVIDERS = {"openai": "", "anthropic": "", "gemini": "gemini/"}
 
 
 def _object(value: JsonValue) -> dict[str, JsonValue]:
@@ -57,9 +59,10 @@ def _price(values: dict[str, float]) -> ModelPrice:
 def parse_models_dev(payload: JsonValue) -> dict[str, ModelPrice]:
     result: dict[str, ModelPrice] = {}
     base_names = {"input": "input_per_1m", "output": "output_per_1m", "cache_read": "cached_input_per_1m"}
-    for provider in ("openai", "anthropic"):
-        # Anthropic cache writes carry a TTL and are mapped to the 5m/1h fields below.
-        names = base_names if provider == "anthropic" else {**base_names, "cache_write": "cache_write_input_per_1m"}
+    for provider in ("openai", "anthropic", "google"):
+        # Anthropic cache writes carry a TTL and are mapped to the 5m/1h fields below;
+        # Google bills cache storage per hour, not per written token.
+        names = base_names if provider != "openai" else {**base_names, "cache_write": "cache_write_input_per_1m"}
         models = _object(_object(_object(payload).get(provider)).get("models"))
         for model, raw in models.items():
             entry = _object(raw)
@@ -128,19 +131,24 @@ def parse_litellm(payload: JsonValue) -> dict[str, ModelPrice]:
     }
     for model, raw in _object(payload).items():
         entry = _object(raw)
-        if entry.get("litellm_provider") not in {"openai", "anthropic"} or entry.get("mode") != "chat" or "/" in model:
+        provider = entry.get("litellm_provider")
+        if not isinstance(provider, str) or provider not in _LITELLM_PROVIDERS or entry.get("mode") != "chat":
             continue
+        namespace = _LITELLM_PROVIDERS[provider]
+        if not model.startswith(namespace) or "/" in model.removeprefix(namespace):
+            continue
+        model = model.removeprefix(namespace)
         if any(word in model for word in ("audio", "realtime")) or model == "gpt-5.6":
             continue
         # Anthropic cache writes carry a TTL and are mapped to the 5m/1h fields below.
         base = (
             shared_base
-            if entry.get("litellm_provider") == "anthropic"
+            if provider != "openai"
             else {**shared_base, "cache_creation_input_token_cost": "cache_write_input_per_1m"}
         )
         try:
             values = _rates(entry, base, 1_000_000)
-            if entry.get("litellm_provider") == "anthropic":
+            if provider == "anthropic":
                 values.update(
                     _rates(
                         entry,
@@ -167,7 +175,7 @@ def parse_litellm(payload: JsonValue) -> dict[str, ModelPrice]:
                     suffix = f"_above_{threshold // 1000}k_tokens" + (f"_{tier}" if tier else "")
                     prefix = f"{tier}_long_context_" if tier else "long_context_"
                     values.update(_rates(entry, {k + suffix: prefix + v for k, v in base.items()}, 1_000_000))
-                if entry.get("litellm_provider") == "anthropic":
+                if provider == "anthropic":
                     long_5m = f"cache_creation_input_token_cost_above_{threshold // 1000}k_tokens"
                     long_1h = f"cache_creation_input_token_cost_above_1hr_above_{threshold // 1000}k_tokens"
                     values.update(

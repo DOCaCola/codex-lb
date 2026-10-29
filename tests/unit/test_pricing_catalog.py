@@ -350,3 +350,36 @@ def test_snapshot_rejects_long_context_rates_without_positive_threshold(prefix, 
         values["long_context_threshold_tokens"] = threshold
     with pytest.raises(ValueError, match="Missing context threshold"):
         catalog.decode_snapshot({"schema_version": 1, "models": {"gpt-test": values}})
+
+
+def test_google_list_prices_enter_both_catalogs():
+    flash = {"input": 0.75, "output": 3.75, "cache_read": 0.075, "input_audio": 0.75}
+    dev = catalog.parse_models_dev(
+        {"google": {"models": {"gemini-test-flash": {"modalities": {"output": ["text"]}, "cost": flash}}}}
+    )
+    assert dev["gemini-test-flash"] == ModelPrice(0.75, 3.75, 0.075)
+
+    pro = {
+        "litellm_provider": "gemini",
+        "mode": "chat",
+        "input_cost_per_token": 2e-6,
+        "output_cost_per_token": 1.2e-5,
+        "cache_read_input_token_cost": 2e-7,
+        "input_cost_per_token_above_200k_tokens": 4e-6,
+        "output_cost_per_token_above_200k_tokens": 1.8e-5,
+        "cache_read_input_token_cost_above_200k_tokens": 4e-7,
+    }
+    prices = catalog.parse_litellm(
+        {
+            "gemini/gemini-test-pro": pro,
+            "gemini-test-pro": {**pro, "litellm_provider": "vertex_ai-language-models"},
+            "gemini/tuned/gemini-test-pro": pro,
+            "gemini-unnamespaced": pro,
+        }
+    )
+    assert set(prices) == {"gemini-test-pro"}
+    price = prices["gemini-test-pro"]
+    assert (price.input_per_1m, price.output_per_1m, price.cached_input_per_1m) == pytest.approx((2, 12, 0.2))
+    assert price.long_context_threshold_tokens == 200_000
+    assert (price.long_context_input_per_1m, price.long_context_output_per_1m) == pytest.approx((4, 18))
+    assert price.cache_write_input_per_1m is None

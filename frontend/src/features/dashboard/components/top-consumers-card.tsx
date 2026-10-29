@@ -9,6 +9,12 @@ export type TopConsumersCardProps = {
   consumers: WeeklyCreditApiKeyAttribution[];
 };
 
+const SUBTITLE_KEYS: Record<QuotaProvider, string> = {
+  codex: "dashboard.topConsumers.subtitleCodex",
+  claude: "dashboard.topConsumers.subtitleClaude",
+  antigravity: "dashboard.topConsumers.subtitleAntigravity",
+};
+
 export function TopConsumersCard({ provider, consumers }: TopConsumersCardProps) {
   const { t } = useTranslation();
 
@@ -21,9 +27,7 @@ export function TopConsumersCard({ provider, consumers }: TopConsumersCardProps)
       <div className="mb-4 flex justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">{t("dashboard.topConsumers.title")}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t(provider === "codex" ? "dashboard.topConsumers.subtitleCodex" : "dashboard.topConsumers.subtitleClaude")}
-          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t(SUBTITLE_KEYS[provider])}</p>
         </div>
         <p
           className="shrink-0 text-[11px] font-medium text-muted-foreground"

@@ -31,7 +31,14 @@ from app.modules.antigravity.client import CloudCodeClient, LoadCodeAssist
 from app.modules.antigravity.constants import ANTIGRAVITY_KIND, CLOUD_CODE_BASE_URL, MODEL_PREFIX
 from app.modules.antigravity.errors import AntigravityError, MetadataHTTPError
 from app.modules.antigravity.failures import record_failure
-from app.modules.antigravity.quota import parse_summary, plan_type, quota_weight, window_status
+from app.modules.antigravity.quota import (
+    QUOTA_REFRESH_INTERVAL,
+    parse_summary,
+    plan_type,
+    quota_fresh,
+    quota_weight,
+    window_status,
+)
 from app.modules.antigravity.repository import AntigravityRepository
 from app.modules.antigravity.schemas import (
     AccountState,
@@ -59,8 +66,7 @@ Endpoint = Literal["account", "catalog", "quota"]
 INTERVALS: dict[Endpoint, timedelta] = {
     "account": timedelta(hours=1),
     "catalog": timedelta(hours=1),
-    # The CLI reads the quota summary on every start; a 5-minute poll stays within that pattern.
-    "quota": timedelta(minutes=5),
+    "quota": QUOTA_REFRESH_INTERVAL,
 }
 FETCH_TIMEOUT_SECONDS = 45
 OAUTH_FLOW_TTL = timedelta(minutes=15)
@@ -412,6 +418,7 @@ class AntigravityService:
     def _response(row: AntigravityAccount, cooldowns: list[AntigravityCooldown]) -> AntigravityAccountResponse:
         state = AccountState.model_validate_json(row.state_json)
         plan = plan_type(state.subscription)
+        now = datetime.now(UTC)
         return AntigravityAccountResponse(
             id=row.source_id,
             name=row.source.name,
@@ -428,7 +435,8 @@ class AntigravityService:
             plan_type=plan,
             quota_weight=quota_weight(plan),
             state=state,
-            windows=window_status(state, datetime.now(UTC)),
+            windows=window_status(state, now),
+            quota_fresh=quota_fresh(state, now),
             cooldowns=[
                 Cooldown(scope=item.scope, until=item.until.replace(tzinfo=UTC), reason=item.reason)
                 for item in cooldowns

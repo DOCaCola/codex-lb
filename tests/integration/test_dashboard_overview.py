@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import naive_utc_to_epoch, utcnow
-from app.db.models import Account, AccountStatus, ApiKey, RequestLog
+from app.db.models import Account, AccountStatus, AntigravityAccount, ApiKey, ModelSource, RequestLog
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.schemas import AccountSummary
+from app.modules.antigravity.schemas import AccountState as AntigravityState
+from app.modules.antigravity.schemas import MetadataState, QuotaBucket, Subscription, Tier
 from app.modules.dashboard.weekly_pace import _weekly_timing
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import UsageRepository
@@ -1439,6 +1441,72 @@ async def test_dashboard_overview_includes_previous_window_summary_when_history_
             },
         },
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/api/dashboard/overview", "/api/dashboard/projections"])
+async def test_dashboard_carries_antigravity_family_pace_and_top_consumers(
+    async_client,
+    db_setup,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint,
+):
+    fixed_now = datetime(2026, 10, 29, 12, 0, 0)
+    monkeypatch.setattr("app.modules.dashboard.service.utcnow", lambda: fixed_now)
+    aware_now = fixed_now.replace(tzinfo=UTC)
+    reset = aware_now + timedelta(days=2)
+    state = AntigravityState(
+        subscription=Subscription(paid_tier=Tier(id="g1-ultra-lite-tier"), observed_at=aware_now),
+        quota=[
+            QuotaBucket(family="gemini", window="weekly", remaining_fraction=0.6, resets_at=reset),
+            QuotaBucket(family="claude", window="weekly", remaining_fraction=0.2, resets_at=reset),
+        ],
+        metadata={"quota": MetadataState(updated_at=aware_now - timedelta(minutes=1))},
+    )
+
+    async with SessionLocal() as session:
+        session.add(ModelSource(id="src_agy", name="Team Gemini", kind="antigravity", base_url="https://agy.invalid"))
+        await session.flush()
+        session.add(
+            AntigravityAccount(
+                source_id="src_agy",
+                credentials_encrypted=b"sealed",
+                google_subject="subject-agy",
+                email="agy@example.com",
+                session_id="1",
+                expires_at=fixed_now + timedelta(hours=1),
+                state_json=state.model_dump_json(),
+            )
+        )
+        session.add(ApiKey(id="key-agy", name="Gemini key", key_hash="hash-agy", key_prefix="agy"))
+        session.add(
+            RequestLog(
+                account_id=None,
+                api_key_id="key-agy",
+                request_id="agy-request",
+                requested_at=fixed_now - timedelta(minutes=10),
+                model="antigravity/gemini-4-argon",
+                model_source_kind="antigravity",
+                status="success",
+                input_tokens=100,
+                output_tokens=25,
+                cost_usd=0.01,
+            )
+        )
+        await session.commit()
+
+    response = await async_client.get(endpoint)
+
+    assert response.status_code == 200
+    payload = response.json()
+    paces = {entry["family"]: entry["pace"] for entry in payload["antigravityWeeklyPace"]}
+    assert list(paces) == ["gemini", "claude"]
+    assert paces["gemini"]["unit"] == "pro_units"
+    assert paces["gemini"]["headroomCredits"] == pytest.approx(3.0)
+    assert paces["claude"]["headroomCredits"] == pytest.approx(1.0)
+    assert [entry["apiKeyId"] for entry in payload["topConsumers"]["antigravity"]] == ["key-agy"]
+    assert payload["topConsumers"]["codex"] == []
+    assert payload["topConsumers"]["claude"] == []
 
 
 @pytest.mark.asyncio

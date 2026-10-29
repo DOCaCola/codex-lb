@@ -282,7 +282,8 @@ export function DashboardPage() {
               overview?.summary.secondaryWindow?.capacityCredits ?? 0
             }
             claudeAccounts={claudeAccounts}
-            claudeAccountColors={accountColors.modelSources}
+            antigravityAccounts={antigravityAccounts}
+            modelSourceColors={accountColors.modelSources}
           />
 
           <section className="space-y-4">

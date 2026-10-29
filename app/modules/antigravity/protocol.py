@@ -41,7 +41,14 @@ logger = logging.getLogger(__name__)
 _IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"})
 # Phrases that make Cloud Code answer a bare 429 despite remaining quota (CLIProxyAPI #5695, #5751);
 # CLIProxyAPI PR #6280 obfuscates them in the system instruction by default.
-SENSITIVE_WORDS = ("Claude Agent SDK", "<system-conventions>", "system_conventions", "system-directive", "RFC 2119")
+SENSITIVE_WORDS = (
+    "Claude Agent SDK",
+    "system-conventions",
+    "system_conventions",
+    "system-directive",
+    "system_directive",
+    "RFC 2119",
+)
 _SENSITIVE = re.compile("|".join(re.escape(word) for word in sorted(SENSITIVE_WORDS, key=len, reverse=True)), re.I)
 _ZERO_WIDTH_SPACE = "\u200b"
 

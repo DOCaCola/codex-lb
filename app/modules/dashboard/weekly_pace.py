@@ -87,6 +87,13 @@ class _SimulationAccount:
     window_ms: float
 
 
+def positive_used_percent_delta(samples: Sequence[PaceSample]) -> float:
+    """Usage added across consecutive observations; resets read as no demand rather than negative demand."""
+    return sum(
+        max(0.0, current.used_percent - previous.used_percent) for previous, current in zip(samples, samples[1:])
+    )
+
+
 @dataclass
 class _Projection:
     projected_shortfall_credits: float

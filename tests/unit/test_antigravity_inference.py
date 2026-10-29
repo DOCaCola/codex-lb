@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from app.modules.antigravity.inference import _mark_used_claude, cascade_id, envelope
-from app.modules.antigravity.schemas import AccountState, CatalogFamily
+from app.modules.antigravity.inference import cascade_id, envelope
+from app.modules.antigravity.schemas import CatalogFamily
 
 GEMINI = CatalogFamily(
     id="gemini-3.8-flash",
@@ -47,7 +47,7 @@ def _request(*contents: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _envelope(request: dict[str, Any], family: CatalogFamily = GEMINI, *, used_claude: bool = False) -> dict[str, Any]:
+def _envelope(request: dict[str, Any], family: CatalogFamily = GEMINI) -> dict[str, Any]:
     wire = next(iter(family.model_enums))
     body = envelope(
         request,
@@ -56,7 +56,6 @@ def _envelope(request: dict[str, Any], family: CatalogFamily = GEMINI, *, used_c
         project_id="project-1",
         session_id="-3750763034362895579",
         cascade=CASCADE,
-        used_claude=used_claude,
     )
     return cast(dict[str, Any], body)
 
@@ -75,8 +74,6 @@ def test_tool_continuation_matches_the_captured_native_envelope() -> None:
         "request_id",
         "root_cascade_id",
         "trajectory_id",
-        "used_claude",
-        "used_claude_conservative",
         "used_non_gemini_model",
     ]
     trajectory = labels["trajectory_id"]
@@ -87,8 +84,6 @@ def test_tool_continuation_matches_the_captured_native_envelope() -> None:
         "request_id": f"{trajectory}-1",
         "root_cascade_id": CASCADE,
         "trajectory_id": trajectory,
-        "used_claude": "false",
-        "used_claude_conservative": "false",
         "used_non_gemini_model": "true",
     }
     prefix, cascade, millis, request_trajectory, step = str(body["requestId"]).split("/")
@@ -112,21 +107,14 @@ def test_trajectory_is_stable_within_a_turn_and_advances_with_the_next_user_mess
     assert uuid.UUID(str(next_turn["trajectory_id"]))
 
 
-def test_claude_labels_report_account_history_rather_than_the_current_model() -> None:
-    first_claude = _envelope(_request(USER), CLAUDE)["request"]["labels"]
-    later_gemini = _envelope(_request(USER), GEMINI, used_claude=True)["request"]["labels"]
+def test_claude_and_gemini_share_the_label_set_without_claude_history() -> None:
+    claude = _envelope(_request(USER), CLAUDE)["request"]["labels"]
+    gemini = _envelope(_request(USER), GEMINI)["request"]["labels"]
 
-    assert (first_claude["used_claude"], first_claude["used_claude_conservative"]) == ("false", "false")
-    assert (later_gemini["used_claude"], later_gemini["used_claude_conservative"]) == ("true", "true")
-    assert first_claude["used_non_gemini_model"] == later_gemini["used_non_gemini_model"] == "true"
-    assert first_claude["model_enum"] == "MODEL_PLACEHOLDER_M905"
-
-
-def test_first_claude_dispatch_marks_the_account_once() -> None:
-    marked = _mark_used_claude(AccountState())
-
-    assert marked is not None and marked.used_claude
-    assert _mark_used_claude(marked) is None
+    assert list(claude) == list(gemini)
+    assert not {"used_claude", "used_claude_conservative"} & set(claude)
+    assert claude["used_non_gemini_model"] == gemini["used_non_gemini_model"] == "true"
+    assert claude["model_enum"] == "MODEL_PLACEHOLDER_M905"
 
 
 def test_cascade_is_deterministic_per_client_and_conversation() -> None:

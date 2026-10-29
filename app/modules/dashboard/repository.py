@@ -4,7 +4,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 from sqlalchemy import case, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,8 @@ from app.core.usage.types import BucketConversationAggregate, BucketModelAggrega
 from app.db.models import (
     Account,
     AccountLimitWarmup,
+    AntigravityAccount,
+    AntigravityQuotaHistory,
     ApiKey,
     ClaudeAccount,
     ClaudeQuotaHistory,
@@ -22,6 +24,9 @@ from app.db.models import (
     UsageHistory,
 )
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.antigravity.constants import ANTIGRAVITY_KIND
+from app.modules.antigravity.repository import AntigravityRepository
+from app.modules.antigravity.schemas import QuotaFamily
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import CLAUDE_KIND, QuotaProvenance
 from app.modules.limit_warmup.repository import LimitWarmupRepository
@@ -47,8 +52,9 @@ _TrailingDemandKey = tuple[int, tuple[tuple[str, NormalizedUsageWindow], ...]]
 _trailing_demand_cache: dict[_TrailingDemandKey, tuple[dict[str, float], float]] = {}
 
 # Quota pool whose traffic a top-consumer list attributes: native Codex
-# requests carry no model source, Claude requests carry the Claude source kind.
-QuotaProvider = Literal["codex", "claude"]
+# requests carry no model source; Claude and Antigravity requests carry their source kind.
+QuotaProvider = Literal["codex", "claude", "antigravity"]
+_PROVIDER_SOURCE_KINDS: dict[QuotaProvider, str] = {"claude": CLAUDE_KIND, "antigravity": ANTIGRAVITY_KIND}
 
 
 def _clear_trailing_demand_cache() -> None:
@@ -94,6 +100,7 @@ class DashboardRepository:
         self._limit_warmup_repo = LimitWarmupRepository(session)
         self._settings_repo = SettingsRepository(session)
         self._claude_repo = ClaudeRepository(session)
+        self._antigravity_repo = AntigravityRepository(session)
 
     async def list_accounts(self) -> list[Account]:
         return await self._accounts_repo.list_accounts()
@@ -120,6 +127,24 @@ class DashboardRepository:
         history: dict[str, list[ClaudeQuotaHistory]] = {}
         for row in rows:
             history.setdefault(row.source_id, []).append(row)
+        return history
+
+    async def list_antigravity_accounts(self) -> list[AntigravityAccount]:
+        return await self._antigravity_repo.list_accounts()
+
+    async def antigravity_weekly_history_since(
+        self, since: datetime
+    ) -> dict[tuple[str, QuotaFamily], list[AntigravityQuotaHistory]]:
+        rows = await self._session.scalars(
+            select(AntigravityQuotaHistory)
+            .where(AntigravityQuotaHistory.window == "weekly", AntigravityQuotaHistory.observed_at >= since)
+            .order_by(
+                AntigravityQuotaHistory.source_id, AntigravityQuotaHistory.family, AntigravityQuotaHistory.observed_at
+            )
+        )
+        history: dict[tuple[str, QuotaFamily], list[AntigravityQuotaHistory]] = {}
+        for row in rows:
+            history.setdefault((row.source_id, cast(QuotaFamily, row.family)), []).append(row)
         return history
 
     async def latest_usage_by_account(self, window: str) -> dict[str, UsageHistory]:
@@ -228,7 +253,7 @@ class DashboardRepository:
         provider_clause = (
             RequestLog.model_source_kind.is_(None)
             if provider == "codex"
-            else RequestLog.model_source_kind == CLAUDE_KIND
+            else RequestLog.model_source_kind == _PROVIDER_SOURCE_KINDS[provider]
         )
         grouped_models = (
             select(

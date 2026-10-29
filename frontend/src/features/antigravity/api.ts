@@ -67,6 +67,8 @@ export const AntigravityAccountSchema = z.object({
       exhausted: z.boolean(),
     }),
   ),
+  /** Whether the readings come from a recent, successful quota poll. */
+  quotaFresh: z.boolean(),
   cooldowns: z.array(z.object({ scope: z.string(), until: z.string(), reason: z.string() })),
 });
 export type AntigravityAccount = z.infer<typeof AntigravityAccountSchema>;

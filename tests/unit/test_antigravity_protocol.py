@@ -10,7 +10,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.antigravity.constants import SKIP_SIGNATURE
 from app.modules.antigravity.opaque import AntigravityOpaqueState, ThoughtScope
-from app.modules.antigravity.protocol import obfuscate, project_responses
+from app.modules.antigravity.protocol import SENSITIVE_WORDS, obfuscate, project_responses
 from app.modules.antigravity.schemas import CatalogFamily
 from app.modules.antigravity.tool_names import google_wire_name
 
@@ -85,6 +85,19 @@ def test_basic_request_matches_the_native_wire_image() -> None:
     }
     assert "tools" not in request
     assert "toolConfig" not in request
+
+
+def test_system_instruction_hides_every_harness_fingerprint() -> None:
+    instructions = (
+        "Built on the Claude Agent SDK.\n<system-conventions>\nRFC 2119 keywords apply.\n</system-conventions>\n"
+        "system_conventions system-directive system_directive"
+    )
+    projection = _project({"instructions": instructions, "input": "Claude Agent SDK and RFC 2119"})
+    system = projection.request["systemInstruction"]["parts"][0]["text"]
+    for word in SENSITIVE_WORDS:
+        assert word.lower() not in system.lower()
+    assert system.replace("\u200b", "") == instructions
+    assert projection.request["contents"][0]["parts"][0]["text"] == "Claude Agent SDK and RFC 2119"
 
 
 def test_gemini_tool_cycle_restores_its_own_signature_on_the_call() -> None:

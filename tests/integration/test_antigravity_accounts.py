@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import SecretStr
 
-from app.db.models import AntigravityAccount, AntigravityClientBuild
+from app.db.models import AntigravityClientBuild
 from app.db.session import SessionLocal
 from app.modules.antigravity import oauth
 from app.modules.antigravity.client import CloudCodeClient, LoadCodeAssist
 from app.modules.antigravity.constants import SKIP_SIGNATURE
-from app.modules.antigravity.schemas import AccountState, Credentials, UserInfo
+from app.modules.antigravity.schemas import Credentials, UserInfo
 
 pytestmark = pytest.mark.integration
 
@@ -180,13 +180,6 @@ async def ask(async_client, model: str, conversation: str = "conversation-1") ->
     return response.json()
 
 
-async def account_state(source_id: str) -> AccountState:
-    async with SessionLocal() as session:
-        row = await session.get(AntigravityAccount, source_id)
-        assert row is not None
-        return AccountState.model_validate_json(row.state_json)
-
-
 async def test_responses_reach_antigravity_as_the_native_agent(async_client, pool, monkeypatch):
     captured = install_upstream(monkeypatch)
 
@@ -206,20 +199,8 @@ async def test_responses_reach_antigravity_as_the_native_agent(async_client, poo
     )
     labels = envelope["request"]["labels"]
     assert labels["model_enum"] == f"MODEL_PLACEHOLDER_M{900 if envelope['model'].endswith('high') else 899}"
-    assert (labels["used_claude"], labels["used_non_gemini_model"]) == ("false", "true")
-
-
-async def test_first_claude_dispatch_is_remembered_by_the_account(async_client, pool, monkeypatch):
-    captured = install_upstream(monkeypatch)
-
-    await ask(async_client, CLAUDE)
-    await ask(async_client, GEMINI)
-
-    first, second = (envelope["request"]["labels"] for _, envelope, _ in captured)
-    assert captured[0][0] == captured[1][0]
-    assert first["used_claude"] == "false"
-    assert second["used_claude"] == second["used_claude_conservative"] == "true"
-    assert (await account_state(captured[0][0])).used_claude
+    assert labels["used_non_gemini_model"] == "true"
+    assert not {"used_claude", "used_claude_conservative"} & set(labels)
 
 
 async def test_quota_exhaustion_fails_over_to_the_next_account(async_client, pool, monkeypatch):

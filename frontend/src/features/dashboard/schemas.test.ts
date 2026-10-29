@@ -33,7 +33,8 @@ describe("DashboardOverviewSchema", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -95,7 +96,8 @@ describe("DashboardOverviewSchema", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -138,7 +140,8 @@ describe("DashboardOverviewSchema", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -821,7 +824,8 @@ describe("DashboardOverviewSchema with additional quotas", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,
@@ -889,7 +893,8 @@ describe("DashboardOverviewSchema with additional quotas", () => {
     const parsed = DashboardOverviewSchema.parse({
       lastSyncAt: ISO,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
       timeframe: {
         key: "7d",
         windowMinutes: 10080,

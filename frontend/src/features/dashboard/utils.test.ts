@@ -783,6 +783,7 @@ describe("buildDashboardView", () => {
         },
       ],
       claude: [],
+      antigravity: [],
     };
     const rawOverview: unknown = JSON.parse(
       JSON.stringify({ ...createDashboardOverview(), weeklyCreditPace: rawWirePace, topConsumers }),
@@ -835,7 +836,8 @@ describe("buildDashboardView", () => {
     const view = buildDashboardView(overview, {}, {
       weeklyCreditPace: null,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(overviewPace);
@@ -851,7 +853,8 @@ describe("buildDashboardView", () => {
     const view = buildDashboardView(overview, {}, {
       weeklyCreditPace: staleProjectionsPace,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(overviewPace);
@@ -865,7 +868,8 @@ describe("buildDashboardView", () => {
     const view = buildDashboardView(overview, {}, {
       weeklyCreditPace: projectionsPace,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(projectionsPace);
@@ -880,7 +884,8 @@ describe("buildDashboardView", () => {
     const view = buildDashboardView(overview, {}, {
       weeklyCreditPace: projectionsPace,
       claudeWeeklyPace: null,
-      topConsumers: { codex: [], claude: [] },
+      antigravityWeeklyPace: [],
+      topConsumers: { codex: [], claude: [], antigravity: [] },
     });
 
     expect(view.weeklyCreditPace).toBe(projectionsPace);

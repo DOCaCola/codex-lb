@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.core.types import JsonValue
 from app.modules.antigravity.catalog import quota_family
@@ -26,6 +26,10 @@ from app.modules.antigravity.schemas import (
 
 # Google publishes Ultra as 5x and 20x Pro; free plans are not weighted until their size is known.
 PLAN_WEIGHTS: dict[PlanType, int] = {"pro": 1, "ultra_5x": 5, "ultra_20x": 20}
+# The CLI reads the quota summary on every start; a 5-minute poll stays within that pattern.
+QUOTA_REFRESH_INTERVAL = timedelta(minutes=5)
+# A reading is stale once its last poll failed or three polls were missed, like Codex usage freshness.
+QUOTA_STALE_AFTER = 3 * QUOTA_REFRESH_INTERVAL
 _FIVE_HOUR = re.compile(r"\b5h\b|five[-\s]?hour|\bsession\b", re.IGNORECASE)
 _WEEKLY = re.compile(r"\bweekly\b|\b7d\b|seven[-\s]?day", re.IGNORECASE)
 _ARGON_BUCKET = re.compile(r"\bargon\b|gemini-argon", re.IGNORECASE)
@@ -115,6 +119,17 @@ def quota_weight(plan: PlanType) -> int | None:
 def current_buckets(state: AccountState, now: datetime) -> list[QuotaBucket]:
     """Readings still inside their window; a passed reset invalidates the reading."""
     return [bucket for bucket in state.quota if bucket.resets_at is None or bucket.resets_at > now]
+
+
+def quota_fresh(state: AccountState, now: datetime) -> bool:
+    """Whether the stored readings come from a recent, successful quota poll."""
+    metadata = state.metadata.get("quota")
+    return (
+        metadata is not None
+        and metadata.error is None
+        and metadata.updated_at is not None
+        and now - metadata.updated_at < QUOTA_STALE_AFTER
+    )
 
 
 def window_status(state: AccountState, now: datetime) -> list[WindowStatus]:

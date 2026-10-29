@@ -37,7 +37,7 @@ const BASE_PACE: WeeklyCreditPace = {
 
 describe("WeeklyCreditsPaceCard", () => {
   it("renders weekly pace percentages and separates schedule gap from forecast shortfall", () => {
-    render(<WeeklyCreditsPaceCard pace={BASE_PACE} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={BASE_PACE} />);
 
     expect(screen.getByText("Weekly pace")).toBeInTheDocument();
     expect(screen.queryByText("2 accounts with weekly timing")).not.toBeInTheDocument();
@@ -59,6 +59,7 @@ describe("WeeklyCreditsPaceCard", () => {
   it("reports usage below the schedule", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...BASE_PACE,
           deltaPercent: -8,
@@ -87,6 +88,7 @@ describe("WeeklyCreditsPaceCard", () => {
   it("reports a current schedule gap when the recent forecast is safe", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...BASE_PACE,
           scheduleGapCredits: 3_096,
@@ -117,6 +119,7 @@ describe("WeeklyCreditsPaceCard", () => {
   it("keeps a danger label when recent burn projects a shortfall below schedule", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...BASE_PACE,
           deltaPercent: -5,
@@ -136,13 +139,13 @@ describe("WeeklyCreditsPaceCard", () => {
   });
 
   it("does not render fake pace when data is unavailable", () => {
-    const { container } = render(<WeeklyCreditsPaceCard pace={null} />);
+    const { container } = render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={null} />);
 
     expect(container).toBeEmptyDOMElement();
   });
 
   it("falls back to the legacy layout when runwayStatus is absent (old backend)", () => {
-    render(<WeeklyCreditsPaceCard pace={BASE_PACE} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={BASE_PACE} />);
 
     expect(screen.getByText("Used now")).toBeInTheDocument();
     expect(screen.getByText("Scheduled by now")).toBeInTheDocument();
@@ -185,7 +188,7 @@ const RUNWAY_PACE: WeeklyCreditPace = {
 
 describe("WeeklyCreditsPaceCard runway layout", () => {
   it("paints the full runway content from a single overview payload", () => {
-    render(<WeeklyCreditsPaceCard pace={RUNWAY_PACE} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={RUNWAY_PACE} />);
 
     const verdict = screen.getByTestId("weekly-runway-verdict");
     expect(verdict).toHaveTextContent("Safe");
@@ -203,6 +206,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("labels Claude amounts in Pro units", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Claude · Pro units"
         pace={{
           ...RUNWAY_PACE,
           unit: "pro_units",
@@ -227,7 +231,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   });
 
   it("renders a neutral verdict badge without warning emphasis when safe", () => {
-    render(<WeeklyCreditsPaceCard pace={RUNWAY_PACE} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={RUNWAY_PACE} />);
 
     const verdict = screen.getByTestId("weekly-runway-verdict");
     expect(verdict).toHaveTextContent("Safe");
@@ -237,7 +241,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   });
 
   it("renders an amber verdict badge when tight", () => {
-    render(<WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, runwayStatus: "tight" }} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={{ ...RUNWAY_PACE, runwayStatus: "tight" }} />);
 
     const verdict = screen.getByTestId("weekly-runway-verdict");
     expect(verdict).toHaveTextContent("Tight");
@@ -247,6 +251,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("pairs depletion and missed relief times with warning emphasis when runs dry", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...RUNWAY_PACE,
           runwayStatus: "runs_dry",
@@ -269,6 +274,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("recommends no remedies even when the pool runs dry", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...RUNWAY_PACE,
           runwayStatus: "runs_dry",
@@ -285,7 +291,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   });
 
   it("compares live usage with the linear schedule", () => {
-    render(<WeeklyCreditsPaceCard pace={RUNWAY_PACE} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={RUNWAY_PACE} />);
 
     const row = screen.getByTestId("runway-schedule-row");
     expect(row).toHaveTextContent("Used now58%");
@@ -299,7 +305,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   });
 
   it("names the smoothed credit gap when usage runs over schedule", () => {
-    render(<WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, smoothedScheduleGapCredits: 18_000 }} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={{ ...RUNWAY_PACE, smoothedScheduleGapCredits: 18_000 }} />);
 
     expect(screen.getByTestId("runway-schedule-row")).toHaveTextContent("18K credits over planned usage over 30m");
   });
@@ -307,6 +313,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("outlines scheduled usage that has not happened yet", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{ ...RUNWAY_PACE, actualUsedPercent: 30, deltaPercent: -10, smoothedDeltaPercent: -10 }}
       />,
     );
@@ -319,6 +326,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("reports on pace when the smoothed gap rounds to zero", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{ ...RUNWAY_PACE, actualUsedPercent: 40, deltaPercent: 0, smoothedDeltaPercent: 0.3 }}
       />,
     );
@@ -331,6 +339,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("stretches the timeline horizon so reset events past 48h are not dropped", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...RUNWAY_PACE,
           depletionEtaHours: 8,
@@ -348,7 +357,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   });
 
   it("does not crash on an ETA beyond the representable Date range", () => {
-    render(<WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, depletionEtaHours: 3e9 }} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={{ ...RUNWAY_PACE, depletionEtaHours: 3e9 }} />);
 
     expect(screen.getByTestId("runway-timeline")).toBeInTheDocument();
     expect(screen.getByTestId("runway-eta-marker")).not.toHaveAttribute("title");
@@ -358,6 +367,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("shows steady-state copy instead of an ETA when a measured burn is zero", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...RUNWAY_PACE,
           burnRateRecentCreditsPerHour: 0,
@@ -375,6 +385,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("explains an unmeasured burn instead of claiming the pool is holding steady", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{
           ...RUNWAY_PACE,
           burnRateRecentCreditsPerHour: null,
@@ -390,7 +401,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
 
   it("falls back to the legacy layout when a headroom companion is missing", () => {
     const { unmount } = render(
-      <WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, headroomPercent: undefined }} />,
+      <WeeklyCreditsPaceCard subtitle="Codex · credits" pace={{ ...RUNWAY_PACE, headroomPercent: undefined }} />,
     );
 
     expect(screen.queryByTestId("weekly-runway-verdict")).not.toBeInTheDocument();
@@ -398,7 +409,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.getByText("Used now")).toBeInTheDocument();
     unmount();
 
-    render(<WeeklyCreditsPaceCard pace={{ ...RUNWAY_PACE, headroomCredits: undefined }} />);
+    render(<WeeklyCreditsPaceCard subtitle="Codex · credits" pace={{ ...RUNWAY_PACE, headroomCredits: undefined }} />);
 
     expect(screen.queryByTestId("weekly-runway-verdict")).not.toBeInTheDocument();
     expect(screen.queryByTestId("runway-timeline")).not.toBeInTheDocument();
@@ -408,6 +419,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("labels demand figures as floors when every account is saturated", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{ ...RUNWAY_PACE, accountCount: 2, saturatedAccountCount: 2 }}
       />,
     );
@@ -419,6 +431,7 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
   it("does not label floors while unsaturated accounts remain", () => {
     render(
       <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
         pace={{ ...RUNWAY_PACE, accountCount: 2, saturatedAccountCount: 1 }}
       />,
     );
