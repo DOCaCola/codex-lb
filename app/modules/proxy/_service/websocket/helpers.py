@@ -355,6 +355,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
+from app.modules.proxy.owner_quota_loss import OwnerQuotaLoss, owner_quota_loss_message
 from app.modules.proxy.selection_errors import USAGE_LIMIT_REACHED
 
 
@@ -603,6 +604,22 @@ def _install_fresh_replay_body(
     request_state.fresh_upstream_request_is_retry_safe = False
     request_state.responses_lite_model = request_state.fresh_upstream_request_responses_lite_model
     return fresh_request_text
+
+
+def _websocket_owner_bound_only_by_client_anchor(request_state: "_WebSocketRequestState") -> bool:
+    """Return whether only the client's own ``previous_response_id`` binds the turn to its owner.
+
+    The client can then leave the owner by resending the full history without
+    the anchor. A proxy-injected anchor is not the client's to drop, and a
+    file pin or a turn-state owner keeps binding that resend to the same
+    account.
+    """
+    return (
+        request_state.previous_response_id is not None
+        and not request_state.proxy_injected_previous_response_id
+        and not request_state.file_required_preferred_account
+        and request_state.affinity_policy.codex_session_source != "turn_state"
+    )
 
 
 def _websocket_accepted_replay_can_switch_account(request_state: "_WebSocketRequestState") -> bool:
@@ -1789,6 +1806,7 @@ def _rewrite_websocket_previous_response_owner_unavailable_event(
     request_state: _WebSocketRequestState,
     upstream_error_code: str,
     upstream_error_message: str,
+    owner_quota_loss: OwnerQuotaLoss | None = None,
 ) -> tuple[OpenAIEvent | None, dict[str, JsonValue] | None, str | None, str]:
     """Fail an anchored turn its owner refused and that cannot leave the owner.
 
@@ -1797,21 +1815,32 @@ def _rewrite_websocket_previous_response_owner_unavailable_event(
     the full history without the anchor, which the model cooldown then routes
     to another account. Surfacing it without the ``Retry-After`` is what makes
     that retry prompt -- Codex retries an unrecognized coded failure at once,
-    but waits out a ``Retry-After`` on the turn. Every other owner refusal is
-    reported as the owner being unavailable.
+    but waits out a ``Retry-After`` on the turn. An owner whose usage limit is
+    spent (``owner_quota_loss``) is reported with its reset time and the
+    instruction to resend without the anchor; the Codex-native route uses the
+    stale-anchor code its client resends the full history for. Every other
+    owner refusal is reported as the owner being unavailable.
     """
     request_state.failure_phase_override = "upstream"
     request_state.failure_detail_override = "owner_account_unavailable"
     request_state.upstream_error_code_override = upstream_error_code
+    quota_loss_applies = owner_quota_loss is not None and upstream_error_code not in MODEL_ADMISSION_LIMIT_CODES
     _record_continuity_fail_closed(
         surface="websocket_stream",
-        reason="owner_account_unavailable",
+        reason="owner_quota_exhausted" if quota_loss_applies else "owner_account_unavailable",
         previous_response_id=request_state.previous_response_id,
         session_id=request_state.session_id,
         upstream_error_code=upstream_error_code,
     )
     if upstream_error_code in MODEL_ADMISSION_LIMIT_CODES:
         rewritten_code, rewritten_message = upstream_error_code, upstream_error_message
+    elif owner_quota_loss is not None:
+        rewritten_code = (
+            PREVIOUS_RESPONSE_NOT_FOUND_CODE
+            if request_state.expose_stale_previous_response_classifier
+            else "upstream_unavailable"
+        )
+        rewritten_message = owner_quota_loss_message(owner_quota_loss)
     else:
         rewritten_code, rewritten_message = (
             "upstream_unavailable",

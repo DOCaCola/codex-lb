@@ -112,6 +112,7 @@ from app.modules.proxy.helpers import (
 from app.modules.proxy.http_continuation import http_continuation_signal
 from app.modules.proxy.load_balancer import AccountLease, AccountSelection
 from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.owner_quota_loss import OwnerQuotaLoss, load_owner_quota_loss, owner_quota_loss_message
 from app.modules.proxy.replay_safety import responses_payload_is_account_neutral_fresh_replay
 from app.modules.proxy.selection_errors import USAGE_LIMIT_REACHED, selection_failure_response
 
@@ -308,6 +309,27 @@ def _retry_after_kwargs(retry_after_seconds: float | None) -> dict[str, float]:
 
 def _payload_size_estimate_bytes(payload: ResponsesRequest) -> int:
     return len(json.dumps(payload.to_payload(), ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
+
+
+async def _client_anchor_owner_quota_loss(
+    proxy: _StreamingServiceProtocol,
+    payload: ResponsesRequest,
+    *,
+    owner_account_id: str,
+    turn_state_owner_account_id: str | None,
+    file_required_preferred_account: bool,
+) -> OwnerQuotaLoss | None:
+    """Return the spent usage limit of an owner only the client's anchor binds to.
+
+    A resend without ``previous_response_id`` leaves such an owner. A
+    turn-state owner or an input-file pin keeps binding that resend, so its
+    loss stays the generic owner-unavailable failure.
+    """
+    if payload.previous_response_id is None or turn_state_owner_account_id is not None:
+        return None
+    if file_required_preferred_account:
+        return None
+    return await load_owner_quota_loss(proxy._repo_factory, owner_account_id)
 
 
 def _transient_retry_error_code(tex: BaseException) -> str:
@@ -1818,6 +1840,17 @@ class _StreamingRetryMixin:
                             )
                             reason = "owner_conflict"
                             upstream_error_code = selection.error_code
+                        elif (
+                            owner_quota_loss := await _client_anchor_owner_quota_loss(
+                                proxy,
+                                payload,
+                                owner_account_id=preferred_account_id,
+                                turn_state_owner_account_id=turn_state_owner_account_id,
+                                file_required_preferred_account=file_required_preferred_account,
+                            )
+                        ) is not None:
+                            message = owner_quota_loss_message(owner_quota_loss)
+                            reason = "owner_quota_exhausted"
                         _record_continuity_fail_closed(
                             surface="http_stream",
                             reason=reason,
@@ -1972,6 +2005,17 @@ class _StreamingRetryMixin:
                             )
                             reason = "owner_conflict"
                             upstream_error_code = selection.error_code
+                        elif (
+                            owner_quota_loss := await _client_anchor_owner_quota_loss(
+                                proxy,
+                                payload,
+                                owner_account_id=preferred_account_id,
+                                turn_state_owner_account_id=turn_state_owner_account_id,
+                                file_required_preferred_account=file_required_preferred_account,
+                            )
+                        ) is not None:
+                            message = owner_quota_loss_message(owner_quota_loss)
+                            reason = "owner_quota_exhausted"
                         _record_continuity_fail_closed(
                             surface="http_stream",
                             reason=reason,

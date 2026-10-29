@@ -46,7 +46,7 @@ from app.core.usage.service_tiers import billable_service_tier
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.core.utils.retry import backoff_seconds
 from app.core.utils.shared_future import wait_on_shared_future
-from app.db.models import Account, AccountStatus, DashboardSettings, StickySessionKind
+from app.db.models import Account, DashboardSettings, StickySessionKind
 from app.modules.api_keys.service import (
     ApiKeyData,
     ApiKeyRequestUsageBudget,
@@ -86,6 +86,7 @@ from app.modules.proxy.load_balancer import (
     effective_account_concurrency_caps,
 )
 from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.owner_quota_loss import load_owner_quota_loss
 from app.modules.proxy.replay_safety import (
     project_responses_input_for_account_neutral_fresh_replay,
     responses_input_suffix_retains_prior_output,
@@ -165,8 +166,6 @@ class _CompactServiceProtocol(Protocol):
         api_key: ApiKeyData | None,
         fail_on_missing: bool = True,
     ) -> str | None: ...
-
-    async def _compact_owner_selection_loss_is_quota_caused(self, account_id: str) -> bool: ...
 
     async def _ensure_fresh_with_budget(
         self, account: Account, *, force: bool = False, timeout_seconds: float | None = None
@@ -506,15 +505,6 @@ def _service_tier_from_compact_payload(payload: ResponsesCompactRequest) -> str 
     return normalize(payload.service_tier)
 
 
-# Account statuses that prove the pinned owner's selection-time loss is caused
-# by upstream quota/rate-limit state rather than authentication, deactivation,
-# or an operator pause. Only these authorize account-neutral replay recovery.
-_COMPACT_OWNER_QUOTA_UNAVAILABLE_STATUSES = (
-    AccountStatus.RATE_LIMITED,
-    AccountStatus.QUOTA_EXCEEDED,
-)
-
-
 def _compact_replay_history_retains_prior_output(input_items: list[JsonValue]) -> bool:
     """Prove the carried history retains prior assistant output before new input.
 
@@ -633,34 +623,6 @@ def _compact_account_neutral_replay_payload(
 
 
 class _CompactMixin:
-    async def _compact_owner_selection_loss_is_quota_caused(self, account_id: str) -> bool:
-        """Return whether the pinned owner is unselectable because of quota state.
-
-        Account-neutral replay off a pinned previous-response owner is legal
-        only for owner loss the owner's quota state caused. At selection time
-        that evidence is the owner's own persisted status: ``RATE_LIMITED`` or
-        ``QUOTA_EXCEEDED`` is the same upstream usage-exhaustion state the
-        selector consulted. Hard authentication loss (``DEACTIVATED``),
-        operator pauses, local capacity caps on a request-routable account, and
-        a failed lookup all stay owner-bound. ``REAUTH_REQUIRED`` remains
-        selectable and therefore does not itself cause owner loss.
-        """
-
-        proxy = cast(_CompactServiceProtocol, self)
-        try:
-            async with proxy._repo_factory() as repos:
-                account = await repos.accounts.get_by_id_fresh(account_id)
-                # Read inside the repository scope: the session expires ORM
-                # attributes when it closes.
-                status = account.status if account is not None else None
-        except Exception:
-            logger.warning(
-                "Compact previous-response owner status lookup failed; keeping the request owner-bound",
-                exc_info=True,
-            )
-            return False
-        return status in _COMPACT_OWNER_QUOTA_UNAVAILABLE_STATUSES
-
     async def _resolve_compact_turn_state_owner(
         self,
         *,
@@ -1397,9 +1359,8 @@ class _CompactMixin:
                             owner_quota_failover_eligible
                             or (
                                 unavailable_owner_account_id not in excluded_account_ids
-                                and await proxy._compact_owner_selection_loss_is_quota_caused(
-                                    unavailable_owner_account_id
-                                )
+                                and await load_owner_quota_loss(proxy._repo_factory, unavailable_owner_account_id)
+                                is not None
                             )
                         ):
                             recovery_blocked_reason = "non_quota_owner_loss"

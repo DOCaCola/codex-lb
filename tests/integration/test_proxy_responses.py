@@ -24,7 +24,7 @@ from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.time import utcnow
-from app.db.models import Account, DashboardSettings, RequestLog, StickySessionKind
+from app.db.models import Account, AccountStatus, DashboardSettings, RequestLog, StickySessionKind
 from app.db.session import SessionLocal
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy._service.streaming import retry as streaming_retry_module
@@ -1578,6 +1578,60 @@ async def test_v1_responses_missing_previous_response_owner_fails_closed_before_
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "previous_response_owner_unavailable"
     assert response.json()["error"]["message"] == "Previous response owner account is unavailable; retry later."
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_spent_previous_response_owner_reports_reset(async_client, monkeypatch):
+    raw_owner_id = "acc_prev_http_spent_owner"
+    for raw_account_id, email in (
+        (raw_owner_id, "prev-http-spent-owner@example.com"),
+        ("acc_prev_http_spent_other", "prev-http-spent-other@example.com"),
+    ):
+        auth_json = _make_auth_json(raw_account_id, email)
+        files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+        response = await async_client.post("/api/accounts/import", files=files)
+        assert response.status_code == 200
+
+    async with SessionLocal() as session:
+        owner = (await session.execute(select(Account).where(Account.chatgpt_account_id == raw_owner_id))).scalar_one()
+        owner.status = AccountStatus.RATE_LIMITED
+        owner.reset_at = 1793774149
+        session.add(
+            RequestLog(
+                account_id=owner.id,
+                session_id="sid_prev_http_spent_owner",
+                request_id="resp_prev_http_spent_owner",
+                request_kind="response_create",
+                model="gpt-5.1",
+                status="success",
+            )
+        )
+        await session.commit()
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del payload, headers, access_token, account_id, base_url, raise_for_status, kwargs
+        raise AssertionError("a turn anchored to a spent owner must fail before any upstream attempt")
+        if False:
+            yield ""
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    response = await async_client.post(
+        "/v1/responses",
+        json={
+            "model": "gpt-5.1",
+            "input": "continue",
+            "previous_response_id": "resp_prev_http_spent_owner",
+        },
+        headers={"session_id": "sid_prev_http_spent_owner"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "previous_response_owner_unavailable"
+    assert response.json()["error"]["message"] == (
+        "Previous response owner account reached its usage limit (resets 2026-11-04 06:35 UTC); "
+        "retry without previous_response_id."
+    )
 
 
 @pytest.mark.asyncio

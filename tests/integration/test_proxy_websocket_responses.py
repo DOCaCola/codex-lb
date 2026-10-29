@@ -11138,6 +11138,46 @@ def test_backend_responses_websocket_previous_response_usage_limit_returns_upstr
     assert handled_error_codes == ["usage_limit_reached"]
 
 
+def test_backend_responses_websocket_spent_owner_refusal_asks_client_to_resend_without_anchor(
+    app_instance,
+    monkeypatch,
+):
+    from app.modules.proxy._service.websocket import mixin as websocket_mixin_module
+    from app.modules.proxy.owner_quota_loss import OwnerQuotaLoss
+
+    loaded_owner_ids: list[str] = []
+
+    async def fake_load_owner_quota_loss(repo_factory, account_id):
+        del repo_factory
+        loaded_owner_ids.append(account_id)
+        return OwnerQuotaLoss(resets_at=1793774149)
+
+    monkeypatch.setattr(websocket_mixin_module, "load_owner_quota_loss", fake_load_owner_quota_loss)
+
+    event, _connect_models, _preferred_accounts, handled_error_codes = _run_anchored_turn_refused_by_its_owner(
+        app_instance,
+        monkeypatch,
+        {
+            "type": "error",
+            "status": 429,
+            "error": {
+                "type": "invalid_request_error",
+                "code": "usage_limit_reached",
+                "message": "The usage limit has been reached",
+            },
+        },
+    )
+
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == "previous_response_not_found"
+    assert event["response"]["error"]["message"] == (
+        "Previous response owner account reached its usage limit (resets 2026-11-04 06:35 UTC); "
+        "retry without previous_response_id."
+    )
+    assert loaded_owner_ids == ["acct_ws_proxy_owner"]
+    assert handled_error_codes == ["usage_limit_reached"]
+
+
 def test_backend_responses_websocket_previous_response_model_admission_limit_is_promptly_retryable(
     app_instance,
     monkeypatch,

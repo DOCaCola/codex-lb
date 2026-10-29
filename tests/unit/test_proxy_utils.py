@@ -24575,6 +24575,124 @@ async def test_connect_proxy_websocket_previous_response_owner_usage_limit_fails
     assert request_logs.calls[0]["account_id"] == account_owner.id
 
 
+async def _connect_anchored_turn_to_spent_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    codex_route: bool,
+    proxy_injected_anchor: bool = False,
+    alternate_selected: bool = False,
+) -> tuple[dict[str, Any], _RequestLogsRecorder]:
+    """Connect a turn anchored to an owner whose usage limit is spent and that
+    the selector therefore cannot return (it returns nothing, or another
+    account when ``alternate_selected``); return the client frame and logs."""
+    request_logs = _RequestLogsRecorder()
+    owner = _make_account("acc_ws_spent_owner")
+    owner.status = AccountStatus.RATE_LIMITED
+    owner.reset_at = 1793774149
+    alternate = _make_account("acc_ws_alternate")
+
+    def repo_factory() -> _RepoContext:
+        context = _RepoContext(request_logs)
+        cast(AsyncMock, context._repos.accounts).get_by_id_fresh.return_value = owner
+        return context
+
+    service = proxy_service.ProxyService(repo_factory)
+
+    async def select_account(deadline: float, **kwargs: object) -> AccountSelection:
+        del deadline, kwargs
+        if alternate_selected:
+            return AccountSelection(account=alternate, error_message=None)
+        return AccountSelection(account=None, error_message="Rate limit exceeded. Try again in 300s")
+
+    monkeypatch.setattr(service, "_select_account_with_budget", select_account)
+    monkeypatch.setattr(service, "_release_websocket_reservation", AsyncMock())
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_spent_owner",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        previous_response_id="resp_prev_anchor",
+        preferred_account_id=owner.id,
+    )
+    request_state.expose_stale_previous_response_classifier = codex_route
+    request_state.proxy_injected_previous_response_id = proxy_injected_anchor
+
+    websocket_send = AsyncMock()
+    selected_account, selected_upstream = await service._connect_proxy_websocket(
+        {},
+        sticky_key=None,
+        sticky_kind=None,
+        prefer_earlier_reset=False,
+        prefer_earlier_reset_window="secondary",
+        routing_strategy="usage_weighted",
+        model="gpt-5.1",
+        request_state=request_state,
+        api_key=None,
+        client_send_lock=anyio.Lock(),
+        websocket=cast(WebSocket, SimpleNamespace(send_text=websocket_send)),
+    )
+
+    assert selected_account is None
+    assert selected_upstream is None
+    await_args = websocket_send.await_args
+    assert await_args is not None
+    return json.loads(await_args.args[0]), request_logs
+
+
+_SPENT_OWNER_MESSAGE = (
+    "Previous response owner account reached its usage limit (resets 2026-11-04 06:35 UTC); "
+    "retry without previous_response_id."
+)
+
+
+@pytest.mark.asyncio
+async def test_connect_proxy_websocket_spent_owner_asks_codex_client_to_resend_without_anchor(monkeypatch):
+    sent_payload, request_logs = await _connect_anchored_turn_to_spent_owner(monkeypatch, codex_route=True)
+
+    assert sent_payload["status"] == 502
+    assert sent_payload["error"]["code"] == "previous_response_not_found"
+    assert sent_payload["error"]["message"] == _SPENT_OWNER_MESSAGE
+    assert request_logs.calls[0]["error_code"] == "previous_response_not_found"
+    assert request_logs.calls[0]["error_message"] == _SPENT_OWNER_MESSAGE
+    assert request_logs.calls[0]["account_id"] == "acc_ws_spent_owner"
+
+
+@pytest.mark.asyncio
+async def test_connect_proxy_websocket_spent_owner_keeps_public_route_code(monkeypatch):
+    sent_payload, _request_logs = await _connect_anchored_turn_to_spent_owner(monkeypatch, codex_route=False)
+
+    assert sent_payload["status"] == 502
+    assert sent_payload["error"]["code"] == "previous_response_owner_unavailable"
+    assert sent_payload["error"]["message"] == _SPENT_OWNER_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_connect_proxy_websocket_spent_owner_replaced_by_selector_reports_reset(monkeypatch):
+    sent_payload, _request_logs = await _connect_anchored_turn_to_spent_owner(
+        monkeypatch,
+        codex_route=True,
+        alternate_selected=True,
+    )
+
+    assert sent_payload["error"]["code"] == "previous_response_not_found"
+    assert sent_payload["error"]["message"] == _SPENT_OWNER_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_connect_proxy_websocket_spent_owner_of_proxy_injected_anchor_stays_generic(monkeypatch):
+    sent_payload, _request_logs = await _connect_anchored_turn_to_spent_owner(
+        monkeypatch,
+        codex_route=True,
+        proxy_injected_anchor=True,
+    )
+
+    assert sent_payload["error"]["code"] == "previous_response_owner_unavailable"
+    assert sent_payload["error"]["message"] == "Previous response owner account is unavailable; retry later."
+
+
 @pytest.mark.asyncio
 async def test_connect_proxy_websocket_account_bound_replay_stays_on_owner(monkeypatch):
     request_logs = _RequestLogsRecorder()

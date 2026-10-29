@@ -21,6 +21,7 @@ class _WebSocketServiceProtocol(Protocol):
     _drain_deferred_keyed_stream_health: Any
     _emit_pending_websocket_keepalive: Any
     _emit_websocket_connect_failure: Any
+    _emit_websocket_previous_response_owner_unavailable: Any
     _emit_websocket_connect_timeout: Any
     _emit_websocket_proxy_request_timeout: Any
     _emit_websocket_security_work_missing_pool: Any

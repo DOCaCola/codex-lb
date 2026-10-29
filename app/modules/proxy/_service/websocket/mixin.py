@@ -474,6 +474,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_event_incomplete_reason,
     _websocket_full_resend_conflicts_with_visible_pending,
     _websocket_input_items_are_self_contained_fresh_replay,
+    _websocket_owner_bound_only_by_client_anchor,
     _websocket_owner_switch_has_other_pending_requests,
     _websocket_precreated_auth_error_code,
     _websocket_precreated_replay_fallback_error,
@@ -538,6 +539,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease, effective_account_concurrency_caps
 from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.owner_quota_loss import load_owner_quota_loss, owner_quota_loss_message
 from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
 from app.modules.proxy.replay_safety import trim_replayed_previous_response_output
 from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
@@ -4462,28 +4464,13 @@ class _WebSocketMixin:
             and account.id != preferred_account_id
         ):
             await proxy._load_balancer.release_account_lease(selection.lease)
-            message = "Previous response owner account is unavailable; retry later."
-            _record_continuity_fail_closed(
-                surface="websocket_connect",
-                reason="owner_account_unavailable",
-                previous_response_id=request_state.previous_response_id,
-                session_id=request_state.session_id,
-                upstream_error_code="previous_response_owner_unavailable",
-            )
-            await proxy._emit_websocket_connect_failure(
+            await proxy._emit_websocket_previous_response_owner_unavailable(
                 websocket,
                 client_send_lock=client_send_lock,
-                account_id=preferred_account_id,
+                owner_account_id=preferred_account_id,
                 api_key=api_key,
                 request_state=request_state,
-                status_code=502,
-                payload=openai_error(
-                    "previous_response_owner_unavailable",
-                    message,
-                    error_type="server_error",
-                ),
-                error_code="previous_response_owner_unavailable",
-                error_message=message,
+                upstream_error_code="previous_response_owner_unavailable",
             )
             return None
         if account:
@@ -4540,28 +4527,13 @@ class _WebSocketMixin:
                     error_message=error_message,
                 )
                 return None
-            message = "Previous response owner account is unavailable; retry later."
-            _record_continuity_fail_closed(
-                surface="websocket_connect",
-                reason="owner_account_unavailable",
-                previous_response_id=request_state.previous_response_id,
-                session_id=request_state.session_id,
-                upstream_error_code=error_code,
-            )
-            await proxy._emit_websocket_connect_failure(
+            await proxy._emit_websocket_previous_response_owner_unavailable(
                 websocket,
                 client_send_lock=client_send_lock,
-                account_id=preferred_account_id,
+                owner_account_id=preferred_account_id,
                 api_key=api_key,
                 request_state=request_state,
-                status_code=502,
-                payload=openai_error(
-                    "previous_response_owner_unavailable",
-                    message,
-                    error_type="server_error",
-                ),
-                error_code="previous_response_owner_unavailable",
-                error_message=message,
+                upstream_error_code=error_code,
             )
             return None
         _facade().logger.warning(
@@ -4589,6 +4561,64 @@ class _WebSocketMixin:
             error_message=error_message,
         )
         return None
+
+    async def _emit_websocket_previous_response_owner_unavailable(
+        self,
+        websocket: WebSocket,
+        *,
+        client_send_lock: anyio.Lock,
+        owner_account_id: str,
+        api_key: ApiKeyData | None,
+        request_state: _WebSocketRequestState,
+        upstream_error_code: str,
+    ) -> None:
+        """Fail an anchored turn whose required owner could not be selected.
+
+        When the client's own anchor is all that binds the turn and the owner's
+        usage limit is spent, the client can continue on another account by
+        resending without the anchor: the failure says so and names the reset.
+        The Codex-native route uses the stale-anchor code its client answers
+        with a full resend; public routes keep the owner-unavailable code.
+        """
+        proxy = cast(_WebSocketServiceProtocol, self)
+        owner_quota_loss = (
+            await load_owner_quota_loss(proxy._repo_factory, owner_account_id)
+            if _websocket_owner_bound_only_by_client_anchor(request_state)
+            else None
+        )
+        if owner_quota_loss is None:
+            error_code = "previous_response_owner_unavailable"
+            message = "Previous response owner account is unavailable; retry later."
+            reason = "owner_account_unavailable"
+        else:
+            error_code = (
+                PREVIOUS_RESPONSE_NOT_FOUND_CODE
+                if request_state.expose_stale_previous_response_classifier
+                else "previous_response_owner_unavailable"
+            )
+            message = owner_quota_loss_message(owner_quota_loss)
+            reason = "owner_quota_exhausted"
+        _record_continuity_fail_closed(
+            surface="websocket_connect",
+            reason=reason,
+            previous_response_id=request_state.previous_response_id,
+            session_id=request_state.session_id,
+            upstream_error_code=upstream_error_code,
+        )
+        await proxy._emit_websocket_connect_failure(
+            websocket,
+            client_send_lock=client_send_lock,
+            account_id=owner_account_id,
+            api_key=api_key,
+            request_state=request_state,
+            status_code=502,
+            payload=openai_error(error_code, message, error_type="server_error"),
+            error_code=error_code,
+            error_message=message,
+            # Already the public owner-loss failure: the stale-anchor sanitizer
+            # would replace the quota message and record a stale anchor.
+            sanitize_previous_response_error=False,
+        )
 
     async def _emit_websocket_security_work_missing_pool(
         self,
@@ -6452,10 +6482,18 @@ class _WebSocketMixin:
                 {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},
                 owner_rejection_code,
             )
+            # The refusal just updated the owner's persisted status, which
+            # tells a spent usage limit apart from other owner refusals.
+            owner_quota_loss = (
+                await load_owner_quota_loss(proxy._repo_factory, account.id)
+                if _websocket_owner_bound_only_by_client_anchor(request_state)
+                else None
+            )
             event, payload, event_type, downstream_text = _rewrite_websocket_previous_response_owner_unavailable_event(
                 request_state=request_state,
                 upstream_error_code=owner_rejection_code,
                 upstream_error_message=_websocket_event_error_message(event_type, payload) or "Upstream error",
+                owner_quota_loss=owner_quota_loss,
             )
             retry_error_code = None
         if owner_rejection_code is not None and retry_safe_owner_replay and not retry_safe_previous_response_not_found:
@@ -7495,6 +7533,7 @@ class _WebSocketMixin:
         payload: OpenAIErrorEnvelope,
         error_code: str,
         error_message: str,
+        sanitize_previous_response_error: bool = True,
     ) -> None:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
@@ -7502,13 +7541,14 @@ class _WebSocketMixin:
         if replay_fallback is not None:
             status_code, payload, error_code, error_message, rejected_account_id = replay_fallback
             account_id = rejected_account_id
-        status_code, payload, error_code, error_message = _sanitize_websocket_connect_failure(
-            request_state=request_state,
-            status_code=status_code,
-            payload=payload,
-            error_code=error_code,
-            error_message=error_message,
-        )
+        if sanitize_previous_response_error:
+            status_code, payload, error_code, error_message = _sanitize_websocket_connect_failure(
+                request_state=request_state,
+                status_code=status_code,
+                payload=payload,
+                error_code=error_code,
+                error_message=error_message,
+            )
         await proxy._release_websocket_request_state_reservation(request_state)
         await proxy._write_websocket_connect_failure(
             account_id=account_id,
