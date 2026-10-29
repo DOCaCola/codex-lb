@@ -502,8 +502,16 @@ class _FakeSession:
         self._context = context
         self.calls: list[dict[str, object]] = []
 
-    def post(self, url: str, *, headers: dict[str, str], json: object, timeout: aiohttp.ClientTimeout) -> _PostContext:
-        self.calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+    def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: object,
+        timeout: aiohttp.ClientTimeout,
+        data: bytes | None = None,
+    ) -> _PostContext:
+        self.calls.append({"url": url, "headers": headers, "data": data, "json": json, "timeout": timeout})
         return self._context
 
 
@@ -906,6 +914,24 @@ async def test_open_source_stream_returns_the_first_chunk(monkeypatch: pytest.Mo
     assert opened is response
     assert first_chunk == b"data: hello\n\n"
     await stack.aclose()
+
+
+@pytest.mark.asyncio
+async def test_open_source_stream_sends_compact_json_bytes_when_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = _FakeResponse(content=_FakeContent(b"data: hello\n\n"))
+    session, _context, _lease = _install_session(monkeypatch, response)
+    payload: dict[str, JsonValue] = {"model": "m", "input": ["héllo", {"a": 1}]}
+
+    for compact in (False, True):
+        stack, _opened, _first = await forwarding_module._open_source_stream(
+            _responses_source(api_key=True), "/responses", payload, encryptor=_fake_encryptor(), compact_json=compact
+        )
+        await stack.aclose()
+
+    default, compact_call = session.calls
+    assert (default["data"], default["json"]) == (None, payload)
+    assert compact_call["json"] is None
+    assert compact_call["data"] == '{"model":"m","input":["héllo",{"a":1}]}'.encode()
 
 
 @pytest.mark.asyncio

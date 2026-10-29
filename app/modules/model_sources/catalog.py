@@ -24,7 +24,7 @@ def source_models_to_upstream_models(sources: list[ModelSource]) -> list[Upstrea
     for source in sources:
         if not source.is_enabled:
             continue
-        if source.kind not in {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter", "claude"}:
+        if source.kind not in {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter", "claude", "antigravity"}:
             continue
         for source_model in source.models:
             if not source_model.is_enabled:
@@ -46,19 +46,19 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
     # OpenAI's own catalog, so no compaction threshold is advertised here.
     context_window = source_model.context_window or DEFAULT_SOURCE_CONTEXT_WINDOW
     raw["max_context_window"] = context_window
-    if source.kind == "claude":
+    if source.kind in ("claude", "antigravity"):
         raw["effective_context_window_percent"] = 95
-        # The Claude adapter projects Codex's grammar-format apply_patch tool,
+        # The Claude and Antigravity adapters project Codex's grammar-format apply_patch tool,
         # and Codex registers that tool only for catalogs advertising it.
         raw["apply_patch_tool_type"] = "freeform"
         # Message-based subagents: reports travel as portable plaintext agent messages.
         raw["multi_agent_version"] = "v2"
-        # Codex then defers MCP tools behind its client tool_search, which the adapter maps onto
-        # Anthropic's deferred tools: the tool list stays identical across a thread's side chats and
-        # loading a tool keeps the prompt cache.
+        # Codex then defers MCP tools behind its client tool_search. The Claude adapter maps it onto
+        # Anthropic's deferred tools, so the tool list stays identical across a thread's side chats and
+        # loading a tool keeps the prompt cache; Antigravity declares loaded tools like any other.
         raw["supports_search_tool"] = True
         # Codex then offers its tools through code mode, as for its own models: one JavaScript
-        # exec batching dependent calls. The Claude adapter adds the code-mode contract.
+        # exec batching dependent calls. The adapters add the code-mode contract.
         raw["tool_mode"] = "code_mode_only"
     raw.setdefault("visibility", "list")
     raw.setdefault("shell_type", "shell_command")
@@ -107,7 +107,7 @@ def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> U
         supports_reasoning_summaries=reasoning_opted_in and raw.get("supports_reasoning_summaries") is True,
         support_verbosity=False,
         default_verbosity=None,
-        prefer_websockets=source.kind in {"openrouter", "claude"},
+        prefer_websockets=source.kind in {"openrouter", "claude", "antigravity"},
         supports_parallel_tool_calls=supports_parallel_tools,
         supported_in_api=True,
         minimal_client_version=None,

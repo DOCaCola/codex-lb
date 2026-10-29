@@ -50,6 +50,8 @@ class ToolArguments:
 
     tool_name: str
     validator: Validator
+    # The model provider named in diagnostics.
+    provider: str = "Claude"
 
     def encode(self, arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
         return {_ARGUMENT_KEY: arguments}
@@ -69,23 +71,25 @@ class ToolArguments:
         try:
             return json.loads(raw, parse_constant=reject_constant, object_pairs_hook=object_pairs)
         except (ValueError, RecursionError) as exc:
-            raise ClaudeError(f"Claude tool '{self.tool_name}' returned invalid argument JSON") from exc
+            raise ClaudeError(f"{self.provider} tool '{self.tool_name}' returned invalid argument JSON") from exc
 
     def decode(self, envelope: dict[str, JsonValue]) -> dict[str, JsonValue]:
         try:
             size = len(json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode())
         except (ValueError, RecursionError) as exc:
-            raise ClaudeError(f"Claude tool '{self.tool_name}' returned invalid argument JSON") from exc
+            raise ClaudeError(f"{self.provider} tool '{self.tool_name}' returned invalid argument JSON") from exc
         if size > MAX_TOOL_ARGUMENT_BYTES:
-            raise ClaudeError(f"Claude tool '{self.tool_name}' arguments exceeded the size limit")
+            raise ClaudeError(f"{self.provider} tool '{self.tool_name}' arguments exceeded the size limit")
         arguments = envelope.get(_ARGUMENT_KEY)
         if set(envelope) != {_ARGUMENT_KEY} or not isinstance(arguments, dict):
-            raise ClaudeError(f"Claude tool '{self.tool_name}' returned an invalid arguments envelope")
+            raise ClaudeError(f"{self.provider} tool '{self.tool_name}' returned an invalid arguments envelope")
         try:
             self.validator.validate(arguments)
         except (ValidationError, RecursionError) as exc:
             # Never include provider argument values in diagnostics.
-            raise ClaudeError(f"Claude tool '{self.tool_name}' arguments do not match its declared schema") from exc
+            raise ClaudeError(
+                f"{self.provider} tool '{self.tool_name}' arguments do not match its declared schema"
+            ) from exc
         return arguments
 
 

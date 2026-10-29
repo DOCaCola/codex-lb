@@ -129,7 +129,7 @@ class ModelSourcesService:
             raise ModelSourceNotFoundError(f"Model source not found: {source_id}")
 
 
-_PROVIDER_ACCOUNT_LABELS = {"claude": "Claude", "openrouter": "OpenRouter"}
+_PROVIDER_ACCOUNT_LABELS = {"claude": "Claude", "antigravity": "Antigravity", "openrouter": "OpenRouter"}
 
 
 def _require_user_defined(row: ModelSource) -> None:

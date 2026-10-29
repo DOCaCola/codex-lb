@@ -117,6 +117,7 @@ export function ApiComparisonTrend({ data, loading, error, onRetry, provider, on
               { value: "all", label: t("apiKeys.trend.allProviders") },
               { value: "codex", label: t("apiKeys.trend.codex"), icon: <ProviderLogo provider="codex" /> },
               { value: "claude", label: t("apiKeys.trend.claude"), icon: <ProviderLogo provider="claude" /> },
+              { value: "antigravity", label: t("apiKeys.trend.antigravity"), icon: <ProviderLogo provider="antigravity" /> },
               { value: "openrouter", label: t("apiKeys.trend.openrouter"), icon: <ProviderLogo provider="openrouter" /> },
             ]}
             onChange={onProviderChange}

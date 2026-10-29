@@ -203,18 +203,18 @@ class ChatCompletionsRequest(BaseModel):
             data["tool_choice"] = tool_choice
         return ResponsesRequest.model_validate(data)
 
-    def apply_claude_controls(self, responses: ResponsesRequest) -> None:
-        """Apply Chat-only controls after routing selects the Claude Responses wire."""
+    def apply_adapter_controls(self, responses: ResponsesRequest, *, provider: str) -> None:
+        """Apply Chat-only controls after routing selects a translating Responses adapter (Claude, Antigravity)."""
 
         if self.seed is not None:
-            raise ClientPayloadError("Claude Chat does not support seed", param="seed")
+            raise ClientPayloadError(f"{provider} Chat does not support seed", param="seed")
         for field in ("presence_penalty", "frequency_penalty"):
             if getattr(self, field) not in (None, 0):
-                raise ClientPayloadError(f"Claude Chat does not support {field}", param=field)
+                raise ClientPayloadError(f"{provider} Chat does not support {field}", param=field)
         if self.logprobs not in (None, False):
-            raise ClientPayloadError("Claude Chat does not support logprobs", param="logprobs")
+            raise ClientPayloadError(f"{provider} Chat does not support logprobs", param="logprobs")
         if self.top_logprobs not in (None, 0):
-            raise ClientPayloadError("Claude Chat does not support top_logprobs", param="top_logprobs")
+            raise ClientPayloadError(f"{provider} Chat does not support top_logprobs", param="top_logprobs")
         permitted_extras = {
             "reasoning",
             "reasoning_effort",
@@ -224,53 +224,55 @@ class ChatCompletionsRequest(BaseModel):
         }
         for field in self.model_extra or {}:
             if field not in permitted_extras:
-                raise ClientPayloadError(f"Claude Chat does not support {field}", param=field)
+                raise ClientPayloadError(f"{provider} Chat does not support {field}", param=field)
         if self.stream_options is not None and self.stream_options.include_obfuscation:
-            raise ClientPayloadError("Claude Chat does not support stream obfuscation", param="stream_options")
+            raise ClientPayloadError(f"{provider} Chat does not support stream obfuscation", param="stream_options")
         if self.stream_options is not None and self.stream_options.model_extra:
-            raise ClientPayloadError("Claude Chat does not support extra stream options", param="stream_options")
+            raise ClientPayloadError(f"{provider} Chat does not support extra stream options", param="stream_options")
         if self.store:
-            raise ClientPayloadError("Claude Chat does not support stored completions", param="store")
+            raise ClientPayloadError(f"{provider} Chat does not support stored completions", param="store")
         if _is_json_object_response_format(self.response_format):
             raise ClientPayloadError(
-                "Claude Chat requires a JSON schema for structured output", param="response_format"
+                f"{provider} Chat requires a JSON schema for structured output", param="response_format"
             )
         if responses.reasoning is not None and responses.reasoning.summary is not None:
-            raise ClientPayloadError("Claude Chat does not support reasoning summaries", param="reasoning")
+            raise ClientPayloadError(f"{provider} Chat does not support reasoning summaries", param="reasoning")
         thinking = (self.model_extra or {}).get("thinking")
         reasoning_extras = responses.reasoning.model_extra if responses.reasoning is not None else None
         if reasoning_extras and set(reasoning_extras) - {"display"}:
-            raise ClientPayloadError("Claude Chat does not support this reasoning control", param="reasoning")
+            raise ClientPayloadError(f"{provider} Chat does not support this reasoning control", param="reasoning")
         reasoning_display = reasoning_extras.get("display") if reasoning_extras else None
         if reasoning_display not in (None, "summarized", "omitted"):
-            raise ClientPayloadError("Unsupported Claude thinking display", param="reasoning.display")
+            raise ClientPayloadError(f"Unsupported {provider} thinking display", param="reasoning.display")
         display = reasoning_display or "summarized"
         if is_json_mapping(thinking):
             if "budget_tokens" in thinking:
-                raise ClientPayloadError("Claude Chat does not support a thinking token budget", param="thinking")
+                raise ClientPayloadError(f"{provider} Chat does not support a thinking token budget", param="thinking")
             unsupported_thinking = set(thinking) - {"type", "display", "effort", "enabled"}
             if unsupported_thinking:
-                raise ClientPayloadError("Claude Chat does not support this thinking control", param="thinking")
+                raise ClientPayloadError(f"{provider} Chat does not support this thinking control", param="thinking")
             thinking_type = thinking.get("type")
             if thinking_type is not None and thinking_type not in ("adaptive", "enabled", "disabled"):
-                raise ClientPayloadError("Unsupported Claude thinking type", param="thinking.type")
+                raise ClientPayloadError(f"Unsupported {provider} thinking type", param="thinking.type")
             enabled = thinking.get("enabled")
             if enabled is not None and not isinstance(enabled, bool):
-                raise ClientPayloadError("Claude thinking.enabled must be a boolean", param="thinking.enabled")
+                raise ClientPayloadError(f"{provider} thinking.enabled must be a boolean", param="thinking.enabled")
             if (enabled is False and thinking_type in ("adaptive", "enabled")) or (
                 enabled is True and thinking_type == "disabled"
             ):
-                raise ClientPayloadError("Conflicting Claude thinking controls", param="thinking")
+                raise ClientPayloadError(f"Conflicting {provider} thinking controls", param="thinking")
             if (thinking_type in ("adaptive", "enabled") or enabled is True) and (
                 responses.reasoning is not None and responses.reasoning.effort == "none"
             ):
-                raise ClientPayloadError("Conflicting Claude thinking controls", param="thinking")
+                raise ClientPayloadError(f"Conflicting {provider} thinking controls", param="thinking")
             requested_display = thinking.get("display")
             if requested_display is not None:
                 if requested_display not in ("summarized", "omitted"):
-                    raise ClientPayloadError("Unsupported Claude thinking display", param="thinking.display")
+                    raise ClientPayloadError(f"Unsupported {provider} thinking display", param="thinking.display")
                 if reasoning_display is not None and reasoning_display != requested_display:
-                    raise ClientPayloadError("Conflicting Claude thinking display controls", param="thinking.display")
+                    raise ClientPayloadError(
+                        f"Conflicting {provider} thinking display controls", param="thinking.display"
+                    )
                 display = requested_display
             if thinking_type == "disabled":
                 if responses.reasoning is not None and responses.reasoning.effort not in (None, "none"):

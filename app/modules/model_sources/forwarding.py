@@ -65,7 +65,7 @@ SOURCE_STREAM_WITHHELD_CAP_BYTES = 2 * 1_048_576
 TimeoutPhase = Literal["connect", "header", "first_frame", "idle"]
 FrameKind = Literal["non_content", "content", "success_terminal", "failure_terminal"]
 
-_SOURCE_LABELS = {"claude": "Claude", "openrouter": "OpenRouter"}
+_SOURCE_LABELS = {"claude": "Claude", "antigravity": "Antigravity", "openrouter": "OpenRouter"}
 
 
 def source_label(source: ModelSource) -> str:
@@ -803,6 +803,7 @@ async def _open_source_stream(
     header_deadline_seconds: float | None = SOURCE_HEADER_DEADLINE_SECONDS,
     first_frame_deadline_seconds: float | None = SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
     prepared_headers: Mapping[str, str] | None = None,
+    compact_json: bool = False,
 ) -> tuple[AsyncExitStack, aiohttp.ClientResponse, bytes | None]:
     """Open the upstream request eagerly so errors surface before headers.
 
@@ -840,7 +841,11 @@ async def _open_source_stream(
                         headers=prepared_headers
                         if prepared_headers is not None
                         else _source_headers(source, encryptor=encryptor, stream=True),
-                        json=payload,
+                        # Compact JSON imitates native clients whose wire image a source requires.
+                        data=json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+                        if compact_json
+                        else None,
+                        json=None if compact_json else payload,
                         timeout=_source_client_timeout(source),
                         **({"allow_redirects": False} if prepared_headers is not None else {}),
                     )

@@ -7,6 +7,7 @@ import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import { useAuthStore, usePermission } from "@/features/auth/hooks/use-auth";
 import { CacheIsolationProbeSection } from "@/features/cache-probe/components/cache-isolation-probe-section";
 import { useClaudeAccounts } from "@/features/claude/use-claude";
+import { useAntigravityAccounts } from "@/features/antigravity/use-antigravity";
 import { FirewallSection } from "@/features/firewall/components/firewall-section";
 import { QuotaPlannerSection } from "@/features/quota-planner/components/quota-planner-section";
 import { AccessCard } from "@/features/settings/components/access/access-card";
@@ -109,11 +110,13 @@ export function RoutingSettingsSection() {
   const canWriteOps = usePermission("ops:write");
   const { accountsQuery } = useAccounts();
   const claudeAccountsQuery = useClaudeAccounts();
+  const antigravityAccountsQuery = useAntigravityAccounts();
 
   return (
     <SettingsSection section="routing">
       <RoutingSettings
         claudeAccounts={claudeAccountsQuery.data?.accounts}
+        antigravityAccounts={antigravityAccountsQuery.data?.accounts}
         key={[
           settings.openaiCacheAffinityMaxAgeSeconds,
           settings.warmupModel,

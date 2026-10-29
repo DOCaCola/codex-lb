@@ -117,8 +117,8 @@ def test_every_source_request_passes_the_constructed_headers_only() -> None:
                     ast.parse('{"allow_redirects": False} if prepared_headers is not None else {}', mode="eval").body
                 ), call.lineno
 
-    # Prepared headers have exactly one caller: the Claude transport's typed
-    # PreparedClaudeRequest, whose dispatch builder constructs provider headers.
+    # Prepared headers come only from the provider transports' typed prepared
+    # requests (Claude, Antigravity), whose dispatch builders construct provider headers.
     prepared_callers = []
     for path in (_FORWARDING_PATH.parents[2]).rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -127,10 +127,12 @@ def test_every_source_request_passes_the_constructed_headers_only() -> None:
             for keyword in node.keywords:
                 if keyword.arg == "prepared_headers":
                     prepared_callers.append((path.relative_to(_FORWARDING_PATH.parents[2]).as_posix(), keyword.value))
-    assert len(prepared_callers) == 1
-    path, value = prepared_callers[0]
-    assert path == "modules/claude/transport.py"
-    assert ast.dump(value) == ast.dump(ast.parse("prepared.headers", mode="eval").body)
+    assert sorted(path for path, _ in prepared_callers) == [
+        "modules/antigravity/transport.py",
+        "modules/claude/transport.py",
+    ]
+    for _, value in prepared_callers:
+        assert ast.dump(value) == ast.dump(ast.parse("prepared.headers", mode="eval").body)
 
 
 def test_forwarding_has_no_access_to_inbound_request_headers() -> None:

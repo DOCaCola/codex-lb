@@ -31,6 +31,7 @@ SHUTDOWN_TIMEOUT_SECONDS = 30.0
 BACKGROUND_LOOP_BUILDERS: tuple[str, ...] = (
     "build_quota_webhook_scheduler",
     "build_claude_refresh_scheduler",
+    "build_antigravity_refresh_scheduler",
     "build_metadata_refresh_scheduler",
     "build_usage_refresh_scheduler",
     "build_model_refresh_scheduler",

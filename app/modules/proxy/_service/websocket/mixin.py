@@ -120,7 +120,6 @@ from app.modules.api_keys.service import (
     ApiKeyInvalidError,
     ApiKeysService,
 )
-from app.modules.claude.replay import has_claude_replay
 from app.modules.model_sources.selection import (
     effective_model_for_api_key,
     responses_model_is_source_owned,
@@ -538,7 +537,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
 from app.modules.proxy.load_balancer import AccountLease, effective_account_concurrency_caps
-from app.modules.proxy.native_history import project_native_history
+from app.modules.proxy.native_history import has_provider_replay, project_native_history
 from app.modules.proxy.owner_quota_loss import load_owner_quota_loss, owner_quota_loss_message
 from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
 from app.modules.proxy.replay_safety import trim_replayed_previous_response_output
@@ -3539,7 +3538,7 @@ class _WebSocketMixin:
         # Source-owned models retain their own replay policy. Project native
         # history before continuity trimming so no foreign state escapes
         # authentication, while replay_input above remains the logical history.
-        if has_claude_replay(responses_payload.input) and (
+        if has_provider_replay(responses_payload.input) and (
             source_route_excluded
             or not await responses_model_is_source_owned(
                 responses_payload.model, refreshed_api_key, raw_model=raw_source_model

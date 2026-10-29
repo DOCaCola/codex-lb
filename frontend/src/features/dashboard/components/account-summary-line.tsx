@@ -5,27 +5,37 @@ import { normalizeStatus } from "@/utils/account-status";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { claudeStatus } from "@/features/claude/display-values";
+import type { AntigravityAccount } from "@/features/antigravity/api";
+import { antigravityStatus } from "@/features/antigravity/display-values";
 
 type AccountSummaryLineProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
   claudeAccounts?: ClaudeAccount[];
+  antigravityAccounts?: AntigravityAccount[];
 };
 
 export function AccountSummaryLine({
   accounts,
   openRouterAccounts = [],
   claudeAccounts = [],
+  antigravityAccounts = [],
 }: AccountSummaryLineProps) {
   const { t } = useTranslation();
   const registeredCount =
-    accounts.length + openRouterAccounts.length + claudeAccounts.length;
+    accounts.length +
+    openRouterAccounts.length +
+    claudeAccounts.length +
+    antigravityAccounts.length;
   const activeCount =
     accounts.filter((account) => normalizeStatus(account.status) === "active")
       .length +
     openRouterAccounts.filter((account) => account.isEnabled).length +
     claudeAccounts.filter((account) => claudeStatus(account) === "active")
-      .length;
+      .length +
+    antigravityAccounts.filter(
+      (account) => antigravityStatus(account) === "active",
+    ).length;
   const unavailableCount = registeredCount - activeCount;
 
   return (

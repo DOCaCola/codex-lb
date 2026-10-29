@@ -159,10 +159,14 @@ class ClaudeToolNames:
     def wire_name(self, identity: ToolIdentity) -> str:
         return self._wire_by_key[identity.key]
 
+    def wire_base(self, qualified: str) -> str:
+        """The provider's wire form of a qualified client name, before collision numbering."""
+        return _fit(claude_code_name(qualified), qualified)
+
     def add(self, identity: ToolIdentity) -> str:
         """Register a new identity; collisions are numbered in registration order, as OmniRoute does."""
         qualified = identity.qualified_name
-        base = _fit(claude_code_name(qualified), qualified)
+        base = self.wire_base(qualified)
         wire, number = base, 2
         while wire in self.by_wire:
             suffix = str(number)

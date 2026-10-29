@@ -91,6 +91,8 @@ from app.modules.accounts import api as accounts_api
 from app.modules.accounts.deletion import build_account_deletion_scheduler
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.usage_rollup_scheduler import build_account_usage_rollup_scheduler
+from app.modules.antigravity import api as antigravity_api
+from app.modules.antigravity.scheduler import build_antigravity_refresh_scheduler
 from app.modules.api_keys import api as api_keys_api
 from app.modules.api_keys.last_used_coalescer import build_api_key_last_used_flush_scheduler
 from app.modules.api_keys.reset_scheduler import build_api_key_limit_reset_scheduler
@@ -699,6 +701,7 @@ async def lifespan(app: FastAPI):
     model_scheduler = build_model_refresh_scheduler()
     openrouter_scheduler = OpenRouterRefreshScheduler()
     claude_scheduler = build_claude_refresh_scheduler()
+    antigravity_scheduler = build_antigravity_refresh_scheduler()
     quota_webhook_worker = build_quota_webhook_scheduler()
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
     quota_planner_scheduler = build_quota_planner_scheduler()
@@ -719,6 +722,7 @@ async def lifespan(app: FastAPI):
     await model_scheduler.start()
     await openrouter_scheduler.start()
     await claude_scheduler.start()
+    await antigravity_scheduler.start()
     await quota_webhook_worker.start()
     await sticky_session_cleanup_scheduler.start()
     await quota_planner_scheduler.start()
@@ -941,6 +945,7 @@ async def lifespan(app: FastAPI):
         await model_scheduler.stop()
         await openrouter_scheduler.stop()
         await claude_scheduler.stop()
+        await antigravity_scheduler.stop()
         await quota_webhook_worker.stop()
         # Stop the invalidation poller only after the model scheduler: a final
         # leader tick may still bump through the installed poller.
@@ -1088,6 +1093,7 @@ def create_app() -> FastAPI:
     app.include_router(model_sources_api.router)
     app.include_router(openrouter_api.router)
     app.include_router(claude_api.router)
+    app.include_router(antigravity_api.router)
     app.include_router(quota_webhook_api.router)
     app.include_router(health_api.router)
 

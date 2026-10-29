@@ -190,6 +190,8 @@ class SettingsRepository:
         single_account_id: str | None = None,
         claude_single_account_id: str | None = None,
         clear_claude_single_account_id: bool = False,
+        antigravity_single_account_id: str | None = None,
+        clear_antigravity_single_account_id: bool = False,
         openai_cache_affinity_max_age_seconds: int | None = None,
         dashboard_session_ttl_seconds: int | None = None,
         http_responses_session_bridge_prompt_cache_idle_ttl_seconds: int | None = None,
@@ -358,6 +360,8 @@ class SettingsRepository:
             settings.single_account_id = single_account_id
         if claude_single_account_id is not None or clear_claude_single_account_id:
             settings.claude_single_account_id = claude_single_account_id
+        if antigravity_single_account_id is not None or clear_antigravity_single_account_id:
+            settings.antigravity_single_account_id = antigravity_single_account_id
         if openai_cache_affinity_max_age_seconds is not None:
             settings.openai_cache_affinity_max_age_seconds = openai_cache_affinity_max_age_seconds
         if dashboard_session_ttl_seconds is not None:

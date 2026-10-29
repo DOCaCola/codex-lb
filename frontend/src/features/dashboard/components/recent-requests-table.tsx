@@ -325,7 +325,9 @@ export function RecentRequestsTable({
     if (!request?.planType) return missing;
     const plan = request.planType.trim().toLowerCase();
     if (!plan) return missing;
-    return request.modelSourceKind === "claude" ? t(`claude.subscription.${plan}`) : formatSlug(plan);
+    if (request.modelSourceKind === "claude") return t(`claude.subscription.${plan}`);
+    if (request.modelSourceKind === "antigravity") return t(`antigravity.plan.${plan}`);
+    return formatSlug(plan);
   };
   const [selectedRequest, setSelectedRequest] = useState<RequestLog | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);

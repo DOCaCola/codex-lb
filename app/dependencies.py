@@ -12,6 +12,7 @@ from app.db.session import get_background_session, get_session
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.service import AccountsService
+from app.modules.antigravity.service import AntigravityService
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.audit.repository import AuditRepository
@@ -389,6 +390,12 @@ def get_claude_service(session: AsyncSession = Depends(get_session)) -> ClaudeSe
     from app.modules.claude.repository import ClaudeRepository
 
     return ClaudeService(ClaudeRepository(session))
+
+
+def get_antigravity_service(session: AsyncSession = Depends(get_session)) -> AntigravityService:
+    from app.modules.antigravity.repository import AntigravityRepository
+
+    return AntigravityService(AntigravityRepository(session))
 
 
 def get_openrouter_service(session: AsyncSession = Depends(get_session)) -> OpenRouterService:

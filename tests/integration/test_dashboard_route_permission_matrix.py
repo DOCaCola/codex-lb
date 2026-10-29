@@ -224,6 +224,12 @@ def _route_auth(route: APIRoute) -> RouteAuth:
     return RouteAuth(session_validated, write_alias_gate, tuple(requirements))
 
 
+def _error_code(payload: object) -> object:
+    """The error envelope's code; status bodies may carry their own nullable ``error`` field."""
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return error.get("code") if isinstance(error, dict) else None
+
+
 def _dashboard_routes(app: FastAPI) -> Iterator[tuple[str, str, APIRoute]]:
     for route in app.routes:
         if not isinstance(route, APIRoute) or not route.path.startswith(DASHBOARD_PREFIX):
@@ -365,7 +371,7 @@ async def test_every_dashboard_mutation_rejects_cross_site_requests(
             headers={"Sec-Fetch-Site": "cross-site"},
         )
         payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
-        code = payload.get("error", {}).get("code") if isinstance(payload, dict) else None
+        code = _error_code(payload)
         if response.status_code != 403 or code != CROSS_SITE_REQUEST_REJECTED_CODE:
             unprotected.append(f"{method} {path} -> {response.status_code} {code}")
     assert unprotected == [], f"mutating routes reachable cross-site: {unprotected}"
@@ -390,7 +396,7 @@ async def test_every_dashboard_mutation_accepts_same_origin_requests(
             continue
         response = await async_client.request(method, _PATH_PARAM.sub("x", path), json={}, headers=headers)
         payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
-        code = payload.get("error", {}).get("code") if isinstance(payload, dict) else None
+        code = _error_code(payload)
         if code == CROSS_SITE_REQUEST_REJECTED_CODE:
             rejected.append(f"{method} {path} -> {response.status_code} {code}")
     assert rejected == [], f"same-origin requests rejected as cross-site: {rejected}"

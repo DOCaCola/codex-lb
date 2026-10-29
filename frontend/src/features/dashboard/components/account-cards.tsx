@@ -13,12 +13,15 @@ import type { OpenRouterAccount } from "@/features/openrouter/api";
 import { OpenRouterAccountCard } from "@/features/openrouter/account-display";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeAccountCard } from "@/features/claude/account-display";
+import type { AntigravityAccount } from "@/features/antigravity/api";
+import { AntigravityAccountCard } from "@/features/antigravity/account-display";
 import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 
 export type AccountCardsProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
   claudeAccounts?: ClaudeAccount[];
+  antigravityAccounts?: AntigravityAccount[];
   accountColors?: AccountColorHexes;
   readOnly?: boolean;
   onAction?: AccountCardProps["onAction"];
@@ -28,6 +31,7 @@ export function AccountCards({
   accounts,
   openRouterAccounts = [],
   claudeAccounts = [],
+  antigravityAccounts = [],
   accountColors = NO_ACCOUNT_COLORS,
   readOnly = false,
   onAction,
@@ -37,7 +41,8 @@ export function AccountCards({
   if (
     accounts.length === 0 &&
     openRouterAccounts.length === 0 &&
-    claudeAccounts.length === 0
+    claudeAccounts.length === 0 &&
+    antigravityAccounts.length === 0
   ) {
     return (
       <EmptyState
@@ -67,6 +72,13 @@ export function AccountCards({
     ...claudeAccounts.map((account) => (
       <ClaudeAccountCard
         key={`claude:${account.id}`}
+        account={account}
+        color={accountColors.modelSources.get(account.id)}
+      />
+    )),
+    ...antigravityAccounts.map((account) => (
+      <AntigravityAccountCard
+        key={"antigravity:" + account.id}
         account={account}
         color={accountColors.modelSources.get(account.id)}
       />

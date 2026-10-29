@@ -49,11 +49,11 @@ describe("ApiComparisonTrend", () => {
     );
     const filter = screen.getByRole("group", { name: "Provider" });
     expect(within(filter).getAllByRole("button").map((button) => button.textContent)).toEqual(
-      ["All", "Codex", "Claude", "OpenRouter"],
+      ["All", "Codex", "Claude", "Antigravity", "OpenRouter"],
     );
     expect(within(filter).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-    await user.click(within(filter).getByRole("button", { name: "Claude" }));
-    expect(onProviderChange).toHaveBeenCalledWith("claude");
+    await user.click(within(filter).getByRole("button", { name: "Antigravity" }));
+    expect(onProviderChange).toHaveBeenCalledWith("antigravity");
     view.rerender(
       <ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()}
         provider="claude" onProviderChange={onProviderChange} />,

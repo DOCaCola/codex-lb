@@ -13,6 +13,7 @@ import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-c
 import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
 import { useClaudeAccounts } from "@/features/claude/use-claude";
+import { useAntigravityAccounts } from "@/features/antigravity/use-antigravity";
 import { AccountList } from "@/features/dashboard/components/account-list";
 import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
 import { AccountViewModeToggle } from "@/features/dashboard/components/account-view-mode-toggle";
@@ -67,7 +68,9 @@ export function DashboardPage() {
   const canWriteAccounts = usePermission("accounts:write");
   const openRouterQuery = useOpenRouterAccounts();
   const claudeQuery = useClaudeAccounts();
+  const antigravityQuery = useAntigravityAccounts();
   const claudeAccounts = claudeQuery.data?.accounts ?? [];
+  const antigravityAccounts = antigravityQuery.data?.accounts ?? [];
   const openRouterAccounts = openRouterQuery.data?.accounts ?? [];
   const overviewTimeframe = useMemo(
     () => parseOverviewTimeframe(searchParams.get("overviewTimeframe")),
@@ -292,6 +295,7 @@ export function DashboardPage() {
                   accounts={overview?.accounts ?? []}
                   openRouterAccounts={openRouterAccounts}
                   claudeAccounts={claudeAccounts}
+                  antigravityAccounts={antigravityAccounts}
                 />
               </div>
               <div className="h-px min-w-8 flex-1 bg-border" />
@@ -305,6 +309,7 @@ export function DashboardPage() {
                 accounts={overview?.accounts ?? []}
                 openRouterAccounts={openRouterAccounts}
                 claudeAccounts={claudeAccounts}
+                antigravityAccounts={antigravityAccounts}
                 accountColors={accountColors}
                 readOnly={!canWriteAccounts}
                 sort={accountListSort}
@@ -316,6 +321,7 @@ export function DashboardPage() {
                 accounts={overview?.accounts ?? []}
                 openRouterAccounts={openRouterAccounts}
                 claudeAccounts={claudeAccounts}
+                antigravityAccounts={antigravityAccounts}
                 accountColors={accountColors}
                 readOnly={!canWriteAccounts}
                 onAction={handleAccountAction}
@@ -331,9 +337,19 @@ export function DashboardPage() {
                 Loading Claude accounts…
               </p>
             )}
+            {antigravityQuery.isLoading && (
+              <p className="text-sm text-muted-foreground">
+                Loading Antigravity accounts…
+              </p>
+            )}
             {claudeQuery.error && (
               <p role="alert" className="text-sm text-destructive">
                 {claudeQuery.error.message}
+              </p>
+            )}
+            {antigravityQuery.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {antigravityQuery.error.message}
               </p>
             )}
             {openRouterQuery.error && (

@@ -75,7 +75,8 @@ class ModelSourcesRepository:
                         ModelSource.kind.in_(("openai_compatible", "openrouter")),
                         ModelSource.supports_chat_completions.is_(True),
                     ),
-                    and_(ModelSource.kind == "claude", ModelSource.supports_responses.is_(True)),
+                    # Translating adapters serve Chat through their Responses wire.
+                    and_(ModelSource.kind.in_(("claude", "antigravity")), ModelSource.supports_responses.is_(True)),
                 )
             )
             .where(ModelSourceModel.model == model)
@@ -109,7 +110,7 @@ class ModelSourcesRepository:
             select(ModelSource)
             .options(selectinload(ModelSource.models))
             .join(ModelSourceModel, ModelSourceModel.source_id == ModelSource.id)
-            .where(ModelSource.kind.in_(("openai_compatible", "openrouter", "claude")))
+            .where(ModelSource.kind.in_(("openai_compatible", "openrouter", "claude", "antigravity")))
             .where(ModelSource.supports_responses.is_(True))
             .where(ModelSourceModel.model == model)
             .where(_enablement_filter(only_disabled))

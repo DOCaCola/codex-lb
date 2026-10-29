@@ -11,15 +11,19 @@ const schema = z.object({ series: z.array(z.object({
   dashed: z.boolean(), colorIndex: z.number().int().nonnegative(),
 })) });
 
-type TrendProvider = "openrouter" | "claude" | "openai_compatible";
+type TrendProvider = "openrouter" | "claude" | "antigravity" | "openai_compatible";
 
 const TRENDS_COLLECTION: Record<TrendProvider, string> = {
   openrouter: "/api/openrouter-accounts",
   claude: "/api/claude-accounts",
+  antigravity: "/api/antigravity-accounts",
   openai_compatible: "/api/model-sources",
 };
 
-const ACTIVITY_SCOPE: Record<Exclude<TrendProvider, "claude">, { label: string; note: string }> = {
+/** Subscription providers chart reported quota; the others chart recorded request activity. */
+const TREND_SCOPE: Record<TrendProvider, { label: string; note: string | null }> = {
+  claude: { label: "Claude quota history", note: null },
+  antigravity: { label: "Antigravity quota history", note: null },
   openrouter: { label: "OpenRouter activity", note: "Other OpenRouter activity is not included" },
   openai_compatible: { label: "Provider activity", note: "Requests sent to this provider by other clients are not included" },
 };
@@ -31,9 +35,9 @@ export function ProviderAccountTrends({ provider, accountId, embedded = false }:
     queryFn: ({ signal }) => get(`${TRENDS_COLLECTION[provider]}/${encodeURIComponent(accountId)}/trends`, schema, { signal }),
     refetchInterval: 60000,
   });
-  const activity = provider === "claude" ? null : ACTIVITY_SCOPE[provider];
-  const quota = activity === null;
-  return <section className={embedded ? "min-w-0" : "rounded-xl border bg-card p-5"} aria-label={activity?.label ?? "Claude quota history"}>
+  const scope = TREND_SCOPE[provider];
+  const quota = scope.note === null;
+  return <section className={embedded ? "min-w-0" : "rounded-xl border bg-card p-5"} aria-label={scope.label}>
     <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {quota ? "Quota remaining · 7 days" : "Request activity · 7 days"}
@@ -53,7 +57,7 @@ export function ProviderAccountTrends({ provider, accountId, embedded = false }:
         <Chart series={query.data.series} percentage={quota} />
       </Suspense>}
     <p className="mt-2 text-xs text-muted-foreground">
-      {activity ? `Hourly requests recorded by codex-lb, including errors. ${activity.note}; history depends on log retention.`
+      {!quota ? "Hourly requests recorded by codex-lb, including errors. " + scope.note + "; history depends on log retention."
         : "Hourly averages of observed quota. Gaps mean no observations. Weekly plan is an even-consumption guideline based on recorded reset deadlines, not reported quota."}
     </p>
   </section>;

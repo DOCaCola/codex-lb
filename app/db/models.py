@@ -1497,6 +1497,7 @@ class DashboardSettings(Base):
     )
     single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
     claude_single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    antigravity_single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # Subscription-exhaustion overflow designation (#2123). No foreign key on
     # purpose: a dangling id means "off", mirroring single_account_id. The drain
     # deadline is armed when the designation is cleared and compared against
@@ -2173,6 +2174,109 @@ class OpenRouterAccount(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     source: Mapped[ModelSource] = relationship(lazy="selectin")
     __mapper_args__ = {"version_id_col": version}
+
+
+class AntigravityAccount(Base):
+    __tablename__ = "antigravity_accounts"
+
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
+    routing_policy: Mapped[str] = mapped_column(String, nullable=False, default="normal", server_default="normal")
+    credentials_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # Google OAuth subject: the account identity across reconnects and plan changes.
+    google_subject: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # One signed-int64 value per account, like one native CLI installation.
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # ready | reauth_required
+    credential_status: Mapped[str] = mapped_column(String, nullable=False, default="ready", server_default="ready")
+    # NULL, banned, misconfigured or location_unsupported; verification is a cooldown, not a hold.
+    hold: Mapped[str | None] = mapped_column(String, nullable=True)
+    hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hold_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    state_json: Mapped[str] = mapped_column(Text, nullable=False)
+    last_selected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    source: Mapped[ModelSource] = relationship(lazy="selectin")
+    __mapper_args__ = {"version_id_col": version}
+
+
+class AntigravityOAuthFlow(Base):
+    __tablename__ = "antigravity_oauth_flows"
+
+    state_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    verifier_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("antigravity_accounts.source_id", ondelete="CASCADE"), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AntigravityClientBuild(Base):
+    """A verified native CLI build: version and changelist are only valid together."""
+
+    __tablename__ = "antigravity_client_builds"
+
+    sha512: Mapped[str] = mapped_column(String, primary_key=True)
+    platform: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    changelist: Mapped[str] = mapped_column(String, nullable=False)
+    build_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    archive_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    verified_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AntigravityVersionState(Base):
+    __tablename__ = "antigravity_version_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform: Mapped[str] = mapped_column(String, nullable=False)
+    current_sha512: Mapped[str | None] = mapped_column(String, nullable=True)
+    pinned_sha512: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class AntigravityQuotaHistory(Base):
+    __tablename__ = "antigravity_quota_history"
+
+    source_id: Mapped[str] = mapped_column(
+        String, ForeignKey("antigravity_accounts.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    family: Mapped[str] = mapped_column(String, primary_key=True)
+    window: Mapped[str] = mapped_column(String, primary_key=True)
+    used_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    resets_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AntigravityCooldown(Base):
+    __tablename__ = "antigravity_cooldowns"
+
+    source_id: Mapped[str] = mapped_column(
+        String, ForeignKey("antigravity_accounts.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    # "account", "family:<quota family>" for exhausted quota, or "model:<catalog family>" for rate limits.
+    scope: Mapped[str] = mapped_column(String, primary_key=True)
+    until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class AntigravitySessionOwner(Base):
+    """Conversation affinity: a scope hash and its account, never history."""
+
+    __tablename__ = "antigravity_session_owners"
+
+    scope_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        String, ForeignKey("antigravity_accounts.source_id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
 
 
 class ModelSourceModel(Base):

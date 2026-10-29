@@ -12,6 +12,7 @@ export type AddAccountDialogProps = {
   onAddAccount: () => void;
   onOpenRouter?: () => void;
   onClaude?: () => void;
+  onAntigravity?: () => void;
   onOpenAICompatible?: () => void;
 };
 
@@ -36,7 +37,7 @@ function AccountOption({ icon: Icon, title, description, onClick }: {
 }
 
 export function AddAccountDialog({
-  open, onOpenChange, onImport, onAddAccount, onOpenRouter, onClaude, onOpenAICompatible,
+  open, onOpenChange, onImport, onAddAccount, onOpenRouter, onClaude, onAntigravity, onOpenAICompatible,
 }: AddAccountDialogProps) {
   const { t } = useTranslation();
   // Close first so Radix releases its pointer lock before the next modal opens.
@@ -68,6 +69,14 @@ export function AddAccountDialog({
               <AccountOption icon={KeyRound} title={t("accounts.addDialog.claudeTitle", "OAuth or file import")}
                 description={t("accounts.addDialog.claudeDescription", "Sign in with OAuth or import a Claude Code credential file.")}
                 onClick={() => handleSelect(onClaude)} />
+            </fieldset>
+          )}
+          {onAntigravity && (
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-2 text-xs font-semibold text-muted-foreground">Antigravity</legend>
+              <AccountOption icon={KeyRound} title={t("accounts.addDialog.antigravityTitle", "OAuth or file import")}
+                description={t("accounts.addDialog.antigravityDescription", "Sign in with Google or import an Antigravity credential file.")}
+                onClick={() => handleSelect(onAntigravity)} />
             </fieldset>
           )}
           {onOpenRouter && (

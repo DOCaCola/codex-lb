@@ -54,9 +54,13 @@ def _active_turn_start(items: list[JsonValue], *, compaction: bool) -> int:
 
 
 def project_foreign_replay(
-    payload: dict[str, JsonValue], *, require_complete_history: bool = False
+    payload: dict[str, JsonValue],
+    *,
+    require_complete_history: bool = False,
+    native_prefix: str = CLAUDE_REASONING_PREFIX,
+    provider: str = "claude",
 ) -> dict[str, JsonValue]:
-    """Preserve portable reasoning without treating foreign ciphertext as Claude state."""
+    """Preserve portable reasoning without treating foreign ciphertext as the target provider's state."""
     items = payload.get("input")
     if not isinstance(items, list):
         return payload
@@ -75,7 +79,7 @@ def project_foreign_replay(
             raise ClientPayloadError(
                 "Reasoning encrypted_content must be text", param=param, code="invalid_provider_history"
             )
-        if isinstance(token, str) and token.startswith(CLAUDE_REASONING_PREFIX):
+        if isinstance(token, str) and token.startswith(native_prefix):
             projected.append(item)
             continue
         texts: list[str] = []
@@ -112,7 +116,7 @@ def project_foreign_replay(
             )
         else:
             # Keep item positions stable for subsequent signed-history diagnostics.
-            # Foreign private state has no Claude wire representation;
+            # Foreign private state has no wire representation for this provider;
             # the original encrypted item remains in retained logical history.
             projected.append({"type": "reasoning", "summary": []})
         if token and not texts:
@@ -123,7 +127,7 @@ def project_foreign_replay(
             active += 1
     if not converted and not omitted:
         return payload
-    logger.info("claude_foreign_history_projection converted=%d omitted=%d active=%d", converted, omitted, active)
+    logger.info("%s_foreign_history_projection converted=%d omitted=%d active=%d", provider, converted, omitted, active)
     return {**payload, "input": projected}
 
 

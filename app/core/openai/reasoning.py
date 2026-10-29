@@ -10,6 +10,8 @@ from app.core.utils.json_guards import is_json_list, is_json_mapping
 logger = logging.getLogger(__name__)
 
 CLAUDE_REASONING_PREFIX = "claude-v1."
+ANTIGRAVITY_REASONING_PREFIX = "antigravity-v1."
+_PROVIDER_REASONING_PREFIXES = (CLAUDE_REASONING_PREFIX, ANTIGRAVITY_REASONING_PREFIX)
 
 _ITEM_ID_PREFIXES = {
     "message": "msg_",
@@ -23,15 +25,15 @@ _ITEM_ID_PREFIXES = {
 
 
 def ensure_native_provider_history(payload: Mapping[str, JsonValue]) -> None:
-    """Unscoped low-level callers cannot authenticate or drop Claude state."""
+    """Unscoped low-level callers cannot authenticate or drop Claude or Antigravity state."""
     items = payload.get("input")
     if not is_json_list(items):
         return
     for index, item in enumerate(items):
         token = item.get("encrypted_content") if is_json_mapping(item) else None
-        if isinstance(token, str) and token.startswith(CLAUDE_REASONING_PREFIX):
+        if isinstance(token, str) and token.startswith(_PROVIDER_REASONING_PREFIXES):
             raise ClientPayloadError(
-                "Claude history requires authenticated projection before native OpenAI dispatch.",
+                "Provider history requires authenticated projection before native OpenAI dispatch.",
                 param=f"input[{index}]",
                 code="nonportable_provider_history",
             )

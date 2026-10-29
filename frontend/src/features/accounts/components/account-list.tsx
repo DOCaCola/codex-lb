@@ -31,6 +31,9 @@ import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeListItem } from "@/features/claude/account-display";
 import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import { claudeStatus } from "@/features/claude/display-values";
+import type { AntigravityAccount } from "@/features/antigravity/api";
+import { AntigravityListItem } from "@/features/antigravity/account-display";
+import { antigravityStatus } from "@/features/antigravity/display-values";
 import type { ModelSource } from "@/features/model-sources/schemas";
 import { ModelSourceListItem } from "@/features/model-sources/account-display";
 import { modelSourceStatus } from "@/features/model-sources/display-values";
@@ -51,6 +54,8 @@ export type AccountListProps = {
   onOpenRouter?: () => void;
   claudeAccounts?: ClaudeAccount[];
   onClaude?: () => void;
+  antigravityAccounts?: AntigravityAccount[];
+  onAntigravity?: () => void;
   /** User-defined OpenAI-compatible sources. */
   modelSources?: ModelSource[];
   onOpenAICompatible?: () => void;
@@ -71,6 +76,8 @@ export function AccountList({
   onOpenRouter,
   claudeAccounts = [],
   onClaude,
+  antigravityAccounts = [],
+  onAntigravity,
   modelSources = [],
   onOpenAICompatible,
   accountColors = NO_ACCOUNT_COLORS,
@@ -144,6 +151,22 @@ export function AccountList({
           name: account.name,
           account,
         })),
+      ...antigravityAccounts
+        .filter(
+          (account) =>
+            (statusFilter === "all" ||
+              antigravityStatus(account) === statusFilter) &&
+            (!needle ||
+              `${account.name} ${account.id} ${account.email} antigravity google gemini ${account.planType.replaceAll("_", " ")} ${t(`antigravity.plan.${account.planType}`)}`
+                .toLowerCase()
+                .includes(needle)),
+        )
+        .map((account) => ({
+          kind: "antigravity" as const,
+          id: account.id,
+          name: account.name,
+          account,
+        })),
       ...filtered.map((account) => ({
         kind: "codex" as const,
         id: account.accountId,
@@ -186,6 +209,7 @@ export function AccountList({
     filtered,
     openRouterAccounts,
     claudeAccounts,
+    antigravityAccounts,
     modelSources,
     search,
     statusFilter,
@@ -196,6 +220,7 @@ export function AccountList({
     accounts.length +
     openRouterAccounts.length +
     claudeAccounts.length +
+    antigravityAccounts.length +
     modelSources.length;
 
   return (
@@ -321,6 +346,14 @@ export function AccountList({
                 selected={entry.id === selectedAccountId}
                 onSelect={onSelect}
               />
+            ) : entry.kind === "antigravity" ? (
+              <AntigravityListItem
+                key={entry.id}
+                account={entry.account}
+                color={accountColors.modelSources.get(entry.id)}
+                selected={entry.id === selectedAccountId}
+                onSelect={onSelect}
+              />
             ) : entry.kind === "openrouter" ? (
               <OpenRouterListItem
                 key={entry.id}
@@ -365,6 +398,7 @@ export function AccountList({
         onAddAccount={onOpenOauth}
         onOpenRouter={onOpenRouter}
         onClaude={onClaude}
+        onAntigravity={onAntigravity}
         onOpenAICompatible={onOpenAICompatible}
       />
     </div>

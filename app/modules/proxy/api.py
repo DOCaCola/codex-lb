@@ -18,6 +18,8 @@ from uuid import uuid4
 import anyio
 
 if TYPE_CHECKING:
+    from app.modules.antigravity.inference import AntigravityAttempt
+    from app.modules.antigravity.recovery import RecoveryState
     from app.modules.claude.chat_replay import ChatHistory
     from app.modules.claude.dispatch import PreparedClaudeRequest
     from app.modules.claude.failover import FailoverState
@@ -4138,7 +4140,7 @@ async def _build_codex_models_response_body(
         visible_source_models.append(source_model)
     visible_source_models.sort(
         key=lambda model: (
-            0 if model.source_kind == "claude" else 1,
+            _SOURCE_KIND_ORDER.get(model.source_kind or "", len(_SOURCE_KIND_ORDER)),
             _effective_source_codex_visibility(
                 model,
                 visibility_allowed_models=visibility_allowed_models,
@@ -4337,8 +4339,17 @@ async def _build_models_response_body(
 _ANTHROPIC_LIST_PROVIDERS: Final[Mapping[str, str]] = {
     MODEL_SOURCE_KIND_SUBSCRIPTION: "OpenAI account",
     "claude": "Claude account",
+    "antigravity": "Antigravity account",
     "openrouter": "OpenRouter",
 }
+# Subscription providers list after OpenAI's own models, then other sources.
+_SOURCE_KIND_ORDER: Final[Mapping[str, int]] = {"claude": 0, "antigravity": 1}
+# Sources whose adapter expands local history: they never continue an upstream response by ID.
+_STATELESS_ADAPTER_KINDS: Final = frozenset({"openrouter", "claude", "antigravity"})
+# Sources whose adapter translates Responses itself: tools, namespaces and item IDs stay intact.
+_TRANSLATING_ADAPTER_KINDS: Final = frozenset({"claude", "antigravity"})
+# Client-executed tool types the Antigravity adapter declares; hosted tools are dropped.
+_ANTIGRAVITY_TOOL_TYPES: Final = frozenset({"custom", "namespace", "tool_search"})
 
 
 async def _build_anthropic_models_response(api_key: ApiKeyData | None, *, now: float) -> Response:
@@ -4374,8 +4385,12 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
             else is_public_model(model, allowed_models)
         )
     ]
-    listed.extend(model for model in source_models if model.source_kind == "claude")
-    listed.extend(model for model in source_models if model.source_kind != "claude")
+    listed.extend(
+        sorted(
+            source_models,
+            key=lambda model: _SOURCE_KIND_ORDER.get(model.source_kind or "", len(_SOURCE_KIND_ORDER)),
+        )
+    )
     # Claude Code has no visibility field; the list is its picker, so catalog-hidden models stay out.
     listed = [model for model in listed if _model_visibility(model) == "list"]
     # Claude Code can only pick a model, so Fast is a sibling row; it is omitted where it would have no effect.
@@ -5007,12 +5022,16 @@ async def v1_chat_completions(
         if source is None
         else False
     )
-    if source is not None and source.kind == "claude":
+    if source is not None and source.kind in _TRANSLATING_ADAPTER_KINDS:
         try:
-            payload.apply_claude_controls(responses_payload)
+            payload.apply_adapter_controls(responses_payload, provider=source_label(source))
             from app.modules.claude.chat_replay import ChatHistory
 
-            chat_history = ChatHistory.from_messages(payload.messages) if payload.messages else None
+            # Claude restores its signed thinking for Chat clients; Antigravity continues an unsigned
+            # tool turn with the skip-validator sentinel (Gemini) or with thinking off (Claude wire).
+            chat_history = (
+                ChatHistory.from_messages(payload.messages) if source.kind == "claude" and payload.messages else None
+            )
         except ClientPayloadError as exc:
             return _logged_error_json_response(
                 request, 400, openai_client_payload_error(exc), headers=rate_limit_headers
@@ -5275,7 +5294,7 @@ async def _select_responses_model_source_with_continuity(
     if (
         source_selection is None
         or payload.previous_response_id is None
-        or source_selection[0].kind in {"openrouter", "claude"}
+        or source_selection[0].kind in _STATELESS_ADAPTER_KINDS
     ):
         # An explicitly selected provider model cannot run on the previous
         # subscription account. Its stateless adapter must expand retained
@@ -5689,7 +5708,7 @@ async def _source_compaction_response(
 ) -> Response:
     try:
         resolve_checkpoint = _source_checkpoint_resolver(request, api_key, context)
-        if source.kind in {"openrouter", "claude"}:
+        if source.kind in _STATELESS_ADAPTER_KINDS:
             expanded = await SourceContinuation(request, api_key, source.id).expand(
                 payload.model_dump(mode="json", exclude_none=True), resolve=resolve_checkpoint
             )
@@ -5701,7 +5720,10 @@ async def _source_compaction_response(
                 resolve=resolve_checkpoint,
             )
             payload = ResponsesCompactRequest.model_validate(expanded)
-        source_request = build_source_compaction_request(payload, keep_tool_declarations=source.kind == "claude")
+        # Prefix-cached adapters keep the conversation's tools so the summary turn reuses its cache.
+        source_request = build_source_compaction_request(
+            payload, keep_tool_declarations=source.kind in _TRANSLATING_ADAPTER_KINDS
+        )
     except ClientPayloadError as exc:
         return _logged_error_json_response(request, 400, openai_client_payload_error(exc), headers=rate_limit_headers)
     except ProxyResponseError as exc:
@@ -5902,6 +5924,21 @@ async def _dispatch_source_responses_response(
     )
     from app.modules.claude.overload import connect_retry_delay, is_overload, retry_delay, wait_for_retry
 
+    if source.kind == "antigravity":
+        return await _dispatch_antigravity_responses_response(
+            request,
+            payload,
+            source=source,
+            api_key=api_key,
+            rate_limit_headers=rate_limit_headers,
+            pre_normalization_effort=pre_normalization_effort,
+            enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+            native_codex_heartbeat=native_codex_heartbeat,
+            context=context,
+            chat_projection=chat_projection,
+            chat_include_usage=chat_include_usage,
+            require_complete_history=require_complete_history,
+        )
     recovery = FailoverState() if source.kind == "claude" else None
     recovery_clock = clock_for(context.service) if context is not None else REAL_CLOCK
     recovery_scheduler = scheduler_for(context.service) if context is not None else REAL_SCHEDULER
@@ -6015,6 +6052,53 @@ async def _dispatch_source_responses_response(
             await anyio.lowlevel.checkpoint()
 
 
+async def _dispatch_antigravity_responses_response(
+    request: Request,
+    payload: ResponsesRequest,
+    *,
+    source: ModelSource,
+    api_key: ApiKeyData | None,
+    rate_limit_headers: Mapping[str, str],
+    pre_normalization_effort: str | None,
+    enforce_openai_sdk_contract: bool,
+    native_codex_heartbeat: bool,
+    context: ProxyContext | None,
+    chat_projection: bool,
+    chat_include_usage: bool,
+    require_complete_history: bool,
+) -> Response:
+    """Antigravity's bounded recovery loop; each attempt reselects within the conversation's pool."""
+    from app.modules.antigravity.recovery import RecoveryState, plan_retry
+    from app.modules.claude.overload import wait_for_retry
+
+    recovery = RecoveryState()
+    clock = clock_for(context.service) if context is not None else REAL_CLOCK
+    scheduler = scheduler_for(context.service) if context is not None else REAL_SCHEDULER
+    while True:
+        try:
+            return await _dispatch_source_responses_attempt(
+                request,
+                payload,
+                source=source,
+                api_key=api_key,
+                rate_limit_headers=rate_limit_headers,
+                pre_normalization_effort=pre_normalization_effort,
+                enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+                native_codex_heartbeat=native_codex_heartbeat,
+                context=context,
+                chat_projection=chat_projection,
+                chat_include_usage=chat_include_usage,
+                require_complete_history=require_complete_history,
+                antigravity_recovery=recovery,
+            )
+        except ModelSourceForwardingError as exc:
+            delay = await plan_retry(recovery, exc)
+            if delay is None:
+                raise
+            if not await wait_for_retry(request, delay, clock=clock, scheduler=scheduler):
+                return Response()
+
+
 async def _dispatch_source_responses_attempt(
     request: Request,
     payload: ResponsesRequest,
@@ -6033,6 +6117,7 @@ async def _dispatch_source_responses_attempt(
     chat_history: ChatHistory | None = None,
     chat_include_usage: bool = False,
     require_complete_history: bool = False,
+    antigravity_recovery: RecoveryState | None = None,
 ) -> Response:
     """Serve a Responses request from an OpenAI-compatible model source.
 
@@ -6053,15 +6138,20 @@ async def _dispatch_source_responses_attempt(
         source,
         pre_normalization_effort=pre_normalization_effort,
     )
+    from app.modules.antigravity.errors import AntigravityError
     from app.modules.claude.credentials import ClaudeError
     from app.modules.claude.inference import prepare_responses as prepare_claude_responses
 
     claude_attempt = None
+    antigravity_attempt: AntigravityAttempt | None = None
     continuation = (
         SourceContinuation(
-            request, api_key, source.id, retain_incomplete=source.kind == "claude" and not chat_projection
+            request,
+            api_key,
+            source.id,
+            retain_incomplete=source.kind in _TRANSLATING_ADAPTER_KINDS and not chat_projection,
         )
-        if source.kind in {"openrouter", "claude"}
+        if source.kind in _STATELESS_ADAPTER_KINDS
         else None
     )
     if native_request is not None:
@@ -6121,6 +6211,26 @@ async def _dispatch_source_responses_attempt(
                 require_complete_history=require_complete_history,
             )
             source = claude_attempt.prepared.source
+        elif source.kind == "antigravity":
+            from app.modules.antigravity.inference import prepare_responses as prepare_antigravity_responses
+
+            assert continuation is not None and antigravity_recovery is not None
+            antigravity_attempt = await prepare_antigravity_responses(
+                source_payload,
+                api_key,
+                continuation,
+                antigravity_recovery,
+                chat_reasoning=chat_projection,
+                require_complete_history=require_complete_history,
+            )
+            source = antigravity_attempt.prepared.source
+            if antigravity_recovery.excluded:
+                logger.info(
+                    "antigravity_account_failover source_id=%s excluded_count=%d sends=%d",
+                    source.id,
+                    len(antigravity_recovery.excluded),
+                    antigravity_recovery.sends,
+                )
         if claude_attempt is not None and claude_recovery is not None:
             claude_attempt = replace(
                 claude_attempt, prepared=replace(claude_attempt.prepared, budget=claude_recovery.budget)
@@ -6157,6 +6267,16 @@ async def _dispatch_source_responses_attempt(
             and not isinstance(exc, ThreadNotFound)
         ):
             raise claude_recovery.last_error from exc
+        return _logged_error_json_response(
+            request,
+            exc.status_code,
+            {"error": exc.responses_error_detail},
+            headers={**rate_limit_headers, **exc.response_headers},
+        )
+    except AntigravityError as exc:
+        # A pool emptied by recovery reports the rejection that emptied it.
+        if antigravity_recovery is not None and antigravity_recovery.last_error is not None:
+            raise antigravity_recovery.last_error from exc
         return _logged_error_json_response(
             request,
             exc.status_code,
@@ -6211,6 +6331,9 @@ async def _dispatch_source_responses_attempt(
                 budget = thinking_value.get("budget_tokens")
                 upstream_thinking_mode = mode if isinstance(mode, str) else None
                 upstream_thinking_budget = budget if isinstance(budget, int) and not isinstance(budget, bool) else None
+        if antigravity_attempt is not None:
+            requested_effort = antigravity_attempt.prepared.requested_effort
+            upstream_effort = antigravity_attempt.prepared.effort
         reservation = await _enforce_request_limits(
             api_key,
             request_model=payload.model,
@@ -6227,7 +6350,13 @@ async def _dispatch_source_responses_attempt(
             admission_budget=admission_budget,
             requested_service_tier=payload.service_tier,
             requested_reasoning_effort=requested_effort,
-            plan_type=claude_attempt.prepared.plan_type if claude_attempt is not None else None,
+            plan_type=(
+                claude_attempt.prepared.plan_type
+                if claude_attempt is not None
+                else antigravity_attempt.prepared.plan_type
+                if antigravity_attempt is not None
+                else None
+            ),
             upstream_reasoning_effort=upstream_effort,
             upstream_thinking_mode=upstream_thinking_mode,
             upstream_thinking_budget_tokens=upstream_thinking_budget,
@@ -6249,11 +6378,17 @@ async def _dispatch_source_responses_attempt(
             await record_admission(source.id)
         if payload.stream:
             await open_with_disconnect_watch(
-                request, owner, _open_owned_source_stream(owner, source_payload, claude_attempt=claude_attempt)
+                request,
+                owner,
+                _open_owned_source_stream(
+                    owner, source_payload, claude_attempt=claude_attempt, antigravity_attempt=antigravity_attempt
+                ),
             )
             stream = owner.stream
             if claude_recovery is not None:
                 claude_recovery.stream_opened = True
+            if antigravity_recovery is not None:
+                antigravity_recovery.stream_opened = True
             if stream is None:
                 raise RuntimeError("model source open completed without assigning the stream")
             if native_request is not None:
@@ -6324,6 +6459,17 @@ async def _dispatch_source_responses_attempt(
             if claude_recovery is not None:
                 claude_recovery.stream_opened = True
             result = await open_with_disconnect_watch(request, owner, collect_response(owner.stream))
+        elif antigravity_attempt is not None:
+            from app.modules.antigravity.inference import collect_response as collect_antigravity_response
+
+            await open_with_disconnect_watch(
+                request,
+                owner,
+                _open_owned_source_stream(owner, source_payload, antigravity_attempt=antigravity_attempt),
+            )
+            assert owner.stream is not None and antigravity_recovery is not None
+            antigravity_recovery.stream_opened = True
+            result = await open_with_disconnect_watch(request, owner, collect_antigravity_response(owner.stream))
         else:
             result = await open_with_disconnect_watch(request, owner, forward_source_responses(source, source_payload))
         if continuation is not None:
@@ -6367,10 +6513,21 @@ async def _dispatch_source_responses_attempt(
 
 
 async def _open_owned_source_stream(
-    owner: SourceDispatch, source_payload: dict[str, JsonValue], *, claude_attempt: ClaudeAttempt | None = None
+    owner: SourceDispatch,
+    source_payload: dict[str, JsonValue],
+    *,
+    claude_attempt: ClaudeAttempt | None = None,
+    antigravity_attempt: AntigravityAttempt | None = None,
 ) -> None:
     """Open the source stream for ``owner``; assigning ``owner.stream`` is the coroutine's last statement."""
 
+    if antigravity_attempt is not None:
+        from app.modules.antigravity.transport import open_responses as open_antigravity_responses
+
+        owner.stream = await open_antigravity_responses(
+            antigravity_attempt, scheduler=owner.scheduler, clock=owner.clock
+        )
+        return
     if claude_attempt is not None:
         from app.modules.claude.transport import open_responses
 
@@ -6486,7 +6643,7 @@ def _shape_source_responses_payload(
             }
         else:
             source_payload["reasoning"] = {"effort": source_reasoning_effort}
-    if source.kind not in {"openrouter", "claude"}:
+    if source.kind not in _STATELESS_ADAPTER_KINDS:
         strip_replayed_tool_call_namespaces_from_payload(source_payload)
     source_payload["stream"] = bool(payload.stream)
     _apply_source_response_request_overrides(
@@ -6501,9 +6658,10 @@ def _shape_source_responses_payload(
     if source.kind != "claude":
         _drop_unsupported_source_response_tools(
             source_payload,
-            supported_tool_types=source_model_supported_tool_types(source, payload.model),
+            supported_tool_types=source_model_supported_tool_types(source, payload.model)
+            | (_ANTIGRAVITY_TOOL_TYPES if source.kind == "antigravity" else frozenset()),
         )
-    if source.kind != "claude":
+    if source.kind not in _TRANSLATING_ADAPTER_KINDS:
         # Claude item IDs link local authenticated search replay, not OpenAI
         # store lookups. Its adapter never forwards these IDs to Anthropic.
         source_payload = strip_unstored_lookup_item_ids(source_payload)

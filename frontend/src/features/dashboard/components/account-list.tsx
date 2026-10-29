@@ -35,6 +35,15 @@ import { ClaudeName, ClaudePlan } from "@/features/claude/account-display";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
 import { claudeStatus } from "@/features/claude/display-values";
+import type { AntigravityAccount } from "@/features/antigravity/api";
+import { AntigravityName, AntigravityPlan } from "@/features/antigravity/account-display";
+import {
+  SHORT_FAMILY_LABELS,
+  antigravityStatus,
+  bindingWindow,
+  modelSummary,
+  quotaFamilies,
+} from "@/features/antigravity/display-values";
 import { OpenRouterName, OpenRouterTier } from "@/features/openrouter/account-display";
 import {
   keyAllowance,
@@ -59,11 +68,13 @@ const ACCOUNT_LIST_VISIBLE_ROWS = 8;
 const ACCOUNT_LIST_ROW_HEIGHT_REM = 4.5;
 const ACCOUNT_LIST_COLUMNS =
   "minmax(13rem,1.3fr) 7.75rem 5rem minmax(14rem,1.2fr) 7.5rem 7.5rem minmax(8rem,0.8fr) 8rem";
+const PROVIDER_ORDER = ["codex", "claude", "antigravity", "openrouter"];
 
 type AccountListProps = {
   accounts: AccountSummary[];
   openRouterAccounts?: OpenRouterAccount[];
   claudeAccounts?: ClaudeAccount[];
+  antigravityAccounts?: AntigravityAccount[];
   accountColors?: AccountColorHexes;
   readOnly?: boolean;
   sort?: AccountListSort;
@@ -423,6 +434,7 @@ export function AccountList({
   accounts,
   openRouterAccounts = [],
   claudeAccounts = [],
+  antigravityAccounts = [],
   accountColors = NO_ACCOUNT_COLORS,
   readOnly = false,
   sort: controlledSort,
@@ -449,6 +461,11 @@ export function AccountList({
         id: account.id,
         account,
       })),
+      ...antigravityAccounts.map((account) => ({
+        kind: "antigravity" as const,
+        id: account.id,
+        account,
+      })),
       ...openRouterAccounts.map((account) => ({
         kind: "openrouter" as const,
         id: account.id,
@@ -466,8 +483,7 @@ export function AccountList({
         a.kind !== b.kind
       )
         return (
-          ["codex", "claude", "openrouter"].indexOf(a.kind) -
-          ["codex", "claude", "openrouter"].indexOf(b.kind)
+          PROVIDER_ORDER.indexOf(a.kind) - PROVIDER_ORDER.indexOf(b.kind)
         );
       if (a.kind === "openrouter" && b.kind === "openrouter") {
         const value = (account: OpenRouterAccount): number | null => {
@@ -496,13 +512,17 @@ export function AccountList({
             ? normalizeStatus(entry.account.status)
             : entry.kind === "claude"
               ? claudeStatus(entry.account)
-              : openRouterStatus(entry.account);
+              : entry.kind === "antigravity"
+                ? antigravityStatus(entry.account)
+                : openRouterStatus(entry.account);
         if (sort.key === "plan")
           return entry.kind === "codex"
             ? formatSlug(entry.account.planType)
             : entry.kind === "claude"
               ? t(`claude.subscription.${entry.account.planType}`)
-              : "OpenRouter";
+              : entry.kind === "antigravity"
+                ? t(`antigravity.plan.${entry.account.planType}`)
+                : "OpenRouter";
         return name(entry);
       };
       return (
@@ -510,7 +530,7 @@ export function AccountList({
         (sort.direction === "asc" ? 1 : -1)
       );
     });
-  }, [accounts, openRouterAccounts, claudeAccounts, sort, t]);
+  }, [accounts, openRouterAccounts, claudeAccounts, antigravityAccounts, sort, t]);
 
   const handleSort = (key: AccountListSortKey) => {
     const nextSort: AccountListSort =
@@ -526,7 +546,8 @@ export function AccountList({
   if (
     accounts.length === 0 &&
     openRouterAccounts.length === 0 &&
-    claudeAccounts.length === 0
+    claudeAccounts.length === 0 &&
+    antigravityAccounts.length === 0
   ) {
     return (
       <EmptyState
@@ -591,6 +612,14 @@ export function AccountList({
           if (entry.kind === "claude")
             return (
               <ClaudeRow
+                key={entry.id}
+                account={entry.account}
+                color={accountColors.modelSources.get(entry.account.id)}
+              />
+            );
+          if (entry.kind === "antigravity")
+            return (
+              <AntigravityRow
                 key={entry.id}
                 account={entry.account}
                 color={accountColors.modelSources.get(entry.account.id)}
@@ -834,6 +863,47 @@ function ClaudeRow({ account, color }: { account: ClaudeAccount; color: string |
         <Button asChild size="sm" variant="ghost"
           className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground">
           <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`} aria-label="Details">
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function AntigravityRow({ account, color }: { account: AntigravityAccount; color: string | undefined }) {
+  return (
+    <div
+      data-testid="account-list-row"
+      className="grid min-h-[4.5rem] items-center gap-3 px-3 py-2 text-sm"
+      style={{ gridTemplateColumns: ACCOUNT_LIST_COLUMNS }}
+    >
+      <div className="min-w-0">
+        <p className="truncate font-medium">
+          <AntigravityName account={account} color={color} />
+        </p>
+        <p className="text-xs text-muted-foreground">{modelSummary(account)}</p>
+      </div>
+      <StatusBadge status={normalizeStatus(antigravityStatus(account))} />
+      <span className="text-xs text-muted-foreground"><AntigravityPlan account={account} /></span>
+      <QuotaCells quotas={quotaFamilies(account).flatMap((family) => {
+        const window = bindingWindow(account, family);
+        return window
+          ? [{
+              ...quotaLabel(SHORT_FAMILY_LABELS[family], Math.max(0, 100 - window.usedPercent), window.resetsAt),
+              diagnostic: window.window === "weekly" ? "weekly" : "5h",
+            }]
+          : [];
+      })} />
+      <span className="text-xs text-muted-foreground">Not applicable</span>
+      <span className="text-xs text-muted-foreground">Not reported</span>
+      <span className="text-xs text-muted-foreground">
+        {account.hold ? formatSlug(account.hold) : formatSlug(account.credentialStatus)}
+      </span>
+      <div className="flex justify-end">
+        <Button asChild size="sm" variant="ghost"
+          className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground">
+          <Link to={"/accounts?selected=" + encodeURIComponent(account.id)} aria-label="Details">
             <ExternalLink className="h-3.5 w-3.5" />
           </Link>
         </Button>

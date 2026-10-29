@@ -7,11 +7,13 @@ from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.usage.pacing import scheduled_remaining_series
-from app.db.models import ClaudeQuotaHistory, RequestLog
+from app.db.models import AntigravityQuotaHistory, ClaudeQuotaHistory, RequestLog
 from app.modules.shared.schemas import DashboardModel
 
 HOUR = 3600
 HOURS = 7 * 24
+_FAMILY_LABELS = {"gemini": "Gemini", "argon": "Gemini 4 Argon", "claude": "Claude & GPT"}
+_WINDOW_LABELS = {"five_hour": "5-hour", "weekly": "weekly"}
 
 
 class TrendPoint(DashboardModel):
@@ -112,7 +114,59 @@ async def read_trends(session: AsyncSession, source_id: str, *, quota: bool) -> 
     return result
 
 
-def weekly_plan(observations: list[ClaudeQuotaHistory], *, start: int, end: int) -> list[TrendPoint]:
+async def read_antigravity_trends(session: AsyncSession, source_id: str) -> ProviderTrends:
+    """Remaining quota per family and window; the plan line follows the binding weekly window."""
+    now = datetime.now(UTC)
+    end = int(now.timestamp()) // HOUR * HOUR
+    start = end - (HOURS - 1) * HOUR
+    since = datetime.fromtimestamp(start, UTC).replace(tzinfo=None)
+    until = datetime.fromtimestamp(end + HOUR, UTC).replace(tzinfo=None)
+    column = AntigravityQuotaHistory.observed_at
+    observations = list(
+        await session.scalars(
+            select(AntigravityQuotaHistory)
+            .where(AntigravityQuotaHistory.source_id == source_id, column >= since, column < until)
+            .order_by(column)
+        )
+    )
+    values: dict[tuple[str, str], dict[int, list[float]]] = {}
+    for observation in observations:
+        hour = int(observation.observed_at.replace(tzinfo=UTC).timestamp()) // HOUR * HOUR
+        remaining = max(0.0, min(100.0, 100.0 - observation.used_percent))
+        values.setdefault((observation.family, observation.window), {}).setdefault(hour, []).append(remaining)
+    keys = [(family, window) for family in _FAMILY_LABELS for window in _WINDOW_LABELS if (family, window) in values]
+    result = ProviderTrends(
+        series=[
+            TrendSeries(
+                key=f"{family}_{window}",
+                label=f"{_FAMILY_LABELS[family]} {_WINDOW_LABELS[window]}",
+                color_index=index,
+                points=[
+                    TrendPoint(
+                        t=datetime.fromtimestamp(hour, UTC),
+                        v=sum(points) / len(points) if (points := values[(family, window)].get(hour)) else None,
+                    )
+                    for hour in range(start, end + HOUR, HOUR)
+                ],
+            )
+            for index, (family, window) in enumerate(keys)
+        ]
+    )
+    weekly = [item for item in observations if item.window == "weekly"]
+    if weekly:
+        latest: dict[str, AntigravityQuotaHistory] = {item.family: item for item in weekly}
+        binding = max(latest.values(), key=lambda item: item.used_percent).family
+        plan = weekly_plan([item for item in weekly if item.family == binding], start=start, end=end)
+        if plan:
+            result.series.append(
+                TrendSeries(key="weekly_plan", label="Weekly plan", points=plan, dashed=True, color_index=1)
+            )
+    return result
+
+
+def weekly_plan(
+    observations: list[ClaudeQuotaHistory] | list[AntigravityQuotaHistory], *, start: int, end: int
+) -> list[TrendPoint]:
     """The Codex weekly plan line, using each hour's latest recorded reset deadline."""
     deadlines: dict[int, tuple[int, int]] = {}
     for observation in observations:

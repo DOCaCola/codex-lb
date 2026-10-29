@@ -72,6 +72,7 @@ class DashboardSettingsData:
     relative_availability_top_k: int
     single_account_id: str | None
     claude_single_account_id: str | None = field(default=None, kw_only=True)
+    antigravity_single_account_id: str | None = field(default=None, kw_only=True)
     openai_cache_affinity_max_age_seconds: int
     dashboard_session_ttl_seconds: int
     http_responses_session_bridge_prompt_cache_idle_ttl_seconds: int
@@ -191,6 +192,7 @@ class DashboardSettingsUpdateData:
     relative_availability_top_k: int
     single_account_id: str | None
     claude_single_account_id: str | None = field(default=None, kw_only=True)
+    antigravity_single_account_id: str | None = field(default=None, kw_only=True)
     openai_cache_affinity_max_age_seconds: int
     dashboard_session_ttl_seconds: int
     http_responses_session_bridge_prompt_cache_idle_ttl_seconds: int
@@ -398,6 +400,8 @@ class SettingsService:
             single_account_id=payload.single_account_id,
             claude_single_account_id=payload.claude_single_account_id,
             clear_claude_single_account_id=payload.claude_single_account_id is None,
+            antigravity_single_account_id=payload.antigravity_single_account_id,
+            clear_antigravity_single_account_id=payload.antigravity_single_account_id is None,
             openai_cache_affinity_max_age_seconds=payload.openai_cache_affinity_max_age_seconds,
             dashboard_session_ttl_seconds=payload.dashboard_session_ttl_seconds,
             http_responses_session_bridge_prompt_cache_idle_ttl_seconds=(
@@ -650,6 +654,7 @@ def _settings_data(row: DashboardSettings, totp: TotpEnrollmentSummary) -> Dashb
         relative_availability_top_k=row.relative_availability_top_k,
         single_account_id=row.single_account_id,
         claude_single_account_id=row.claude_single_account_id,
+        antigravity_single_account_id=row.antigravity_single_account_id,
         openai_cache_affinity_max_age_seconds=row.openai_cache_affinity_max_age_seconds,
         dashboard_session_ttl_seconds=row.dashboard_session_ttl_seconds,
         http_responses_session_bridge_prompt_cache_idle_ttl_seconds=(

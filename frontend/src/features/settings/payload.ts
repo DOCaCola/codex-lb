@@ -32,6 +32,7 @@ export function buildSettingsUpdateRequest(
     relativeAvailabilityTopK: settings.relativeAvailabilityTopK,
     singleAccountId: settings.singleAccountId,
     claudeSingleAccountId: settings.claudeSingleAccountId,
+    antigravitySingleAccountId: settings.antigravitySingleAccountId,
     openaiCacheAffinityMaxAgeSeconds: settings.openaiCacheAffinityMaxAgeSeconds,
     dashboardSessionTtlSeconds: settings.dashboardSessionTtlSeconds,
     warmupModel: settings.warmupModel,

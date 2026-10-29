@@ -14,7 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.db.models import Account, ModelSource
 
 # Codex accounts, then the model-source kinds: every source is a provider account.
-AccountProvider = Literal["codex", "claude", "openrouter", "openai_compatible"]
+AccountProvider = Literal["codex", "claude", "antigravity", "openrouter", "openai_compatible"]
 
 
 def provider_account_key(
