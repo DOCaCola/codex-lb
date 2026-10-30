@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.core.clients.http import lease_model_source_session
 from app.core.types import JsonValue
-from app.modules.antigravity.constants import API_VERSION, CLOUD_CODE_BASE_URL
+from app.modules.antigravity.constants import API_VERSION, CLOUD_CODE_BASE_URL, GO_SKIP_AUTO_HEADERS
 from app.modules.antigravity.errors import AntigravityError, MetadataHTTPError
 from app.modules.antigravity.version import ClientIdentity
 
@@ -123,6 +123,7 @@ class CloudCodeClient:
                     method_url(method),
                     data=json.dumps(body, separators=(",", ":")).encode(),
                     headers=native_headers(access_token, self.identity),
+                    skip_auto_headers=GO_SKIP_AUTO_HEADERS,
                     timeout=aiohttp.ClientTimeout(total=30, connect=10),
                     allow_redirects=False,
                 ) as response:

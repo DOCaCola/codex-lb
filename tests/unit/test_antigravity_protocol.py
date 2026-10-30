@@ -123,6 +123,35 @@ def test_foreign_or_unrestored_signatures_use_the_validator_sentinel() -> None:
     assert unsigned.request["contents"][1]["parts"][-1]["thoughtSignature"] == SKIP_SIGNATURE
 
 
+def test_replayed_args_and_declared_properties_follow_go_map_order() -> None:
+    # The CLI re-encodes call args as map[string]any: byte order at every depth, unknown keys kept.
+    tool = {
+        "type": "function",
+        "name": "probe",
+        "parameters": {
+            "type": "object",
+            "properties": {"zeta": {"type": "string"}, "Alpha": {"type": "object"}, "_under": {"type": "boolean"}},
+        },
+    }
+    args = {"zeta": "z", "query": "q", "Alpha": {"y": 1, "b": [{"d": 1, "c": 2}], "B": 0}, "_under": True}
+    projection = _project(
+        {
+            "tools": [tool],
+            "input": [
+                {"role": "user", "content": "probe"},
+                {"type": "function_call", "call_id": "call_1", "name": "probe", "arguments": json.dumps(args)},
+                {"type": "function_call_output", "call_id": "call_1", "output": "done"},
+            ],
+        }
+    )
+    call = projection.request["contents"][1]["parts"][-1]["functionCall"]
+    assert json.dumps(call["args"], separators=(",", ":")) == (
+        '{"Alpha":{"B":0,"b":[{"c":2,"d":1}],"y":1},"_under":true,"query":"q","zeta":"z"}'
+    )
+    declaration = projection.request["tools"][0]["functionDeclarations"][0]
+    assert list(declaration["parameters"]["properties"]) == ["Alpha", "_under", "zeta"]
+
+
 def test_claude_on_antigravity_answers_tools_as_user_and_keeps_signed_thinking() -> None:
     projection = _project(_tool_turn(CLAUDE, signer=_scope(CLAUDE)), CLAUDE)
     contents = projection.request["contents"]

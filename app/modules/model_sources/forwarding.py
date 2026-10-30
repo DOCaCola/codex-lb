@@ -4,7 +4,7 @@ import asyncio
 import codecs
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from json import JSONDecodeError
@@ -803,6 +803,7 @@ async def _open_source_stream(
     header_deadline_seconds: float | None = SOURCE_HEADER_DEADLINE_SECONDS,
     first_frame_deadline_seconds: float | None = SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
     prepared_headers: Mapping[str, str] | None = None,
+    skip_auto_headers: Collection[str] = (),
     compact_json: bool = False,
 ) -> tuple[AsyncExitStack, aiohttp.ClientResponse, bytes | None]:
     """Open the upstream request eagerly so errors surface before headers.
@@ -841,6 +842,7 @@ async def _open_source_stream(
                         headers=prepared_headers
                         if prepared_headers is not None
                         else _source_headers(source, encryptor=encryptor, stream=True),
+                        skip_auto_headers=skip_auto_headers,
                         # Compact JSON imitates native clients whose wire image a source requires.
                         data=json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
                         if compact_json

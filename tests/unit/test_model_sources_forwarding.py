@@ -5,7 +5,7 @@ import json
 import logging
 import math
 import ssl
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection
 from types import SimpleNamespace
 from typing import cast
 
@@ -510,8 +510,18 @@ class _FakeSession:
         json: object,
         timeout: aiohttp.ClientTimeout,
         data: bytes | None = None,
+        skip_auto_headers: Collection[str] = (),
     ) -> _PostContext:
-        self.calls.append({"url": url, "headers": headers, "data": data, "json": json, "timeout": timeout})
+        self.calls.append(
+            {
+                "url": url,
+                "headers": headers,
+                "data": data,
+                "json": json,
+                "timeout": timeout,
+                "skip_auto_headers": skip_auto_headers,
+            }
+        )
         return self._context
 
 
@@ -889,6 +899,8 @@ async def test_stream_responses_yields_the_first_chunk_before_reading_further(mo
     # (which would pre-empt the header/first-frame phases under a low idle window).
     assert timeout.sock_read is None
     assert cast(dict[str, str], session.calls[0]["headers"])["Accept"] == "text/event-stream"
+    # Only native wire images opt out of aiohttp's automatic headers.
+    assert session.calls[0]["skip_auto_headers"] == ()
 
     # The first chunk is already in hand: it is yielded without touching the
     # (stalled) remainder of the body.

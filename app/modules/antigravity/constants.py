@@ -31,5 +31,8 @@ MANIFEST_URL = "https://antigravity-cli-auto-updater-974169037036.us-central1.ru
 PLATFORMS = ("darwin_arm64", "darwin_amd64", "linux_arm64", "linux_amd64", "windows_amd64", "windows_arm64")
 DEFAULT_PLATFORM = "darwin_arm64"
 
+# Go's net/http sends no Accept header; aiohttp would add "Accept: */*" to every native request.
+GO_SKIP_AUTO_HEADERS = frozenset({"Accept"})
+
 # Thought-signature sentinel accepted for Gemini function calls without a valid signature.
 SKIP_SIGNATURE = "skip_thought_signature_validator"

@@ -158,6 +158,8 @@ def test_forwarding_has_no_access_to_inbound_request_headers() -> None:
     ]
     assert header_like_parameters == [
         ("_open_source_stream", "prepared_headers"),
+        # Names of automatic headers a native wire image omits; carries no header values.
+        ("_open_source_stream", "skip_auto_headers"),
         ("__init__", "upstream_headers"),
     ], header_like_parameters
 

@@ -12,7 +12,7 @@ from app.db.models import AntigravityClientBuild
 from app.db.session import SessionLocal
 from app.modules.antigravity import oauth
 from app.modules.antigravity.client import CloudCodeClient, LoadCodeAssist
-from app.modules.antigravity.constants import SKIP_SIGNATURE
+from app.modules.antigravity.constants import GO_SKIP_AUTO_HEADERS, SKIP_SIGNATURE
 from app.modules.antigravity.schemas import Credentials, UserInfo
 
 pytestmark = pytest.mark.integration
@@ -158,6 +158,7 @@ def install_upstream(monkeypatch, *, rejections: int = 0, rounds: list[list[dict
 
     async def open_stream(source, path, payload, **kwargs):
         assert path == transport.STREAM_PATH
+        assert kwargs["skip_auto_headers"] is GO_SKIP_AUTO_HEADERS
         captured.append((source.id, payload, kwargs["prepared_headers"]))
         if len(captured) <= rejections:
             raise ModelSourceForwardingError(status_code=429, payload=QUOTA_EXHAUSTED, upstream_status_code=429)

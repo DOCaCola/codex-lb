@@ -19,6 +19,7 @@ from app.modules.antigravity.constants import (
     AUTHORIZE_URL,
     CLIENT_ID,
     CLIENT_SECRET,
+    GO_SKIP_AUTO_HEADERS,
     REDIRECT_URI,
     SCOPES,
     TOKEN_URL,
@@ -138,6 +139,7 @@ async def _token(form: dict[str, str]) -> TokenResponse:
                 TOKEN_URL,
                 data=form,
                 headers={"User-Agent": GO_USER_AGENT, "Accept-Encoding": "gzip"},
+                skip_auto_headers=GO_SKIP_AUTO_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
                 allow_redirects=False,
             ) as response:
@@ -206,6 +208,7 @@ async def userinfo(access_token: str) -> UserInfo:
                     "User-Agent": GO_USER_AGENT,
                     "Accept-Encoding": "gzip",
                 },
+                skip_auto_headers=GO_SKIP_AUTO_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
                 allow_redirects=False,
             ) as response:

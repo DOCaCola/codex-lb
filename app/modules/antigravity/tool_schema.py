@@ -177,8 +177,9 @@ def compile_tool_schema(
                 if not isinstance(properties, dict):
                     raise invalid("properties must be an object")
                 if properties:
+                    # The CLI declares properties as a Go map: encoded in byte order of the names.
                     result["properties"] = {
-                        name: compile_node(child, resolving, depth + 1) for name, child in properties.items()
+                        name: compile_node(properties[name], resolving, depth + 1) for name in sorted(properties)
                     }
                 required = node.get("required")
                 if isinstance(required, list):

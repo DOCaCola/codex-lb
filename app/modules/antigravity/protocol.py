@@ -92,6 +92,18 @@ class GeminiProjection:
     search: SearchPolicy | None = None
 
 
+def go_map_order(value: JsonValue) -> JsonValue:
+    """Key order of Go's encoding/json for map[string]any, in which the CLI replays call args.
+
+    Keys are byte-sorted at every depth; code-point order of str equals UTF-8 byte order.
+    """
+    if isinstance(value, dict):
+        return {key: go_map_order(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [go_map_order(item) for item in value]
+    return value
+
+
 def _parts(value: JsonValue, *, param: str) -> list[dict[str, JsonValue]]:
     if isinstance(value, str):
         return [{"text": value}] if value else []
@@ -414,7 +426,7 @@ def project_responses(
             if identity.arguments is not None:
                 arguments = identity.arguments.encode(cast(dict[str, JsonValue], arguments))
             wire = tools.wire_name(identity)
-            model_parts().parts.append({"functionCall": {"id": call_id, "name": wire, "args": arguments}})
+            model_parts().parts.append({"functionCall": {"id": call_id, "name": wire, "args": go_map_order(arguments)}})
             calls[call_id] = wire
             pending.add(call_id)
         elif kind in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
@@ -480,7 +492,7 @@ def project_responses(
                 # in the surrounding messages.
                 continue
             model_parts().parts.append(
-                {"functionCall": {"id": sealed.call_id, "name": SEARCH_TOOL_NAME, "args": sealed.args}}
+                {"functionCall": {"id": sealed.call_id, "name": SEARCH_TOOL_NAME, "args": go_map_order(sealed.args)}}
             )
             placed_searches.add(sealed.item_id)
         else:

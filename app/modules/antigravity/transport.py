@@ -26,6 +26,7 @@ from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler
 from app.core.types import JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.antigravity.classify import classify
+from app.modules.antigravity.constants import GO_SKIP_AUTO_HEADERS
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.inference import AntigravityAttempt
 from app.modules.antigravity.recovery import AntigravityUpstreamError
@@ -85,6 +86,7 @@ class _Upstream:
                 self.envelope,
                 encryptor=None,
                 prepared_headers=prepared.headers,
+                skip_auto_headers=GO_SKIP_AUTO_HEADERS,
                 first_frame_deadline_seconds=None,
                 compact_json=True,
                 scheduler=self.scheduler,
