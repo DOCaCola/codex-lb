@@ -32,7 +32,14 @@ class CatalogEntry(BaseModel):
     max_output_tokens: int | None = Field(default=None, gt=0, alias="maxOutputTokens")
     supports_thinking: bool = Field(default=False, alias="supportsThinking")
     supports_images: bool = Field(default=False, alias="supportsImages")
+    disabled: bool = False
+    is_internal: bool = Field(default=False, alias="isInternal")
     quota_info: QuotaInfo | None = Field(default=None, alias="quotaInfo")
+
+
+def _unavailable(model_id: str, entry: CatalogEntry) -> bool:
+    """Entries the account cannot call: gated off its plan (``-disabled``, opencodex) or internal (OmniRoute)."""
+    return entry.disabled or entry.is_internal or model_id.endswith("-disabled")
 
 
 def quota_family(model_id: str, display_name: str | None) -> QuotaFamily:
@@ -68,9 +75,11 @@ def parse_catalog(data: dict[str, JsonValue]) -> tuple[list[CatalogFamily], str 
     entries: dict[str, CatalogEntry] = {}
     for model_id, raw in raw_models.items():
         try:
-            entries[model_id] = CatalogEntry.model_validate(raw)
+            entry = CatalogEntry.model_validate(raw)
         except ValidationError:
             continue
+        if not _unavailable(model_id, entry):
+            entries[model_id] = entry
     offered = _agent_models(data)
     order = [model_id for model_id in (offered if offered is not None else sorted(entries)) if model_id in entries]
     families: dict[str, CatalogFamily] = {}

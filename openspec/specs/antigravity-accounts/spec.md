@@ -47,7 +47,7 @@ The system SHALL check the CLI update manifest for the configured platform at st
 - **THEN** the changelist is re-extracted before the new record is used
 
 ### Requirement: Antigravity catalog and effort families
-The system SHALL discover each account's models through `fetchAvailableModels` on enrollment, periodically and on manual refresh, retaining the last successful snapshot on failure. Wire models with `-low`, `-medium` or `-high` suffixes SHALL be exposed as one client model per family (`antigravity/<family>`), and Codex reasoning effort SHALL select the matching tier, mapping unsupported efforts to the nearest advertised tier. Context and output limits SHALL be seeded from the catalog. Routing MUST only select accounts whose catalog lists the requested family.
+The system SHALL discover each account's models through `fetchAvailableModels` on enrollment, periodically and on manual refresh, retaining the last successful snapshot on failure. Entries marked `disabled` or `isInternal`, or whose ID ends in `-disabled`, SHALL NOT be offered. Wire models with `-low`, `-medium` or `-high` suffixes SHALL be exposed as one client model per family (`antigravity/<family>`), and Codex reasoning effort SHALL select the matching tier, mapping unsupported efforts to the nearest advertised tier. Context and output limits SHALL be seeded from the catalog. Routing MUST only select accounts whose catalog lists the requested family.
 
 #### Scenario: Effort selection
 - **WHEN** a client requests `antigravity/gemini-3.8-flash` with effort `xhigh`

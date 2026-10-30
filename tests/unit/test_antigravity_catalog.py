@@ -63,6 +63,28 @@ def test_models_outside_the_agent_picker_are_not_offered() -> None:
     assert "tab_flash_lite" not in {family.id for family in parse_catalog(catalog)[0]}
 
 
+def test_models_the_account_cannot_call_are_not_offered() -> None:
+    # A free account's catalog lists Argon as gemini-4-argon-disabled in the agent picker.
+    models = {key: value for key, value in CATALOG["models"].items() if key != "gemini-4-argon"}
+    catalog = {
+        **CATALOG,
+        "models": {
+            **models,
+            "gemini-4-argon-disabled": _model("Gemini 4 Argon", maxTokens=1_048_576),
+            "gpt-oss-120b-medium": _model("GPT-OSS 120B", "API_PROVIDER_OPENAI_VERTEX", disabled=True),
+            "internal-agent": _model("Internal", isInternal=True),
+        },
+        "agentModelSorts": [
+            {"groups": [{"modelIds": ["gemini-4-argon-disabled", "gemini-3.8-flash-high", "gpt-oss-120b-medium"]}]},
+            {"groups": [{"modelIds": ["internal-agent", "claude-sonnet-5"]}]},
+        ],
+        "defaultAgentModelId": "gemini-4-argon-disabled",
+    }
+    families, default = parse_catalog(catalog)
+    assert [family.id for family in families] == ["gemini-3.8-flash", "claude-sonnet-5"]
+    assert default is None
+
+
 def test_family_mixing_providers_is_rejected() -> None:
     catalog: dict[str, Any] = {
         "models": {
