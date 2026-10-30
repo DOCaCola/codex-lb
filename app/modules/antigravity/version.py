@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.clients.http import lease_model_source_session
+from app.core.clients.http import lease_model_source_session, read_capped
 from app.core.utils.time import utcnow
 from app.db.models import AntigravityClientBuild, AntigravityVersionState
 from app.modules.antigravity.constants import DEFAULT_PLATFORM, MANIFEST_URL, PLATFORMS
@@ -275,7 +275,7 @@ async def _fetch_manifest(platform: str) -> Manifest:
         ) as response:
             if response.status != 200:
                 raise AntigravityError(f"CLI manifest returned HTTP {response.status}")
-            body = await response.content.read(64 * 1024 + 1)
+            body = await read_capped(response, 64 * 1024)
             if len(body) > 64 * 1024:
                 raise AntigravityError("CLI manifest exceeded its size limit")
             return Manifest.model_validate_json(body)

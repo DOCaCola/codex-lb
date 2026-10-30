@@ -12,7 +12,7 @@ from typing import Any
 import aiohttp
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.core.clients.http import lease_model_source_session
+from app.core.clients.http import lease_model_source_session, read_capped
 from app.core.types import JsonValue
 from app.modules.antigravity.constants import API_VERSION, CLOUD_CODE_BASE_URL, GO_SKIP_AUTO_HEADERS
 from app.modules.antigravity.errors import AntigravityError, MetadataHTTPError
@@ -127,7 +127,7 @@ class CloudCodeClient:
                     timeout=aiohttp.ClientTimeout(total=30, connect=10),
                     allow_redirects=False,
                 ) as response:
-                    raw = await response.content.read(MAX_METADATA_BYTES + 1)
+                    raw = await read_capped(response, MAX_METADATA_BYTES)
                     if len(raw) > MAX_METADATA_BYTES:
                         raise AntigravityError(f"Antigravity {method} exceeded the size limit", status_code=502)
                     try:

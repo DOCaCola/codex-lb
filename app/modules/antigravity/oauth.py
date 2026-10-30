@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import aiohttp
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 
-from app.core.clients.http import lease_model_source_session
+from app.core.clients.http import lease_model_source_session, read_capped
 from app.core.crypto import TokenEncryptor
 from app.modules.antigravity.constants import (
     AUTHORIZE_URL,
@@ -126,7 +126,7 @@ def imported_refresh_token(document: dict[str, object]) -> str:
 
 
 async def _bounded(response: aiohttp.ClientResponse) -> bytes:
-    body = await response.content.read(MAX_AUTH_BYTES + 1)
+    body = await read_capped(response, MAX_AUTH_BYTES)
     if len(body) > MAX_AUTH_BYTES:
         raise AntigravityError("Google OAuth response exceeded the size limit", status_code=502)
     return body

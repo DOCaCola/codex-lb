@@ -48,6 +48,8 @@ def test_plan_types() -> None:
 
     assert plan_type(None) == "unknown"
     assert plan_type(subscription(None)) == "free"
+    # Google reports the free tier as the paid tier too ("Antigravity Starter Quota").
+    assert plan_type(subscription("free-tier", "free-tier")) == "free"
     assert plan_type(subscription(None, "enterprise-tier")) == "unknown"
     assert plan_type(subscription("g1-pro-tier")) == "pro"
     assert plan_type(subscription("g1-ultra-lite-tier")) == "ultra_5x"

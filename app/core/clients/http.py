@@ -407,6 +407,24 @@ async def lease_model_source_session() -> AsyncIterator[aiohttp.ClientSession]:
         yield session if session is not None else client.session
 
 
+async def read_capped(response: aiohttp.ClientResponse, limit: int) -> bytes:
+    """The whole body, or its first ``limit + 1`` bytes when it is larger.
+
+    ``StreamReader.read(n)`` returns what has arrived so far, not ``n`` bytes: a body
+    split across network reads comes back truncated from a single call. Callers
+    reject a result longer than ``limit``; the request's own timeout bounds the wait.
+    """
+    chunks: list[bytes] = []
+    received = 0
+    while received <= limit:
+        chunk = await response.content.read(limit + 1 - received)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        received += len(chunk)
+    return b"".join(chunks)
+
+
 @contextlib.asynccontextmanager
 async def lease_retry_client(
     client: RetryClient | None = None,

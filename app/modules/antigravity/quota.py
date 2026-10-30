@@ -99,10 +99,11 @@ def parse_summary(data: dict[str, JsonValue]) -> list[QuotaBucket]:
 def plan_type(subscription: Subscription | None) -> PlanType:
     if subscription is None:
         return "unknown"
-    tier = subscription.paid_tier.id if subscription.paid_tier else None
-    if tier is None:
-        current = subscription.current_tier.id if subscription.current_tier else ""
-        return "free" if current in ("free-tier", "standard-tier", "legacy-tier") else "unknown"
+    # The paid tier names the plan when present; Google also reports the free tier there.
+    reported = subscription.paid_tier or subscription.current_tier
+    tier = reported.id if reported else ""
+    if tier in ("free-tier", "standard-tier", "legacy-tier"):
+        return "free"
     if tier.startswith("g1-pro"):
         return "pro"
     if tier.startswith("g1-ultra-lite"):
