@@ -90,6 +90,21 @@ Gemini SSE events SHALL be unwrapped and projected into Responses events: though
 - **WHEN** Gemini stops with only thought parts twice
 - **THEN** the client receives an explicit empty-completion error after one retry
 
+### Requirement: Antigravity web search
+A Codex `web_search` tool with live access SHALL be offered to Antigravity models as the native CLI's `search_web` function, declared first under that exact name, when the dispatching account's catalog names a search model: the first `webSearchModelIds` entry when the catalog also lists a Flash Lite tier, otherwise that Flash Lite model; without a Flash Lite tier no search SHALL be offered, as the CLI fails every search there. Cached-only access (`external_web_access: false`) and accounts without a search model SHALL offer no search tool. Options other than `allowed_domains` filters and `max_uses` SHALL be rejected. When the model calls `search_web`, the gateway SHALL send the CLI's `web_search` generateContent request on the same account with the native identity, restricting `includedDomains` to the client's allowed domains, and answer the call with the CLI's grounded summary format, citation markers at the grounding offsets and numbered sources. A failed search, or one beyond the per-response limit (`max_uses`, default 8), SHALL answer the call with the CLI's tool-error text instead of ending the response. The client SHALL see each call as a `web_search_call` item with in-progress, searching and completed or failed events. A round whose only calls are searches SHALL continue the same response with another upstream round; a round that also calls client tools SHALL complete for those calls. Search results SHALL be sealed into an encrypted reasoning item after the round's calls and replayed with them on later turns, joining the client's results of the same step. A forced `web_search` tool choice SHALL force `search_web` and fail when search is not offered.
+
+#### Scenario: Search then answer
+- **WHEN** a Gemini round calls only `search_web` and stops
+- **THEN** the gateway runs the search on the same account, the client sees a completed `web_search_call`, and the response continues with a round that receives the call and its grounded result
+
+#### Scenario: Account without a search model
+- **WHEN** the account's catalog has no Flash Lite tier
+- **THEN** the request declares no `search_web` function
+
+#### Scenario: Search failure
+- **WHEN** the search request is rejected upstream
+- **THEN** the model receives the CLI's tool error for that call and the response continues
+
 ### Requirement: Antigravity error handling and failover
 Upstream errors SHALL be classified from `google.rpc` ErrorInfo and RetryInfo before message text. Quota exhaustion and retry delays of at least five minutes SHALL cool the account's quota family until the reported reset and fail over. Short rate limits under three seconds SHALL retry once on the same account; longer ones SHALL cool down the account for the model and fail over. Unexplained 429s without details SHALL retry at most once on the same account and MUST NOT mark quota. 503 overloads and pre-output 500, 502 and 504 SHALL be retried at most once. A 401 SHALL refresh once and retry once. Terms-of-service bans SHALL become a durable account state without retry. A verification-required response SHALL cool the account down for 15 minutes, keep its verification notice on the account and fail over; it MUST NOT disable the account. Location, schema and other request errors MUST NOT fail over. No retry SHALL occur after output has been delivered.
 

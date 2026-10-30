@@ -5,6 +5,10 @@ Each SSE line is {"response": {candidates, usageMetadata, modelVersion, response
 readable thought and whose encrypted content seals the step's first signature for
 same-channel replay. Text becomes one assistant message per run; its phase is
 commentary when a call follows and final_answer when the turn ends.
+
+A round whose calls are only search_web calls does not end the response: the
+transport runs the searches, seals their results after the calls and continues
+the same response with another upstream round.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from pydantic import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.opaque import AntigravityOpaqueState, ThoughtScope
+from app.modules.antigravity.search import SearchCall, SearchOutcome
 from app.modules.antigravity.tool_names import GoogleToolNames
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_helper, custom_tool_input
 from app.modules.claude.credentials import ClaudeError
@@ -90,14 +95,21 @@ class GeminiProjection:
     signature_sealed: bool = False
     calls: int = 0
     text_seen: bool = False
+    # Searches of the response so far, and those of the current round awaiting execution.
+    searched: int = 0
+    searches: list[tuple[int, SearchCall]] = field(default_factory=list)
+    awaiting_search: bool = False
+    # Client calls and any generated output of the current upstream round.
+    round_calls: int = 0
+    round_output: bool = False
     finish_reason: str | None = None
     started: bool = False
     stopped: bool = False
 
     @property
     def visible(self) -> bool:
-        """Whether the client has been shown generated content (text or a call)."""
-        return self.text_seen or self.calls > 0
+        """Whether the client has been shown generated content (text, a call or a search)."""
+        return self.text_seen or self.calls > 0 or self.searched > 0
 
     def event(self, kind: str, **fields: JsonValue) -> dict[str, JsonValue]:
         result: dict[str, JsonValue] = {"type": kind, "sequence_number": self.sequence, **fields}
@@ -251,6 +263,7 @@ class GeminiProjection:
             slot, previous = self.message
             self.message = (slot, previous + text)
             self.text_seen = True
+            self.round_output = True
             events.append(
                 self.event(
                     "response.output_text.delta",
@@ -362,6 +375,9 @@ class GeminiProjection:
         call_id = upstream_id if isinstance(upstream_id, str) and upstream_id else "call_" + uuid.uuid4().hex[:24]
         slot = self._slot()
         item_id = f"{self.response_id}_{slot}"
+        self.round_output = True
+        if identity.hosted:
+            return self._search(slot, item_id, call_id, arguments)
         try:
             if identity.arguments is not None and not identity.custom:
                 arguments = identity.arguments.decode(arguments)
@@ -431,7 +447,75 @@ class GeminiProjection:
             )
         self.outputs[slot] = item
         self.calls += 1
+        self.round_calls += 1
         events.append(self.event("response.output_item.done", output_index=slot, item=deepcopy(item)))
+        return events
+
+    def _search(
+        self, slot: int, item_id: str, call_id: str, arguments: dict[str, JsonValue]
+    ) -> list[dict[str, JsonValue]]:
+        query = arguments.get("query")
+        if not isinstance(query, str) or not query.strip() or not isinstance(arguments.get("domain", ""), str):
+            raise AntigravityError("Antigravity returned an invalid search call", code="invalid_upstream_response")
+        item: dict[str, JsonValue] = {
+            "id": item_id,
+            "type": "web_search_call",
+            "status": "in_progress",
+            "action": {"type": "search", "query": query},
+        }
+        self.outputs[slot] = item
+        self.searches.append((slot, SearchCall(item_id, call_id, dict(arguments))))
+        self.searched += 1
+        return [
+            self.event("response.output_item.added", output_index=slot, item=deepcopy(item)),
+            self.event("response.web_search_call.in_progress", item_id=item_id, output_index=slot),
+            self.event("response.web_search_call.searching", item_id=item_id, output_index=slot),
+        ]
+
+    def pending_searches(self) -> list[SearchCall]:
+        return [call for _, call in self.searches]
+
+    def complete_searches(self, outcomes: list[SearchOutcome]) -> list[dict[str, JsonValue]]:
+        """Close the round's searches and seal their results after them.
+
+        A round that also called client tools ends the response: the client answers those calls and its
+        results return with these searches as one step. Otherwise the response continues with a new round.
+        """
+        events: list[dict[str, JsonValue]] = []
+        for (slot, _), outcome in zip(self.searches, outcomes, strict=True):
+            item = self.outputs[slot]
+            item["status"] = "completed" if outcome.succeeded else "failed"
+            if outcome.succeeded:
+                events.append(self.event("response.web_search_call.completed", item_id=item["id"], output_index=slot))
+            events.append(self.event("response.output_item.done", output_index=slot, item=deepcopy(item)))
+        slot = self._slot()
+        state: dict[str, JsonValue] = {"id": f"{self.response_id}_{slot}", "type": "reasoning", "summary": []}
+        events.append(self.event("response.output_item.added", output_index=slot, item=deepcopy(state)))
+        state["encrypted_content"] = self.opaque.seal(
+            self.scope, text="", signature=None, searches=[outcome.sealed() for outcome in outcomes]
+        )
+        self.outputs[slot] = state
+        events.append(self.event("response.output_item.done", output_index=slot, item=deepcopy(state)))
+        self.searches.clear()
+        self.awaiting_search = False
+        if self.round_calls:
+            return [*events, self.event("response.completed", response=self.envelope("completed"))]
+        self.stopped = False
+        self.finish_reason = None
+        self.signature = None
+        self.signature_sealed = False
+        self.round_output = False
+        self.prior = self.usage
+        return events
+
+    def _abandon_searches(self) -> list[dict[str, JsonValue]]:
+        """Searches of a round that ended without STOP never ran."""
+        events: list[dict[str, JsonValue]] = []
+        for slot, _ in self.searches:
+            item = self.outputs[slot]
+            item["status"] = "failed"
+            events.append(self.event("response.output_item.done", output_index=slot, item=deepcopy(item)))
+        self.searches.clear()
         return events
 
     def _finish(self) -> list[dict[str, JsonValue]]:
@@ -455,10 +539,15 @@ class GeminiProjection:
         events = self._close_thought()
         self.stopped = True
         if reason == "STOP":
-            if not self.visible:
+            if not self.round_output:
                 raise EmptyCompletion()
-            events.extend(self._close_message("commentary" if self.calls else "final_answer"))
+            if self.searches:
+                events.extend(self._close_message("commentary"))
+                self.awaiting_search = True
+                return events
+            events.extend(self._close_message("commentary" if self.round_calls else "final_answer"))
             return [*events, self.event("response.completed", response=self.envelope("completed"))]
+        events.extend(self._abandon_searches())
         if reason == "MAX_TOKENS":
             events.extend(self._close_message(None))
             return [

@@ -104,10 +104,12 @@ class ToolIdentity:
     encrypted_arguments: bool = False
     # The client's own tool search (Responses ``tool_search``), not a function of that name.
     search: bool = False
+    # A gateway-executed tool the client never sees as a function (Antigravity's search_web).
+    hosted: bool = False
 
     @property
-    def key(self) -> tuple[str | None, str, bool, bool]:
-        return (self.namespace, self.name, self.custom, self.search)
+    def key(self) -> tuple[str | None, str, bool, bool, bool]:
+        return (self.namespace, self.name, self.custom, self.search, self.hosted)
 
     @property
     def qualified_name(self) -> str:
@@ -142,7 +144,7 @@ class ClaudeToolNames:
     """One request's client tool identities, keyed by the name sent to Claude."""
 
     by_wire: dict[str, ToolIdentity] = field(default_factory=dict)
-    _wire_by_key: dict[tuple[str | None, str, bool, bool], str] = field(default_factory=dict)
+    _wire_by_key: dict[tuple[str | None, str, bool, bool, bool], str] = field(default_factory=dict)
     _by_original: dict[str, ToolIdentity | None] = field(default_factory=dict)
 
     def __len__(self) -> int:

@@ -24,6 +24,8 @@ The research for this change lives outside the repository (`antigravity-integrat
 
 **Risk posture.** Google names third-party use of the Antigravity login as grounds for suspension. New accounts start paused, bans are permanent state, and background traffic is limited to what the CLI itself sends (loadCodeAssist, fetchAvailableModels, retrieveUserQuotaSummary).
 
+**Web search.** Cloud Code has no hosted search a Codex client can rely on. The CLI declares a `search_web` function and answers each call itself with a separate non-streaming `web_search` generateContent request on the same account (Google Search grounding on the catalog's search model), so the gateway does exactly that and shows the call as a hosted `web_search_call`. Running the search on the dispatching account keeps the traffic indistinguishable from the CLI and avoids routing Antigravity content to another provider; a Codex-account sidecar (opencodex) stays an option if this proves unreliable. The search model follows the CLI's rule, captured against the mock: `webSearchModelIds[0]`, else the Flash Lite tier, and no search at all without a Flash Lite tier. A search-only round continues the same response with a new upstream round, re-projected from the logical request plus the output so far, so a later client turn replays it identically. Results are sealed into an encrypted reasoning item, which keeps them off the client's visible history while letting the next turn replay the call and its function response. Search usage is not added to the response's usage: the CLI does not report it and it is billed against the account's quota, not the client's tokens.
+
 ## Failure modes
 
 - Manifest or archive unavailable: keep the verified record, show the error; inference continues.
@@ -42,8 +44,9 @@ VALIDATED tool config for Claude entries, catalog effort fields, HTTP/2 wire, Ar
 - the server-side meaning of the labels, including whether omitting `used_claude`/`used_claude_conservative` matters;
 - signature placement for Claude-on-Antigravity;
 - acceptance of `pattern` and of array `items` in compiled tool schemas, and of `responseJsonSchema`;
-- the server-side meaning of verification responses.
+- the server-side meaning of verification responses;
+- grounding quality and quota cost of `web_search` requests on real accounts.
 
 **Dashboard quota.** Antigravity quota is per model family, and the families are separate budgets, so the dashboard shows one bar per family instead of a single ring. Pace reports the family that runs out first. Accounts are pooled in Pro units like Claude; stale or unweighted accounts are named rather than silently skewing the totals.
 
-Out of scope for this change: hosted `web_search` is not offered on Antigravity models; ban notifications use the existing account state, not the quota webhook; subagent lineage is not projected into the native labels.
+Out of scope for this change: ban notifications use the existing account state, not the quota webhook; subagent lineage is not projected into the native labels.

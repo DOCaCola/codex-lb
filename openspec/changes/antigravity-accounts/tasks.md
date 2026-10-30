@@ -16,6 +16,7 @@
 - [x] 2.4 Error taxonomy, transport and bounded recovery loop; account state transitions for ban, verification and reauth.
 - [x] 2.5 Routing: eligibility, family quota, stickiness, shared strategy.
 - [x] 2.6 Wire into source dispatch (HTTP, SSE, WebSocket, Messages/Chat front-ends), request logs and throughput.
+- [x] 2.7 Offer Codex `web_search` as the CLI's `search_web`: catalog search model, gateway-run grounded search on the dispatching account, multi-round responses and sealed replay.
 
 ## 3. Dashboard and verification
 

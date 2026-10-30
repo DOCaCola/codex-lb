@@ -4,6 +4,9 @@ Generated events are held until the response shows visible text or a call. A
 generation that finishes without either is resent once on the same account
 before anything reached the client; the client receives keepalive comments
 meanwhile, and both attempts' usage is billed with the response.
+
+A round that only called search_web is answered by the gateway on the same
+account; the response then continues with the next upstream round.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.inference import AntigravityAttempt
 from app.modules.antigravity.recovery import AntigravityUpstreamError
 from app.modules.antigravity.responses import EmptyCompletion
+from app.modules.antigravity.search import SearchOutcome, run_search
 from app.modules.claude.credentials import ClaudeError
 from app.modules.model_sources.forwarding import (
     SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
@@ -69,6 +73,8 @@ class _Upstream:
         self.clock = clock
         self.stack: AsyncExitStack | None = None
         self.status = 200
+        # The round being sent; later rounds of the response replace it.
+        self.envelope = attempt.prepared.envelope
 
     async def open(self) -> AsyncGenerator[str]:
         prepared = self.attempt.prepared
@@ -76,7 +82,7 @@ class _Upstream:
             stack, response, _ = await _open_source_stream(
                 prepared.source,
                 STREAM_PATH,
-                prepared.envelope,
+                self.envelope,
                 encryptor=None,
                 prepared_headers=prepared.headers,
                 first_frame_deadline_seconds=None,
@@ -160,6 +166,7 @@ async def open_responses(
         resent = False
         opening: dict[str, JsonValue] | None = first
         last_signal = clock.monotonic()
+        executed = 0
         try:
             while True:
                 try:
@@ -181,10 +188,31 @@ async def open_responses(
                                 last_signal = clock.monotonic()
                                 yield b": keepalive\n\n"
                             if projection.stopped:
-                                return
-                    raise _failure("model_source_stream_truncated", "Antigravity stream ended without a finish reason")
+                                break
+                        else:
+                            raise _failure(
+                                "model_source_stream_truncated", "Antigravity stream ended without a finish reason"
+                            )
+                    if not projection.awaiting_search:
+                        return
+                    context = prepared.search
+                    assert context is not None  # search_web is declared only with a search context.
+                    outcomes: list[SearchOutcome] = []
+                    for call in projection.pending_searches():
+                        outcomes.append(await run_search(context, call, allowed=executed < context.policy.max_uses))
+                        executed += 1
+                    for converted in projection.complete_searches(outcomes):
+                        encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                        observer.feed(encoded)
+                        yield encoded
+                    if projection.stopped:
+                        return
+                    await upstream.aclose()
+                    upstream.envelope = attempt.continuation(list(projection.outputs.values()))
+                    events = await upstream.open()
+                    opening = None
                 except EmptyCompletion:
-                    if resent:
+                    if resent or released:
                         raise _failure(
                             "empty_completion", "Antigravity finished twice without visible output or a tool call"
                         ) from None

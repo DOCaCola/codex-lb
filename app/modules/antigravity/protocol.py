@@ -27,8 +27,15 @@ from app.core.openai.additional_tools import (
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.utils.request_id import get_request_id
 from app.modules.antigravity.constants import SKIP_SIGNATURE
-from app.modules.antigravity.opaque import PREFIX, AntigravityOpaqueState, ThoughtScope
+from app.modules.antigravity.opaque import PREFIX, AntigravityOpaqueState, SealedThought, ThoughtScope
 from app.modules.antigravity.schemas import CatalogFamily
+from app.modules.antigravity.search import (
+    SEARCH_TOOL_NAME,
+    SealedSearch,
+    SearchPolicy,
+    search_declaration,
+    search_policy,
+)
 from app.modules.antigravity.tool_names import GoogleToolNames
 from app.modules.antigravity.tool_schema import compile_tool_schema
 from app.modules.claude.code_mode import code_mode_contract
@@ -51,6 +58,7 @@ SENSITIVE_WORDS = (
 )
 _SENSITIVE = re.compile("|".join(re.escape(word) for word in sorted(SENSITIVE_WORDS, key=len, reverse=True)), re.I)
 _ZERO_WIDTH_SPACE = "\u200b"
+SEARCH_IDENTITY = ToolIdentity(SEARCH_TOOL_NAME, None, False, hosted=True)
 
 
 def invalid(message: str, param: str = "input") -> ClientPayloadError:
@@ -80,6 +88,8 @@ class GeminiProjection:
     sentinels: int = 0
     # Claude-on-Antigravity cannot think through an open turn whose calls lost their signed thinking.
     thinking_disabled: bool = False
+    # The client's web search, declared as the CLI's search_web; None when not offered.
+    search: SearchPolicy | None = None
 
 
 def _parts(value: JsonValue, *, param: str) -> list[dict[str, JsonValue]]:
@@ -130,11 +140,13 @@ def project_responses(
     scope: ThoughtScope,
     opaque: AntigravityOpaqueState,
     restore_signatures: bool = True,
+    searchable: bool = False,
 ) -> GeminiProjection:
     """Translate a materialized Responses request; without restore_signatures every step is unsigned.
 
     Unsigned projection is the repair after Google rejects a restored signature: Gemini calls carry
     the validator sentinel and Claude-on-Antigravity drops the thinking (CLIProxyAPI reasoning replay).
+    searchable says whether the account's catalog names a search model.
     """
     if payload.get("previous_response_id") or payload.get("conversation"):
         raise invalid("Antigravity continuation must be expanded before protocol conversion", "previous_response_id")
@@ -215,8 +227,27 @@ def project_responses(
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
     raw_tools = cast(list[JsonValue], collect_responses_tools(raw_tools, additional_tool_bundles(items)))
+    hosted = [
+        (index, tool)
+        for index, tool in enumerate(raw_tools)
+        if isinstance(tool, dict) and tool.get("type") == "web_search"
+    ]
+    if len(hosted) > 1:
+        raise invalid("Duplicate web search declaration", "tools")
+    policy: SearchPolicy | None = None
+    for index, tool in hosted:
+        assert isinstance(tool, dict)
+        policy = search_policy(tool, param=f"tools[{index}]")
+        if policy is not None and not searchable:
+            # The CLI cannot search on such an account either; the model is offered no search tool.
+            logger.info("antigravity_web_search_unavailable request_id=%s reason=no_search_model", get_request_id())
+            policy = None
+        if policy is not None:
+            # Registered first, so the CLI's own name stays free of collision numbering.
+            declarations.append({**search_declaration(), "name": tools.add(SEARCH_IDENTITY)})
     for index, tool in enumerate(raw_tools):
-        declare(tool, param=f"tools[{index}]")
+        if not (isinstance(tool, dict) and tool.get("type") == "web_search"):
+            declare(tool, param=f"tools[{index}]")
     # Google has no deferred declarations: tools a search loaded are declared like any other.
     for index, item in enumerate(items):
         if isinstance(item, dict) and item.get("type") == "tool_search_output":
@@ -228,6 +259,19 @@ def project_responses(
     contract = code_mode_contract(tools)
     if contract is not None:
         system.append({"text": contract})
+
+    opened: dict[int, SealedThought] = {}
+    for index, item in enumerate(items):
+        token = item.get("encrypted_content") if isinstance(item, dict) and item.get("type") == "reasoning" else None
+        if isinstance(token, str) and token.startswith(PREFIX):
+            opened[index] = opaque.open(token, client_scope=scope.client_scope, param=f"input[{index}]")
+    # Searches answered by an earlier round, keyed by their web_search_call item.
+    sealed_searches: dict[str, SealedSearch] = (
+        {search.item_id: search for thought in opened.values() for search in thought.searches}
+        if policy is not None
+        else {}
+    )
+    placed_searches: set[str] = set()
 
     contents: list[dict[str, JsonValue]] = []
     step: _Step | None = None
@@ -289,15 +333,21 @@ def project_responses(
     answered: set[str] = set()
     pending_system: list[dict[str, JsonValue]] = []
     responses: list[dict[str, JsonValue]] = []
+    # Gateway-run search results; they join the client's results of the same step.
+    search_responses: list[dict[str, JsonValue]] = []
     response_images: list[dict[str, JsonValue]] = []
 
     def flush_responses() -> None:
-        if not responses:
+        if not responses and not search_responses:
             return
         close_step()
         contents.append(
-            {"role": "user" if anthropic else "model", "parts": cast(JsonValue, [*responses, *response_images])}
+            {
+                "role": "user" if anthropic else "model",
+                "parts": cast(JsonValue, [*search_responses, *responses, *response_images]),
+            }
         )
+        search_responses.clear()
         responses.clear()
         response_images.clear()
 
@@ -408,19 +458,31 @@ def project_responses(
                 # Imported or delegated history: output without a call here is context, not a tool cycle.
                 append_user([{"text": f"[Standalone {kind}: call_id={call_id}]"}, {"text": text}, *images])
         elif kind == "reasoning":
-            token = item.get("encrypted_content")
-            if not isinstance(token, str) or not token.startswith(PREFIX):
+            if index not in opened:
                 # Foreign reasoning was projected to portable text before translation.
                 continue
-            thought = opaque.open(token, client_scope=scope.client_scope, param=param)
+            thought = opened[index]
+            # A round's search state follows its calls; their results answer that step.
+            search_responses.extend(
+                {"functionResponse": {"id": search.call_id, "name": SEARCH_TOOL_NAME, "response": search.response}}
+                for search in thought.searches
+                if search.item_id in placed_searches
+            )
             current = model_parts()
             if thought.text:
                 current.parts.append({"text": thought.text, "thought": True})
             if restore_signatures and scope.owns(thought) and thought.signature is not None:
                 current.signature = current.signature or thought.signature
         elif kind == "web_search_call":
-            # Hosted search ran on another provider; its findings are in the surrounding messages.
-            continue
+            sealed = sealed_searches.get(cast(str, item.get("id")))
+            if sealed is None:
+                # Search that ran on another provider, or without search offered now: its findings are
+                # in the surrounding messages.
+                continue
+            model_parts().parts.append(
+                {"functionCall": {"id": sealed.call_id, "name": SEARCH_TOOL_NAME, "args": sealed.args}}
+            )
+            placed_searches.add(sealed.item_id)
         else:
             raise invalid(f"Unsupported Antigravity Responses item: {kind}", param)
     flush_responses()
@@ -445,10 +507,16 @@ def project_responses(
     choice = payload.get("tool_choice", "auto")
     if isinstance(choice, dict) and choice.get("type") in ("auto", "none", "required") and len(choice) == 1:
         choice = choice["type"]
-    if declarations and choice != "none":
-        request["tools"] = [{"functionDeclarations": declarations}]
+    if choice != "none":
+        config: dict[str, JsonValue] | None = None
         if choice == "required":
-            request["toolConfig"] = {"functionCallingConfig": {"mode": "ANY"}}
+            if not declarations:
+                raise invalid("Tool choice requires a declared tool", "tool_choice")
+            config = {"functionCallingConfig": {"mode": "ANY"}}
+        elif isinstance(choice, dict) and choice.get("type") == "web_search":
+            if policy is None:
+                raise invalid("Web search is not offered for this Antigravity request", "tool_choice")
+            config = {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [SEARCH_TOOL_NAME]}}
         elif isinstance(choice, dict) and choice.get("type") in ("function", "custom"):
             identity = next(
                 (
@@ -460,13 +528,15 @@ def project_responses(
             )
             if identity is None:
                 raise invalid("Unknown tool choice", "tool_choice")
-            request["toolConfig"] = {
-                "functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [tools.wire_name(identity)]}
-            }
+            config = {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [tools.wire_name(identity)]}}
         elif choice != "auto":
             raise invalid("Unsupported tool choice", "tool_choice")
-        if payload.get("parallel_tool_calls") is False:
-            raise invalid("Antigravity cannot guarantee serial tool calls", "parallel_tool_calls")
+        if declarations:
+            request["tools"] = [{"functionDeclarations": declarations}]
+            if config is not None:
+                request["toolConfig"] = config
+            if payload.get("parallel_tool_calls") is False:
+                raise invalid("Antigravity cannot guarantee serial tool calls", "parallel_tool_calls")
     limit = payload.get("max_output_tokens", max_output_tokens)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit > max_output_tokens:
         raise invalid("Requested output limit exceeds the Antigravity model capability", "max_output_tokens")
@@ -495,7 +565,7 @@ def project_responses(
         if text.get("verbosity") is not None:
             raise invalid("Antigravity has no verbosity control; specify verbosity in instructions", "text.verbosity")
     request["generationConfig"] = generation
-    return GeminiProjection(request, tools, restored, sentinels, thinking_disabled)
+    return GeminiProjection(request, tools, restored, sentinels, thinking_disabled, policy)
 
 
 def _declaration(name: str, description: JsonValue, parameters: dict[str, JsonValue] | None) -> JsonValue:

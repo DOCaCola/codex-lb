@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -34,6 +35,7 @@ from app.modules.antigravity.repository import AntigravityRepository
 from app.modules.antigravity.responses import GeminiProjection, Usage
 from app.modules.antigravity.routing import catalog_family, claim_session, select_account
 from app.modules.antigravity.schemas import AccountState, CatalogFamily, Effort
+from app.modules.antigravity.search import SearchContext
 from app.modules.antigravity.tool_names import GoogleToolNames
 from app.modules.antigravity.version import AntigravityVersionService, ClientIdentity
 from app.modules.api_keys.service import ApiKeyData
@@ -65,6 +67,14 @@ class PreparedAntigravityRequest:
     tools: GoogleToolNames
     show_summary: bool
     model: str
+    # What a later round of the same response needs to rebuild the request.
+    logical: dict[str, JsonValue]
+    max_output_tokens: int
+    session_id: str
+    cascade: str
+    restore_signatures: bool
+    # The client's web search on this account; None when the request offers none.
+    search: SearchContext | None = None
 
     @property
     def headers(self) -> dict[str, str]:
@@ -81,6 +91,37 @@ class PreparedAntigravityRequest:
 class AntigravityAttempt:
     prepared: PreparedAntigravityRequest
     opaque: AntigravityOpaqueState
+
+    def continuation(self, outputs: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
+        """The next round of the response: the request with the response's output so far appended.
+
+        It is translated exactly as the client's next turn will replay that output. A forced tool choice
+        was satisfied by the round that searched, so later rounds choose freely.
+        """
+        prepared = self.prepared
+        raw = prepared.logical.get("input", [])
+        items: list[JsonValue] = (
+            [{"role": "user", "content": raw}] if isinstance(raw, str) else list(cast(list[JsonValue], raw))
+        )
+        payload: dict[str, JsonValue] = {**prepared.logical, "input": [*items, *deepcopy(outputs)]}
+        payload.pop("tool_choice", None)
+        projection = project_responses(
+            cast(dict[str, PydanticJsonValue], payload),
+            family=prepared.family,
+            max_output_tokens=prepared.max_output_tokens,
+            scope=prepared.scope,
+            opaque=self.opaque,
+            restore_signatures=prepared.restore_signatures,
+            searchable=True,
+        )
+        return envelope(
+            cast(dict[str, JsonValue], projection.request),
+            family=prepared.family,
+            wire=prepared.wire_model,
+            project_id=prepared.project_id,
+            session_id=prepared.session_id,
+            cascade=prepared.cascade,
+        )
 
 
 def cascade_id(client_scope: str, conversation_id: str) -> str:
@@ -211,15 +252,19 @@ async def prepare_responses(
             scope=scope,
             opaque=opaque,
             restore_signatures=not recovery.unsigned,
+            searchable=state.search_model is not None,
         )
+        cascade = cascade_id(client_scope, conversation_id)
         body = envelope(
             cast(dict[str, JsonValue], projection.request),
             family=family,
             wire=wire,
             project_id=snapshot.project_id,
             session_id=account.session_id,
-            cascade=cascade_id(client_scope, conversation_id),
+            cascade=cascade,
         )
+        session_id = account.session_id
+        max_output_tokens = selected.max_output_tokens
         await claim_session(session, client_scope, conversation_id, account.source_id)
         await session.commit()
         source = account.source
@@ -228,6 +273,18 @@ async def prepare_responses(
     continuation.source_id = source.id
     summary = reasoning.get("summary") if isinstance(reasoning, dict) else None
     display = reasoning.get("display") if isinstance(reasoning, dict) else None
+    search = (
+        SearchContext(
+            model=state.search_model,
+            project_id=snapshot.project_id,
+            access_token=snapshot.access_token,
+            identity=identity,
+            policy=projection.search,
+            source_id=source.id,
+        )
+        if projection.search is not None and state.search_model is not None
+        else None
+    )
     return AntigravityAttempt(
         PreparedAntigravityRequest(
             source=source,
@@ -245,6 +302,12 @@ async def prepare_responses(
             tools=projection.tools,
             show_summary=(summary not in (None, "none")) or (chat_reasoning and display != "omitted"),
             model=model,
+            logical=cast(dict[str, JsonValue], logical),
+            max_output_tokens=max_output_tokens,
+            session_id=session_id,
+            cascade=cascade,
+            restore_signatures=not recovery.unsigned,
+            search=search,
         ),
         opaque,
     )

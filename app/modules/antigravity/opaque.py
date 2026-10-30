@@ -17,6 +17,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import ANTIGRAVITY_REASONING_PREFIX
 from app.core.types import JsonValue
+from app.modules.antigravity.search import SealedSearch
 
 PREFIX = ANTIGRAVITY_REASONING_PREFIX
 
@@ -30,6 +31,8 @@ class SealedThought(BaseModel):
     client_scope: str
     text: str = ""
     signature: str | None = None
+    # The search_web calls one response round answered, sealed together after the round.
+    searches: list[SealedSearch] = []
 
 
 @dataclass(frozen=True)
@@ -53,7 +56,9 @@ class AntigravityOpaqueState:
     def __init__(self, encryptor: TokenEncryptor) -> None:
         self.encryptor = encryptor
 
-    def seal(self, scope: ThoughtScope, *, text: str, signature: str | None) -> str:
+    def seal(
+        self, scope: ThoughtScope, *, text: str, signature: str | None, searches: list[SealedSearch] | None = None
+    ) -> str:
         envelope = SealedThought(
             source_id=scope.source_id,
             project_id=scope.project_id,
@@ -62,6 +67,7 @@ class AntigravityOpaqueState:
             client_scope=scope.client_scope,
             text=text,
             signature=signature,
+            searches=searches or [],
         )
         return PREFIX + self.encryptor.encrypt(envelope.model_dump_json()).decode("ascii")
 

@@ -52,6 +52,7 @@ CATALOG = {
         {"groups": [{"modelIds": ["gemini-3.8-flash-high", "gemini-3.8-flash-low", "claude-opus-5-5"]}]}
     ],
     "defaultAgentModelId": "gemini-3.8-flash-high",
+    "tieredModelIds": {"flashLite": ["gemini-3.8-flash-lite"]},
 }
 QUOTA_EXHAUSTED: dict[str, Any] = {
     "error": {
@@ -135,29 +136,32 @@ async def pool(async_client, monkeypatch):
     return ids
 
 
-def install_upstream(monkeypatch, *, rejections: int = 0):
+HELLO: list[dict[str, Any]] = [
+    {"response": {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}}]}},
+    {
+        "response": {
+            "candidates": [{"content": {"role": "model", "parts": [{"text": " there"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 3},
+            "responseId": "fixture",
+        }
+    },
+]
+
+
+def install_upstream(monkeypatch, *, rejections: int = 0, rounds: list[list[dict[str, Any]]] | None = None):
+    """Fake streamGenerateContent; each accepted request answers with the next of rounds."""
     from app.modules.antigravity import transport
     from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
     captured: list[tuple[str, dict[str, Any], dict[str, str]]] = []
+    answers = rounds or [HELLO]
 
     async def open_stream(source, path, payload, **kwargs):
         assert path == transport.STREAM_PATH
         captured.append((source.id, payload, kwargs["prepared_headers"]))
         if len(captured) <= rejections:
             raise ModelSourceForwardingError(status_code=429, payload=QUOTA_EXHAUSTED, upstream_status_code=429)
-        lines = [
-            {"response": {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}}]}},
-            {
-                "response": {
-                    "candidates": [
-                        {"content": {"role": "model", "parts": [{"text": " there"}]}, "finishReason": "STOP"}
-                    ],
-                    "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 3},
-                    "responseId": "fixture",
-                }
-            },
-        ]
+        lines = answers[min(len(captured) - rejections, len(answers)) - 1]
 
         async def chunks(_size):
             for line in lines:
@@ -268,6 +272,95 @@ async def test_chat_tool_continuation_replays_the_unsigned_call_with_the_sentine
     assert call_part["functionCall"]["args"] == {"command": "ls"}
     assert call_part["thoughtSignature"] == SKIP_SIGNATURE
     assert any("functionResponse" in part for content in contents for part in content["parts"])
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["json", "sse"])
+async def test_web_search_runs_as_the_native_search_web_and_continues_the_response(
+    async_client, pool, monkeypatch, stream
+):
+    search_round = [
+        {
+            "response": {
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "functionCall": {"id": "fc-1", "name": "search_web", "args": {"query": "codex"}},
+                                    "thoughtSignature": "sig-1",
+                                }
+                            ],
+                        },
+                        "finishReason": "STOP",
+                    }
+                ],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 2},
+                "responseId": "fixture",
+            }
+        }
+    ]
+    captured = install_upstream(monkeypatch, rounds=[search_round, HELLO])
+    searches: list[tuple[str, dict[str, Any], str]] = []
+
+    async def call(self, method: str, access_token: str, body: dict[str, Any]) -> dict[str, Any]:
+        searches.append((method, body, self.identity.user_agent))
+        candidate = {
+            "content": {"role": "model", "parts": [{"text": "Codex is a coding agent."}]},
+            "groundingMetadata": {
+                "groundingChunks": [{"web": {"uri": "https://redirect/1", "title": "openai.com"}}],
+                "groundingSupports": [{"segment": {"endIndex": 24}, "groundingChunkIndices": [0]}],
+            },
+        }
+        return {"response": {"candidates": [candidate]}}
+
+    monkeypatch.setattr(CloudCodeClient, "call", call)
+
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={
+            "model": GEMINI,
+            "input": "What is Codex?",
+            "tools": [{"type": "web_search", "external_web_access": True}],
+            "stream": stream,
+            "prompt_cache_key": "conversation-search",
+        },
+        headers={"session_id": "conversation-search"},
+    )
+
+    assert response.status_code == 200, response.text
+    if stream:
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: {")]
+        kinds = [event["type"] for event in events]
+        assert kinds.count("response.created") == 1
+        assert kinds.index("response.web_search_call.searching") < kinds.index("response.web_search_call.completed")
+        assert kinds[-1] == "response.completed"
+        body = events[-1]["response"]
+    else:
+        body = response.json()
+    assert body["status"] == "completed"
+    assert [item["type"] for item in body["output"]] == ["reasoning", "web_search_call", "reasoning", "message"]
+    assert body["output"][1]["status"] == "completed"
+    assert body["output"][1]["action"] == {"type": "search", "query": "codex"}
+    assert body["output"][-1]["content"][0]["text"] == "Hello there"
+    ((method, search_body, user_agent),) = searches
+    assert (method, search_body["requestType"], search_body["model"]) == (
+        "generateContent",
+        "web_search",
+        "gemini-3.8-flash-lite",
+    )
+    assert user_agent == USER_AGENT
+    # Both rounds go to the account that ran the search.
+    assert len({source_id for source_id, _, _ in captured}) == 1
+    first, second = (envelope["request"] for _, envelope, _ in captured)
+    assert first["tools"][0]["functionDeclarations"][0]["name"] == "search_web"
+    calls = [part for content in second["contents"] for part in content["parts"] if "functionCall" in part]
+    assert calls == [
+        {"functionCall": {"id": "fc-1", "name": "search_web", "args": {"query": "codex"}}, "thoughtSignature": "sig-1"}
+    ]
+    [result] = [part for content in second["contents"] for part in content["parts"] if "functionResponse" in part]
+    assert "Codex is a coding agent.[1]" in result["functionResponse"]["response"]["output"]
+    assert "[1] [openai.com](https://redirect/1)" in result["functionResponse"]["response"]["output"]
 
 
 @pytest.mark.parametrize(

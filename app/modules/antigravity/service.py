@@ -25,7 +25,7 @@ from app.db.models import (
 )
 from app.modules.antigravity import oauth
 from app.modules.antigravity.auth import AntigravityAuth
-from app.modules.antigravity.catalog import default_level, levels, parse_catalog
+from app.modules.antigravity.catalog import default_level, levels, parse_catalog, search_model
 from app.modules.antigravity.classify import classify
 from app.modules.antigravity.client import CloudCodeClient, LoadCodeAssist
 from app.modules.antigravity.constants import ANTIGRAVITY_KIND, CLOUD_CODE_BASE_URL, MODEL_PREFIX
@@ -351,11 +351,14 @@ class AntigravityService:
                         await self.repository.mutate_state(source_id, generation, store_subscription)
                     elif endpoint == "catalog":
                         assert project is not None
-                        families, default = parse_catalog(await client.available_models(snapshot.access_token, project))
+                        available = await client.available_models(snapshot.access_token, project)
+                        families, default = parse_catalog(available)
+                        searcher = search_model(available)
 
                         def store_catalog(current: AccountState) -> AccountState:
                             current.catalog = families
                             current.default_model = default
+                            current.search_model = searcher
                             return current
 
                         merged = await self.repository.mutate_state(source_id, generation, store_catalog)

@@ -4348,8 +4348,8 @@ _SOURCE_KIND_ORDER: Final[Mapping[str, int]] = {"claude": 0, "antigravity": 1}
 _STATELESS_ADAPTER_KINDS: Final = frozenset({"openrouter", "claude", "antigravity"})
 # Sources whose adapter translates Responses itself: tools, namespaces and item IDs stay intact.
 _TRANSLATING_ADAPTER_KINDS: Final = frozenset({"claude", "antigravity"})
-# Client-executed tool types the Antigravity adapter declares; hosted tools are dropped.
-_ANTIGRAVITY_TOOL_TYPES: Final = frozenset({"custom", "namespace", "tool_search"})
+# Tool types the Antigravity adapter declares; web_search runs as the native CLI's search_web.
+_ANTIGRAVITY_TOOL_TYPES: Final = frozenset({"custom", "namespace", "tool_search", "web_search"})
 
 
 async def _build_anthropic_models_response(api_key: ApiKeyData | None, *, now: float) -> Response:

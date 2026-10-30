@@ -110,6 +110,8 @@ class AccountState(BaseModel):
     subscription: Subscription | None = None
     catalog: list[CatalogFamily] = Field(default_factory=list)
     default_model: str | None = None
+    # The catalog's search_web model; None when the account's catalog cannot search.
+    search_model: str | None = None
     quota: list[QuotaBucket] = Field(default_factory=list)
     all_models: bool = True
     selections: list[str] = Field(default_factory=list)

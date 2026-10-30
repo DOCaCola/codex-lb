@@ -129,6 +129,22 @@ def _smallest(current: int | None, value: int | None) -> int | None:
     return min(current, value)
 
 
+def search_model(data: dict[str, JsonValue]) -> str | None:
+    """The model the CLI runs search_web on: the first webSearchModelIds entry, else the Flash Lite tier.
+
+    Mock captures of agy 1.4.10: without tieredModelIds.flashLite the CLI fails every search
+    ("failed to resolve Flash Lite model from TieredModelIDs"), even when webSearchModelIds is set.
+    """
+    tiered = data.get("tieredModelIds")
+    flash_lite = tiered.get("flashLite") if isinstance(tiered, dict) else None
+    if not isinstance(flash_lite, list) or not flash_lite or not isinstance(flash_lite[0], str):
+        return None
+    preferred = data.get("webSearchModelIds")
+    if isinstance(preferred, list) and preferred and isinstance(preferred[0], str):
+        return preferred[0]
+    return flash_lite[0]
+
+
 def levels(family: CatalogFamily) -> list[Effort]:
     return [level for level in EFFORTS if level in family.tiers]
 
