@@ -103,45 +103,59 @@ Operators SHALL enroll Claude accounts through expiring single-use PKCE authoriz
 - **THEN** enrollment rejects the duplicate using authenticated identity rather than the access token or display name
 
 ### Requirement: Reconnect identity diagnostics
-Without explicit identity replacement consent, credential import and OAuth reconnect SHALL distinguish a different authenticated
+Credential import and OAuth reconnect SHALL distinguish a different authenticated
 account, a different organization for the same verified account, and an identity
-mismatch whose saved account UUID is unavailable. Rejections SHALL preserve saved
-credentials, identity and ownership. Logs SHALL contain only the local source ID
-and mismatch category, excluding tokens, provider UUIDs and profile contents.
+mismatch whose saved identity is unavailable for comparison. A mismatch SHALL NOT
+change saved credentials, identity or ownership; it SHALL be answered with 409 and
+the mismatch code, and the reconnect SHALL be held for confirmation. Logs SHALL
+contain only the local source ID and mismatch category, excluding tokens,
+provider UUIDs and profile contents.
 
 #### Scenario: Same account with a different organization
 - **WHEN** reconnect returns the saved account UUID but a different identity fingerprint
-- **THEN** the dashboard returns `claude_reconnect_organization_changed` and explains that the account matches but its organization differs
+- **THEN** the dashboard returns 409 `claude_reconnect_organization_changed` and explains that the account matches but its organization differs
 
 #### Scenario: Different authenticated account
 - **WHEN** reconnect returns an account UUID different from the saved UUID
-- **THEN** the dashboard returns `claude_reconnect_account_mismatch`
+- **THEN** the dashboard returns 409 `claude_reconnect_account_mismatch`
 
 #### Scenario: Legacy identity mismatch
-- **WHEN** the identity fingerprint differs and no account UUID was saved
-- **THEN** the dashboard returns `claude_reconnect_identity_unverified` without claiming either component matches
+- **WHEN** the saved account has no identity fingerprint or no account UUID and the incoming identity differs
+- **THEN** the dashboard returns 409 `claude_reconnect_identity_unverified` without claiming either component matches
 
 #### Scenario: Subscription change with stable identity
 - **WHEN** reconnect supplies current credentials for the same account and organization after expiry and a subscription change
-- **THEN** reconnect succeeds without requiring the previous subscription tier
+- **THEN** reconnect succeeds without confirmation and without requiring the previous subscription tier
 
 ### Requirement: Explicit credential identity replacement
-Operators SHALL be able to explicitly consent to replacing the authenticated
-Claude identity on an existing account entry. Replacement SHALL preserve settings,
-account ID, historical accounting and the discovered model catalog; it SHALL reset
-current subscription/quota observations, cooldowns and native resource ownership,
-and SHALL mark the catalog due for rediscovery. Ordinary reconnect SHALL continue to
-reject identity mismatches without explicit consent, and mismatch errors SHALL name
-the replacement option. Replacement SHALL advance credential generation and the
-retained identity generation atomically. A request whose account identity is
-replaced during preparation or before sending SHALL NOT dispatch: resource-bound
-continuations SHALL return their resource error, including replayable
+Operators SHALL replace the authenticated Claude identity of an existing account
+entry by confirming a held reconnect. A mismatched reconnect SHALL be held for ten
+minutes with its credentials encrypted, bound to the account and the credential
+generation it was started against. The mismatch response SHALL carry the pending ID,
+its expiry and a comparison of the saved and incoming email, organization name and
+plan. `POST /api/claude-accounts/{id}/pending-reconnects/{pending_id}/confirm` SHALL
+replace the identity with the held credentials;
+`DELETE /api/claude-accounts/{id}/pending-reconnects/{pending_id}` SHALL discard
+them. A pending reconnect SHALL be usable once, and an expired, unknown or stale one
+SHALL be rejected without changes. Replacement SHALL preserve settings, account ID,
+historical accounting and the discovered model catalog; it SHALL reset current
+subscription/quota observations, cooldowns and native resource ownership, and SHALL
+mark the catalog due for rediscovery. Replacement SHALL advance credential
+generation and the retained identity generation atomically. A request whose account
+identity is replaced during preparation or before sending SHALL NOT dispatch:
+resource-bound continuations SHALL return their resource error, including replayable
 `thread_not_found` for native threads, and other requests SHALL return retryable
-503 `claude_identity_changed` with `Retry-After: 1`.
+503 `claude_identity_changed` with `Retry-After: 1`. Claude accounts SHALL store
+the email and organization name of their last authenticated profile and expose them
+in account responses.
 
 #### Scenario: Reauthorize a changed identity
-- **WHEN** fresh OAuth or imported credentials authenticate a different identity and replacement consent is supplied
-- **THEN** the selected entry receives the credentials while its settings and historical accounting remain intact
+- **WHEN** fresh OAuth or imported credentials authenticate a different identity and the operator confirms the pending reconnect
+- **THEN** the selected entry receives the held credentials while its settings and historical accounting remain intact
+
+#### Scenario: Discard a changed identity
+- **WHEN** the operator discards the pending reconnect, or it expires
+- **THEN** the saved credentials stay unchanged and the pending ID can no longer be confirmed
 
 #### Scenario: Routable during rediscovery
 - **WHEN** an identity is replaced before the next catalog refresh
@@ -150,6 +164,10 @@ continuations SHALL return their resource error, including replayable
 #### Scenario: Stale OAuth completion
 - **WHEN** the account generation changed after a reconnect flow started
 - **THEN** completion cannot replace credentials or clear ownership/state
+
+#### Scenario: Stale confirmation
+- **WHEN** the account generation changed after a reconnect was held
+- **THEN** confirming it fails without replacing credentials
 
 #### Scenario: Old provider state
 - **WHEN** history contains search state issued before identity replacement
@@ -164,8 +182,8 @@ continuations SHALL return their resource error, including replayable
 - **THEN** its provenance and quota observations cannot become current for the new identity
 
 #### Scenario: Unchanged identity
-- **WHEN** replacement consent is supplied but the authenticated identity is unchanged
-- **THEN** reconnect preserves continuation ownership and follows ordinary credential rotation
+- **WHEN** a reconnect authenticates the saved identity
+- **THEN** it completes immediately, preserves continuation ownership and follows ordinary credential rotation
 
 ### Requirement: Refresh rotation ownership
 Refresh MUST use durable cross-worker ownership and generation checks. Explicit invalidation MUST require reauthentication; definitive transient rejections MUST permit a later retry after backoff. Uncertain consumption MUST NOT blindly replay the refresh token, and known expired access tokens MUST NOT be dispatched.
@@ -957,14 +975,26 @@ A paired tool output MUST NOT count as a new user turn. Complete-history compact
 
 ### Requirement: Automatic Claude subscription discovery
 Explicit credential imports SHALL preserve non-secret subscriptionType and
-rateLimitTier. Account responses SHALL expose a derived Free, Pro, Max, Max 5x,
-Max 20x, Team, Enterprise or Unknown plan. Known specific rate-limit tiers SHALL
-take priority over generic subscription type. Absent or unsupported identifiers
-MUST NOT imply Free, Max 20x, quota capacity or model entitlement.
+rateLimitTier. Account responses SHALL expose a derived Free, Pro, Max, Ultra,
+Team, Enterprise or Unknown plan. Rate-limit tiers SHALL take priority over
+subscription type. The tiers `max_5x` and `max` SHALL resolve to Max, and
+`max_20x` and `ultra` SHALL resolve to Ultra, with or without the
+`default_claude_` prefix. A subscription type of `max` alone SHALL NOT
+resolve to a plan, because it named both tiers before Anthropic's 2026-10-30
+rename. Absent or unsupported identifiers MUST NOT imply Free, Ultra, quota
+capacity or model entitlement.
 
 #### Scenario: Imported Max multiplier
 - **WHEN** an imported credential reports subscriptionType max and rateLimitTier default_claude_max_5x
-- **THEN** the account displays Max 5x without changing routing or quota limits
+- **THEN** the account displays Max without changing routing or quota limits
+
+#### Scenario: Former Max 20x tier
+- **WHEN** metadata reports rateLimitTier default_claude_max_20x
+- **THEN** the account displays Ultra
+
+#### Scenario: Generic Max subscription without a tier
+- **WHEN** metadata reports subscriptionType max and no rate-limit tier
+- **THEN** the account displays an unknown plan rather than Max or Ultra
 
 ### Requirement: Coordinated subscription metadata refresh
 The gateway SHALL read /api/claude_cli/bootstrap with its maintained Claude CLI
@@ -976,8 +1006,8 @@ without reimport. Failures SHALL retain last-known subscription metadata and
 timestamps and expose a safe diagnostic without changing inference health.
 
 #### Scenario: Account upgrade
-- **WHEN** authenticated bootstrap changes an imported Pro subscription to Max 20x
-- **THEN** the retained metadata and displayed plan become Max 20x
+- **WHEN** authenticated bootstrap changes an imported Pro subscription to Ultra
+- **THEN** the retained metadata and displayed plan become Ultra
 
 #### Scenario: Failed discovery
 - **WHEN** bootstrap returns 429 or malformed metadata
@@ -1005,14 +1035,20 @@ Successful and failed attempts SHALL retain that snapshot through settlement,
 including downstream WebSocket requests and account failover. Request tables and
 details SHALL display the same localized plan labels as accounts. Historical
 rows lacking a snapshot MUST NOT be relabeled using current account metadata.
+Snapshots recorded under the former keys `max_5x` and `max_20x` SHALL be
+renamed to `max` and `ultra`, keeping the plan recorded at dispatch.
 
 #### Scenario: Subscription changes during inference
-- **WHEN** a Pro account becomes Max 20x while a prepared request is running
-- **THEN** that request log still shows Pro and subsequent preparations show Max 20x
+- **WHEN** a Pro account becomes Ultra while a prepared request is running
+- **THEN** that request log still shows Pro and subsequent preparations show Ultra
 
 #### Scenario: No known subscription
 - **WHEN** a Claude request is prepared without recognized subscription metadata
 - **THEN** its log records Unknown, distinct from historical rows without a plan
+
+#### Scenario: Snapshot recorded before the rename
+- **WHEN** a request log recorded `max_20x` before the rename
+- **THEN** it displays Ultra
 
 ### Requirement: History-preserving translated Claude continuation
 Translated Claude requests ending in an assistant message SHALL append one wire-only user `(continue)` turn after validating complete tool results. Existing history and signed blocks MUST remain ordered and unchanged. User-ending requests, native Messages and retained logical history MUST remain unchanged. This transformation MUST NOT relax authentication or resource ownership.
@@ -1788,3 +1824,18 @@ thinking for these models, and SHALL keep rejecting it for others.
 
 - **WHEN** a Responses turn to Opus 5.5 sets `tool_choice` `required` with reasoning effort `high`
 - **THEN** the turn is accepted and forwarded with `tool_choice` `auto` and adaptive thinking
+
+### Requirement: Claude plan weights per window
+Pooled Claude figures SHALL weight each account in Pro units per quota window:
+five-hour Pro 1, Max 5 and Ultra 20; weekly Pro 1, Max 5 and Ultra 10, matching
+Anthropic's published limits. Weekly figures include model-scoped weekly
+windows. Account responses SHALL expose both weights; plans without a published
+multiplier have none and are not pooled.
+
+#### Scenario: Ultra weekly capacity
+- **WHEN** the Claude weekly pace pools a Pro and an Ultra account
+- **THEN** their combined weekly capacity is 11 Pro units
+
+#### Scenario: Ultra five-hour capacity
+- **WHEN** an unverified Ultra account reports a five-hour window
+- **THEN** that window contributes 20 Pro units to the pooled five-hour figure

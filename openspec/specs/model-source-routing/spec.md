@@ -533,7 +533,7 @@ colours, provider marks and request-log attribution. Mutation controls SHALL be
 unavailable to read-only sessions.
 
 #### Scenario: Add an endpoint
-- **WHEN** an operator chooses "API endpoint" in the add-account chooser
+- **WHEN** an operator chooses "OpenAI-compatible" under API providers in the add-account chooser
 - **THEN** the OpenAI-compatible provider dialog opens and the created source appears in the Accounts list
 
 #### Scenario: Settings no longer lists sources

@@ -1328,27 +1328,21 @@ reachability result without showing proxy credentials or account tokens.
 ### Requirement: Account list presents a single add-account entry point with a chooser dialog
 
 The account list SHALL present account creation through a single dashed-border placeholder control
-rendered at the bottom of the list, instead of separate always-visible "Import" and "Add Account"
-buttons. Activating the placeholder SHALL open a modal chooser dialog offering two options: adding
-an account via OAuth and importing an exported `auth.json` file. Selecting an option SHALL close the
-chooser and open the corresponding existing flow (the OAuth dialog or the import dialog) via the
-existing handlers, without changing those flows' behavior.
+rendered at the bottom of the list. Activating it SHALL open a chooser dialog with two groups.
+"Subscriptions" SHALL list Codex, Claude and Antigravity in that order, each labelled with its
+provider logo and offering exactly two options, "Sign in" and "Import file". "API providers" SHALL
+list OpenRouter and OpenAI-compatible, each one option with its provider logo as icon. Every option
+SHALL close the chooser and open exactly one dialog for one method.
 
 #### Scenario: Add-account placeholder opens the chooser
 
-- **WHEN** an operator views the account list
-- **THEN** a single "Add account" placeholder control is shown at the bottom of the list
-- **AND** no separate always-visible "Import" or "Add Account" buttons are present
-- **WHEN** the operator activates the placeholder
-- **THEN** a chooser dialog opens offering an "Add account" (OAuth) option and an "Import" option
+- **WHEN** an operator activates the "Add account" placeholder
+- **THEN** the chooser shows Subscriptions (Codex, Claude, Antigravity) and API providers (OpenRouter, OpenAI-compatible)
 
 #### Scenario: Choosing an option opens its existing flow
 
-- **GIVEN** the add-account chooser dialog is open
-- **WHEN** the operator selects the "Add account" option
-- **THEN** the chooser closes and the existing OAuth sign-in dialog opens
-- **WHEN** the operator instead selects the "Import" option
-- **THEN** the chooser closes and the existing `auth.json` import dialog opens
+- **WHEN** the operator selects "Import file" under Claude
+- **THEN** the chooser closes and only the Claude credential import dialog opens
 
 ### Requirement: Account list status filter shares the help row
 
@@ -4552,3 +4546,157 @@ Request-log plan badges MUST assign distinct colors to `free`, `plus`, `prolite`
 - **WHEN** Codex Pro and Claude Pro requests appear together
 - **THEN** their plan badges use identical theme colors
 - **AND** each retains its existing display label
+
+### Requirement: Account notes
+Every account on the Accounts page SHALL support an optional operator note of at
+most 2,000 characters: Codex accounts and every model-source account (Claude,
+Antigravity, OpenRouter and OpenAI-compatible). Notes SHALL be stored with the
+account, listed by `GET /api/account-notes` for readers of accounts, and set by
+`PUT /api/account-notes/accounts/{account_id}` or
+`PUT /api/account-notes/model-sources/{source_id}` for account writers. A note
+that is empty after trimming SHALL be stored as no note. Each account detail SHALL
+show a Note panel under its header and status alerts with the note's text and line breaks;
+writers SHALL be able to edit and save or cancel it, and read-only users SHALL see
+it without edit controls. Notes SHALL NOT affect routing.
+
+#### Scenario: Save a note
+- **WHEN** a writer saves "Reserved for CI" on a Claude account
+- **THEN** the Claude account detail shows "Reserved for CI" after reload
+
+#### Scenario: Clear a note
+- **WHEN** a writer saves a note containing only whitespace
+- **THEN** the account has no note and its Note panel shows the empty state
+
+#### Scenario: Read-only user
+- **WHEN** a read-only user opens an account with a note
+- **THEN** the note is visible without an edit control
+
+#### Scenario: Unknown account
+- **WHEN** a note is set for an account ID that does not exist
+- **THEN** the API returns 404 `account_not_found`
+
+### Requirement: Accounts page selects the first listed account
+Without a valid `selected` query parameter, the Accounts page SHALL select the
+first row of the account list in the list's own unfiltered order, whatever its
+provider. The list and the page SHALL derive that order from one shared function.
+
+#### Scenario: Claude listed before Codex
+- **WHEN** the Accounts page opens without a selection and the list shows a Claude account above the Codex accounts
+- **THEN** the Claude account is selected and highlighted
+
+#### Scenario: Name order
+- **WHEN** the list is sorted by name and an OpenRouter account comes first
+- **THEN** the OpenRouter account is selected
+
+### Requirement: Provider sign-in and import dialogs share one flow
+
+Claude and Antigravity sign-in SHALL use the Codex browser sign-in stages: a details stage, an
+authorization stage with the authorization URL, Copy, Refresh link (which starts a new flow), a
+plain-text monospace paste field with Submit, and a waiting line with an expiry countdown, followed
+by a success or error stage with Try again. The URL box, copy button and paste field SHALL be shared
+with the Codex dialog. Credential file import SHALL be a separate dialog per provider using one
+shared file area, which the Codex multi-file import uses as well.
+
+#### Scenario: Refresh the authorization link
+
+- **WHEN** an operator presses Refresh link during Claude sign-in
+- **THEN** a new authorization flow starts and its URL replaces the previous one
+
+#### Scenario: Sign-in fails
+
+- **WHEN** completing an Antigravity sign-in fails
+- **THEN** the dialog shows the error stage with Close and Try again
+
+### Requirement: Provider accounts re-authenticate like Codex
+
+Claude and Antigravity account details SHALL offer a "Re-authenticate" control with the Codex label
+and icon, opening a menu with "Sign in again" and "Import credential file". Re-authentication dialogs
+SHALL show the saved identity read-only instead of a name field. When a Claude re-authentication is
+held for an identity mismatch, a confirmation dialog SHALL compare the saved and incoming email,
+organization and plan; Cancel SHALL discard the held sign-in and "Replace saved identity" SHALL
+confirm it. A matching sign-in SHALL complete without confirmation.
+
+#### Scenario: Plan change moves the organization
+
+- **WHEN** a Claude sign-in for the same email returns a different organization
+- **THEN** the confirmation dialog highlights the organization and plan rows, and confirming completes the reconnect without another sign-in
+
+#### Scenario: Cancel the replacement
+
+- **WHEN** the operator cancels the confirmation
+- **THEN** the held sign-in is discarded and the saved credentials stay unchanged
+
+### Requirement: Account subscription end date
+Codex, Claude and Antigravity accounts SHALL support an optional subscription
+end, a date and time stored in UTC. `GET /api/account-subscriptions` SHALL list
+the set end dates for readers of accounts, and
+`PUT /api/account-subscriptions/accounts/{account_id}` or
+`PUT /api/account-subscriptions/model-sources/{source_id}` SHALL set or clear
+one for account writers. A timezone-less end SHALL be rejected. Setting an end on
+an OpenRouter or OpenAI-compatible account SHALL fail with
+`subscription_end_not_applicable`. The Codex, Claude and Antigravity account
+details SHALL show a Subscription end panel after the Note panel, stating the
+end in the dashboard's date format with the time remaining, or that it has
+passed and is ignored by projections; writers SHALL be able to set it in local
+time, change it or clear it. The end date SHALL only inform projections: it
+SHALL NOT change the account's status or affect routing, before or after it passes.
+
+#### Scenario: Set an end date
+- **WHEN** a writer sets 15 November 2026 18:00 local time on a Claude account
+- **THEN** the account stores that instant in UTC and its detail shows it with the time remaining
+
+#### Scenario: Clear an end date
+- **WHEN** a writer clears the end date
+- **THEN** the account has no end date and projections treat it as renewing
+
+#### Scenario: Not applicable
+- **WHEN** an end date is set on an OpenRouter account
+- **THEN** the API returns 400 `subscription_end_not_applicable`
+
+#### Scenario: Unknown account
+- **WHEN** an end date is set for an account ID that does not exist
+- **THEN** the API returns 404 `account_not_found`
+
+### Requirement: Quota projections honor subscription end dates
+The weekly pace for Codex, Claude and every Antigravity family SHALL treat an
+account's upcoming subscription end as a capacity cutoff. An end that has
+passed SHALL be ignored, so the account is projected as renewing:
+
+- When the end comes before the account's next weekly reset, its expected
+  remaining and scheduled burn SHALL follow a linear schedule from the window
+  start to the end, so the plan spends the account by its end.
+- Resets at or after the end SHALL NOT count as relief, as reset events, or as
+  refills in the forecast simulation; at the end the account's remaining
+  balance SHALL be removed from the pool.
+- The forecast and the depletion ETA SHALL spend the balance that expires
+  first, by reset or end, before later balances.
+- When no pooled account resets before its end, there SHALL be no next relief,
+  and a depletion ETA SHALL make the verdict `runs_dry`.
+- The add-capacity estimate SHALL count each account's capacity only for the
+  share of the next seven days before its end.
+- The response SHALL list each end within the next seven days with the
+  account's weekly capacity, and the runway timeline SHALL mark it distinctly
+  from resets.
+
+The Codex 5-hour and weekly depletion projections SHALL use the end as the
+window's horizon when it precedes the reset, measuring the safe line from the
+window start to the end.
+
+#### Scenario: Ending account brings no relief
+- **GIVEN** a Codex account at 100% weekly usage whose subscription ends a day before its reset
+- **WHEN** the weekly pace is computed
+- **THEN** that reset is neither the next relief nor a reset event, and an end marker is listed instead
+
+#### Scenario: Remaining quota lapses at the end
+- **GIVEN** two accounts with equal remaining quota, one ending in 10 hours
+- **WHEN** the depletion ETA is computed at a burn rate that spends half of one account's remaining quota in 10 hours
+- **THEN** the ending account's balance is spent first and its unspent half is removed at the end, shortening the ETA compared with no end date
+
+#### Scenario: Passed end is ignored
+- **WHEN** an account's subscription end has passed and the account keeps serving requests
+- **THEN** the account's status and routing are unchanged
+- **AND** the weekly pace and depletion project it as a renewing account
+
+#### Scenario: No end dates
+- **WHEN** no account has an end date
+- **THEN** every projection equals the projection without the feature
