@@ -248,6 +248,32 @@ def test_tools_added_only_mid_conversation_set_tool_choice():
     assert translated.payload["tool_choice"] == "auto"
 
 
+def test_turn_scoped_system_messages_drop_once_a_later_user_message_exists():
+    def reminder(text: str) -> dict:
+        return {"role": "system", "clear_at": "next_user_message", "content": text}
+
+    translated = _translate(
+        {
+            "tools": [_tool("Bash")],
+            "messages": [
+                {"role": "user", "content": "Start"},
+                reminder("expired by text"),
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "Bash", "input": {}}]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "ok"}]},
+                reminder("expired by tool result"),
+                {"role": "assistant", "content": "Done"},
+                {"role": "system", "clear_at": "never", "content": "kept permanently"},
+                {"role": "user", "content": "Continue"},
+                reminder("current turn"),
+            ],
+        }
+    )
+    developer_texts = [
+        item["content"][0]["text"] for item in translated.payload["input"] if item.get("role") == "developer"
+    ]
+    assert developer_texts == ["kept permanently", "current turn"]
+
+
 @pytest.mark.parametrize(
     ("body", "message"),
     [
@@ -263,6 +289,10 @@ def test_tools_added_only_mid_conversation_set_tool_choice():
                 ],
             },
             "Tool changes require a system message without a clear_at scope",
+        ),
+        (
+            {"messages": [{"role": "system", "clear_at": "next_turn", "content": "Reminder"}]},
+            "clear_at must be 'next_user_message' or 'never'",
         ),
         ({"tools": [_tool("Read"), _tool("Read")], "messages": []}, "Tool 'Read' is declared more than once"),
         (

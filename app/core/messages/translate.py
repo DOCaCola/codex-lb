@@ -458,12 +458,14 @@ class _MessagesInput:
     def translate(self, messages: JsonValue) -> list[JsonValue]:
         if not isinstance(messages, list):
             raise MessagesRequestError("messages must be an array")
-        for message in messages:
+        roles = [message.get("role") if isinstance(message, dict) else None for message in messages]
+        last_user = max((index for index, role in enumerate(roles) if role == "user"), default=-1)
+        for index, message in enumerate(messages):
             if not isinstance(message, dict):
                 raise MessagesRequestError("Each message must be an object")
             role = message.get("role")
             if role == "system":
-                self._system_message(message)
+                self._system_message(message, followed_by_user=index < last_user)
                 continue
             if role not in ("user", "assistant"):
                 raise MessagesRequestError(f"Unsupported message role '{role}'")
@@ -472,9 +474,13 @@ class _MessagesInput:
         self._flush_deferred()
         return self._items
 
-    def _system_message(self, message: dict[str, JsonValue]) -> None:
+    def _system_message(self, message: dict[str, JsonValue], *, followed_by_user: bool) -> None:
         # Responses requires each function call to be followed by its output, so a system
         # message between a tool call and its result waits for the outputs (CLIProxyAPI 9fdc4605).
+        clear_at = message.get("clear_at")
+        if clear_at not in (None, "never", "next_user_message"):
+            raise MessagesRequestError("clear_at must be 'next_user_message' or 'never'")
+        turn_scoped = clear_at == "next_user_message"
         content = message.get("content")
         if isinstance(content, list):
             changes = [
@@ -482,13 +488,14 @@ class _MessagesInput:
             ]
             if changes:
                 # Anthropic refuses tool changes in a turn-scoped system message.
-                if message.get("clear_at") not in (None, "never"):
+                if turn_scoped:
                     raise MessagesRequestError("Tool changes require a system message without a clear_at scope")
                 for block in changes:
                     self._catalog.change(block)
                 content = [block for block in content if not any(block is change for change in changes)]
         text = _instructions(content)
-        if not text:
+        # Anthropic stops rendering a turn-scoped message once any later user message exists.
+        if not text or (turn_scoped and followed_by_user):
             return
         item: dict[str, JsonValue] = {
             "type": "message",
