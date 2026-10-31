@@ -20,6 +20,16 @@ from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _no_webhook_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep client tests off the database; the webhook marker is covered by integration tests."""
+
+    async def note_redemption(upstream_account_id: str) -> None:
+        return None
+
+    monkeypatch.setattr("app.modules.quota_webhook.repository.note_redemption", note_redemption)
+
+
 class StubResponse:
     def __init__(self, status: int, payload: dict | None, text: str) -> None:
         self.status = status

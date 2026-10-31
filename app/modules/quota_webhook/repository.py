@@ -20,10 +20,15 @@ from app.db.models import (
     QuotaWebhookDelivery,
     QuotaWebhookRedemption,
 )
-from app.modules.quota_webhook.schemas import Observation, WebhookUpdate, detect_reset
+from app.db.session import get_background_session
+from app.modules.quota_webhook.schemas import ALL_KINDS, Observation, ResetKind, WebhookUpdate, detect_reset
 
 logger = logging.getLogger(__name__)
 MAX_PENDING = 1000
+# Longer than any gap between two usage refreshes of an account, including a
+# paused account's slower cadence, so a redemption is still known when the
+# next sample after it arrives.
+REDEMPTION_RETENTION = timedelta(days=8)
 
 
 def now_utc() -> datetime:
@@ -38,7 +43,7 @@ async def lock_config(session: AsyncSession, *, create: bool = False) -> QuotaWe
             .values(
                 id=1,
                 enabled=False,
-                kinds='["scheduled","unexpected"]',
+                kinds=json.dumps(ALL_KINDS, separators=(",", ":")),
                 generation=1,
                 changed_at=now_utc(),
             )
@@ -153,10 +158,15 @@ async def observe(
         baseline = await session.get(QuotaWebhookBaseline, (account_id, window))
         if baseline is not None and observed_at <= baseline.observed_at:
             continue
-        suppressed = redemption is not None and observed_at <= redemption.suppress_until
-        if baseline is not None and baseline.snapshot != "null" and baseline.identity == identity and not suppressed:
+        if baseline is not None and baseline.snapshot != "null" and baseline.identity == identity:
             before = Observation.model_validate_json(baseline.snapshot)
-            kind = detect_reset(before, sample)
+            kind: ResetKind | None = detect_reset(before, sample)
+            if (
+                kind == "unexpected"
+                and redemption is not None
+                and baseline.observed_at < redemption.redeemed_at <= observed_at
+            ):
+                kind = "redeemed"
             if kind is not None and kind in json.loads(config.kinds):
                 await enqueue(
                     session,
@@ -190,23 +200,25 @@ def _deadline(value: int | None) -> str | None:
 
 
 async def redemption_intent(session: AsyncSession, upstream_account_id: str) -> None:
+    """Record that codex-lb is about to redeem a reset credit for this upstream account.
+
+    Recorded before the upstream call: an ambiguous consume outcome that did
+    reset quota is still reported as redeemed rather than unexpected.
+    """
     config = await lock_config(session)
     if config is not None and config.enabled:
         row = await session.get(QuotaWebhookRedemption, upstream_account_id)
         if row is None:
             row = QuotaWebhookRedemption(upstream_account_id=upstream_account_id)
             session.add(row)
-        row.suppress_until = now_utc() + timedelta(minutes=10)
-        # Do not compare a post-redemption sample against pre-redemption usage,
-        # even if no refresh happens until after the suppression interval.
-        await session.execute(
-            delete(QuotaWebhookBaseline).where(
-                QuotaWebhookBaseline.account_id.in_(
-                    select(Account.id).where(Account.chatgpt_account_id == upstream_account_id)
-                ),
-            )
-        )
+        row.redeemed_at = now_utc()
     await session.commit()
+
+
+async def note_redemption(upstream_account_id: str) -> None:
+    """Record a redemption from any consume path in its own transaction."""
+    async with get_background_session() as session:
+        await redemption_intent(session, upstream_account_id)
 
 
 @dataclass(frozen=True)
@@ -223,7 +235,9 @@ async def claim(session: AsyncSession) -> ClaimedDelivery | None:
     config = await lock_config(session)
     now = now_utc()
     await session.execute(delete(QuotaWebhookDelivery).where(QuotaWebhookDelivery.created_at < now - timedelta(days=7)))
-    await session.execute(delete(QuotaWebhookRedemption).where(QuotaWebhookRedemption.suppress_until < now))
+    await session.execute(
+        delete(QuotaWebhookRedemption).where(QuotaWebhookRedemption.redeemed_at < now - REDEMPTION_RETENTION)
+    )
     if config is None or not config.enabled:
         await session.commit()
         return None

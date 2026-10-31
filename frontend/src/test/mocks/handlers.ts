@@ -1513,7 +1513,7 @@ export const handlers = [
   }),
 
   http.get("/api/settings/quota-reset-webhook", () => HttpResponse.json({
-    enabled: false, kinds: ["scheduled", "unexpected"], urlConfigured: false,
+    enabled: false, kinds: ["scheduled", "unexpected", "redeemed"], urlConfigured: false,
     signingSecretConfigured: false, pending: 0, lastDelivery: null,
   })),
   http.get("/api/settings/quota-reset-webhook/destination", () => HttpResponse.json({ url: null })),

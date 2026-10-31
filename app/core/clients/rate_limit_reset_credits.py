@@ -204,6 +204,12 @@ async def consume_reset_credit(
         operation="reset credits consume",
     )
 
+    if account_id:
+        # See consume_rate_limit_reset_credit: the webhook labels the reset as redeemed.
+        from app.modules.quota_webhook.repository import note_redemption
+
+        await note_redemption(account_id)
+
     try:
         if route is not None:
             return await _consume_reset_credit_via_codex(

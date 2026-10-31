@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field, SecretStr
 
 from app.modules.shared.schemas import DashboardModel
 
-ResetKind = Literal["scheduled", "unexpected"]
+ResetKind = Literal["scheduled", "unexpected", "redeemed"]
+ALL_KINDS: list[ResetKind] = ["scheduled", "unexpected", "redeemed"]
 
 
 class Observation(BaseModel):
@@ -17,7 +18,7 @@ class Observation(BaseModel):
 
 class WebhookUpdate(DashboardModel):
     enabled: bool
-    kinds: list[ResetKind] = Field(min_length=1, max_length=2)
+    kinds: list[ResetKind] = Field(min_length=1, max_length=3)
     url: SecretStr | None = None
     signing_secret: SecretStr | None = None
     clear_url: bool = False
@@ -35,7 +36,7 @@ class DeliveryStatus(DashboardModel):
 
 class WebhookStatus(DashboardModel):
     enabled: bool = False
-    kinds: list[ResetKind] = ["scheduled", "unexpected"]
+    kinds: list[ResetKind] = ALL_KINDS
     url_configured: bool = False
     signing_secret_configured: bool = False
     pending: int = 0
@@ -51,7 +52,12 @@ class SavedDestination(DashboardModel):
 
 
 def detect_reset(before: Observation, after: Observation) -> ResetKind | None:
-    """Observation-based evidence, never an assertion of the provider's cause."""
+    """Observation-based evidence, never an assertion of the provider's cause.
+
+    Returns only "scheduled" or "unexpected"; the caller relabels an unexpected
+    reset as "redeemed" when codex-lb redeemed a reset credit between the two
+    observations.
+    """
     if after.observed_at <= before.observed_at or before.window_minutes != after.window_minutes:
         return None
     previous_deadline = before.reset_at

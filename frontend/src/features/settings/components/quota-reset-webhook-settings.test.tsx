@@ -8,7 +8,7 @@ import { server } from "@/test/mocks/server";
 
 const path = "/api/settings/quota-reset-webhook";
 const savedUrl = "https://example.com/saved-token";
-const configured = { enabled: true, kinds: ["scheduled", "unexpected"], urlConfigured: true,
+const configured = { enabled: true, kinds: ["scheduled", "unexpected", "redeemed"], urlConfigured: true,
   signingSecretConfigured: true, pending: 0, lastDelivery: null };
 
 async function loadedInput() {
@@ -84,6 +84,21 @@ describe("Quota reset webhook settings", () => {
     renderWithProviders(<QuotaResetWebhookSettings />);
     await loadedInput();
     expect(screen.queryByRole("button", { name: "Remove signing secret" })).not.toBeInTheDocument();
+  });
+
+  it("filters reset credit redemptions separately from unexpected resets", async () => {
+    let saved: unknown;
+    server.use(http.put(path, async ({ request }) => {
+      saved = await request.json(); return HttpResponse.json({ ...configured, kinds: ["scheduled", "unexpected"] });
+    }));
+    renderWithProviders(<QuotaResetWebhookSettings />);
+    await loadedInput();
+    const redeemed = screen.getByLabelText("Reset credit redemptions");
+    expect(redeemed).toBeChecked();
+    expect(screen.getByLabelText("Unexpected resets")).toBeChecked();
+    await userEvent.click(redeemed);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saved).toMatchObject({ kinds: ["scheduled", "unexpected"] }));
   });
 
   it("blocks saves when destination loading fails", async () => {

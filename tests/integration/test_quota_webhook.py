@@ -5,7 +5,7 @@ from datetime import UTC, timedelta
 import pytest
 from sqlalchemy import select, update
 
-from app.db.models import QuotaWebhookBaseline, QuotaWebhookConfig, QuotaWebhookDelivery
+from app.db.models import QuotaWebhookConfig, QuotaWebhookDelivery, QuotaWebhookRedemption
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.quota_webhook.repository import claim, now_utc, redemption_intent, settle
@@ -22,15 +22,17 @@ async def configured(async_client):
         PATH,
         json={
             "enabled": True,
-            "kinds": ["scheduled", "unexpected"],
+            "kinds": ["scheduled", "unexpected", "redeemed"],
             "url": "https://example.com/secret-path",
             "signingSecret": "test-signing-secret",
         },
     )
     assert response.status_code == 200, response.text
     async with SessionLocal() as session:
-        await AccountsRepository(session).upsert(_make_account("webhook-a", "a@example.com"))
-        await AccountsRepository(session).upsert(_make_account("webhook-b", "b@example.com"))
+        for account_id, email in [("webhook-a", "a@example.com"), ("webhook-b", "b@example.com")]:
+            account = _make_account(account_id, email)
+            account.chatgpt_account_id = f"upstream-{account_id}"
+            await AccountsRepository(session).upsert(account)
     return now_utc() + timedelta(seconds=1)
 
 
@@ -136,18 +138,46 @@ async def test_snapshot_race_enqueues_once(configured):
     assert len(await deliveries()) == 1
 
 
-async def test_redemption_clears_baseline(configured):
-    from app.db.models import Account
-
+async def redeem_at(at, account="webhook-a"):
+    """Redeem through the webhook boundary, pinning the recorded time for a deterministic order."""
     async with SessionLocal() as session:
-        await session.execute(update(Account).where(Account.id == "webhook-a").values(chatgpt_account_id="upstream"))
+        await redemption_intent(session, f"upstream-{account}")
+        await session.execute(update(QuotaWebhookRedemption).values(redeemed_at=at))
         await session.commit()
-    await snapshot(configured, 90)
-    async with SessionLocal() as session:
-        await redemption_intent(session, "upstream")
-        assert await session.get(QuotaWebhookBaseline, ("webhook-a", "secondary")) is None
-    await snapshot(configured + timedelta(minutes=20), 0)
+
+
+async def test_redemption_between_samples_is_reported_as_redeemed(configured):
+    reset = int((configured + timedelta(days=3)).replace(tzinfo=UTC).timestamp())
+    await snapshot(configured, 90, reset=reset)
+    await redeem_at(configured + timedelta(seconds=30))
+    await snapshot(configured + timedelta(seconds=60), 0, reset=reset)
+    [row] = await deliveries()
+    payload = json.loads(row.payload)
+    assert payload["kind"] == "redeemed"
+    assert (payload["used_percent_before"], payload["used_percent_after"]) == (90, 0)
+
+
+async def test_redemption_before_both_samples_leaves_later_resets_unexpected(configured):
+    await redeem_at(configured)
+    reset = int((configured + timedelta(days=3)).replace(tzinfo=UTC).timestamp())
+    await snapshot(configured + timedelta(seconds=30), 90, reset=reset)
+    await snapshot(configured + timedelta(seconds=60), 0, reset=reset)
+    assert [json.loads(row.payload)["kind"] for row in await deliveries()] == ["unexpected"]
+
+
+async def test_redeemed_kind_can_be_filtered_out(async_client, configured):
+    response = await async_client.put(PATH, json={"enabled": True, "kinds": ["scheduled", "unexpected"]})
+    assert response.status_code == 200, response.text
+    start = now_utc() + timedelta(seconds=1)
+    reset = int((start + timedelta(days=3)).replace(tzinfo=UTC).timestamp())
+    await snapshot(start, 90, reset=reset)
+    await redeem_at(start + timedelta(seconds=30))
+    await snapshot(start + timedelta(seconds=60), 0, reset=reset)
     assert await deliveries() == []
+
+
+async def test_new_configuration_selects_every_kind(async_client):
+    assert (await async_client.get(PATH)).json()["kinds"] == ["scheduled", "unexpected", "redeemed"]
 
 
 async def test_invalid_url_and_empty_filter_rejected(async_client):

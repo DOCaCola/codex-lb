@@ -2054,7 +2054,8 @@ class QuotaWebhookDelivery(Base):
 class QuotaWebhookRedemption(Base):
     __tablename__ = "quota_webhook_redemptions"
     upstream_account_id: Mapped[str] = mapped_column(String, primary_key=True)
-    suppress_until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Latest reset-credit redemption codex-lb sent for this upstream account.
+    redeemed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class ClaudeAccount(Base):

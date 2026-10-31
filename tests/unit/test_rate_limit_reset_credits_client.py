@@ -22,6 +22,16 @@ from app.core.clients.usage import _usage_headers
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _no_webhook_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep client tests off the database; the webhook marker is covered by integration tests."""
+
+    async def note_redemption(upstream_account_id: str) -> None:
+        return None
+
+    monkeypatch.setattr("app.modules.quota_webhook.repository.note_redemption", note_redemption)
+
+
 class StubResponse:
     def __init__(self, status: int, payload: object | None, text: str) -> None:
         self.status = status
@@ -329,6 +339,33 @@ async def test_consume_reset_credit_sends_credit_id_and_uuid_redeem_request_id()
     # canonical uuid v4
     parsed = UUID(redeem_request_id, version=4)
     assert str(parsed) == redeem_request_id
+
+
+@pytest.mark.asyncio
+async def test_consume_reset_credit_records_redemption_before_upstream_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = ClientState()
+    noted: list[tuple[str, int]] = []
+
+    async def note_redemption(upstream_account_id: str) -> None:
+        noted.append((upstream_account_id, state.calls))
+
+    monkeypatch.setattr("app.modules.quota_webhook.repository.note_redemption", note_redemption)
+    client = StubRetryClient(
+        [StubResponse(200, {"code": "reset", "credit": {"id": "RateLimitResetCredit_test"}, "windows_reset": 1}, "")],
+        state,
+    )
+
+    await consume_reset_credit(
+        "access-token",
+        "acc_workspace",
+        "RateLimitResetCredit_test",
+        base_url="http://upstream.test/backend-api",
+        client=cast(Any, client),
+        allow_direct_egress=True,
+    )
+
+    assert noted == [("acc_workspace", 0)]
+    assert state.calls == 1
 
 
 @pytest.mark.asyncio

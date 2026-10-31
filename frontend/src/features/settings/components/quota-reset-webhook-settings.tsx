@@ -10,8 +10,10 @@ import { ApiError, get, post, put } from "@/lib/api-client";
 
 const path = "/api/settings/quota-reset-webhook";
 const key = ["settings", "quota-reset-webhook"];
+const resetKinds = ["scheduled", "unexpected", "redeemed"] as const;
+type ResetKind = (typeof resetKinds)[number];
 const schema = z.object({
-  enabled: z.boolean(), kinds: z.array(z.enum(["scheduled", "unexpected"])),
+  enabled: z.boolean(), kinds: z.array(z.enum(resetKinds)),
   urlConfigured: z.boolean(), signingSecretConfigured: z.boolean(), pending: z.number(),
   lastDelivery: z.object({ eventId: z.string(), status: z.string(), attempts: z.number(),
     createdAt: z.string(), httpStatus: z.number().nullable(), error: z.string().nullable(),
@@ -22,7 +24,7 @@ export function QuotaResetWebhookSettings({ disabled = false }: { disabled?: boo
   const { t } = useTranslation();
   const client = useQueryClient();
   const query = useQuery({ queryKey: key, queryFn: () => get(path, schema), refetchInterval: 10000 });
-  const [draft, setDraft] = useState<{ enabled: boolean; kinds: ("scheduled" | "unexpected")[] } | null>(null);
+  const [draft, setDraft] = useState<{ enabled: boolean; kinds: ResetKind[] } | null>(null);
   const [urlDraft, setUrlDraft] = useState<string | null>(null);
   const [showUrl, setShowUrl] = useState(false);
   const [savedUrl, setSavedUrl] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function QuotaResetWebhookSettings({ disabled = false }: { disabled?: boo
   const [clearSecret, setClearSecret] = useState(false);
   const save = useMutation({ mutationFn: () => put(path, schema, { body: {
     enabled: clearUrl ? false : draft?.enabled ?? query.data?.enabled ?? false,
-    kinds: draft?.kinds ?? query.data?.kinds ?? ["scheduled", "unexpected"],
+    kinds: draft?.kinds ?? query.data?.kinds ?? [...resetKinds],
     ...(urlDraft !== null && url ? { url } : {}), ...(secret ? { signingSecret: secret } : {}),
     clearUrl, clearSigningSecret: clearSecret,
   }}), onSuccess: async () => {
@@ -60,7 +62,12 @@ export function QuotaResetWebhookSettings({ disabled = false }: { disabled?: boo
   });
   const data = query.data;
   const enabled = clearUrl ? false : draft?.enabled ?? data?.enabled ?? false;
-  const kinds = draft?.kinds ?? data?.kinds ?? ["scheduled", "unexpected"];
+  const kinds = draft?.kinds ?? data?.kinds ?? [...resetKinds];
+  const kindLabels: Record<ResetKind, string> = {
+    scheduled: t("settings.quotaWebhook.scheduled", "Scheduled resets"),
+    unexpected: t("settings.quotaWebhook.unexpected", "Unexpected resets"),
+    redeemed: t("settings.quotaWebhook.redeemed", "Reset credit redemptions"),
+  };
   const busy = disabled || save.isPending || test.isPending || savedUrl === null || !data;
   const dirty = draft !== null || (urlDraft !== null && urlDraft !== savedUrl) || !!secret || clearSecret;
   const failed = query.isError || save.isError || test.isError || destinationError !== null;
@@ -110,10 +117,10 @@ export function QuotaResetWebhookSettings({ disabled = false }: { disabled?: boo
       {clearSecret ? t("settings.quotaWebhook.undoRemoveSecret", "Undo signing secret removal") : t("settings.quotaWebhook.removeSecret", "Remove signing secret")}
     </Button>}
     {clearSecret && <p role="status" className="text-xs">{t("settings.quotaWebhook.secretRemoval", "Signing secret will be removed when you save.")}</p>}
-    <div className="flex flex-wrap gap-4">{(["scheduled", "unexpected"] as const).map((kind) => <label key={kind} className="flex gap-2 text-sm">
+    <div className="flex flex-wrap gap-4">{resetKinds.map((kind) => <label key={kind} className="flex gap-2 text-sm">
       <input type="checkbox" checked={kinds.includes(kind)} disabled={busy} onChange={(event) => setDraft({ enabled,
         kinds: event.target.checked ? [...kinds, kind] : kinds.filter((item) => item !== kind) })} />
-      {kind === "scheduled" ? t("settings.quotaWebhook.scheduled", "Scheduled resets") : t("settings.quotaWebhook.unexpected", "Unexpected resets")}
+      {kindLabels[kind]}
     </label>)}</div>
     <p className="text-xs text-muted-foreground">{t("settings.quotaWebhook.security", "HTTP and HTTPS destinations supported, including internal addresses. HTTP is unencrypted. Saving clears detection baselines and cancels queued events. First observations do not notify.")}</p>
     {failed && <p role="alert" className="text-sm text-destructive">{errorMessage}</p>}
