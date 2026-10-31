@@ -469,19 +469,6 @@ data is available.
 - **THEN** the response includes depletion safe-line data and weekly-credit pace data when those calculations are available
 - **AND** the overview endpoint does not need to compute those fields for initial page render
 
-### Requirement: Dashboard usage donuts present credits as stacked remaining and capacity
-
-The dashboard's primary and secondary usage donuts MUST present remaining amount and capacity as two stacked values separated by a horizontal divider: the remaining count above (bold, `data-testid="donut-center-remaining"`) and the capacity count below (muted, `data-testid="donut-center-capacity"`). Codex values MUST use locale-aware thousands separators (e.g. `7,331` and `7,560`); Claude Pro-unit values MAY show one decimal. Compact-format abbreviation (e.g. `7.33k`) MUST NOT be used in the donut center for these panels.
-
-For Codex the primary donut title MUST read `5-Hour Credits` and the secondary `Weekly Credits`. For Claude they MUST read `5-Hour Quota` and `Weekly Quota`, with a `Pro units` centre caption.
-
-#### Scenario: Dashboard donut shows stacked remaining and capacity
-
-- **WHEN** the dashboard renders a Codex usage donut with `remaining=7331` and `total=7560`
-- **THEN** the donut title reads `5-Hour Credits` or `Weekly Credits`
-- **AND** the center renders `7,331` in the remaining element and `7,560` in the capacity element
-- **AND** a divider separates the two values
-
 ### Requirement: Footer version update indicator
 
 The dashboard footer SHALL show the running application version and SHALL display a compact update-available icon next to that version only when the runtime version API confirms a newer stable GitHub release exists.
@@ -529,32 +516,39 @@ The account delete confirmation dialog SHALL include a checkbox labeled "Delete 
 
 ### Requirement: Dashboard limit warm-up controls
 
-The dashboard SHALL expose global limit warm-up controls in Settings and per-account opt-in/status in the Accounts page account settings and the dashboard list view. Dashboard account cards SHALL NOT show limit warm-up state or controls. The global default SHALL be disabled. Settings SHALL include an exhausted-threshold percent control that determines which pre-reset usage samples count as exhausted for reset-confirmed warm-up.
+The dashboard SHALL expose global limit warm-up controls in Settings and per-account opt-in/status in the account
+settings on the Providers page. Dashboard account cards and list rows SHALL NOT show limit warm-up state or controls.
+The global default SHALL be disabled. Settings SHALL include an exhausted-threshold percent control that determines
+which pre-reset usage samples count as exhausted for reset-confirmed warm-up.
 
 #### Scenario: Configure warm-up behavior
 - **WHEN** an operator opens Settings
-- **THEN** the dashboard shows controls for enabling limit warm-up, selecting primary/secondary/both windows, setting the warm-up model, setting the prompt, setting the exhausted threshold, and setting the cooldown
+- **THEN** the dashboard shows controls for enabling limit warm-up, selecting primary/secondary/both windows, setting
+  the warm-up model, setting the prompt, setting the exhausted threshold, and setting the cooldown
 
 #### Scenario: Validate warm-up settings before save
 - **WHEN** an operator edits warm-up model, prompt, exhausted threshold, or cooldown fields
-- **THEN** the dashboard enforces the same non-empty, max-length, percent, and integer cooldown bounds as the backend API before enabling save
+- **THEN** the dashboard enforces the same non-empty, max-length, percent, and integer cooldown bounds as the backend
+  API before enabling save
 
 #### Scenario: Show per-account opt-in and last attempt
-- **WHEN** an operator selects a Codex account on the Accounts page
+- **WHEN** an operator opens a Codex account's settings on the Providers page
 - **THEN** its settings show a limit warm-up switch reflecting the opt-in
-- **AND** the latest attempt status, window, model, and completion/attempt time when available, or that no attempt was made
+- **AND** the latest attempt status, window, model, and completion/attempt time when available, or that no attempt
+  was made
 
 #### Scenario: Opt-in while warm-up is disabled globally
 - **WHEN** global limit warm-up is known to be disabled
 - **THEN** the account's warm-up switch states that nothing is sent and links to Settings
 
 #### Scenario: Dashboard cards omit warm-up
-- **WHEN** the dashboard renders Codex account cards
-- **THEN** the cards show no limit warm-up state or toggle
+- **WHEN** the dashboard renders Codex account cards or list rows
+- **THEN** they show no limit warm-up state or toggle
 
 #### Scenario: Warm-up controls are accessible by name
-- **WHEN** an operator navigates the dashboard with assistive technology
-- **THEN** global and per-account warm-up toggles expose descriptive accessible names that identify the setting and account context
+- **WHEN** an operator navigates with assistive technology
+- **THEN** global and per-account warm-up toggles expose descriptive accessible names that identify the setting and
+  account context
 
 ### Requirement: Account alias contract
 
@@ -612,33 +606,53 @@ The dashboard overview API MUST return account summaries sorted by `capacity_cre
 
 ### Requirement: Dashboard provider cards share one presentation layout
 
-Codex, Claude and OpenRouter dashboard cards SHALL reuse one shared identity/status header, provider-content body and bottom action footer with consistent spacing and typography. Optional identity descriptions SHALL NOT shift the common body start within a row. Provider units, unknown/stale observations, privacy behavior and existing action permissions SHALL be preserved without fabricating unsupported metrics. Codex and Claude card quota windows SHALL use the same one-column or two-column arrangement on desktop and mobile; detail and list layouts SHALL retain their existing responsive behavior.
+Codex, Claude, Antigravity and OpenRouter dashboard cards SHALL use one card: identity with provider logo, account
+colour, plan badge and today's cost, then the account's limits with the weekly window first and one row per window the
+account has, then a status strip with its remedy (Re-auth, Resume, Reset credit) only when the account needs
+attention, then a footer only when it carries information. Codex footers SHALL show subscription and purchased
+credits and the reset-credit button. Provider units, unknown or stale observations, privacy behaviour and action
+permissions SHALL be preserved without fabricating unsupported metrics.
 
 #### Scenario: Mixed providers retain their semantics
-- **WHEN** Codex, Claude and OpenRouter cards appear together
-- **THEN** they share the header/body/footer layout
-- **AND** quota percentages, dollar balances, privacy and existing actions retain their provider-specific meanings
+- **WHEN** Codex, Claude, Antigravity and OpenRouter cards appear together
+- **THEN** they share the card layout
+- **AND** quota percentages, dollar balances, privacy and actions retain their provider-specific meanings
+
+#### Scenario: Weekly-only account
+- **WHEN** an account has only a weekly limit
+- **THEN** its card shows no 5h row
+
+#### Scenario: Healthy account has no strip
+- **WHEN** an account is active with no notice
+- **THEN** its card shows no status strip
 
 #### Scenario: Optional email does not shift quotas
 - **WHEN** one Codex card has an additional email description and another provider card does not
-- **THEN** their shared body sections begin at the same vertical position within that row
+- **THEN** their limit rows begin at the same vertical position within that row
 
 #### Scenario: Card quotas remain consistent on mobile
 - **WHEN** Codex and Claude cards each have two quota windows at a narrow viewport
-- **THEN** both render two quota columns without horizontal document overflow
+- **THEN** both render the same limit rows without horizontal document overflow
 
 ### Requirement: Dashboard account grid uses intrinsic equal-height cards
 
-Every provider card SHALL use the same flexible grid-item wrapper. Multi-column account grids SHALL use equal content-driven card heights across rows and align action footers along the bottom of each row. Single-column layouts SHALL retain natural card heights. Cards SHALL show their content in full without a fixed height cap, clipping or inner scrolling. Grid items and cards SHALL remain within their allocated column width.
+Every provider card SHALL use the same grid item. Multi-column account grids SHALL give cards in a row equal heights,
+with limit rows starting at the same position and status strips and footers aligned along the bottom. Single-column
+layouts SHALL retain natural card heights. Cards SHALL show their content in full without clipping or inner scrolling
+and SHALL stay within their column.
 
 #### Scenario: Different provider content stays aligned
 - **WHEN** multi-column cards have different amounts of provider content or identity lines
-- **THEN** all visible card surfaces have equal heights determined by the tallest content
-- **AND** footers in the same row have matching bottom alignment
+- **THEN** all visible card surfaces in a row have equal heights determined by the tallest content
+- **AND** status strips and footers in the same row are aligned along the bottom
 
 #### Scenario: Mobile retains full natural content
 - **WHEN** the account grid uses a single column
 - **THEN** cards use natural content heights and all metrics and actions remain contained and accessible
+
+#### Scenario: Warnings do not shift charts
+- **WHEN** one card in a row has a status strip and its neighbour does not
+- **THEN** both cards' limit rows start at the same vertical position
 
 ### Requirement: Weekly credits pace header uses flex-start alignment
 
@@ -887,55 +901,6 @@ selected value using the settings API field `preferEarlierResetWindow`.
 - **WHEN** the settings import is applied
 - **THEN** the imported value is sent to the backend instead of being dropped
 
-### Requirement: Dashboard account cards show live credit state
-
-Account summary responses SHALL expose nullable upstream purchased-credit metadata as `creditsHas`, `creditsUnlimited`, and `creditsBalance`, alongside calculated remaining subscription credits for each available quota window. Dashboard card and list views MUST present calculated subscription quota and purchased credits as separate labeled metrics and MUST NOT use one as a fallback replacement for the other.
-
-When `creditsUnlimited` is true, the purchased-credit metric SHALL render `Unlimited`. Otherwise, it SHALL render the numeric `creditsBalance` when available and `-` when unavailable. The subscription metric SHALL select remaining credits with the following precedence: monthly credits for monthly-only accounts; secondary credits for weekly-only accounts; otherwise secondary credits when available, falling back to primary credits. It SHALL render `-` when the selected value is unavailable.
-
-The compact list SHALL sort subscription and purchased credits independently. A persisted legacy `credits` sort preference SHALL migrate to the purchased-credit sort so existing operator preferences remain valid after upgrade.
-
-#### Scenario: Zero purchased balance does not hide subscription quota
-
-- **WHEN** an account summary has `creditsBalance = 0.0`
-- **AND** `remainingCreditsSecondary = 35910.0`
-- **THEN** the dashboard shows subscription quota `35910.00`
-- **AND** separately shows purchased credits `0.00`
-
-#### Scenario: Unlimited applies only to purchased credits
-
-- **WHEN** an account summary has `creditsUnlimited = true`
-- **THEN** the purchased-credit metric shows `Unlimited`
-- **AND** the subscription metric still shows its own remaining quota value or `-`
-
-#### Scenario: Missing metrics render independently
-
-- **WHEN** an account summary has no purchased credit balance and no calculated remaining subscription credits
-- **THEN** both separately labeled metrics show `-`
-
-#### Scenario: Unlimited credits render explicitly
-
-- **WHEN** an account summary has `creditsUnlimited = true`
-- **THEN** the dashboard account card shows purchased credits as `Unlimited`
-- **AND** the subscription quota remains independently visible
-
-#### Scenario: Positive credit balance renders on the card
-
-- **WHEN** an account summary includes `creditsBalance = 1.5`
-- **THEN** the dashboard account card shows purchased credits as `1.50`
-- **AND** does not replace the subscription quota value
-
-#### Scenario: Missing credit data renders a placeholder
-
-- **WHEN** an account summary has no purchased credit balance and no remaining subscription credit value
-- **THEN** the dashboard account card shows `-` for both separately labeled metrics
-
-#### Scenario: Legacy credit sort remains valid
-
-- **WHEN** local dashboard preferences contain the legacy `credits` sort key
-- **THEN** the dashboard migrates it to the purchased-credit sort key
-- **AND** persists the migrated preference
-
 ### Requirement: Dashboard settings must expose upstream proxy routing controls
 The settings dashboard MUST allow operators to inspect upstream proxy routing state, enable or disable routing, choose the default proxy pool, create proxy endpoints, create proxy pools, and add endpoints to pools. For every endpoint the admin API reports as `plaintextCredentials: true`, the endpoint list MUST render a warning stating that its credentials are sent unencrypted over that scheme and recommending an `https://` proxy or a credential-free IP allowlist; endpoints reported as `false` MUST render no such warning.
 
@@ -1054,35 +1019,6 @@ with date-range, account, provider-account, API-key, model and user-agent filter
 - **AND** allows filtering by date range, account, API key, model and user agent
 - **AND** uses the returned payload to render summary cards, the daily trend, breakdown lists, latency charts and the
   daily breakdown
-
-### Requirement: Dashboard accounts section shows account availability summary
-
-The dashboard `Accounts` section SHALL render a compact summary derived from the existing dashboard overview accounts collection. The summary SHALL show the total registered account count, the active account count, and the unavailable account count.
-
-An account SHALL count as active only when its dashboard status normalizes to `active`. Accounts whose normalized status is `paused`, `limited`, `exceeded`, `reauth`, or `deactivated` SHALL count as unavailable.
-
-The summary SHALL render in the `Accounts` section header row and SHALL use the project's existing foreground, muted, positive, and negative theme color conventions for light and dark mode.
-
-#### Scenario: Mixed account states show registered, active, and unavailable counts
-
-- **WHEN** `GET /api/dashboard/overview` returns three accounts with statuses `active`, `paused`, and `rate_limited`
-- **THEN** the dashboard `Accounts` section header shows `3 registered`
-- **AND** shows `1 active`
-- **AND** shows `2 unavailable`
-
-#### Scenario: Only normalized active accounts count as active
-
-- **WHEN** `GET /api/dashboard/overview` returns accounts with statuses `active`, `quota_exceeded`, `reauth_required`, and `deactivated`
-- **THEN** only the `active` account contributes to the active count
-- **AND** the other three accounts contribute to the unavailable count
-
-#### Scenario: Theme-aware colors match dashboard conventions
-
-- **WHEN** the dashboard renders in light mode or dark mode
-- **THEN** the registered count uses foreground styling
-- **AND** the labels use muted-foreground styling
-- **AND** the active count uses the dashboard positive green styling
-- **AND** the unavailable count uses the dashboard negative red styling
 
 ### Requirement: Dashboard overview summary cards show previous-window usage deltas
 
@@ -1273,44 +1209,6 @@ account email as a subtitle so the underlying account remains identifiable.
 - **WHEN** the operator cancels
 - **THEN** the editor closes without calling the alias handler
 - **AND** the displayed label is unchanged
-
-### Requirement: Dashboard accounts section supports card and list views
-
-The Dashboard Accounts section SHALL allow operators to choose between the existing card layout and a compact list layout. The default mode SHALL remain cards. The selected account view mode SHALL persist locally and apply on later dashboard visits.
-
-The list layout SHALL use the same dashboard overview account collection as the card layout and SHALL expose account identity, status, plan, quota remaining, credits, limit warm-up state, and the same account actions available from the card layout. The list quota cells SHALL include compact visual meters for each rendered quota row while preserving numeric percent and reset timing text. The Account, Status, Plan, Quota, Credits, and Warm-up list headers SHALL be clickable sort controls. The selected list sort column and direction SHALL persist locally and apply on later dashboard visits that render the compact list layout.
-
-#### Scenario: Dashboard defaults to card view
-
-- **WHEN** the account view-mode preference is unset
-- **THEN** the Dashboard Accounts section renders account cards
-- **AND** the card/list control indicates card mode is selected
-
-#### Scenario: Operator switches to list view
-
-- **WHEN** an operator selects list mode in the Dashboard Accounts section
-- **THEN** the account cards are replaced by a compact list of the same accounts
-- **AND** the list exposes each account's status, quota, credits, warm-up state, and available actions
-- **AND** each quota row includes a compact visual remaining-capacity meter
-
-#### Scenario: Operator sorts account list columns
-
-- **WHEN** an operator clicks a sortable list header
-- **THEN** the account list sorts by that column in ascending order
-- **AND** clicking the same header again toggles the sort direction
-- **AND** the active sort header exposes its sort direction to assistive technology
-
-#### Scenario: Account list sort persists locally
-
-- **WHEN** an operator sorts the compact account list by a column and direction
-- **AND** later returns to the dashboard in the same browser profile with list mode selected
-- **THEN** the compact account list renders with the same active sort column and direction
-
-#### Scenario: Account view mode persists locally
-
-- **WHEN** an operator selects list mode
-- **AND** later returns to the dashboard in the same browser profile
-- **THEN** the Dashboard Accounts section renders in list mode without requiring another selection
 
 ### Requirement: Reports page exposes a visible user-agent filter
 
@@ -4794,3 +4692,98 @@ saving unrelated changes SHALL NOT broaden the key to every account.
 
 - **WHEN** an operator changes a field and selects Discard
 - **THEN** every field shows its saved value again
+
+### Requirement: Dashboard header summarises account health
+
+The dashboard header SHALL show the page title, one line of account health and a refresh button, without a
+subtitle. The line SHALL state how many of all accounts can take work and, when present, which accounts are limited
+and when the first of them comes back, how many are paused, how many need sign-in, and when the next 5-hour window
+resets. Names SHALL follow privacy blurring.
+
+#### Scenario: Limited account comes back later
+- **WHEN** five of six accounts are active and one is limited until 14:30
+- **THEN** the line reads that five of six accounts can take work and names the limited account with its return time
+
+### Requirement: Dashboard remaining quota card
+
+The quota section SHALL offer a Codex, Claude or Antigravity switch when accounts of more than one of those
+providers exist. For Codex and Claude, a Remaining credits (Codex) or Remaining quota (Claude, in Pro units) card SHALL
+show a 5-hour and a weekly ring with remaining of capacity and the percent left, a table of each account's remaining
+5-hour and weekly amount with reset countdowns, and a total row. Accounts excluded from pooling SHALL be marked and
+explained in a note. Antigravity SHALL show remaining quota per model family. Ring values SHALL use compact numbers.
+
+#### Scenario: Codex remaining credits
+- **WHEN** Codex accounts have 2,850 of 2,850 five-hour and 61,360 of 95,760 weekly credits left
+- **THEN** the rings show 2.85K of 2.85K and 61.36K of 95.76K with 100% and 64% left
+- **AND** the table lists each account and the totals
+
+### Requirement: Top consumers show recent cost activity
+
+The overview and projections payloads SHALL give each top consumer `costBuckets`: twelve known-cost sums of
+ten-minute buckets covering the two-hour attribution window, oldest first. The Top consumers card SHALL draw them as a
+sparkline in the key's colour.
+
+#### Scenario: Cost in the latest bucket
+- **WHEN** a key's only request in the window cost $0.125 and was made in the last ten minutes
+- **THEN** its `costBuckets` are eleven zeros followed by 0.125
+
+### Requirement: Dashboard activity strip
+
+Below the accounts, the dashboard SHALL show requests, tokens, estimated API cost, account burn and error rate as one
+strip of compact metrics with sparklines, with the 1d / 7d / 30d overview timeframe switch beside its header. Account
+burn SHALL show the weekly account-equivalent value with the 5-hour value as meta.
+
+#### Scenario: Switch timeframe
+- **WHEN** an operator selects 30d beside the Activity header
+- **THEN** the strip shows the 30-day metrics
+
+### Requirement: Dashboard accounts header counts account states
+
+The dashboard `Accounts` header SHALL show a hint derived from all provider accounts: the total count and the
+ready count, followed by the limited, paused and need-sign-in counts when they are not zero. Ready SHALL mean a
+normalized status of `active`; limited SHALL include `limited` and `exceeded`; need sign-in SHALL include `reauth`
+and `deactivated`.
+
+#### Scenario: Mixed account states
+- **WHEN** accounts have statuses `active`, `paused` and `rate_limited`
+- **THEN** the hint reads `3 accounts · 1 ready · 1 limited · 1 paused`
+
+### Requirement: Dashboard accounts offer card and list views
+
+The Dashboard Accounts section SHALL allow operators to choose between cards and a compact list. The default mode
+SHALL remain cards and the selection SHALL persist locally. The list SHALL show the same accounts in the same order
+with account identity and provider, status with notice and remedy, two limit meters with percent and reset countdown,
+and today's cost.
+
+#### Scenario: Dashboard defaults to card view
+- **WHEN** the account view-mode preference is unset
+- **THEN** the Dashboard Accounts section renders account cards
+
+#### Scenario: Operator switches to list view
+- **WHEN** an operator selects list mode
+- **THEN** the cards are replaced by a list of the same accounts with status, limit meters and today's cost
+
+#### Scenario: Account view mode persists locally
+- **WHEN** an operator selects list mode
+- **AND** later returns to the dashboard in the same browser profile
+- **THEN** the Dashboard Accounts section renders in list mode
+
+### Requirement: Codex dashboard cards show subscription and purchased credits
+
+Account summary responses SHALL expose nullable upstream purchased-credit metadata as `creditsHas`,
+`creditsUnlimited`, and `creditsBalance`, alongside calculated remaining subscription credits for each available
+quota window. The Codex card footer MUST present remaining subscription credits and purchased credits as two values,
+subscription first, and MUST NOT use one as a fallback replacement for the other. When `creditsUnlimited` is true,
+the purchased value SHALL render `Unlimited`. The subscription value SHALL select remaining credits with the
+following precedence: monthly credits for monthly-only accounts; secondary credits for weekly-only accounts;
+otherwise secondary credits when available, falling back to primary credits.
+
+#### Scenario: Zero purchased balance does not hide subscription quota
+- **WHEN** an account summary has `creditsBalance = 0.0`
+- **AND** `remainingCreditsSecondary = 35910.0`
+- **THEN** the card footer shows `35,910 + 0 credits`
+
+#### Scenario: Unlimited applies only to purchased credits
+- **WHEN** an account summary has `creditsUnlimited = true`
+- **THEN** the purchased value shows `Unlimited`
+- **AND** the subscription value still shows its own remaining quota
