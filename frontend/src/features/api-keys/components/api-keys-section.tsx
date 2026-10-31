@@ -1,6 +1,7 @@
 import { KeySquare } from "lucide-react";
 import { lazy, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AlertMessage } from "@/components/alert-message";
@@ -11,14 +12,12 @@ import { ApiKeyQuotaPrivacyToggle } from "@/features/api-keys/components/api-key
 import { ApiKeyCreatedDialog } from "@/features/api-keys/components/api-key-created-dialog";
 import { ApiKeyTable } from "@/features/api-keys/components/api-key-table";
 import { useApiKeys } from "@/features/api-keys/hooks/use-api-keys";
-import type { ApiKey, ApiKeyCreateRequest, ApiKeyUpdateRequest } from "@/features/api-keys/schemas";
+import type { ApiKey, ApiKeyCreateRequest } from "@/features/api-keys/schemas";
+import { keyHref } from "@/features/apis/key-summary";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
 const ApiKeyCreateDialog = lazy(() =>
   import("@/features/api-keys/components/api-key-create-dialog").then((m) => ({ default: m.ApiKeyCreateDialog })),
-);
-const ApiKeyEditDialog = lazy(() =>
-  import("@/features/api-keys/components/api-key-edit-dialog").then((m) => ({ default: m.ApiKeyEditDialog })),
 );
 
 export type ApiKeysSectionProps = {
@@ -40,16 +39,15 @@ export function ApiKeysSection({
   onHideUpstreamQuotaFromApiKeysChange,
 }: ApiKeysSectionProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const {
     apiKeysQuery,
     createMutation,
-    updateMutation,
     deleteMutation,
     regenerateMutation,
   } = useApiKeys();
 
   const createDialog = useDialogState();
-  const editDialog = useDialogState<ApiKey>();
   const deleteDialog = useDialogState<ApiKey>();
   const createdDialog = useDialogState<string>();
 
@@ -58,29 +56,20 @@ export function ApiKeysSection({
     disabled ||
     apiKeysQuery.isFetching ||
     createMutation.isPending ||
-    updateMutation.isPending ||
     deleteMutation.isPending ||
     regenerateMutation.isPending;
 
   const mutationError = useMemo(
     () =>
       getErrorMessageOrNull(createMutation.error) ||
-      getErrorMessageOrNull(updateMutation.error) ||
       getErrorMessageOrNull(deleteMutation.error) ||
       getErrorMessageOrNull(regenerateMutation.error),
-    [createMutation.error, deleteMutation.error, regenerateMutation.error, updateMutation.error],
+    [createMutation.error, deleteMutation.error, regenerateMutation.error],
   );
 
   const handleCreate = async (payload: ApiKeyCreateRequest) => {
     const created = await createMutation.mutateAsync(payload);
     createdDialog.show(created.key);
-  };
-
-  const handleUpdate = async (payload: ApiKeyUpdateRequest) => {
-    if (!editDialog.data) {
-      return;
-    }
-    await updateMutation.mutateAsync({ keyId: editDialog.data.id, payload });
   };
 
   return (
@@ -117,7 +106,7 @@ export function ApiKeysSection({
       <ApiKeyTable
         keys={keys}
         busy={busy}
-        onEdit={(apiKey) => editDialog.show(apiKey)}
+        onEdit={(apiKey) => navigate(keyHref(apiKey.id, "settings"))}
         onDelete={(apiKey) => deleteDialog.show(apiKey)}
         onRegenerate={(apiKey) => {
           void regenerateMutation.mutateAsync(apiKey.id).then((result) => {
@@ -131,14 +120,6 @@ export function ApiKeysSection({
         busy={createMutation.isPending}
         onOpenChange={createDialog.onOpenChange}
         onSubmit={handleCreate}
-      />
-
-      <ApiKeyEditDialog
-        open={editDialog.open}
-        busy={updateMutation.isPending}
-        apiKey={editDialog.data}
-        onOpenChange={editDialog.onOpenChange}
-        onSubmit={handleUpdate}
       />
 
       <ApiKeyCreatedDialog

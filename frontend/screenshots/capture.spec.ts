@@ -779,49 +779,65 @@ test("API comparison trends across metrics and modes on desktop and mobile", asy
   expect(errors).toEqual([]);
 });
 
-test("API lifetime cost bars and compact labels on desktop and mobile", async ({ page }, testInfo) => {
+test("API key table lifetime share and key page on desktop and mobile", async ({ page }, testInfo) => {
   await interceptApi(page);
+  const keys = [{
+    ...apiKeys[0],
+    usageSummary: {
+      requestCount: 426943, totalTokens: 80000, cachedInputTokens: 12000,
+      totalCostUsd: 44248.05, pricedRequests: 422859, unpricedRequests: 99,
+      unmeteredRequests: 3985, coverageUnknown: false,
+    },
+  }, {
+    ...apiKeys[1],
+    usageSummary: {
+      requestCount: 10000, totalTokens: 40000, cachedInputTokens: 6000,
+      totalCostUsd: 14749.35, pricedRequests: 10000, unpricedRequests: 0,
+      unmeteredRequests: 0, coverageUnknown: false,
+    },
+  }];
   await page.route("**/api/api-keys/**", (route) => {
     if (new URL(route.request().url()).pathname !== "/api/api-keys/") return route.fallback();
-    return fulfill(route, [{
-      ...apiKeys[0],
-      usageSummary: {
-        requestCount: 426943, totalTokens: 80000, cachedInputTokens: 12000,
-        totalCostUsd: 44248.05, pricedRequests: 422859, unpricedRequests: 99,
-        unmeteredRequests: 3985, coverageUnknown: false,
-      },
-    }, {
-      ...apiKeys[1],
-      usageSummary: {
-        requestCount: 10000, totalTokens: 40000, cachedInputTokens: 6000,
-        totalCostUsd: 14749.35, pricedRequests: 10000, unpricedRequests: 0,
-        unmeteredRequests: 0, coverageUnknown: false,
-      },
-    }]);
+    return fulfill(route, keys);
   });
-  await applyTheme(page, "light");
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto(BASE_URL);
-  await page.getByRole("link", { name: "API Keys", exact: true }).click();
-  const panel = page.getByTestId("api-keys-overview-cost-panel");
-  await expect(panel.getByText("$44,248.05 · 75%", { exact: true })).toBeVisible();
-  await expect(panel.getByText("$14,749.35 · 25%", { exact: true })).toBeVisible();
-  await expect(panel.getByText("Share of recorded estimated cost", { exact: true })).toBeVisible();
-  await expect(panel).not.toContainText(/known|incomplete|priced|unmetered/);
-  for (const [name, width, height] of [["desktop", 1440, 900], ["mobile", 390, 844]] as const) {
-    await page.setViewportSize({ width, height });
-    await panel.evaluate((element) => element.scrollIntoView({ block: "center" }));
-    await expect(panel.getByText("$44,248.05 · 75%", { exact: true })).toBeVisible();
-    await expect(panel.getByRole("meter", { name: "Production" })).toBeVisible();
-    await expect(panel.getByRole("meter", { name: "Development" })).toBeVisible();
-    await expect.poll(() => panel.getByRole("meter", { name: "Production" }).evaluate(
-      (element) => Math.round(element.firstElementChild!.getBoundingClientRect().width / element.getBoundingClientRect().width * 100),
-    )).toBe(75);
-    await expect.poll(() => panel.getByRole("meter", { name: "Development" }).evaluate(
-      (element) => Math.round(element.firstElementChild!.getBoundingClientRect().width / element.getBoundingClientRect().width * 100),
-    )).toBe(25);
-    await expect.poll(() => panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    await panel.screenshot({ path: testInfo.outputPath(`api-cost-${name}.png`), animations: "disabled" });
+  for (const theme of ["light", "dark"] as const) {
+    await applyTheme(page, theme);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(BASE_URL + "/keys");
+    const list = page.getByTestId("api-keys-list");
+    const rows = list.getByTestId("api-key-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: keys[0].name })).toContainText("75%");
+    await expect(rows.filter({ hasText: keys[1].name })).toContainText("25%");
+    await expect(list).not.toContainText(/known|incomplete|priced|unmetered/);
+    for (const [name, width, height] of [["desktop", 1440, 900], ["mobile", 390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await list.screenshot({ path: testInfo.outputPath("api-keys-table-" + theme + "-" + name + ".png"), animations: "disabled" });
+    }
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await rows.filter({ hasText: keys[0].name }).getByRole("link", { name: keys[0].name }).click();
+    await expect(page.getByRole("heading", { name: keys[0].name })).toBeVisible();
+    await expect(page.getByTestId("api-key-rail")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("api-key-overview-" + theme + ".png"), fullPage: true, animations: "disabled" });
+
+    await page.getByRole("group", { name: "Key view" }).getByRole("button", { name: /settings/i }).click();
+    await page.getByLabel("Name").fill(keys[0].name + " renamed");
+    const saveBar = page.getByRole("region", { name: "Unsaved changes" });
+    await expect(saveBar).toBeVisible();
+    const statusBar = page.locator("footer").last();
+    for (const [name, width, height] of [["desktop", 1440, 900], ["mobile", 390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      // The sticky save bar stays above the status bar, which wraps to several lines on phones.
+      await expect.poll(async () => {
+        const bar = (await saveBar.boundingBox())!;
+        return bar.y + bar.height <= (await statusBar.boundingBox())!.y;
+      }).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("api-key-settings-" + theme + "-" + name + ".png"), animations: "disabled" });
+    }
   }
 });
 

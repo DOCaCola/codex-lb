@@ -17,7 +17,7 @@ async function openRowActions(user: ReturnType<typeof userEvent.setup>, row: HTM
 }
 
 describe("api keys flow integration", () => {
-  it("creates, shows plain key dialog, edits, and deletes an api key", async () => {
+  it("creates, shows plain key dialog, then edits and deletes the key on its Settings tab", async () => {
     const user = userEvent.setup();
     const createdName = "Integration Key";
     const updatedName = "Integration Key Updated";
@@ -45,15 +45,15 @@ describe("api keys flow integration", () => {
 
     await openRowActions(user, createdRow);
     await user.click(await screen.findByRole("menuitem", { name: /Edit/ }));
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/keys\/[^/]+\/settings$/));
     const nameInput = await screen.findByLabelText("Name");
     await user.clear(nameInput);
     await user.type(nameInput, updatedName);
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-    const updatedRow = getParentRow(await screen.findByText(updatedName));
+    expect(await screen.findByRole("heading", { name: updatedName })).toBeInTheDocument();
 
-    await openRowActions(user, updatedRow);
-    await user.click(await screen.findByRole("menuitem", { name: /Delete/ }));
+    await user.click(within(screen.getByTestId("api-key-settings")).getByRole("button", { name: "Delete" }));
     const confirmTitle = await screen.findByText("Delete API key");
     const confirmDialog = confirmTitle.closest("[role='alertdialog']");
     expect(confirmDialog).not.toBeNull();
@@ -65,6 +65,7 @@ describe("api keys flow integration", () => {
     await waitFor(() => {
       expect(screen.queryByText(updatedName)).not.toBeInTheDocument();
     });
+    expect(window.location.pathname).toBe("/keys");
   });
 
   it("creates an api key with assigned accounts", async () => {

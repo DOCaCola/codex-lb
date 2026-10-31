@@ -12,7 +12,7 @@ type ChartToggleProps<T extends string> = {
 
 export function ChartToggle<T extends string>({ label, value, options, onChange }: ChartToggleProps<T>) {
   return (
-    <div role="group" aria-label={label} className="inline-flex rounded-md border bg-muted/30 p-0.5">
+    <div role="group" aria-label={label} className="inline-flex max-w-full flex-wrap rounded-md border bg-muted/30 p-0.5">
       {options.map((option) => {
         const isActive = option.value === value;
         return (

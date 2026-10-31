@@ -19,7 +19,9 @@ vi.mock("@/components/lazy-recharts", () => ({
     chartData = data;
     return <div data-testid="cumulative-chart">{children}</div>;
   },
-  Area: ({ name, stackId }: { name: string; stackId?: string }) => <div data-testid={`series-${name}`} data-stack-id={stackId} />,
+  Area: ({ name, stackId, stroke }: { name: string; stackId?: string; stroke: string }) => (
+    <div data-testid={`series-${name}`} data-stack-id={stackId} data-stroke={stroke} />
+  ),
   Line: ({ name }: { name: string }) => <div data-testid={`series-${name}`} />,
   CartesianGrid: () => null, XAxis: () => null, YAxis: () => null,
   Tooltip: ({ content }: { content: ReactElement<Record<string, unknown>> }) =>
@@ -37,7 +39,8 @@ const fixture: ApiKeysTrendsResponse = {
   }],
 };
 
-const providerProps = { provider: "all" as const, onProviderChange: vi.fn() };
+const colors = new Map([["key:unknown", "#111111"], ["key:free", "#222222"], ["deleted", "#333333"], ["other", "#444444"]]);
+const providerProps = { provider: "all" as const, onProviderChange: vi.fn(), colors };
 
 describe("ApiComparisonTrend", () => {
   it("offers the provider filter and reports the chosen provider", async () => {
@@ -45,7 +48,7 @@ describe("ApiComparisonTrend", () => {
     const onProviderChange = vi.fn();
     const view = renderWithProviders(
       <ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()}
-        provider="all" onProviderChange={onProviderChange} />,
+        provider="all" onProviderChange={onProviderChange} colors={colors} />,
     );
     const filter = screen.getByRole("group", { name: "Provider" });
     expect(within(filter).getAllByRole("button").map((button) => button.textContent)).toEqual(
@@ -56,7 +59,7 @@ describe("ApiComparisonTrend", () => {
     expect(onProviderChange).toHaveBeenCalledWith("antigravity");
     view.rerender(
       <ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()}
-        provider="claude" onProviderChange={onProviderChange} />,
+        provider="claude" onProviderChange={onProviderChange} colors={colors} />,
     );
     expect(within(filter).getByRole("button", { name: "Claude" })).toHaveAttribute("aria-pressed", "true");
   });
@@ -104,6 +107,12 @@ describe("ApiComparisonTrend", () => {
     expect(screen.queryByTestId("series-key:free")).not.toBeInTheDocument();
     await user.click(within(legend).getByRole("button", { name: "Free key" }));
     expect(screen.getByTestId("series-key:free")).toBeVisible();
+  });
+
+  it("draws each key in its table colour", () => {
+    renderWithProviders(<ApiComparisonTrend data={fixture} loading={false} error={false} onRetry={vi.fn()} {...providerProps} />);
+    expect(screen.getByTestId("series-key:unknown")).toHaveAttribute("data-stroke", "#111111");
+    expect(screen.getByTestId("series-key:free")).toHaveAttribute("data-stroke", "#222222");
   });
 
   it("shows explicit loading, empty and retryable error states", async () => {

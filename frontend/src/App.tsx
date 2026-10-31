@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useState, type CSSProperties } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import { AppHeader } from "@/components/layout/app-header";
@@ -90,7 +90,8 @@ function AppLayout() {
     <div
       className="flex min-h-screen flex-col bg-background"
       data-time-format={timeFormat}
-      style={{ paddingBottom: statusBarHeight }}
+      // Sticky footers offset themselves by the measured status bar height.
+      style={{ paddingBottom: statusBarHeight, "--status-bar-height": statusBarHeight + "px" } as CSSProperties}
     >
       <RouteScrollRestoration />
       <AppHeader
@@ -143,6 +144,8 @@ export default function App() {
               <Route path="/providers/:accountId" element={<ProvidersPage />} />
               <Route path="/providers/:accountId/settings" element={<ProvidersPage />} />
               <Route path="/keys" element={<ApisPage />} />
+              <Route path="/keys/:keyId" element={<ApisPage />} />
+              <Route path="/keys/:keyId/settings" element={<ApisPage />} />
               <Route path="/settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to={DEFAULT_SETTINGS_SECTION} replace />} />
                 <Route path="general" element={<GeneralSettingsSection />} />

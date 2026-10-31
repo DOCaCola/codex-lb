@@ -10,6 +10,7 @@ import {
   updateApiKey,
 } from "@/features/api-keys/api";
 import type {
+  ApiKey,
   ApiKeyCreateRequest,
   ApiKeyUpdateRequest,
 } from "@/features/api-keys/schemas";
@@ -50,8 +51,12 @@ export function useApiKeys({ enabled = true }: ApiKeyQueryOptions = {}) {
   const updateMutation = useMutation({
     mutationFn: ({ keyId, payload }: { keyId: string; payload: ApiKeyUpdateRequest }) =>
       updateApiKey(keyId, payload),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       toast.success(t("apiKeys.toasts.updated"));
+      // The saved key replaces its list entry at once, so a settings form shows the saved values without waiting.
+      queryClient.setQueryData<ApiKey[]>(["api-keys", "list"], (keys) =>
+        keys?.map((apiKey) => (apiKey.id === updated.id ? updated : apiKey)),
+      );
       void queryClient.invalidateQueries({ queryKey: ["api-keys", "list"] });
       void queryClient.invalidateQueries({ queryKey: ["api-keys", "trends"] });
     },

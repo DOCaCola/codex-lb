@@ -6,7 +6,7 @@ import { ProviderLogo } from "@/components/brand/provider-account-name";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/lazy-recharts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { buildComparisonPoints, comparisonSeriesId, selectComparisonSeries } from "@/features/apis/comparison-trends";
+import { buildComparisonPoints, selectComparisonSeries } from "@/features/apis/comparison-trends";
 import type {
   ComparisonMetric,
   ComparisonMode,
@@ -15,11 +15,10 @@ import type {
   ComparisonSeries,
 } from "@/features/apis/comparison-trends";
 import type { ApiKeysTrendsResponse } from "@/features/apis/schemas";
+import type { KeyColors } from "@/features/apis/key-summary";
 import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
-import { useThemeStore } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
-import { buildDonutPalette } from "@/utils/colors";
 import { formatChartDateTime, formatCompactNumber, formatCurrency } from "@/utils/formatters";
 
 type DisplaySeries = ComparisonSeries & { label: string; color: string };
@@ -62,27 +61,26 @@ export type ApiComparisonTrendProps = {
   onRetry: () => void;
   provider: ComparisonProvider;
   onProviderChange: (provider: ComparisonProvider) => void;
+  /** Colours shared with the keys table and rail. */
+  colors: KeyColors;
 };
 
-export function ApiComparisonTrend({ data, loading, error, onRetry, provider, onProviderChange }: ApiComparisonTrendProps) {
+export function ApiComparisonTrend({ data, loading, error, onRetry, provider, onProviderChange, colors }: ApiComparisonTrendProps) {
   const { t } = useTranslation();
   const [metric, setMetric] = useState<ComparisonMetric>("cost");
   const [mode, setMode] = useState<ComparisonMode>("hourly");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
-  const theme = useThemeStore((state) => state.theme);
   const reducedMotion = useReducedMotion();
-  const series = useMemo(() => {
-    const source = data?.series ?? [];
-    const identities = source.map(comparisonSeriesId).sort();
-    const palette = buildDonutPalette(identities.length + 1, theme === "dark");
-    const colors = new Map(identities.map((id, index) => [id, palette[index]]));
-    return selectComparisonSeries(source, metric, hidden).map((item) => ({
+  const series = useMemo(
+    () => selectComparisonSeries(data?.series ?? [], metric, hidden).map((item) => ({
       ...item,
       label: item.kind === "other" ? t("apiKeys.trend.other")
         : item.kind === "deleted" ? t("apiKeys.trend.deleted") : item.name!,
-      color: item.kind === "other" ? palette[identities.length] : colors.get(item.id)!,
-    }));
-  }, [data, metric, hidden, t, theme]);
+      // A key created since the list loaded has no colour yet and is drawn as Other until it refreshes.
+      color: colors.get(item.id) ?? colors.get("other")!,
+    })),
+    [data, metric, hidden, t, colors],
+  );
   const points = useMemo(() => buildComparisonPoints(series, metric, mode), [series, metric, mode]);
   const dayTicks = useMemo(() => points.filter((point, index) => index === 0 || point.t.slice(0, 10) !== points[index - 1].t.slice(0, 10))
     .map((point) => point.t), [points]);
