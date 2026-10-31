@@ -451,29 +451,6 @@ export const ConversationAnalyticsSchema = z.object({
   })),
 });
 
-export const ClaudeCacheActivitySchema = z.object({
-  generatedAt: z.iso.datetime({ offset: true }),
-  windowMinutes: z.number().int().positive(),
-  groups: z.array(z.object({
-    sourceId: z.string().nullable(),
-    model: z.string(),
-    current: cacheWindowSchema(),
-    previous: cacheWindowSchema(),
-    readRatioChange: z.number().nullable(),
-  })),
-});
-
-function cacheWindowSchema() {
-  return z.object({
-    requests: z.number().int().nonnegative(),
-    measuredRequests: z.number().int().nonnegative(),
-    inputTokens: z.number().int().nonnegative(),
-    cacheReadTokens: z.number().int().nonnegative(),
-    cacheWriteTokens: z.number().int().nonnegative(),
-    cacheReadRatio: z.number().min(0).max(1).nullable(),
-  });
-}
-
 export const ConversationDetailsSchema = z.object({
   conversationId: z.string(),
   start: z.iso.datetime({ offset: true }),

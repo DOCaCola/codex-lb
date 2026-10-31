@@ -64,10 +64,8 @@ from app.modules.accounts.usage_time_rollup_read import (
 )
 from app.modules.request_logs.mappers import ALL_CANCELLED_PUBLIC_STATUSES, CANCELLED_PUBLIC_STATUSES
 from app.modules.request_logs.observability import (
-    CacheActivityRow,
     ConversationAnalyticsRows,
     provider_account_expr,
-    read_cache_activity,
     read_conversation_analytics,
 )
 
@@ -247,9 +245,6 @@ class ConversationTraceResult:
 class RequestLogsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
-
-    async def cache_activity(self, now: datetime) -> list[CacheActivityRow]:
-        return await read_cache_activity(self._session, now)
 
     @staticmethod
     def _exclude_warmup_clause() -> ColumnElement[bool]:

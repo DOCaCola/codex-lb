@@ -987,7 +987,7 @@ test("logs conversations — narrow", async ({ page }) => {
   });
 });
 
-test("provider observability details and cache activity", async ({ page }, testInfo) => {
+test("provider observability details", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await interceptApi(page);
@@ -1007,14 +1007,6 @@ test("provider observability details and cache activity", async ({ page }, testI
     })),
   };
   await page.route("**/api/conversations/conv_abc", (route) => fulfill(route, details));
-  await page.route("**/api/request-logs/claude-cache-activity", (route) => fulfill(route, {
-    generatedAt: "2026-10-01T10:00:00Z", windowMinutes: 60,
-    groups: [{
-      sourceId: "claude-alpha", model: "anthropic/claude-opus-5-5", readRatioChange: -0.05,
-      current: { requests: 12, measuredRequests: 10, inputTokens: 100000, cacheReadTokens: 80000, cacheWriteTokens: 10000, cacheReadRatio: 0.8 },
-      previous: { requests: 8, measuredRequests: 8, inputTokens: 100000, cacheReadTokens: 85000, cacheWriteTokens: 5000, cacheReadRatio: 0.85 },
-    }],
-  }));
   for (const theme of ["light", "dark"] as const) {
     await applyTheme(page, theme);
     await page.goto(`${BASE_URL}/logs?view=conversations`);
@@ -1023,15 +1015,6 @@ test("provider observability details and cache activity", async ({ page }, testI
     await expect(dialog.getByText("45.6 tok/s").first()).toBeVisible();
     await expect(dialog.locator(".recharts-surface")).toBeVisible();
     await dialog.screenshot({ path: testInfo.outputPath(`conversation-analytics-${theme}.png`) });
-    await page.goto(`${BASE_URL}/reports`);
-    const cacheCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Claude cache activity (1h)", exact: true }) });
-    await expect(cacheCard.getByText("80.0%")).toBeVisible();
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await cacheCard.screenshot({ path: testInfo.outputPath(`claude-cache-${theme}-${width}.png`) });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    }
-    await page.setViewportSize({ width: 1440, height: 900 });
   }
   expect(errors).toEqual([]);
 });

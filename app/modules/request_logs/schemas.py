@@ -193,29 +193,6 @@ class ConversationTraceResponse(DashboardModel):
     has_more: bool
 
 
-class CacheWindow(DashboardModel):
-    requests: int
-    measured_requests: int
-    input_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
-    cache_read_ratio: float | None
-
-
-class CacheActivity(DashboardModel):
-    source_id: str | None
-    model: str
-    current: CacheWindow
-    previous: CacheWindow
-    read_ratio_change: float | None
-
-
-class ClaudeCacheActivityResponse(DashboardModel):
-    generated_at: datetime
-    window_minutes: int = 60
-    groups: list[CacheActivity]
-
-
 class ConversationPerformance(DashboardModel):
     model: str
     reasoning_effort: str | None

@@ -1021,10 +1021,6 @@ export const handlers = [
     );
   }),
 
-  http.get("/api/request-logs/claude-cache-activity", () =>
-    HttpResponse.json({ generatedAt: new Date().toISOString(), windowMinutes: 60, groups: [] }),
-  ),
-
   http.get("/api/request-logs/conversation-trace", () => HttpResponse.json(createConversationTrace())),
 
   http.get("/api/request-logs/options", ({ request }) => {

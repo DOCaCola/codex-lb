@@ -1,11 +1,7 @@
-from dataclasses import replace
 from datetime import timedelta
-from unittest.mock import AsyncMock
 
 import pytest
 
-import app.core.auth.dependencies as auth_dependencies
-from app.core.auth.dashboard_access import guest_principal
 from app.core.utils.time import utcnow
 from app.db.models import RequestLog
 from app.db.session import SessionLocal
@@ -42,42 +38,6 @@ def log(identifier, now, **overrides):
             **overrides,
         }
     )
-
-
-async def test_cache_activity_uses_complete_normal_measurements_without_double_counting(async_client, monkeypatch):
-    now = utcnow().replace(microsecond=0)
-    monkeypatch.setattr("app.modules.request_logs.api.utcnow", lambda: now)
-    await seed(
-        log("previous", now - timedelta(minutes=90), cached_input_tokens=500),
-        log("current", now - timedelta(minutes=30)),
-        log("zero", now - timedelta(minutes=10), cached_input_tokens=0, cache_creation_tokens=0),
-        log("unknown", now - timedelta(minutes=20), cache_creation_tokens=None),
-        log("invalid-cache", now - timedelta(minutes=20), cached_input_tokens=2000),
-        log("failed", now - timedelta(minutes=5), status="error"),
-        log("warmup", now - timedelta(minutes=5), request_kind="warmup"),
-        log("deleted", now - timedelta(minutes=5), deleted_at=now),
-        log("compact", now - timedelta(minutes=5), request_operation="compaction"),
-        log("too-old", now - timedelta(hours=3)),
-        log("boundary-end", now),
-        log("other-source", now - timedelta(minutes=5), model_source_id="source-b", input_tokens=None),
-    )
-    response = await async_client.get("/api/request-logs/claude-cache-activity")
-    assert response.status_code == 200, response.text
-    body = response.json()
-    groups = {group["sourceId"]: group for group in body["groups"]}
-    group = groups["source-a"]
-    assert group["current"] == {
-        "requests": 4,
-        "measuredRequests": 2,
-        "inputTokens": 2000,
-        "cacheReadTokens": 800,
-        "cacheWriteTokens": 100,
-        "cacheReadRatio": 0.4,
-    }
-    assert group["previous"]["cacheReadRatio"] == 0.5
-    assert group["readRatioChange"] == pytest.approx(-0.1)
-    assert groups["source-b"]["current"]["cacheReadRatio"] is None
-    assert groups["source-b"]["previous"]["requests"] == 0
 
 
 async def test_conversation_analytics_measurement_scope_accounts_and_unknowns(async_client):
@@ -167,18 +127,3 @@ async def test_conversation_gateway_tps_excludes_bursts_without_losing_other_obs
     assert model["tpsSamples"] == 1
     assert model["meanTps"] == 100
     assert model["cacheWriteSamples"] == 7
-
-
-async def test_empty_cache_activity_is_an_observation_not_health_failure(async_client):
-    response = await async_client.get("/api/request-logs/claude-cache-activity")
-    assert response.status_code == 200
-    assert response.json()["groups"] == []
-
-
-async def test_cache_activity_requires_account_read_permission(async_client, monkeypatch):
-    principal = replace(guest_principal(), grants={}, permissions=frozenset())
-    dependency = auth_dependencies.validate_dashboard_session
-    monkeypatch.setattr(auth_dependencies, "validate_dashboard_session", AsyncMock(return_value=principal))
-    monkeypatch.setitem(async_client._transport.app.dependency_overrides, dependency, lambda: principal)
-    response = await async_client.get("/api/request-logs/claude-cache-activity")
-    assert response.status_code == 403, response.text
