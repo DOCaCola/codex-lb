@@ -17,7 +17,7 @@ export function createClaudeQuotaWindow(
 export function createClaudeAccount(overrides: Partial<ClaudeAccount> = {}): ClaudeAccount {
   return {
     planType: "pro",
-    quotaWeight: 1,
+    quotaWeights: { fiveHour: 1, weekly: 1 },
     maxConcurrency: null,
     routingPolicy: "normal",
     id: "claude-test",

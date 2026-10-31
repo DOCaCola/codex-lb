@@ -62,10 +62,11 @@ def test_claude_pace_pools_plan_windows_in_pro_units() -> None:
 
     assert pace is not None
     assert pace.unit == "pro_units"
-    # The team plan has no stated multiplier, so it is not pooled at all.
+    # The team plan has no published multiplier, so it is not pooled at all.
+    # Ultra (former Max 20x) counts 10 Pro units weekly.
     assert pace.account_count == 3
-    assert pace.total_full_credits == pytest.approx(26.0)
-    assert pace.headroom_credits == pytest.approx(0.5 + 4.0 + 5.0)
+    assert pace.total_full_credits == pytest.approx(16.0)
+    assert pace.headroom_credits == pytest.approx(0.5 + 4.0 + 2.5)
     assert pace.stale_account_count == 0
     assert pace.inactive_account_count == 0
 

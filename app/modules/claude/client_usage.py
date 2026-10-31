@@ -16,7 +16,7 @@ from app.db.session import get_background_session
 from app.modules.claude.quota import quota_status
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import AccountState, WindowName, WindowStatus
-from app.modules.claude.subscription import quota_weight, subscription_plan
+from app.modules.claude.subscription import quota_weights, subscription_plan
 
 BASE_WINDOWS: frozenset[WindowName] = frozenset({"five_hour", "seven_day"})
 _FIVE_HOUR_WINDOW_MINUTES = 300
@@ -62,8 +62,8 @@ def claude_pool_rate_limit_headers(
         if not account.source.is_enabled:
             continue
         state = AccountState.model_validate_json(account.state_json)
-        weight = quota_weight(subscription_plan(state.subscription))
-        if weight is None:
+        weights = quota_weights(subscription_plan(state.subscription))
+        if weights is None:
             continue
         statuses = {status.name: status for status in quota_status(state, now=now).windows if status.name in windows}
         if all(_known_utilization(status) is None for status in statuses.values()):
@@ -74,9 +74,9 @@ def claude_pool_rate_limit_headers(
             for name, status in statuses.items()
             if name != "five_hour" and _known_utilization(status) is not None
         ]
-        five_hour.add(weight, statuses.get("five_hour"), exhausted=exhausted)
+        five_hour.add(weights.five_hour, statuses.get("five_hour"), exhausted=exhausted)
         binding_weekly = max(weekly_windows, key=lambda status: status.utilization or 0.0) if weekly_windows else None
-        weekly.add(weight, binding_weekly, exhausted=exhausted)
+        weekly.add(weights.weekly, binding_weekly, exhausted=exhausted)
     return {
         **five_hour.headers("primary", _FIVE_HOUR_WINDOW_MINUTES),
         **weekly.headers("secondary", _SEVEN_DAY_WINDOW_MINUTES),

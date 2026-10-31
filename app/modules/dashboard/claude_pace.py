@@ -1,8 +1,8 @@
 """Claude weekly quota pace, pooled in Pro units.
 
-Each account's seven-day subscription window counts as its plan weight in Pro
-units (Pro 1, Max 5x 5, Max 20x 20). Plans without a stated multiplier are not
-pooled. Eligibility mirrors the Codex pace: disabled accounts are inactive and
+Each account's seven-day subscription window counts as its plan's weekly weight
+in Pro units (Pro 1, Max 5, Ultra 10). Plans without a published multiplier are
+not pooled. Eligibility mirrors the Codex pace: disabled accounts are inactive and
 windows without a fresh observation are stale.
 """
 
@@ -16,7 +16,7 @@ from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import ClaudeAccount, ClaudeQuotaHistory
 from app.modules.claude.quota import quota_status
 from app.modules.claude.schemas import AccountState
-from app.modules.claude.subscription import quota_weight, subscription_plan
+from app.modules.claude.subscription import quota_weights, subscription_plan
 from app.modules.dashboard.schemas import WeeklyCreditPaceResponse
 from app.modules.dashboard.weekly_pace import PaceAccountInput, build_weekly_pace, positive_used_percent_delta
 
@@ -56,9 +56,10 @@ def build_claude_weekly_pace(
 
     for account in accounts:
         state = AccountState.model_validate_json(account.state_json)
-        weight = quota_weight(subscription_plan(state.subscription))
-        if weight is None:
+        weights = quota_weights(subscription_plan(state.subscription))
+        if weights is None:
             continue
+        weight = weights.weekly
         window = next(window for window in quota_status(state, now=status_now).windows if window.name == "seven_day")
         if window.freshness == "unknown" or window.utilization is None or window.resets_at is None:
             continue

@@ -20,7 +20,7 @@ async def set_plan(source_ids, plan):
             account = await session.get(ClaudeAccount, source_id)
             state = AccountState.model_validate_json(account.state_json)
             state.subscription = (
-                SubscriptionMetadata(subscription_type=plan, source="bootstrap", observed_at=datetime.now(UTC))
+                SubscriptionMetadata(rate_limit_tier=plan, source="bootstrap", observed_at=datetime.now(UTC))
                 if plan is not None
                 else None
             )
@@ -41,7 +41,7 @@ async def test_public_request_plan_is_snapshot_not_current_metadata(async_client
 
     async def send(*args, **kwargs):
         # A background discovery can complete while inference is running.
-        await set_plan(pool, "max_20x")
+        await set_plan(pool, "ultra")
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(transport, "_open_source_stream", send)
@@ -59,7 +59,7 @@ async def test_public_request_plan_is_snapshot_not_current_metadata(async_client
     assert row["modelSourceKind"] == "claude"
     assert row["planType"] == (plan or "unknown")
     accounts = (await async_client.get("/api/claude-accounts")).json()["accounts"]
-    assert all(account["planType"] == "max_20x" for account in accounts)
+    assert all(account["planType"] == "ultra" for account in accounts)
 
 
 async def test_failed_and_failover_attempts_use_their_own_plan(async_client, pool, monkeypatch):
@@ -74,7 +74,7 @@ async def test_failed_and_failover_attempts_use_their_own_plan(async_client, poo
     async def send(source, *args, **kwargs):
         if not refused:
             refused.append(source.id)
-            await set_plan(pool, "max_5x")
+            await set_plan(pool, "max")
             raise ModelSourceForwardingError(
                 status_code=429, upstream_status_code=429, payload={"error": {"message": "rate limited"}}
             )
@@ -86,5 +86,5 @@ async def test_failed_and_failover_attempts_use_their_own_plan(async_client, poo
     assert response.status_code == 200, response.text
     async with SessionLocal() as session:
         rows = (await session.scalars(select(RequestLog).where(RequestLog.model == MODEL))).all()
-        assert {(row.status, row.plan_type) for row in rows} == {("error", "pro"), ("success", "max_5x")}
+        assert {(row.status, row.plan_type) for row in rows} == {("error", "pro"), ("success", "max")}
         assert len({row.model_source_id for row in rows}) == 2

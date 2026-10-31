@@ -60,7 +60,7 @@ from app.modules.claude.schemas import (
     SubscriptionMetadata,
     UsageSnapshot,
 )
-from app.modules.claude.subscription import quota_weight, subscription_plan
+from app.modules.claude.subscription import quota_weights, subscription_plan
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.service import ModelSourceNotFoundError
 
@@ -482,7 +482,7 @@ class ClaudeService:
         plan = subscription_plan(state.subscription)
         return ClaudeAccountResponse(
             plan_type=plan,
-            quota_weight=quota_weight(plan),
+            quota_weights=quota_weights(plan),
             routing_policy=AccountRoutingPolicy(row.routing_policy),
             max_concurrency=row.source.max_concurrency,
             id=row.source_id,

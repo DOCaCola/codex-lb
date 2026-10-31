@@ -24,7 +24,7 @@ import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
 
 const account: ClaudeAccount = {
   planType: "pro",
-  quotaWeight: 1,
+  quotaWeights: { fiveHour: 1, weekly: 1 },
   maxConcurrency: null,
   routingPolicy: "normal",
   id: "claude-test",
@@ -93,7 +93,7 @@ describe("Claude shared account surfaces", () => {
 
   it.each([
     ["free", "Free"], ["pro", "Pro"], ["max", "Max"],
-    ["max_5x", "Max 5×"], ["max_20x", "Max 20×"],
+    ["ultra", "Ultra"],
     ["team", "Team"], ["enterprise", "Enterprise"], ["unknown", "Unknown plan"],
   ] as const)("shows %s in cards, account lists and dashboard plan cells", (planType, label) => {
     const selected = { ...account, planType };
@@ -107,10 +107,10 @@ describe("Claude shared account surfaces", () => {
 
   it("searches Claude accounts by the displayed subscription label", async () => {
     render(<AccountList accounts={[]} claudeAccounts={[
-      { ...account, planType: "max_20x" },
+      { ...account, planType: "ultra" },
       { ...account, id: "other", name: "Other Claude", planType: "pro" },
     ]} selectedAccountId={account.id} onSelect={vi.fn()} onOpenImport={vi.fn()} onOpenOauth={vi.fn()} />);
-    await userEvent.type(screen.getByPlaceholderText("Search accounts..."), "Max 20×");
+    await userEvent.type(screen.getByPlaceholderText("Search accounts..."), "Ultra");
     expect(screen.getByText(account.name)).toBeVisible();
     expect(screen.queryByText("Other Claude")).not.toBeInTheDocument();
   });
@@ -129,15 +129,15 @@ describe("Claude shared account surfaces", () => {
   });
 
   it("shows retained plan diagnostics in account details without offering a plan editor", () => {
-    const failed = { ...account, planType: "max_5x" as const,
+    const failed = { ...account, planType: "max" as const,
       state: { ...account.state, subscription_error: "Claude /api/claude_cli/bootstrap returned HTTP 429" },
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
       <ClaudeAccountControls account={failed} readOnly onCreated={vi.fn()}>{({ detail }) => detail}</ClaudeAccountControls>
     </QueryClientProvider>);
-    expect(screen.getByText("Max 5×")).toHaveAttribute("title", "Last known subscription; metadata refresh failed");
-    expect(screen.getByText("Max 5×").parentElement).toHaveTextContent("Claude | Max 5×");
+    expect(screen.getByText("Max", { exact: true })).toHaveAttribute("title", "Last known subscription; metadata refresh failed");
+    expect(screen.getByText("Max", { exact: true }).parentElement).toHaveTextContent("Claude | Max");
     expect(screen.queryByText(/Claude OAuth/)).not.toBeInTheDocument();
     expect(screen.getByText(failed.state.subscription_error)).toHaveAttribute("role", "alert");
     expect(screen.queryByRole("combobox", { name: /subscription|plan/i })).not.toBeInTheDocument();

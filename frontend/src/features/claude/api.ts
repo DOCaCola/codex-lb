@@ -6,9 +6,11 @@ export const SelectionSchema = z.object({
 });
 export type ClaudeSelection = z.infer<typeof SelectionSchema>;
 export const ClaudeAccountSchema = z.object({
-  planType: z.enum(["free", "pro", "max", "max_5x", "max_20x", "team", "enterprise", "unknown"]),
-  /** Pro-unit weight for pooled quota display; null when the plan has no known multiplier. */
-  quotaWeight: z.number().int().positive().nullable(),
+  planType: z.enum(["free", "pro", "max", "ultra", "team", "enterprise", "unknown"]),
+  /** Pro-unit weights for pooled quota display; null when the plan has no published multiplier. */
+  quotaWeights: z
+    .object({ fiveHour: z.number().int().positive(), weekly: z.number().int().positive() })
+    .nullable(),
   routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
   maxConcurrency: z.number().int().positive().nullable(),
   id: z.string(),

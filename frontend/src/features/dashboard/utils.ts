@@ -111,23 +111,24 @@ export function buildClaudeQuotaRing(
   const quotaUnknown: string[] = [];
   let total = 0;
   for (const account of accounts) {
-    if (account.quotaWeight == null) {
+    if (account.quotaWeights == null) {
       planUnknown.push(account.name);
       continue;
     }
+    const weight = windowName === "five_hour" ? account.quotaWeights.fiveHour : account.quotaWeights.weekly;
     const window = account.quota.windows.find((entry) => entry.name === windowName);
     if (!window || window.utilization == null || window.freshness !== "fresh") {
       quotaUnknown.push(account.name);
       continue;
     }
     const remainingPercent = clampPercent(100 - window.utilization);
-    total += account.quotaWeight;
+    total += weight;
     items.push({
       accountId: account.id,
       label: account.name,
       labelSuffix: "",
       isEmail: false,
-      value: (account.quotaWeight * remainingPercent) / 100,
+      value: (weight * remainingPercent) / 100,
       remainingPercent,
       color: accountColors.get(account.id),
     });

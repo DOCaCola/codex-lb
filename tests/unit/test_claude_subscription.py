@@ -21,14 +21,18 @@ pytestmark = pytest.mark.unit
         (None, None, "unknown"),
         ("free", None, "free"),
         ("claude_pro", None, "pro"),
-        (" MAX ", None, "max"),
-        ("max", "default_claude_max_5x", "max_5x"),
-        ("max", "default_claude_max_20x", "max_20x"),
-        ("pro", "claude_max_20x", "max_20x"),
+        # A bare "max" subscription named both tiers before the 2026-10-30 rename.
+        (" MAX ", None, "unknown"),
+        ("max", "default_claude_max_5x", "max"),
+        ("max", "default_claude_max_20x", "ultra"),
+        ("pro", "claude_max_20x", "ultra"),
+        (None, "default_claude_max", "max"),
+        ("ultra", None, "ultra"),
+        (None, "default_claude_ultra", "ultra"),
         ("claude_team", None, "team"),
         (None, "default_claude_enterprise", "enterprise"),
         ("future", "future", "unknown"),
-        ("max", "default_claude_max_40x", "max"),
+        ("max", "default_claude_max_40x", "unknown"),
         (None, "default", "unknown"),
         ("not_really_pro", "", "unknown"),
     ],
@@ -51,7 +55,7 @@ def test_import_retains_subscription_but_not_in_rotating_credentials():
     metadata = imported.subscription_metadata()
     assert metadata is not None
     assert metadata.source == "credential_file"
-    assert subscription_plan(metadata) == "max_5x"
+    assert subscription_plan(metadata) == "max"
     assert "subscription" not in imported.credentials().model_dump_json()
     assert CredentialFile.model_validate(credential_file()).claudeAiOauth.subscription_metadata() is None
 

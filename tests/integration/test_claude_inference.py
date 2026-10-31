@@ -1765,7 +1765,7 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
     from tests.integration.test_claude_request_plans import set_plan
 
     await set_plan([pool[0]], "pro")
-    await set_plan([pool[1]], "max_20x")
+    await set_plan([pool[1]], "ultra")
 
     send_with_headers = transport._open_source_stream
 
@@ -1872,7 +1872,7 @@ async def test_websocket_claude_roundtrip_and_continuation(async_client, pool, m
     assert len(closed) == 2
 
     logs = (await async_client.get("/api/request-logs")).json()["requests"]
-    plans = dict(zip(pool, ("pro", "max_20x"), strict=True))
+    plans = dict(zip(pool, ("pro", "ultra"), strict=True))
     claude_logs = [row for row in logs if row["model"] == MODEL]
     assert claude_logs
     assert all(row["planType"] == plans[row["modelSourceId"]] for row in claude_logs)

@@ -62,6 +62,20 @@ def test_pool_is_weighted_in_pro_units() -> None:
     assert headers["x-codex-secondary-window-minutes"] == "10080"
 
 
+def test_ultra_weighs_twice_as_much_per_five_hours_as_per_week() -> None:
+    headers = claude_pool_rate_limit_headers(
+        [
+            _account("pro", "default_claude_pro", five_hour=50, seven_day=40),
+            _account("ultra", "default_claude_max_20x", five_hour=10, seven_day=20),
+        ],
+        windows=BASE_WINDOWS,
+        now=NOW,
+    )
+
+    assert float(headers["x-codex-primary-used-percent"]) == pytest.approx((0.5 + 2.0) / 21 * 100)
+    assert float(headers["x-codex-secondary-used-percent"]) == pytest.approx((0.4 + 2.0) / 11 * 100)
+
+
 def test_model_specific_weekly_limit_binds() -> None:
     account = _account("max5", "default_claude_max_5x", five_hour=10, seven_day=40, seven_day_opus=90)
 

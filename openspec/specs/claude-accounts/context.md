@@ -769,6 +769,17 @@ safe diagnostic, without changing inference health or blocking the other metadat
 endpoints. Reconnect preserves last-known data unless an explicit import supplies
 new metadata, then schedules rediscovery. Token rotation does not discard it.
 
+## Max and Ultra plan names (2026-10-31)
+
+Anthropic renamed Max 5x to Max and Max 20x to Ultra on 2026-10-30 without
+changing prices or weekly limits. Its subscription lead explained that "20x"
+described only the five-hour limit; Ultra's weekly limit has been 10x Pro since
+weekly limits began, and verified Ultra accounts lose the five-hour limit. Plan
+keys are now `max` and `ultra`; tiers under either naming scheme resolve to
+them. A bare `max` subscription type no longer resolves, because before the
+rename it covered both tiers. Pooled weights are per window (five-hour 1/5/20,
+weekly 1/5/10). Recorded request-log snapshots were renamed in place.
+
 Cards, lists and details reuse existing provider/account styling with localized
 plan labels. Prepared attempts snapshot the normalized plan after final account
 validation, before dispatch; SourceDispatch retains it for completion, errors,

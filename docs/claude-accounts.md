@@ -18,7 +18,10 @@ Operational details: [implementation context](../openspec/specs/claude-accounts/
 
 Subscription labels are detected automatically from imported metadata and
 authenticated bootstrap, then refreshed every six hours or with **Refresh**.
-Accounts show Free, Pro, Max (including 5×/20×), Team, Enterprise or Unknown plan.
+Accounts show Free, Pro, Max, Ultra, Team, Enterprise or Unknown plan. Anthropic
+renamed Max 5x to Max and Max 20x to Ultra on 2026-10-30; both naming schemes are
+recognized. Pooled dashboard figures count Max as 5 Pro units and Ultra as 20 per
+five hours and 10 per week, matching Anthropic's published limits.
 A failed lookup retains the last known label and shows a diagnostic; it does not
 pause inference. Labels are not quota capacities or billing guarantees. New
 request logs record the plan at dispatch, including errors and WebSockets; old

@@ -1699,13 +1699,13 @@ describe("buildDashboardView", () => {
 describe("buildClaudeQuotaRing", () => {
   function accountWithWindow(
     id: string,
-    quotaWeight: number | null,
+    weight: number | { fiveHour: number; weekly: number } | null,
     window: Parameters<typeof createClaudeQuotaWindow>[0],
   ) {
     return createClaudeAccount({
       id,
       name: id,
-      quotaWeight,
+      quotaWeights: typeof weight === "number" ? { fiveHour: weight, weekly: weight } : weight,
       quota: { observedAt: null, models: [], windows: [createClaudeQuotaWindow(window)] },
     });
   }
@@ -1728,6 +1728,15 @@ describe("buildClaudeQuotaRing", () => {
     ]);
     expect(ring.planUnknown).toEqual([]);
     expect(ring.quotaUnknown).toEqual([]);
+  });
+
+  it("weights Ultra by the window being pooled", () => {
+    const ultra = { fiveHour: 20, weekly: 10 };
+    const weekly = buildClaudeQuotaRing([accountWithWindow("ultra", ultra, { name: "seven_day", utilization: 0 })], "seven_day");
+    const fiveHour = buildClaudeQuotaRing([accountWithWindow("ultra", ultra, { name: "five_hour", utilization: 0 })], "five_hour");
+
+    expect(weekly.total).toBe(10);
+    expect(fiveHour.total).toBe(20);
   });
 
   it("excludes accounts without a plan weight or a fresh window observation", () => {

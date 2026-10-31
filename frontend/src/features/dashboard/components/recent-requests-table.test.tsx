@@ -264,7 +264,7 @@ describe("plan badge colors", () => {
   it("gives all known plan keys their own colors in both themes", () => {
     const plans = [
       "free", "plus", "prolite", "pro", "team", "business", "enterprise", "edu",
-      "max", "max_5x", "max_20x", "unknown",
+      "max", "ultra", "unknown",
       "guest", "go", "free_workspace", "education", "quorum", "k12",
     ];
     const { container } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={
@@ -310,7 +310,7 @@ describe("plan badge colors", () => {
 });
 
 describe("Claude subscription snapshots", () => {
-  it.each([ ["max_20x", "Max 20×"], ["max_5x", "Max 5×"], ["unknown", "Unknown plan"] ])(
+  it.each([ ["ultra", "Ultra"], ["max", "Max"], ["unknown", "Unknown plan"] ])(
     "shows %s consistently in request table and details", (planType, label) => {
       render(<RecentRequestsTable accounts={[]} requests={[
         createRequestLogEntry({ modelSourceKind: "claude", modelSourceName: "Claude account", planType }),

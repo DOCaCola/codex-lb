@@ -46,14 +46,10 @@ const PLAN_COLORS = new Map<string, PlanColors>([
     dark: ["#bef264", "#253311", "#526b2b"],
   }],
   ["max", {
-    light: ["#b83b0a", "#fff7ed", "#fed7aa"],
-    dark: ["#fdba74", "#3b2113", "#794826"],
-  }],
-  ["max_5x", {
     light: ["#be185d", "#fff1f2", "#fecdd3"],
     dark: ["#fda4af", "#3e1729", "#79334e"],
   }],
-  ["max_20x", {
+  ["ultra", {
     light: ["#1d4ed8", "#eff6ff", "#bfdbfe"],
     dark: ["#93b4ff", "#152951", "#35558d"],
   }],

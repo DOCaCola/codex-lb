@@ -50,7 +50,7 @@ describe("QuotaSection", () => {
   it("switches to pooled Claude quota and notes accounts left out of the pool", async () => {
     const user = userEvent.setup();
     const accounts = [
-      createClaudeAccount({ id: "max", name: "Claude Max", quotaWeight: 5 }),
+      createClaudeAccount({ id: "max", name: "Claude Max", quotaWeights: { fiveHour: 5, weekly: 5 } }),
       createClaudeAccount({
         id: "stale",
         name: "Claude Stale",

@@ -28,7 +28,16 @@ class AuthenticatedProfile(BaseModel):
     organization: ProfileOrganization
 
 
-ClaudePlanType = Literal["free", "pro", "max", "max_5x", "max_20x", "team", "enterprise", "unknown"]
+ClaudePlanType = Literal["free", "pro", "max", "ultra", "team", "enterprise", "unknown"]
+
+
+class QuotaWeights(DashboardModel):
+    """A plan's quota in Pro units, per window kind; weekly includes model-scoped weekly windows."""
+
+    model_config = ConfigDict(frozen=True)
+
+    five_hour: int
+    weekly: int
 
 
 class SubscriptionMetadata(BaseModel):
@@ -285,8 +294,8 @@ class ClaudeUpdate(DashboardModel):
 
 class ClaudeAccountResponse(DashboardModel):
     plan_type: ClaudePlanType
-    # Pro units per window (Pro 1, Max 5x 5, Max 20x 20); null when the plan has no stated multiplier.
-    quota_weight: int | None
+    # Null when the plan has no published multiplier.
+    quota_weights: QuotaWeights | None
     routing_policy: AccountRoutingPolicy
     max_concurrency: int | None
     id: str

@@ -58,13 +58,13 @@ async def test_import_and_discovery_public_response(async_client, account, monke
     result = await async_client.post(path)
     assert result.status_code == 200, result.text
     body = result.json()
-    assert body["planType"] == "max_20x"
+    assert body["planType"] == "ultra"
     assert body["state"]["subscription"]["source"] == "bootstrap"
     assert body["state"]["subscription_updated_at"] is not None
     assert "access-secret" not in result.text and "org-test" not in result.text
     assert body["routingPolicy"] == "normal" and body["maxConcurrency"] is None
     listed = (await async_client.get("/api/claude-accounts")).json()["accounts"][0]
-    assert listed["planType"] == "max_20x"
+    assert listed["planType"] == "ultra"
     monkeypatch.setattr(ClaudeClient, "bootstrap", AsyncMock(return_value=bootstrap("claude_free", None)))
     assert (await async_client.post(path)).json()["planType"] == "free"
     monkeypatch.setattr(ClaudeClient, "bootstrap", AsyncMock(return_value=bootstrap("future", "future")))
@@ -77,7 +77,7 @@ async def test_subscription_cooldown_retains_data_and_other_endpoints_continue(a
     monkeypatch.setattr(ClaudeClient, "bootstrap", failure)
     for _ in range(2):
         result = await poll(account)
-        assert result.plan_type == "max_20x"
+        assert result.plan_type == "ultra"
         assert result.state.subscription == original.state.subscription
         assert result.state.subscription_updated_at == original.state.subscription_updated_at
         assert "429" in result.state.subscription_error
@@ -111,7 +111,7 @@ async def test_scheduled_discovery_for_existing_account_and_success_cadence(acco
         row.state_json = json.dumps(legacy)
         await session.commit()
     first = await poll(account, force=False)
-    assert first.plan_type == "max_20x"
+    assert first.plan_type == "ultra"
     await poll(account, force=False)
     ClaudeClient.bootstrap.assert_awaited_once()
     async with SessionLocal() as session:
@@ -142,7 +142,7 @@ async def test_reconnect_keeps_last_observation_and_schedules_new_discovery(asyn
     reconnected = await async_client.post(f"/api/claude-accounts/{account}/reconnect", json=body)
     assert reconnected.status_code == 200, reconnected.text
     assert reconnected.json()["state"]["subscription"] == original.state.subscription.model_dump(mode="json")
-    assert reconnected.json()["planType"] == "max_20x"
+    assert reconnected.json()["planType"] == "ultra"
     assert reconnected.json()["state"]["subscription_updated_at"] is None
     await poll(account, force=False)
     assert ClaudeClient.bootstrap.await_count == 2
@@ -157,7 +157,7 @@ async def test_reconnect_with_explicit_subscription_updates_imported_hint(async_
     )
     response = await async_client.post(f"/api/claude-accounts/{account}/reconnect", json=body)
     assert response.status_code == 200, response.text
-    assert response.json()["planType"] == "max_5x"
+    assert response.json()["planType"] == "max"
     assert response.json()["state"]["subscription"]["source"] == "credential_file"
     assert response.json()["state"]["subscription_updated_at"] is None
 
@@ -195,7 +195,7 @@ async def test_malformed_subscription_discovery_retains_last_observation(account
     fetch = AsyncMock(side_effect=ClaudeError("Claude bootstrap returned invalid metadata"))
     monkeypatch.setattr(ClaudeClient, "bootstrap", fetch)
     result = await poll(account)
-    assert result.plan_type == "max_20x"
+    assert result.plan_type == "ultra"
     assert result.state.subscription == original.state.subscription
     assert result.state.subscription_updated_at == original.state.subscription_updated_at
     assert result.state.subscription_error == "Claude bootstrap returned invalid metadata"
@@ -230,7 +230,7 @@ async def test_subscription_claim_deduplicates_and_fences_late_response(account,
                 await session.commit()
         release.set()
         result = await task
-        assert result.plan_type == ("pro" if replace_generation else "max_20x")
+        assert result.plan_type == ("pro" if replace_generation else "ultra")
     finally:
         release.set()
         if not task.done():
