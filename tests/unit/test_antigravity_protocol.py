@@ -217,7 +217,7 @@ def test_google_wire_names_pass_valid_names_unchanged() -> None:
                 "input": [{"type": "function_call", "call_id": "c", "name": "shell", "arguments": "{}"}],
                 "tools": [SHELL],
             },
-            "input",
+            "input[0]",
         ),
     ],
 )
@@ -225,6 +225,50 @@ def test_unsupported_requests_fail_explicitly(payload: dict[str, Any], param: st
     with pytest.raises(ClientPayloadError) as raised:
         _project(payload)
     assert raised.value.param == param
+
+
+@pytest.mark.parametrize("family", [GEMINI, CLAUDE], ids=["gemini", "claude"])
+def test_input_recorded_while_a_tool_runs_follows_its_result(family: CatalogFamily) -> None:
+    """Codex records a goal-status notice where it arrived, before the running call's result."""
+    call = {"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": json.dumps({"command": "ls"})}
+    projection = _project(
+        {
+            "tools": [SHELL],
+            "input": [
+                {"role": "user", "content": "list files"},
+                call,
+                {"role": "user", "content": "paused"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "aborted"},
+                {"role": "user", "content": "go on"},
+            ],
+        },
+        family,
+    )
+    contents = projection.request["contents"]
+    assert [content["role"] for content in contents] == [
+        "user",
+        "model",
+        "user" if family.anthropic_wire else "model",
+        "user",
+    ]
+    assert "functionResponse" in contents[2]["parts"][0]
+    assert contents[3]["parts"] == [{"text": "paused"}, {"text": "go on"}]
+
+
+def test_model_step_before_a_held_input_result_is_rejected() -> None:
+    with pytest.raises(ClientPayloadError, match="before the next model step") as raised:
+        _project(
+            {
+                "tools": [SHELL],
+                "input": [
+                    {"role": "user", "content": "list files"},
+                    {"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}"},
+                    {"role": "user", "content": "steer"},
+                    {"role": "assistant", "content": "next step"},
+                ],
+            }
+        )
+    assert raised.value.param == "input[1]"
 
 
 def test_reasoning_from_another_client_is_rejected() -> None:

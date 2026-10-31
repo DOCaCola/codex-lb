@@ -1270,7 +1270,7 @@ def test_standalone_context_does_not_change_subsequent_parallel_tool_pairs():
 
 
 def test_standalone_output_does_not_complete_a_pending_call():
-    with pytest.raises(ClientPayloadError, match="Tool results are required"):
+    with pytest.raises(ClientPayloadError, match="require their outputs") as error:
         project(
             request(
                 input=[
@@ -1281,6 +1281,68 @@ def test_standalone_output_does_not_complete_a_pending_call():
             ),
             max_output_tokens=8192,
         )
+    assert error.value.param == "input[1]"
+
+
+PAUSE_NOTICE = '<codex_internal_context source="user_goal">\nUser set goal status: "paused".\n</codex_internal_context>'
+
+
+@pytest.mark.parametrize(
+    "output",
+    ["aborted by user after 187.3s", '{"message":"Wait completed.","timed_out":false}'],
+    ids=["cancelled-result", "late-result"],
+)
+def test_input_recorded_while_a_tool_runs_follows_its_result(output):
+    """Codex records a goal-status notice where it arrived, before the running call's result."""
+    payload = request(
+        input=[
+            {"type": "function_call", "call_id": "toolu_wait", "name": "wait", "arguments": "{}"},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": PAUSE_NOTICE}]},
+            {"type": "function_call_output", "call_id": "toolu_wait", "output": output},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go on\n"}]},
+        ]
+    )
+    messages = project(payload, max_output_tokens=8192).body["messages"]
+    assert [message["role"] for message in messages] == ["assistant", "user"]
+    result, notice, follow_up = messages[1]["content"]
+    assert result["type"] == "tool_result" and result["tool_use_id"] == "toolu_wait"
+    assert notice == {"type": "text", "text": PAUSE_NOTICE}
+    assert follow_up == {"type": "text", "text": "go on\n"}
+
+
+def test_input_held_during_parallel_calls_follows_the_last_result():
+    payload = request(
+        input=[
+            {"type": "function_call", "call_id": "a", "name": "run", "arguments": "{}"},
+            {"type": "function_call", "call_id": "b", "name": "run", "arguments": "{}"},
+            {"role": "user", "content": "first"},
+            {"type": "function_call_output", "call_id": "a", "output": "A"},
+            {"role": "user", "content": "second"},
+            {"type": "function_call_output", "call_id": "b", "output": "B"},
+        ]
+    )
+    messages = project(payload, max_output_tokens=8192).body["messages"]
+    assert [message["role"] for message in messages] == ["assistant", "user"]
+    content = messages[1]["content"]
+    assert [block.get("tool_use_id") for block in content[:2]] == ["a", "b"]
+    assert [block["text"] for block in content[2:]] == ["first", "second"]
+
+
+def test_assistant_step_before_a_held_input_result_is_rejected():
+    with pytest.raises(ClientPayloadError, match="before the next assistant step") as error:
+        project(
+            request(
+                input=[
+                    {"role": "user", "content": "start"},
+                    {"type": "function_call", "call_id": "a", "name": "run", "arguments": "{}"},
+                    {"role": "user", "content": "steer"},
+                    {"role": "assistant", "content": "next step"},
+                    {"type": "function_call_output", "call_id": "a", "output": "A"},
+                ]
+            ),
+            max_output_tokens=8192,
+        )
+    assert error.value.param == "input[1]"
 
 
 TASK_INPUT = {

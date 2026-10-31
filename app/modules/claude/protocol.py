@@ -382,6 +382,15 @@ def project_responses(
     # receive it as a reminder closing the preceding user turn.
     system_turns = supports_mid_system(str(payload.get("model", "")))
     pending_system: list[JsonValue] = []
+    # Open tool calls by call_id, mapped to the index of their input item.
+    pending: dict[str, int] = {}
+    # Codex records input that arrives while a tool runs (a goal-status notice, steering) where it
+    # arrived, so it can precede that call's result. Claude requires the results to open the next
+    # user turn; the held input closes that turn, after the step's last result, in its own order.
+    held: list[JsonValue] = []
+
+    def open_call_param() -> str:
+        return f"input[{min(pending.values())}]"
 
     def place_system() -> None:
         if not pending_system or not isinstance(messages[-1], dict) or messages[-1].get("role") != "user":
@@ -402,6 +411,8 @@ def project_responses(
 
     def append(role: str, content: list[JsonValue]) -> None:
         if role == "assistant":
+            if held:
+                raise invalid("Tool results are required before the next assistant step", open_call_param())
             place_system()
         if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == role:
             previous = messages[-1]["content"]
@@ -417,7 +428,6 @@ def project_responses(
         and item.get("type") in ("function_call", "custom_tool_call", "tool_search_call")
         and isinstance(call_id := item.get("call_id"), str)
     }
-    pending: set[str] = set()
     seen_calls: set[str] = set()
     # Code-mode ``notify()`` adds outputs to an exec call after its own result
     # (codex-rs code_mode/delegate.rs). They extend that call's tool_result.
@@ -467,7 +477,8 @@ def project_responses(
                     # Codex replays empty messages; Claude rejects a message without content.
                     continue
                 if pending and role == "user":
-                    raise invalid("Tool results are required before the next user message")
+                    held.extend(content)
+                    continue
                 append(role, content)
             else:
                 raise invalid("Unsupported message role")
@@ -512,7 +523,7 @@ def project_responses(
                     }
                 ],
             )
-            pending.add(call_id)
+            pending[call_id] = index
             seen_calls.add(call_id)
         elif kind == "tool_search_call":
             call_id, arguments = item.get("call_id"), item.get("arguments")
@@ -535,7 +546,7 @@ def project_responses(
                     }
                 ],
             )
-            pending.add(call_id)
+            pending[call_id] = index
             seen_calls.add(call_id)
         elif kind in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
             if kind != "tool_search_output" and is_external_task_input(item):
@@ -578,7 +589,10 @@ def project_responses(
                 append("user", [result])
                 if call_id in exec_calls:
                     exec_results[call_id] = result
-                pending.remove(call_id)
+                del pending[call_id]
+                if not pending and held:
+                    append("user", list(held))
+                    held.clear()
             else:
                 # Codex delegation/imported history can contain output without
                 # a call in this conversation. It is context, not a tool cycle.
@@ -650,7 +664,7 @@ def project_responses(
     if search_items:
         raise invalid("Claude search history requires its account-bound opaque state; resend portable context")
     if pending:
-        raise invalid("Claude tool calls require their outputs before continuing")
+        raise invalid("Claude tool calls require their outputs before continuing", open_call_param())
     if not messages:
         raise invalid("Claude requests require at least one message")
     if isinstance(messages[-1], dict) and messages[-1].get("role") == "assistant":

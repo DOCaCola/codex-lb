@@ -58,6 +58,7 @@ SENSITIVE_WORDS = (
 )
 _SENSITIVE = re.compile("|".join(re.escape(word) for word in sorted(SENSITIVE_WORDS, key=len, reverse=True)), re.I)
 _ZERO_WIDTH_SPACE = "\u200b"
+_TOOL_OUTPUTS = frozenset({"function_call_output", "custom_tool_call_output", "tool_search_output"})
 SEARCH_IDENTITY = ToolIdentity(SEARCH_TOOL_NAME, None, False, hosted=True)
 
 
@@ -341,9 +342,17 @@ def project_responses(
         and isinstance(call_id := item.get("call_id"), str)
     }
     calls: dict[str, str] = {}
-    pending: set[str] = set()
+    # Open tool calls by call_id, mapped to the index of their input item.
+    pending: dict[str, int] = {}
     answered: set[str] = set()
     pending_system: list[dict[str, JsonValue]] = []
+    # Codex records input that arrives while a tool runs (a goal-status notice, steering) where it
+    # arrived, so it can precede that call's result. The held input follows the step's results.
+    held: list[dict[str, JsonValue]] = []
+
+    def open_call_param() -> str:
+        return f"input[{min(pending.values())}]"
+
     responses: list[dict[str, JsonValue]] = []
     # Gateway-run search results; they join the client's results of the same step.
     search_responses: list[dict[str, JsonValue]] = []
@@ -368,6 +377,17 @@ def project_responses(
             append_user([{"text": "<system-reminder>"}, *pending_system, {"text": "</system-reminder>"}])
             pending_system.clear()
 
+    def user_turn(parts: list[dict[str, JsonValue]]) -> None:
+        nonlocal open_turn_unsigned
+        place_system()
+        append_user(parts)
+        open_turn_unsigned = False
+
+    def release_held() -> None:
+        flush_responses()
+        user_turn(list(held))
+        held.clear()
+
     for index, item in enumerate(items):
         param = f"input[{index}]"
         if not isinstance(item, dict):
@@ -375,19 +395,22 @@ def project_responses(
         kind = item.get("type", "message")
         if kind == ADDITIONAL_TOOLS:
             continue
-        if kind != "function_call_output" and kind != "custom_tool_call_output" and kind != "tool_search_output":
+        if held and not pending:
+            release_held()
+        role = item.get("role") if kind == "message" else None
+        if role == "user" and pending:
+            held.extend(_parts(item.get("content"), param=param))
+            continue
+        if held and kind not in _TOOL_OUTPUTS and role not in ("system", "developer"):
+            raise invalid("Tool results are required before the next model step", open_call_param())
+        if kind not in _TOOL_OUTPUTS:
             flush_responses()
         if kind == "message":
-            role = item.get("role")
             parts = _parts(item.get("content"), param=param)
             if role in ("system", "developer"):
                 (pending_system if contents or step is not None else system).extend(parts)
             elif role == "user":
-                if pending:
-                    raise invalid("Tool results are required before the next user message", param)
-                place_system()
-                append_user(parts)
-                open_turn_unsigned = False
+                user_turn(parts)
             elif role == "assistant":
                 place_system()
                 model_parts().parts.extend(parts)
@@ -428,8 +451,8 @@ def project_responses(
             wire = tools.wire_name(identity)
             model_parts().parts.append({"functionCall": {"id": call_id, "name": wire, "args": go_map_order(arguments)}})
             calls[call_id] = wire
-            pending.add(call_id)
-        elif kind in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
+            pending[call_id] = index
+        elif kind in _TOOL_OUTPUTS:
             if kind != "tool_search_output" and is_external_task_input(item):
                 if pending:
                     raise invalid("Tool results are required before the next task input", param)
@@ -454,7 +477,7 @@ def project_responses(
                     {"functionResponse": {"id": call_id, "name": calls[call_id], "response": {"output": text}}}
                 )
                 response_images.extend(images)
-                pending.remove(call_id)
+                del pending[call_id]
                 answered.add(call_id)
             elif call_id in answered and kind == "custom_tool_call_output":
                 # A code-mode notify() output after its exec call's own result.
@@ -497,9 +520,11 @@ def project_responses(
             placed_searches.add(sealed.item_id)
         else:
             raise invalid(f"Unsupported Antigravity Responses item: {kind}", param)
-    flush_responses()
     if pending:
-        raise invalid("Antigravity tool calls require their outputs before continuing")
+        raise invalid("Antigravity tool calls require their outputs before continuing", open_call_param())
+    if held:
+        release_held()
+    flush_responses()
     close_step()
     place_system()
     if not contents:
