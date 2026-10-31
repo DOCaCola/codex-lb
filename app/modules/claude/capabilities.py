@@ -97,6 +97,21 @@ def uses_progress_display(model: str) -> bool:
     return _base_model(model) in _PROGRESS_DISPLAY_MODELS
 
 
+# Responses ``reasoning.summary`` values; Codex sends ``auto`` unless configured otherwise.
+REASONING_SUMMARIES = (None, "auto", "concise", "detailed", "none")
+
+
+def summary_display(model: str, summary: object) -> Literal["updates", "summarized"] | None:
+    """The thinking display a requested reasoning summary selects when the caller chose no display.
+
+    Progress-update models keep ``updates`` unless a summary is asked for explicitly (OpenCodex #7728);
+    other models return readable thinking for any requested summary.
+    """
+    if uses_progress_display(model):
+        return "summarized" if summary in ("concise", "detailed") else "updates"
+    return "summarized" if summary not in (None, "none") else None
+
+
 def rejects_forced_tool_choice(model: str) -> bool:
     """Whether upstream rejects ``tool_choice`` ``any``/``tool`` for this model."""
     return _base_model(model) in _UNFORCED_TOOL_CHOICE_MODELS

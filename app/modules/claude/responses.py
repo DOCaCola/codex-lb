@@ -126,7 +126,8 @@ class ResponsesProjection:
     tools: ClaudeToolNames
     opaque: ClaudeOpaqueState
     search_enabled: bool = False
-    chat_reasoning: bool = False
+    # Readable thinking streams as the reasoning item's summary.
+    show_summary: bool = False
     # The request asked for ``display: "updates"``: thinking text is a progress update for the user.
     progress_updates: bool = False
     # Searches the request resumes, by call ID: the original search item ID and its deferred call. Anthropic
@@ -256,7 +257,7 @@ class ResponsesProjection:
             return result_item
         if kind in ("thinking", "redacted_thinking"):
             result: dict[str, JsonValue] = {"id": item_id, "type": "reasoning", "summary": []}
-            if final and self.chat_reasoning and kind == "thinking" and isinstance(block.get("thinking"), str):
+            if final and self.show_summary and kind == "thinking" and isinstance(block.get("thinking"), str):
                 result["summary"] = [{"type": "summary_text", "text": block["thinking"]}]
             if final:
                 result["encrypted_content"] = self.opaque.encode(
@@ -489,6 +490,16 @@ class ResponsesProjection:
             events.append(self.event("response.output_item.added", output_index=slot, item=deepcopy(item)))
             if block.get("type") == "server_tool_use":
                 events.append(self.event("response.web_search_call.in_progress", item_id=item["id"], output_index=slot))
+            if block.get("type") == "thinking" and self.show_summary:
+                events.append(
+                    self.event(
+                        "response.reasoning_summary_part.added",
+                        item_id=item["id"],
+                        output_index=slot,
+                        summary_index=0,
+                        part={"type": "summary_text", "text": ""},
+                    )
+                )
             if block.get("type") == "text":
                 self.text_parts[index] = (slot, 0)
                 events.append(
@@ -572,7 +583,7 @@ class ResponsesProjection:
                         delta=delta[field_name],
                     )
                 ]
-            if field_name == "thinking" and self.chat_reasoning:
+            if field_name == "thinking" and self.show_summary:
                 return [
                     self.event(
                         "response.reasoning_summary_text.delta",
@@ -682,6 +693,28 @@ class ResponsesProjection:
                         item_id=item["id"],
                         output_index=slot,
                         input=item["input"],
+                    ),
+                ]
+            )
+        summary = item.get("summary") if item["type"] == "reasoning" else None
+        if isinstance(summary, list) and summary:
+            part = summary[0]
+            assert isinstance(part, dict)
+            events.extend(
+                [
+                    self.event(
+                        "response.reasoning_summary_text.done",
+                        item_id=item["id"],
+                        output_index=slot,
+                        summary_index=0,
+                        text=part["text"],
+                    ),
+                    self.event(
+                        "response.reasoning_summary_part.done",
+                        item_id=item["id"],
+                        output_index=slot,
+                        summary_index=0,
+                        part=deepcopy(part),
                     ),
                 ]
             )

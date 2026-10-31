@@ -830,9 +830,9 @@ def test_streamed_malformed_tool_json_fails(fragments):
         ("refusal", "failed", None),
     ],
 )
-@pytest.mark.parametrize("chat_reasoning", [False, True])
-def test_terminal_semantics(stop, status, reason, chat_reasoning):
-    response = ResponsesProjection(scope(), ClaudeToolNames(), codec(), chat_reasoning=chat_reasoning).complete(
+@pytest.mark.parametrize("show_summary", [False, True])
+def test_terminal_semantics(stop, status, reason, show_summary):
+    response = ResponsesProjection(scope(), ClaudeToolNames(), codec(), show_summary=show_summary).complete(
         {
             "id": "m",
             "content": [{"type": "text", "text": "answer"}],
@@ -1514,6 +1514,63 @@ def test_progress_display_models_ask_for_updates_without_a_caller_display(model)
 )
 def test_progress_display_is_not_added_otherwise(model, reasoning, thinking):
     assert _thinking(model, reasoning) == thinking
+
+
+@pytest.mark.parametrize(
+    "model,summary,thinking",
+    [
+        ("anthropic/claude-opus-5-5", "auto", {"type": "adaptive", "display": "updates"}),
+        ("anthropic/claude-opus-5-5", "none", {"type": "adaptive", "display": "updates"}),
+        ("anthropic/claude-opus-5-5", "concise", {"type": "adaptive", "display": "summarized"}),
+        ("anthropic/claude-opus-5-5", "detailed", {"type": "adaptive", "display": "summarized"}),
+        ("anthropic/claude-haiku-5-5", "auto", {"type": "adaptive", "display": "summarized"}),
+        ("anthropic/claude-haiku-5-5", "detailed", {"type": "adaptive", "display": "summarized"}),
+        ("anthropic/claude-haiku-5-5", "none", {"type": "adaptive"}),
+    ],
+)
+def test_requested_summary_selects_the_thinking_display(model, summary, thinking):
+    assert _thinking(model, {"effort": "high", "summary": summary}) == thinking
+
+
+def test_explicit_display_wins_over_the_requested_summary():
+    reasoning = {"effort": "high", "summary": "detailed", "display": "omitted"}
+    assert _thinking("anthropic/claude-opus-5-5", reasoning) == {"type": "adaptive"}
+
+
+def test_unknown_reasoning_summary_is_rejected():
+    with pytest.raises(ClientPayloadError, match="Unsupported reasoning summary") as error:
+        _thinking("anthropic/claude-opus-5-5", {"effort": "high", "summary": "verbose"})
+    assert error.value.param == "reasoning.summary"
+
+
+def test_requested_summary_streams_readable_thinking():
+    projected = project(request(tools=[LOOKUP_TOOL]), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec(), show_summary=True)
+    adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    events = _stream_thinking(adapter, 0, UPDATE)
+    kinds = [event["type"] for event in events]
+    assert kinds == [
+        "response.output_item.added",
+        "response.reasoning_summary_part.added",
+        "response.reasoning_summary_text.delta",
+        "response.reasoning_summary_text.done",
+        "response.reasoning_summary_part.done",
+        "response.output_item.done",
+    ]
+    assert events[2]["delta"] == UPDATE["thinking"]
+    assert events[3]["text"] == UPDATE["thinking"]
+    item = events[-1]["item"]
+    assert item["summary"] == [{"type": "summary_text", "text": UPDATE["thinking"]}]
+    assert adapter.opaque.authenticate(item["encrypted_content"], client_scope=scope().client_scope).block == UPDATE
+
+
+def test_reasoning_without_requested_summary_stays_empty():
+    projected = project(request(tools=[LOOKUP_TOOL]), max_output_tokens=8192)
+    adapter = ResponsesProjection(scope(), projected.tools, codec())
+    adapter.consume({"type": "message_start", "message": {"id": "m", "usage": {}}})
+    events = _stream_thinking(adapter, 0, UPDATE)
+    assert [event["type"] for event in events] == ["response.output_item.added", "response.output_item.done"]
+    assert events[-1]["item"]["summary"] == []
 
 
 UPDATE = {"type": "thinking", "thinking": "Checking the config next.", "signature": "sig-update"}

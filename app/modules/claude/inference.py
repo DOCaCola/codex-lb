@@ -168,10 +168,12 @@ async def prepare_responses(
         detach_session_objects(session)
     continuation.source_id = prepared.source.id
     reasoning = logical.get("reasoning")
-    visible_chat_reasoning = chat_reasoning and (
-        not isinstance(reasoning, dict) or reasoning.get("display") != "omitted"
-    )
     thinking = projection.body.get("thinking")
+    progress_updates = isinstance(thinking, dict) and thinking.get("display") == "updates"
+    hidden = isinstance(reasoning, dict) and reasoning.get("display") == "omitted"
+    summary = reasoning.get("summary") if isinstance(reasoning, dict) else None
+    # Under ``updates`` readable thinking is a progress update, delivered as commentary instead.
+    show_summary = not hidden and (chat_reasoning or (summary not in (None, "none") and not progress_updates))
     return ClaudeAttempt(
         prepared,
         ResponsesProjection(
@@ -180,8 +182,8 @@ async def prepare_responses(
             opaque,
             search_enabled=projection.search_enabled,
             deferred_searches=projection.deferred_searches,
-            chat_reasoning=visible_chat_reasoning,
-            progress_updates=isinstance(thinking, dict) and thinking.get("display") == "updates",
+            show_summary=show_summary,
+            progress_updates=progress_updates,
         ),
     )
 

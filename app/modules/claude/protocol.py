@@ -26,10 +26,11 @@ from app.core.openai.tool_argument_encryption import declares_encrypted_argument
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import (
     EFFORT_LEVELS,
+    REASONING_SUMMARIES,
     ReasoningSpec,
     rejects_forced_tool_choice,
+    summary_display,
     supports_mid_system,
-    uses_progress_display,
 )
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_contract
 from app.modules.claude.model_limits import default_output_tokens
@@ -718,8 +719,14 @@ def project_responses(
         display = requested_reasoning.get("display")
         if display not in (None, "summarized", "omitted"):
             raise invalid("Unsupported Claude thinking display", "reasoning")
+        summary = requested_reasoning.get("summary")
+        if summary not in REASONING_SUMMARIES:
+            raise invalid("Unsupported reasoning summary", "reasoning.summary")
+        model_name = str(payload.get("model"))
         if reasoning.mode == "adaptive":
             body["thinking"] = {"type": "adaptive"}
+            if display is None and summary_display(model_name, summary) == "summarized":
+                display = "summarized"
             if display == "summarized":
                 body["thinking"]["display"] = "summarized"
             body["output_config"] = {"effort": effort}
@@ -740,7 +747,7 @@ def project_responses(
             else:
                 body["thinking"] = {"type": "enabled", "budget_tokens": budget}
         thinking = body["thinking"] != {"type": "disabled"}
-        if thinking and display is None and uses_progress_display(str(payload.get("model"))):
+        if thinking and display is None and summary_display(model_name, summary) == "updates":
             # Progress updates answer the user between tool calls; the model default omits their text.
             body["thinking"]["display"] = "updates"
         # Models that reject forced tool use receive ``auto`` at dispatch, which thinking accepts.
