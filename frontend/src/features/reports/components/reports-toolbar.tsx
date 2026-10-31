@@ -96,6 +96,8 @@ export function ReportsToolbar({
       className="sticky top-[4.25rem] z-10 space-y-2 rounded-xl border bg-card/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/85"
     >
       <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-lg font-semibold tracking-tight text-foreground">{t("nav.reports")}</h1>
+        <span aria-hidden="true" className="h-5 w-px bg-border" />
         <ChartToggle
           label={t("reports.toolbar.range")}
           value={preset}

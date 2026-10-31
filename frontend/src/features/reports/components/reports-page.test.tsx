@@ -91,7 +91,7 @@ describe("ReportsPage", () => {
       "Europe/Berlin",
     );
     expect(screen.getByRole("button", { name: "7d" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Reports" })).toBeInTheDocument();
   });
 
   it("switches the window with a preset", async () => {
