@@ -100,6 +100,8 @@ class WeeklyCreditApiKeyAttribution(DashboardModel):
     cached_tokens: int
     dominant_model: str
     cost_coverage: RequestCostCoverage
+    # Known cost in 10-minute buckets across the attribution window, oldest first.
+    cost_buckets: list[float]
 
 
 class WeeklyCreditPaceResponse(DashboardModel):

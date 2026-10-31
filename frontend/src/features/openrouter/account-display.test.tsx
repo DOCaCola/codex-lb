@@ -1,13 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenRouterAccountCard, OpenRouterMetrics } from "./account-display";
+import { OpenRouterMetrics } from "./account-display";
 import { createOpenRouterAccount } from "./test-fixtures";
-import { AccountCards } from "@/features/dashboard/components/account-cards";
-import { AccountList as DashboardAccountList } from "@/features/dashboard/components/account-list";
 import { renderProvidersList } from "@/features/accounts/test-utils";
-import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
+import { renderDashboardAccounts } from "@/features/dashboard/test-utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { renderWithProviders } from "@/test/utils";
 import { OpenRouterAccountDetail } from "./account-detail";
@@ -25,15 +22,17 @@ vi.mock("@/features/accounts/components/account-note-panel", () => ({
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 
 describe("Unified provider accounts", () => {
-  it.each([false, true])("omits model-selection details from dashboard subtitles (all models: %s)", (allModels) => {
+  it.each([false, true])("keeps model selection out of the dashboard card and in the Providers table (all models: %s)", (allModels) => {
     const account = createOpenRouterAccount();
     account.state.all_models = allModels;
     account.state.selections = ["model-a", "model-b"].map((model) => ({
       model, displayName: null,
     }));
-    render(<MemoryRouter><OpenRouterAccountCard account={account} /></MemoryRouter>);
-    expect(screen.getByTestId("openrouter-account-card")).toHaveTextContent("OpenRouter · Paid");
-    expect(screen.queryByText(/models selected|All models/)).not.toBeInTheDocument();
+    const view = renderDashboardAccounts({ openRouterAccounts: [account] });
+    expect(screen.queryByText(/2 models|All models/)).not.toBeInTheDocument();
+    view.unmount();
+    renderProvidersList({ openRouterAccounts: [account] });
+    expect(within(screen.getByTestId("provider-account-row")).getByText(allModels ? "All models" : "2 models")).toBeInTheDocument();
   });
 
   it.each([
@@ -41,39 +40,18 @@ describe("Unified provider accounts", () => {
     [false, "Paid"],
     [null, "Unknown"],
   ] as const)(
-    "displays key tier %s in account cards, lists and the Providers table",
+    "displays key tier %s in dashboard cards and the Providers table",
     (free, label) => {
       const account = createOpenRouterAccount();
       if (free === null) account.state.key = null;
       else account.state.key!.is_free_tier = free;
-      const view = render(
-        <MemoryRouter>
-          <OpenRouterAccountCard account={account} />
-          <DashboardAccountList accounts={[]} openRouterAccounts={[account]} />
-        </MemoryRouter>,
-      );
-      expect(screen.getAllByTitle(/API key tier reported/)).toHaveLength(2);
-      for (const tier of screen.getAllByTitle(/API key tier reported/)) {
-        expect(tier).toHaveTextContent(label);
-      }
+      const view = renderDashboardAccounts({ openRouterAccounts: [account] });
+      expect(screen.getByTestId("dashboard-account-card").querySelector(".plan-badge")).toHaveTextContent(label);
       view.unmount();
       renderProvidersList({ openRouterAccounts: [account] });
       expect(screen.getByTestId("provider-account-row").querySelector(".plan-badge")).toHaveTextContent(label);
     },
   );
-
-  it("marks retained tier metadata stale", () => {
-    const account = createOpenRouterAccount();
-    account.state.key_error = "Refresh failed";
-    render(
-      <MemoryRouter>
-        <OpenRouterAccountCard account={account} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent(
-      "Paid· stale",
-    );
-  });
 
   it("uses Pause and Resume instead of an enabled switch", async () => {
     const account = createOpenRouterAccount();
@@ -162,23 +140,6 @@ describe("Unified provider accounts", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("sorts provider balances numerically in dashboard list view", async () => {
-    const low = createOpenRouterAccount({ id: "low", name: "Zulu" });
-    const high = createOpenRouterAccount({ id: "high", name: "Alpha" });
-    low.state.credits = { total_credits: 5, total_usage: 1 };
-    render(
-      <MemoryRouter>
-        <DashboardAccountList accounts={[]} openRouterAccounts={[high, low]} />
-      </MemoryRouter>,
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Credits / USD" }),
-    );
-    expect(screen.getAllByTestId("account-list-row")[0]).toHaveTextContent(
-      "Zulu",
-    );
-  });
-
   it("includes OpenRouter in common status filtering", async () => {
     renderProvidersList({
       openRouterAccounts: [
@@ -197,43 +158,17 @@ describe("Unified provider accounts", () => {
 
   it("renders an OpenRouter-only dashboard in both views with detail links", () => {
     const account = createOpenRouterAccount();
-    render(
-      <MemoryRouter>
-        <AccountCards accounts={[]} openRouterAccounts={[account]} />
-        <DashboardAccountList accounts={[]} openRouterAccounts={[account]} />
-        <AccountSummaryLine accounts={[]} openRouterAccounts={[account]} />
-      </MemoryRouter>,
-    );
-    expect(
-      within(screen.getByTestId("dashboard-account-cards")).getByText(
-        "Research",
-      ),
-    ).toBeVisible();
-    expect(
-      within(screen.getByTestId("dashboard-account-list")).getByText(
-        "Research",
-      ),
-    ).toBeVisible();
-    expect(
-      screen
-        .getAllByRole("link")
-        .every(
-          (link) =>
-            link.getAttribute("href") === "/providers/src_research",
-        ),
-    ).toBe(true);
-    expect(
-      screen.getByTestId("dashboard-account-summary-line"),
-    ).toHaveTextContent("1");
+    for (const view of ["cards", "list"] as const) {
+      const rendered = renderDashboardAccounts({ openRouterAccounts: [account] }, { view });
+      expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute("href", "/providers/src_research");
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+      rendered.unmount();
+    }
   });
 
   it("honors privacy mode", () => {
     usePrivacyStore.setState({ blurred: true });
-    render(
-      <MemoryRouter>
-        <OpenRouterAccountCard account={createOpenRouterAccount()} />
-      </MemoryRouter>,
-    );
+    renderDashboardAccounts({ openRouterAccounts: [createOpenRouterAccount()] });
     expect(screen.getByText("Research")).toHaveClass("privacy-blur");
   });
 
@@ -241,7 +176,7 @@ describe("Unified provider accounts", () => {
     const account = createOpenRouterAccount();
     account.state.key = null;
     account.state.credits = null;
-    render(<OpenRouterMetrics account={account} detailed />);
+    render(<OpenRouterMetrics account={account} />);
     expect(screen.getAllByText("Unknown")).toHaveLength(4);
     expect(screen.queryByText("No key cap")).not.toBeInTheDocument();
     expect(
@@ -253,7 +188,7 @@ describe("Unified provider accounts", () => {
     const account = createOpenRouterAccount();
     account.state.key_error = "Refresh failed";
     account.state.credits_error = "Refresh failed";
-    render(<OpenRouterMetrics account={account} detailed />);
+    render(<OpenRouterMetrics account={account} />);
     expect(screen.getAllByText("· stale")).toHaveLength(4);
     expect(screen.getByText("$75.50")).toBeVisible();
   });

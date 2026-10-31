@@ -22,7 +22,7 @@ import {
   formatQuotaResetLabel,
   formatRate,
   formatResetRelative,
-  formatSingleUnitRemaining,
+  formatTimeRemaining,
   formatRefreshTokenLabel,
   formatRelative,
   formatTimeLong,
@@ -174,24 +174,24 @@ it("formats elapsed latency values", () => {
     expect(formatCountdown(125)).toBe("2:05");
   });
 
-  it("formats single-unit reset-credit countdowns", () => {
-    expect(formatSingleUnitRemaining("2026-01-08T00:00:00.000Z")).toEqual({
+  it("formats two-unit reset-credit countdowns", () => {
+    expect(formatTimeRemaining("2026-01-08T00:00:00.000Z")).toEqual({
       label: "7d",
       expiringSoon: false,
     });
-    expect(formatSingleUnitRemaining("2026-01-07T00:00:00.000Z")).toEqual({
-      label: "6d",
+    expect(formatTimeRemaining("2026-01-07T06:30:00.000Z")).toEqual({
+      label: "6d 6h",
       expiringSoon: true,
     });
-    expect(formatSingleUnitRemaining("2026-01-01T01:00:00.000Z")).toEqual({
-      label: "1h",
+    expect(formatTimeRemaining("2026-01-01T01:12:00.000Z")).toEqual({
+      label: "1h 12m",
       expiringSoon: true,
     });
-    expect(formatSingleUnitRemaining("2026-01-01T00:01:00.000Z")).toEqual({
+    expect(formatTimeRemaining("2026-01-01T00:01:00.000Z")).toEqual({
       label: "1m",
       expiringSoon: true,
     });
-    expect(formatSingleUnitRemaining("2025-12-31T23:59:59.000Z")).toEqual({
+    expect(formatTimeRemaining("2025-12-31T23:59:59.000Z")).toEqual({
       label: "now",
       expiringSoon: true,
     });

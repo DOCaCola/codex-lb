@@ -350,6 +350,7 @@ async def _provider_top_consumers(
             cached_tokens=row.cached_tokens,
             dominant_model=row.dominant_model,
             cost_coverage=cost_coverage_response(row.cost_coverage),
+            cost_buckets=row.cost_buckets,
         )
         for row in rows
     ]

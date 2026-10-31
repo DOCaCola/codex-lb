@@ -239,6 +239,7 @@ async def test_dashboard_overview_carries_weekly_runway_fields_and_top_consumers
                 "unmeteredRequests": 0,
                 "coverageUnknown": False,
             },
+            "costBuckets": [0.0] * 11 + [0.125],
         }
     ]
     assert pace["scheduledUsedPercent"] == pytest.approx(97.619, abs=0.01)

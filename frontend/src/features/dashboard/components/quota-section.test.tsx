@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createClaudeAccount, createClaudeQuotaWindow } from "@/features/claude/test-fixtures";
 import { createAntigravityAccount, createAntigravityWindow } from "@/features/antigravity/test-fixtures";
-import { QuotaSection } from "@/features/dashboard/components/quota-section";
+import { QuotaSection, type QuotaSectionProps } from "@/features/dashboard/components/quota-section";
+import { dashboardSummaries } from "@/features/dashboard/test-utils";
 import type { DashboardView, WeeklyCreditPace } from "@/features/dashboard/utils";
 import { useDashboardPreferencesStore } from "@/hooks/use-dashboard-preferences";
+import { createAccountSummary } from "@/test/mocks/factories";
 
 const view: DashboardView = {
   stats: [],
@@ -22,29 +24,60 @@ const view: DashboardView = {
   topConsumers: { codex: [], claude: [], antigravity: [] },
 };
 
+function renderSection(props: Partial<QuotaSectionProps>) {
+  const sources = {
+    accounts: props.codexAccounts ?? [],
+    claudeAccounts: props.claudeAccounts ?? [],
+    antigravityAccounts: props.antigravityAccounts ?? [],
+  };
+  return render(
+    <QuotaSection
+      view={view}
+      codexAccounts={[]}
+      primaryCapacityCredits={0}
+      secondaryCapacityCredits={0}
+      claudeAccounts={[]}
+      antigravityAccounts={[]}
+      summaries={new Map(dashboardSummaries(sources).map((summary) => [summary.id, summary]))}
+      modelSourceColors={new Map()}
+      keyColors={new Map()}
+      {...props}
+    />,
+  );
+}
+
 describe("QuotaSection", () => {
   beforeEach(() => {
     localStorage.clear();
     useDashboardPreferencesStore.setState({ quotaProvider: "codex" });
   });
 
-  it("shows Codex quota without a provider toggle when no Claude accounts exist", async () => {
+  it("shows Codex credits without a provider toggle when no other subscription accounts exist", () => {
     useDashboardPreferencesStore.setState({ quotaProvider: "claude" });
+    const account = createAccountSummary({ accountId: "acc_plus", displayName: "DOCa Plus" });
 
-    render(
-      <QuotaSection
-        view={view}
-        primaryCapacityCredits={0}
-        secondaryCapacityCredits={0}
-        claudeAccounts={[]}
-        antigravityAccounts={[]}
-        modelSourceColors={new Map()}
-      />,
-    );
+    renderSection({
+      view: {
+        ...view,
+        primaryUsageItems: [{ accountId: "acc_plus", label: "DOCa Plus", labelSuffix: "", isEmail: false, value: 120, remainingPercent: 50, color: "#2563eb" }],
+        secondaryUsageItems: [{ accountId: "acc_plus", label: "DOCa Plus", labelSuffix: "", isEmail: false, value: 900, remainingPercent: 60, color: "#2563eb" }],
+        primaryTotal: 120,
+        secondaryTotal: 900,
+      },
+      codexAccounts: [account],
+      primaryCapacityCredits: 240,
+      secondaryCapacityCredits: 1500,
+    });
 
     expect(screen.getByTestId("quota-section")).toHaveAttribute("data-provider", "codex");
     expect(screen.queryByRole("group", { name: "Quota provider" })).not.toBeInTheDocument();
-    expect(await screen.findByText("5-Hour Credits")).toBeInTheDocument();
+    expect(screen.getByText("Remaining credits")).toBeInTheDocument();
+    expect(screen.getByTestId("quota-ring-5h")).toHaveTextContent("of 240");
+    expect(screen.getByTestId("quota-ring-weekly")).toHaveTextContent("of 1.5K");
+    const row = screen.getByTestId("quota-remaining-row");
+    expect(row).toHaveTextContent("DOCa Plus");
+    expect(row).toHaveTextContent("120");
+    expect(row).toHaveTextContent("900");
   });
 
   it("switches to pooled Claude quota and notes accounts left out of the pool", async () => {
@@ -65,28 +98,22 @@ describe("QuotaSection", () => {
       }),
     ];
 
-    render(
-      <QuotaSection
-        view={view}
-        primaryCapacityCredits={0}
-        secondaryCapacityCredits={0}
-        claudeAccounts={accounts}
-        antigravityAccounts={[]}
-        modelSourceColors={new Map()}
-      />,
-    );
+    renderSection({ claudeAccounts: accounts });
 
     const toggle = screen.getByRole("group", { name: "Quota provider" });
     await user.click(within(toggle).getByRole("button", { name: "Claude" }));
 
     expect(useDashboardPreferencesStore.getState().quotaProvider).toBe("claude");
     expect(screen.getByTestId("quota-section")).toHaveAttribute("data-provider", "claude");
-    expect(await screen.findByText("5-Hour Quota")).toBeInTheDocument();
-    expect(screen.getByText("Weekly Quota")).toBeInTheDocument();
-    expect(screen.getByText("1 account not pooled · quota unknown (Claude Stale)")).toBeInTheDocument();
-    expect(screen.queryByText("5-Hour Credits")).not.toBeInTheDocument();
+    expect(screen.getByText("Remaining quota")).toBeInTheDocument();
+    expect(screen.queryByText("Remaining credits")).not.toBeInTheDocument();
+    const [max, stale] = screen.getAllByTestId("quota-remaining-row");
+    expect(max).toHaveTextContent("Claude Max");
+    expect(stale).toHaveTextContent("not pooled");
+    expect(screen.getByTestId("quota-remaining-note")).toHaveTextContent("1 account not pooled · quota unknown (Claude Stale)");
   });
-  it("shows each Antigravity family as its own plan-weighted bar and paces the tightest family", async () => {
+
+  it("shows each Antigravity family as its own plan-weighted pool and paces the tightest family", async () => {
     const user = userEvent.setup();
     const weekly = (family: "gemini" | "argon" | "claude", usedPercent: number) =>
       createAntigravityWindow({ family, window: "weekly", usedPercent, resetsAt: new Date(Date.now() + 49 * 3_600_000).toISOString() });
@@ -103,35 +130,30 @@ describe("QuotaSection", () => {
       createAntigravityAccount({ id: "stale", name: "Stale Seat", quotaFresh: false }),
     ];
 
-    render(
-      <QuotaSection
-        view={{
-          ...view,
-          antigravityWeeklyPace: [
-            { family: "gemini", pace: familyPace({ runwayStatus: "safe", headroomPercent: 57, depletionEtaHours: 120 }) },
-            { family: "claude", pace: familyPace({ runwayStatus: "tight", headroomPercent: 57, depletionEtaHours: 40 }) },
-          ],
-        }}
-        primaryCapacityCredits={0}
-        secondaryCapacityCredits={0}
-        claudeAccounts={[]}
-        antigravityAccounts={accounts}
-        modelSourceColors={new Map()}
-      />,
-    );
+    renderSection({
+      view: {
+        ...view,
+        antigravityWeeklyPace: [
+          { family: "gemini", pace: familyPace({ runwayStatus: "safe", headroomPercent: 57, depletionEtaHours: 120 }) },
+          { family: "claude", pace: familyPace({ runwayStatus: "tight", headroomPercent: 57, depletionEtaHours: 40 }) },
+        ],
+      },
+      antigravityAccounts: accounts,
+    });
 
     const toggle = screen.getByRole("group", { name: "Quota provider" });
     expect(within(toggle).queryByRole("button", { name: "Claude" })).not.toBeInTheDocument();
     await user.click(within(toggle).getByRole("button", { name: "Antigravity" }));
 
     expect(screen.getByTestId("quota-section")).toHaveAttribute("data-provider", "antigravity");
-    const [fiveHour, weeklyCard] = screen.getAllByTestId("antigravity-quota-bars");
-    expect(within(fiveHour).getByTestId("antigravity-family-gemini")).toHaveTextContent("not reported");
-    expect(within(weeklyCard).getByTestId("antigravity-family-gemini")).toHaveTextContent("3.4 / 6 · 43% used");
-    const argon = within(weeklyCard).getByTestId("antigravity-family-argon");
-    expect(argon).toHaveTextContent("4.5 / 5 · 10% used");
-    expect(argon).toHaveTextContent("not reported by Team Pro");
-    expect(within(weeklyCard).getByTestId("antigravity-quota-note")).toHaveTextContent(
+    const card = screen.getByTestId("antigravity-remaining-card");
+    const gemini = within(card).getByTestId("antigravity-family-gemini");
+    expect(gemini.children[1]).toHaveTextContent("not reported");
+    expect(gemini.children[2]).toHaveTextContent("57%");
+    const argon = within(card).getByTestId("antigravity-family-argon");
+    expect(argon.children[2]).toHaveTextContent("90%");
+    expect(argon.children[2]).toHaveTextContent("not reported by Team Pro");
+    expect(within(card).getByTestId("antigravity-quota-note")).toHaveTextContent(
       "2 accounts not pooled · plan not weighted (Free Seat) · quota unknown (Stale Seat)",
     );
     expect(screen.getByText("Antigravity · tightest: Claude & GPT")).toBeInTheDocument();
@@ -141,6 +163,7 @@ describe("QuotaSection", () => {
     expect(screen.getByText("Antigravity · last 2h")).toBeInTheDocument();
   });
 });
+
 
 function familyPace(overrides: Partial<WeeklyCreditPace>): WeeklyCreditPace {
   return {

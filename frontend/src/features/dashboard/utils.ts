@@ -1,5 +1,3 @@
-import { Activity, AlertTriangle, Coins, DollarSign, Flame, MessageSquare, type LucideIcon } from "lucide-react";
-
 import { formatCoveredCostShort, isCostCoverageComplete } from "@/features/dashboard/cost-coverage";
 import type { AntigravityAccount, QuotaFamily } from "@/features/antigravity/api";
 import type { ClaudeAccount } from "@/features/claude/api";
@@ -47,9 +45,12 @@ export type RemainingItem = {
 export type DashboardStat = {
   label: string;
   value: string;
+  /** Unit after the value, for example "Plus / 7d". */
+  unit?: string;
   meta?: string;
+  /** Explanation shown on hover. */
+  description?: string;
   comparison?: DashboardStatComparison;
-  icon: LucideIcon;
   trend: { value: number }[];
   trendColor: string;
 };
@@ -921,7 +922,6 @@ export function buildDashboardView(
       value: formatCompactNumber(metrics?.requests ?? 0),
       meta: requestMeta,
       comparison: buildStatComparison(metrics?.requests, comparison?.previous.requests ?? 0, canCompare),
-      icon: Activity,
       trend: trendPointsToValues(trends.requests),
       trendColor: TREND_COLORS[0],
     },
@@ -930,7 +930,6 @@ export function buildDashboardView(
       value: formatCompactNumber(metrics?.tokens ?? 0),
       meta: formatCachedTokensMeta(metrics?.tokens, metrics?.cachedInputTokens),
       comparison: buildStatComparison(metrics?.tokens, comparison?.previous.tokens ?? 0, canCompare),
-      icon: Coins,
       trend: trendPointsToValues(trends.tokens),
       trendColor: TREND_COLORS[1],
     },
@@ -943,7 +942,6 @@ export function buildDashboardView(
         comparison?.previous.costUsd ?? 0,
         canCompare && costComplete && !!comparison && isCostCoverageComplete(comparison.previous.costCoverage),
       ),
-      icon: DollarSign,
       trend: trendPointsToValues(trends.cost),
       trendColor: TREND_COLORS[2],
     },
@@ -962,7 +960,6 @@ export function buildDashboardView(
       meta: t("dashboard.stats.avgRequestsPerConversation", {
         value: averageRequestsPerConversation,
       }),
-      icon: MessageSquare,
       trend: trendPointsToValues(trends.conversations),
       trendColor: TREND_COLORS[3],
     });
@@ -970,15 +967,19 @@ export function buildDashboardView(
 
   if (showAccountBurnrate) {
     stats.push({
-      label: t("dashboard.stats.accountBurnProjection", { primary: primaryBurnLabel, secondary: secondaryBurnLabel }),
-      value: `${formatBurnEquivalent(primaryBurnEquivalent)} / ${formatBurnEquivalent(secondaryBurnEquivalent)}`,
-      meta: t("dashboard.stats.projectedAccountEquivalents", {
+      label: t("dashboard.stats.accountBurn"),
+      value: formatBurnEquivalent(secondaryBurnEquivalent),
+      unit: t("dashboard.stats.accountBurnUnit", { window: secondaryBurnLabel }),
+      meta: t("dashboard.stats.accountBurnPrimary", {
+        value: formatBurnEquivalent(primaryBurnEquivalent),
+        window: primaryBurnLabel,
+      }),
+      description: t("dashboard.stats.projectedAccountEquivalents", {
         primaryValue: formatBurnEquivalent(primaryBurnEquivalent),
         primary: primaryBurnLabel,
         secondaryValue: formatBurnEquivalent(secondaryBurnEquivalent),
         secondary: secondaryBurnLabel,
       }),
-      icon: Flame,
       trend: buildBurnTrend(trends.tokens, combinedBurnEquivalent),
       trendColor: TREND_COLORS[3],
     });
@@ -993,7 +994,6 @@ export function buildDashboardView(
           count: formatCompactNumber(metrics?.errorCount ?? Math.round((metrics?.errorRate ?? 0) * (metrics?.requests ?? 0))),
           timeframe: timeframeLabel,
         }),
-    icon: AlertTriangle,
     trend: trendPointsToValues(trends.errorRate),
     trendColor: TREND_COLORS[4],
   });

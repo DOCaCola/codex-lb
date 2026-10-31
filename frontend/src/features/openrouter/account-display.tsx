@@ -1,34 +1,7 @@
-import { ExternalLink } from "lucide-react";
-import { Link } from "react-router-dom";
-import { ProviderAccountName } from "@/components/brand/provider-account-name";
-import {
-  AccountCardAction,
-  AccountCardNotice,
-  AccountCardSurface,
-} from "@/components/account-surfaces";
-import { StatusBadge } from "@/components/status-badge";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
-import { useTranslation } from "react-i18next";
-import { usePrivacyStore } from "@/hooks/use-privacy";
-import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
-import { formatDateTimeInline } from "@/utils/formatters";
 import type { OpenRouterAccount } from "./api";
 
-import {
-  openRouterStatus,
-  openRouterBalance,
-  money,
-  keyAllowance,
-} from "./display-values";
-
-export function OpenRouterName({ account, color }: { account: OpenRouterAccount; color?: string }) {
-  const blurred = usePrivacyStore((s) => s.blurred);
-  return (
-    <ProviderAccountName provider="openrouter" color={color}>
-      <span className={blurred ? "privacy-blur" : undefined}>{account.name}</span>
-    </ProviderAccountName>
-  );
-}
+import { openRouterBalance, money, keyAllowance } from "./display-values";
 
 export function OpenRouterTier({ account }: { account: OpenRouterAccount }) {
   const { key, key_error } = account.state;
@@ -73,150 +46,42 @@ function keyAllowancePercent(account: OpenRouterAccount): number | null {
     : null;
 }
 
-export function OpenRouterMetrics({
-  account,
-  detailed = false,
-}: {
-  account: OpenRouterAccount;
-  detailed?: boolean;
-}) {
+export function OpenRouterMetrics({ account }: { account: OpenRouterAccount }) {
   const { key, credits, key_error, credits_error } = account.state;
   const percent = keyAllowancePercent(account);
   return (
-    <>
-      <dl className="grid grid-cols-2 gap-3">
+    <dl className="grid grid-cols-2 gap-3">
+      <Metric
+        label="Account balance"
+        value={money(openRouterBalance(account))}
+        stale={!!credits && !!credits_error}
+      />
+      <div>
         <Metric
-          label="Account balance"
-          value={money(openRouterBalance(account))}
-          stale={!!credits && !!credits_error}
+          label="Key allowance left"
+          value={keyAllowance(account)}
+          stale={!!key && !!key_error}
         />
-        <div>
-          <Metric
-            label="Key allowance left"
-            value={keyAllowance(account)}
-            stale={!!key && !!key_error}
-          />
-          {percent !== null && (
-            <div className="mt-2">
-              <MiniQuotaBar
-                aria-label="Key allowance remaining"
-                percent={percent}
-                testId="openrouter-key-allowance"
-              />
-            </div>
-          )}
-        </div>
-        {detailed && (
-          <>
-            <Metric
-              label="Used today"
-              value={money(key?.usage_daily)}
-              stale={!!key && !!key_error}
+        {percent !== null && (
+          <div className="mt-2">
+            <MiniQuotaBar
+              aria-label="Key allowance remaining"
+              percent={percent}
+              testId="openrouter-key-allowance"
             />
-            <Metric
-              label="Free requests left today"
-              value={key?.free_model_daily_requests?.remaining ?? "Unknown"}
-              stale={!!key && !!key_error}
-            />
-          </>
+          </div>
         )}
-      </dl>
-    </>
-  );
-}
-
-export function OpenRouterFreshness({
-  account,
-}: {
-  account: OpenRouterAccount;
-}) {
-  const format = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
-  const { state } = account;
-  return (
-    <div className="space-y-2 text-xs text-muted-foreground">
-      {!account.hasManagementKey && (
-        <p>
-          Add a management key to display account credits. Key allowance is
-          separate from balance.
-        </p>
-      )}
-      <p>
-        Usage:{" "}
-        {state.key_updated_at
-          ? formatDateTimeInline(state.key_updated_at, format)
-          : "Never"}
-        <br />
-        Credits:{" "}
-        {state.credits_updated_at
-          ? formatDateTimeInline(state.credits_updated_at, format)
-          : "Never"}
-        <br />
-        Catalog:{" "}
-        {state.catalog_updated_at
-          ? formatDateTimeInline(state.catalog_updated_at, format)
-          : "Never"}
-      </p>
-      {[
-        ...new Set(
-          [state.catalog_error, state.key_error, state.credits_error].filter(
-            Boolean,
-          ),
-        ),
-      ].map((message) => (
-        <p key={message} role="alert" className="break-words text-destructive">
-          {message}
-        </p>
-      ))}
-    </div>
-  );
-}
-
-export function OpenRouterAccountCard({
-  account,
-  color,
-}: {
-  account: OpenRouterAccount;
-  color?: string;
-}) {
-  const { t } = useTranslation();
-  const stale = !!(
-    account.state.key_error ||
-    account.state.credits_error ||
-    account.state.catalog_error
-  );
-  return (
-    <AccountCardSurface
-      data-testid="openrouter-account-card"
-      title={<OpenRouterName account={account} color={color} />}
-      subtitle={
-        <>
-          OpenRouter · <OpenRouterTier account={account} />
-        </>
-      }
-      status={<StatusBadge status={openRouterStatus(account)} />}
-      actions={
-        <AccountCardAction asChild>
-          <Link to={`/providers/${encodeURIComponent(account.id)}`}>
-            <ExternalLink className="h-3 w-3" />
-            {t("common.actions.details")}
-          </Link>
-        </AccountCardAction>
-      }
-    >
-      <OpenRouterMetrics account={account} />
-      <AccountCardNotice className="text-muted-foreground">
-        <p>
-          Used today{" "}
-          <span className="font-medium tabular-nums text-foreground">
-            {money(account.state.key?.usage_daily)}
-          </span>
-        </p>
-        {stale && (
-          <span className="text-amber-600 dark:text-amber-400">
-            Monitoring needs attention
-          </span>
-        )}
-      </AccountCardNotice>
-    </AccountCardSurface>
+      </div>
+      <Metric
+        label="Used today"
+        value={money(key?.usage_daily)}
+        stale={!!key && !!key_error}
+      />
+      <Metric
+        label="Free requests left today"
+        value={key?.free_model_daily_requests?.remaining ?? "Unknown"}
+        stale={!!key && !!key_error}
+      />
+    </dl>
   );
 }

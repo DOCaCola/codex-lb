@@ -144,7 +144,7 @@ export function OpenRouterAccountDetail({
         <>
           <DetailCard title={t("accounts.usage.title")} data-testid="account-usage">
             <div className="min-w-0 space-y-4" aria-label="OpenRouter usage">
-              <OpenRouterMetrics account={account} detailed />
+              <OpenRouterMetrics account={account} />
               {!account.hasManagementKey && (
                 <p className="text-xs text-muted-foreground">
                   Add a management key to display account credits. Key allowance is separate from balance.

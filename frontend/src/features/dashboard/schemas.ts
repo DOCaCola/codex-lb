@@ -10,6 +10,7 @@ export type { AccountAdditionalQuota as AdditionalQuota } from "@/features/accou
 
 const OverviewTimeframeKeySchema = z.enum(["1d", "7d", "30d"]);
 export type OverviewTimeframe = z.infer<typeof OverviewTimeframeKeySchema>;
+export const OVERVIEW_TIMEFRAMES = OverviewTimeframeKeySchema.options;
 export const DEFAULT_OVERVIEW_TIMEFRAME: OverviewTimeframe = "7d";
 
 export function parseOverviewTimeframe(value: string | null | undefined): OverviewTimeframe {
@@ -135,6 +136,8 @@ const WeeklyCreditApiKeyAttributionSchema = z.object({
   cachedTokens: z.number().int().nonnegative(),
   dominantModel: z.string(),
   costCoverage: CostCoverageSchema,
+  // Known cost in 10-minute buckets over the attribution window, oldest first.
+  costBuckets: z.array(z.number()),
 });
 
 const WeeklyCreditPaceStatusSchema = z.enum(["behind", "on_track", "ahead", "danger"]);

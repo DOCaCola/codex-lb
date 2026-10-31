@@ -18,7 +18,7 @@ import {
   formatCompactNumber,
   formatDateTimeInline,
   formatResetRelative,
-  formatSingleUnitRemaining,
+  formatTimeRemaining,
   formatWindowLabel,
 } from "@/utils/formatters";
 
@@ -143,7 +143,7 @@ function ResetCreditsRow({
       : unavailable && resetCredits == null
         ? t("common.states.unavailable")
         : t("accounts.usage.resetCredits.available", { count: availableCount });
-  const expiryCountdown = nearestExpiresAt ? formatSingleUnitRemaining(nearestExpiresAt) : null;
+  const expiryCountdown = nearestExpiresAt ? formatTimeRemaining(nearestExpiresAt) : null;
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2 text-xs">

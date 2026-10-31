@@ -169,47 +169,19 @@ test("dashboard provider cards share sizing and anatomy", async ({
     }),
   ];
   openrouter[1].state.key_error = "Monitoring failed";
-  const claude: ClaudeAccount = {
-    planType: "pro",
+  const claude = createClaudeAccount({
     id: "claude-two",
     name: "Claude quotas",
-    isEnabled: true,
-    maxConcurrency: null,
-    routingPolicy: "normal",
-    credentialStatus: "ready",
     expiresAt: "2026-10-01T12:00:00Z",
-    state: {
-      subscription: null, subscription_updated_at: null, subscription_error: null,
-      all_models: true,
-      reasoning_restrictions: {},
-      selections: [],
-      catalog: [],
-      catalog_updated_at: null,
-      catalog_error: null,
-      usage_updated_at: null,
-      usage_error: null,
-    },
     quota: {
       observedAt: null,
       models: [],
       windows: [
-        {
-          name: "five_hour",
-          utilization: null,
-          resetsAt: null,
-          freshness: "unknown",
-          exhausted: false,
-        },
-        {
-          name: "seven_day",
-          utilization: 104,
-          resetsAt: "2026-10-03T12:00:00Z",
-          freshness: "stale",
-          exhausted: false,
-        },
+        createClaudeQuotaWindow({ name: "five_hour", utilization: null, freshness: "unknown" }),
+        createClaudeQuotaWindow({ name: "seven_day", utilization: 104, resetsAt: "2026-10-03T12:00:00Z", freshness: "stale" }),
       ],
     },
-  };
+  });
   const claudeAccounts = [
     claude,
     {
@@ -237,92 +209,46 @@ test("dashboard provider cards share sizing and anatomy", async ({
     await applyTheme(page, theme);
     await page.goto(BASE_URL);
     const grid = page.getByTestId("dashboard-account-cards");
-    await expect(grid.locator(".card-hover")).toHaveCount(7);
+    const cards = grid.getByTestId("dashboard-account-card");
+    await expect(cards).toHaveCount(7);
+    await expect(cards.filter({ hasText: "Claude weekly only" }).getByText(/^5h$/)).toHaveCount(0);
+    await expect(cards.filter({ hasText: "Codex requiring recovery" }).getByTestId("account-card-strip")).toBeVisible();
+    await expect(cards.filter({ hasText: "Codex alias with email" }).getByTestId("account-card-strip")).toHaveCount(0);
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
-      const bounds = await grid.evaluate((element) =>
-        Array.from(element.children).map((wrapper) => {
-          const card = wrapper.querySelector<HTMLElement>(".card-hover")!;
+      const bounds = await cards.evaluateAll((elements) =>
+        elements.map((card) => {
           const rect = card.getBoundingClientRect();
-          const body = card.querySelector<HTMLElement>(
-            '[data-slot="account-card-body"]',
-          )!;
-          const footer = card.querySelector<HTMLElement>(
-            '[data-slot="account-card-actions"]',
-          )!;
+          const header = card.firstElementChild as HTMLElement;
           return {
-            height: rect.height,
             width: rect.width,
-            top: rect.top,
-            bodyOffset: body.getBoundingClientRect().top - rect.top,
-            footerInset: rect.bottom - footer.getBoundingClientRect().bottom,
-            contained: Array.from(
-              card.querySelectorAll<HTMLElement>("p, button, a, [data-slot]"),
-            ).every((child) => {
+            headerHeight: header.getBoundingClientRect().height,
+            contained: Array.from(card.querySelectorAll<HTMLElement>("span, button, a")).every((child) => {
               const r = child.getBoundingClientRect();
-              return (
-                r.left >= rect.left - 1 &&
-                r.right <= rect.right + 1 &&
-                r.top >= rect.top &&
-                r.bottom <= rect.bottom + 1
-              );
+              return r.width === 0 || (r.left >= rect.left - 1 && r.right <= rect.right + 1 && r.top >= rect.top - 1 && r.bottom <= rect.bottom + 1);
             }),
           };
         }),
       );
       expect(bounds.every((card) => card.contained)).toBe(true);
-      expect(
-        Math.max(...bounds.map((card) => card.width)) -
-          Math.min(...bounds.map((card) => card.width)),
-      ).toBeLessThan(1);
-      expect(
-        Math.max(...bounds.map((card) => card.bodyOffset)) -
-          Math.min(...bounds.map((card) => card.bodyOffset)),
-      ).toBeLessThan(1);
-      expect(
-        Math.max(...bounds.map((card) => card.footerInset)) -
-          Math.min(...bounds.map((card) => card.footerInset)),
-      ).toBeLessThan(1);
-      const heightDifference =
-        Math.max(...bounds.map((card) => card.height)) -
-        Math.min(...bounds.map((card) => card.height));
-      if (width >= 640) expect(heightDifference).toBeLessThan(1);
-      else expect(heightDifference).toBeGreaterThan(20);
+      expect(Math.max(...bounds.map((card) => card.width)) - Math.min(...bounds.map((card) => card.width))).toBeLessThan(1);
+      // Equal headers keep the limit rows of neighbouring cards on one line.
+      expect(Math.max(...bounds.map((card) => card.headerHeight)) - Math.min(...bounds.map((card) => card.headerHeight))).toBeLessThan(1);
       await expect
-        .poll(() =>
-          page.evaluate(
-            () => document.documentElement.scrollWidth <= window.innerWidth,
-          ),
-        )
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
         .toBe(true);
-      for (const provider of ["codex", "claude"]) {
-        const card = grid.getByTestId(`${provider}-account-card`).first();
-        expect(
-          await card
-            .locator('[data-slot="account-card-body"] > div')
-            .first()
-            .evaluate(
-              (el) =>
-                getComputedStyle(el).gridTemplateColumns.split(" ").length,
-            ),
-        ).toBe(2);
-      }
       if (width === 1440)
         await grid.screenshot({
           path: testInfo.outputPath(`provider-cards-${theme}-desktop.png`),
           animations: "disabled",
           style: "header, footer { visibility: hidden !important; }",
         });
-      if (width === 390) {
-        await grid
-          .getByTestId("claude-account-card")
-          .first()
-          .screenshot({
-            path: testInfo.outputPath(`provider-cards-${theme}-mobile.png`),
-            animations: "disabled",
-            style: "header, footer { visibility: hidden !important; }",
-          });
-      }
+      if (width === 390)
+        await cards.filter({ hasText: "Claude quotas" }).screenshot({
+          path: testInfo.outputPath(`provider-cards-${theme}-mobile.png`),
+          animations: "disabled",
+          style: "header, footer { visibility: hidden !important; }",
+        });
     }
   }
   expect(errors).toEqual([]);
@@ -405,6 +331,7 @@ test("dashboard quota section switches between Codex and Claude", async ({ page 
     cachedTokens: Math.round(billableTokens * 0.6),
     dominantModel,
     costCoverage: { knownCostUsd: cost, pricedRequests: requests, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
+    costBuckets: Array.from({ length: 12 }, (_, index) => Number(((cost / 12) * (0.5 + (index % 4) / 4)).toFixed(2))),
   });
   const claudeAccounts = [
     createClaudeAccount({
@@ -422,8 +349,8 @@ test("dashboard quota section switches between Codex and Claude", async ({ page 
     createClaudeAccount({
       id: "claude-max",
       name: "DOCa Claude",
-      planType: "max_5x",
-      quotaWeight: 5,
+      planType: "max",
+      quotaWeights: { fiveHour: 5, weekly: 5 },
       quota: {
         observedAt: null,
         models: [],
@@ -436,8 +363,8 @@ test("dashboard quota section switches between Codex and Claude", async ({ page 
     createClaudeAccount({
       id: "claude-stale",
       name: "Claude Team",
-      planType: "max_5x",
-      quotaWeight: 5,
+      planType: "max",
+      quotaWeights: { fiveHour: 5, weekly: 5 },
       quota: {
         observedAt: null,
         models: [],
@@ -465,6 +392,7 @@ test("dashboard quota section switches between Codex and Claude", async ({ page 
           consumer("docacola-mac", 1_850, 6_300_000, "claude-opus-5-5", 96.7),
           consumer("hermes-prod", 240, 610_000, "claude-haiku-4-5", 1.9),
         ],
+        antigravity: [],
       },
     }),
   );
@@ -483,17 +411,16 @@ test("dashboard quota section switches between Codex and Claude", async ({ page 
     for (const provider of ["codex", "claude"] as const) {
       await toggle.getByRole("button", { name: provider === "codex" ? "Codex" : "Claude" }).click();
       await expect(section).toHaveAttribute("data-provider", provider);
-      await expect(section.getByText(provider === "codex" ? "5-Hour Credits" : "5-Hour Quota")).toBeVisible();
-      for (const [width, columns] of [[1440, 4], [900, 2], [390, 1]] as const) {
+      await expect(section.getByText(provider === "codex" ? "Remaining credits" : "Remaining quota")).toBeVisible();
+      for (const width of [1440, 1024, 390] as const) {
         await page.setViewportSize({ width, height: 1000 });
         const grid = section.locator(".grid").first();
-        const layout = await grid.evaluate((element) => ({
-          columns: getComputedStyle(element).gridTemplateColumns.split(" ").length,
-          overflow: Array.from(element.querySelectorAll<HTMLElement>("*")).some(
+        const overflow = await grid.evaluate((element) =>
+          Array.from(element.querySelectorAll<HTMLElement>("*")).some(
             (child) => child.getBoundingClientRect().right > element.getBoundingClientRect().right + 1,
           ),
-        }));
-        expect(layout).toEqual({ columns, overflow: false });
+        );
+        expect(overflow).toBe(false);
         await page.waitForTimeout(SETTLE_MS);
         await section.screenshot({
           path: testInfo.outputPath(`quota-${provider}-${theme}-${width}.png`),
@@ -682,10 +609,11 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await page.screenshot({ path: testInfo.outputPath("claude-models-desktop.png"), animations: "disabled" });
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.goto(BASE_URL);
-  await expect(page.getByTestId("claude-account-card")).toBeVisible();
-  await expect(page.getByTestId("claude-account-card")).toContainText("Claude · Ultra");
-  await page.getByTestId("claude-account-card").scrollIntoViewIfNeeded();
-  await page.getByTestId("claude-account-card").screenshot({ path: testInfo.outputPath("claude-dashboard.png"), animations: "disabled" });
+  const claudeCard = page.locator('[data-testid="dashboard-account-card"][data-provider="claude"]');
+  await expect(claudeCard).toBeVisible();
+  await expect(claudeCard.locator(".plan-badge")).toHaveText("Ultra");
+  await claudeCard.scrollIntoViewIfNeeded();
+  await claudeCard.screenshot({ path: testInfo.outputPath("claude-dashboard.png"), animations: "disabled" });
   await page.getByRole("radio", { name: /List/i }).click();
   const rows = page.getByTestId("dashboard-account-list");
   await expect(rows.getByText("Claude Research")).toBeVisible();
@@ -1278,8 +1206,9 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.keyboard.press("Escape");
     await page.goto(`${BASE_URL}/`);
-    await expect(page.getByTestId("claude-account-card")).toBeVisible();
-    await page.getByTestId("claude-account-card").screenshot({ animations: "disabled", path: test.info().outputPath(`claude-dashboard-${width}.png`) });
+    const claudeCard = page.locator('[data-testid="dashboard-account-card"][data-provider="claude"]');
+    await expect(claudeCard).toBeVisible();
+    await claudeCard.screenshot({ animations: "disabled", path: test.info().outputPath(`claude-dashboard-${width}.png`) });
   });
 }
 
@@ -1329,12 +1258,13 @@ for (const width of [1440, 390]) {
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-models-${width}.png`)});
     await page.keyboard.press("Escape");
     await page.goto(`${BASE_URL}/`);
-    await expect(page.getByTestId("openrouter-account-card")).toBeVisible();
-    await page.getByTestId("openrouter-account-card").scrollIntoViewIfNeeded();
+    const openRouterCard = page.locator('[data-testid="dashboard-account-card"][data-provider="openrouter"]');
+    await expect(openRouterCard).toBeVisible();
+    await openRouterCard.scrollIntoViewIfNeeded();
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-dashboard-${width}.png`)});
     await page.getByRole("radio", {name: "View accounts as list"}).click();
     await expect(page.getByTestId("dashboard-account-list").getByText("Research", {exact: true})).toBeVisible();
-    await page.getByTestId("account-list-row").filter({has: page.getByText("Research", {exact: true})}).scrollIntoViewIfNeeded();
+    await page.getByTestId("dashboard-account-row").filter({has: page.getByText("Research", {exact: true})}).scrollIntoViewIfNeeded();
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-dashboard-list-${width}.png`)});
   });
 }

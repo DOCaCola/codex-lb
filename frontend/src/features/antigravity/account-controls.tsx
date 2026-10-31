@@ -302,7 +302,7 @@ function AntigravityDetail({
         <>
           <DetailCard title={t("accounts.usage.title")} data-testid="account-usage">
             <div className="min-w-0 space-y-4">
-              <AntigravityQuota account={account} detailed />
+              <AntigravityQuota account={account} />
               <ProviderAccountTrends provider="antigravity" accountId={account.id} embedded />
               <p className="text-xs text-muted-foreground">
                 Quota readings are provider-reported per model family. Recorded API-equivalent costs are not subscription

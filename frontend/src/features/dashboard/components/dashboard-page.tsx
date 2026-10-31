@@ -1,25 +1,34 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 
 import { AlertMessage } from "@/components/alert-message";
+import { ChartToggle } from "@/components/chart-toggle";
 import { Button } from "@/components/ui/button";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { useAccountMutations } from "@/features/accounts/hooks/use-accounts";
+import { useProviderActivity } from "@/features/accounts/hooks/use-provider-activity";
+import { useSummaryContext } from "@/features/accounts/hooks/use-summary-context";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
+import { buildProviderGroups, type ProviderSummary } from "@/features/accounts/provider-summary";
+import { DEFAULT_ACCOUNT_SORT_MODE } from "@/features/accounts/sorting";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
-import { AccountCards } from "@/features/dashboard/components/account-cards";
-import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
-import { useClaudeAccounts } from "@/features/claude/use-claude";
-import { useAntigravityAccounts } from "@/features/antigravity/use-antigravity";
-import { AccountList } from "@/features/dashboard/components/account-list";
-import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
+import { listApiKeys } from "@/features/api-keys/api";
+import { useKeyColors } from "@/features/apis/key-summary";
+import { useOpenRouter, useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
+import { useClaude, useClaudeAccounts } from "@/features/claude/use-claude";
+import { useAntigravity, useAntigravityAccounts } from "@/features/antigravity/use-antigravity";
+import { ActivityStrip } from "@/features/dashboard/components/activity-strip";
 import { AccountViewModeToggle } from "@/features/dashboard/components/account-view-mode-toggle";
+import {
+  DashboardAccountCards,
+  DashboardAccountList,
+  type DashboardAccountActions,
+} from "@/features/dashboard/components/dashboard-accounts";
 import { DashboardSkeleton } from "@/features/dashboard/components/dashboard-skeleton";
-import { OverviewTimeframeSelect } from "@/features/dashboard/components/filters/overview-timeframe-select";
-import { StatsGrid } from "@/features/dashboard/components/stats-grid";
+import { DashboardStatusLine } from "@/features/dashboard/components/dashboard-status-line";
 import { QuotaSection } from "@/features/dashboard/components/quota-section";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import {
@@ -29,6 +38,7 @@ import {
 import { buildDashboardView } from "@/features/dashboard/utils";
 import {
   DEFAULT_OVERVIEW_TIMEFRAME,
+  OVERVIEW_TIMEFRAMES,
   parseOverviewTimeframe,
   type AccountSummary,
   type OverviewTimeframe,
@@ -41,43 +51,63 @@ type RetainedDashboardLoadError = {
   message: string;
 };
 
+type ResetCreditDialogTarget = {
+  accountId: string;
+  availableResetCredits: number;
+};
+
+function SectionHeader({ title, hint, children }: { title: string; hint?: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex min-h-[30px] flex-wrap items-center gap-2.5">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
+      <span className="flex-1" />
+      {children}
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const { t, i18n } = useTranslation();
   const resolvedLanguage = i18n.resolvedLanguage;
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const accountColors = useAccountColorHexes();
+  const summaryContext = useSummaryContext();
+  const { activity, available: activityAvailable } = useProviderActivity();
   const showAccountBurnrate = useDashboardPreferencesStore(
     (s) => s.accountBurnrateEnabled,
   );
   const accountViewMode = useDashboardPreferencesStore(
     (s) => s.accountViewMode,
   );
-  const accountListSort = useDashboardPreferencesStore(
-    (s) => s.accountListSort,
-  );
   const setAccountViewMode = useDashboardPreferencesStore(
     (s) => s.setAccountViewMode,
-  );
-  const setAccountListSort = useDashboardPreferencesStore(
-    (s) => s.setAccountListSort,
   );
   // Account actions follow the permission their backend route demands
   // (`accounts:write`), not the coarse `write` alias.
   const canWriteAccounts = usePermission("accounts:write");
+  const canReadApiKeys = usePermission("api_keys:read");
+  const apiKeysQuery = useQuery({
+    queryKey: ["api-keys", "list"],
+    queryFn: listApiKeys,
+    enabled: canReadApiKeys,
+  });
+  const keyColors = useKeyColors(apiKeysQuery.data ?? []);
   const openRouterQuery = useOpenRouterAccounts();
   const claudeQuery = useClaudeAccounts();
   const antigravityQuery = useAntigravityAccounts();
-  const claudeAccounts = claudeQuery.data?.accounts ?? [];
-  const antigravityAccounts = antigravityQuery.data?.accounts ?? [];
-  const openRouterAccounts = openRouterQuery.data?.accounts ?? [];
+  const claudeAccounts = useMemo(() => claudeQuery.data?.accounts ?? [], [claudeQuery.data]);
+  const antigravityAccounts = useMemo(() => antigravityQuery.data?.accounts ?? [], [antigravityQuery.data]);
+  const openRouterAccounts = useMemo(() => openRouterQuery.data?.accounts ?? [], [openRouterQuery.data]);
+  const claude = useClaude();
+  const antigravity = useAntigravity();
+  const openRouter = useOpenRouter();
   const overviewTimeframe = useMemo(
     () => parseOverviewTimeframe(searchParams.get("overviewTimeframe")),
     [searchParams],
   );
-  const dashboardTimeframe = overviewTimeframe;
-  const dashboardQuery = useDashboard(dashboardTimeframe);
+  const dashboardQuery = useDashboard(overviewTimeframe);
   const [retainedDashboardLoadError, setRetainedDashboardLoadError] =
     useState<RetainedDashboardLoadError | null>(null);
   const [overviewRetryTimeframe, setOverviewRetryTimeframe] =
@@ -85,11 +115,7 @@ export function DashboardPage() {
   const projectionsQuery = useDashboardProjections(
     Boolean(dashboardQuery.data),
   );
-  const { resumeMutation, limitWarmupMutation } = useAccountMutations();
-  type ResetCreditDialogTarget = {
-    accountId: string;
-    availableResetCredits: number;
-  };
+  const { resumeMutation } = useAccountMutations();
   const resetCreditDialog = useDialogState<ResetCreditDialogTarget>();
 
   const isRefreshing =
@@ -112,46 +138,51 @@ export function DashboardPage() {
     [searchParams, setSearchParams],
   );
 
-  const handleAccountAction = useCallback(
-    (account: AccountSummary, action: string) => {
-      switch (action) {
-        case "details":
-          navigate(`/providers/${encodeURIComponent(account.accountId)}`);
-          break;
-        case "resume":
-          if (canWriteAccounts) {
-            void resumeMutation.mutateAsync(account.accountId);
-          }
-          break;
-        case "reauth":
-          navigate(`/providers/${encodeURIComponent(account.accountId)}`);
-          break;
-        case "warmup-toggle":
-          if (canWriteAccounts) {
-            void limitWarmupMutation.mutateAsync({
-              accountId: account.accountId,
-              enabled: !account.limitWarmupEnabled,
-            });
-          }
-          break;
-        case "reset-credit":
-          resetCreditDialog.show({
-            accountId: account.accountId,
-            availableResetCredits: account.availableResetCredits ?? 0,
-          });
-          break;
-      }
-    },
-    [
-      canWriteAccounts,
-      limitWarmupMutation,
-      navigate,
-      resetCreditDialog,
-      resumeMutation,
-    ],
+  const overview = dashboardQuery.data;
+  const codexAccounts = useMemo(() => overview?.accounts ?? [], [overview]);
+
+  const summaries = useMemo(
+    () =>
+      buildProviderGroups(
+        { accounts: codexAccounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources: [] },
+        DEFAULT_ACCOUNT_SORT_MODE,
+        { ...summaryContext, quotaDisplay: "both" },
+      ).flatMap((group) => group.summaries),
+    [codexAccounts, claudeAccounts, antigravityAccounts, openRouterAccounts, summaryContext],
+  );
+  const summariesById = useMemo(
+    () => new Map(summaries.map((summary) => [summary.id, summary])),
+    [summaries],
   );
 
-  const overview = dashboardQuery.data;
+  const actions = useMemo<DashboardAccountActions>(
+    () => ({
+      readOnly: !canWriteAccounts,
+      onResume: (summary: ProviderSummary) => {
+        const body = { isEnabled: true };
+        switch (summary.entry.kind) {
+          case "codex":
+            void resumeMutation.mutateAsync(summary.id);
+            break;
+          case "claude":
+            claude.update.mutate({ id: summary.id, body });
+            break;
+          case "antigravity":
+            antigravity.update.mutate({ id: summary.id, body });
+            break;
+          case "openrouter":
+            openRouter.update.mutate({ id: summary.id, body });
+            break;
+        }
+      },
+      onResetCredit: (account: AccountSummary) =>
+        resetCreditDialog.show({
+          accountId: account.accountId,
+          availableResetCredits: account.availableResetCredits ?? 0,
+        }),
+    }),
+    [antigravity.update, canWriteAccounts, claude.update, openRouter.update, resetCreditDialog, resumeMutation],
+  );
 
   const view = useMemo(() => {
     void resolvedLanguage;
@@ -177,7 +208,7 @@ export function DashboardPage() {
   const dashboardLoadError = getErrorMessageOrNull(dashboardQuery.error);
   if (
     retainedDashboardLoadError !== null &&
-    (overview || retainedDashboardLoadError.timeframe !== dashboardTimeframe)
+    (overview || retainedDashboardLoadError.timeframe !== overviewTimeframe)
   ) {
     setRetainedDashboardLoadError(null);
   } else if (
@@ -187,50 +218,58 @@ export function DashboardPage() {
       retainedDashboardLoadError.message !== dashboardLoadError)
   ) {
     setRetainedDashboardLoadError({
-      timeframe: dashboardTimeframe,
+      timeframe: overviewTimeframe,
       message: dashboardLoadError,
     });
   }
   const displayedDashboardLoadError =
     dashboardLoadError ??
-    (retainedDashboardLoadError?.timeframe === dashboardTimeframe
+    (retainedDashboardLoadError?.timeframe === overviewTimeframe
       ? retainedDashboardLoadError.message
       : null);
   const overviewRetryBusy =
-    dashboardQuery.isFetching || overviewRetryTimeframe === dashboardTimeframe;
+    dashboardQuery.isFetching || overviewRetryTimeframe === overviewTimeframe;
   const errorMessage = overview ? dashboardLoadError : null;
 
+  const accountsHint = [
+    t("dashboard.accounts.hint.total", { count: summaries.length }),
+    t("dashboard.accounts.hint.ready", { count: summaries.filter((s) => s.status === "active").length }),
+    ...[
+      ["limited", summaries.filter((s) => s.status === "limited" || s.status === "exceeded").length],
+      ["paused", summaries.filter((s) => s.status === "paused").length],
+      ["signIn", summaries.filter((s) => s.status === "reauth" || s.status === "deactivated").length],
+    ]
+      .filter(([, count]) => (count as number) > 0)
+      .map(([key, count]) => t("dashboard.accounts.hint." + key, { count })),
+  ].join(" · ");
+
+  const providerErrors = [claudeQuery.error, antigravityQuery.error, openRouterQuery.error].filter(
+    (error): error is Error => error !== null,
+  );
+  const providersLoading = claudeQuery.isLoading || antigravityQuery.isLoading || openRouterQuery.isLoading;
+
   return (
-    <div className="animate-fade-in-up space-y-8">
-      {/* Page header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {t("dashboard.page.title")}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("dashboard.page.subtitle")}
-          </p>
+    <div className="animate-fade-in-up space-y-7">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <h1 className="text-lg font-semibold tracking-tight">
+          {t("dashboard.page.title")}
+        </h1>
+        <div className="min-w-0 flex-1">
+          {view ? <DashboardStatusLine summaries={summaries} /> : null}
         </div>
-        <div className="flex items-center gap-2">
-          <OverviewTimeframeSelect
-            value={overviewTimeframe}
-            onChange={handleOverviewTimeframeChange}
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+          aria-label={t("dashboard.page.refresh")}
+          title={t("dashboard.page.refresh")}
+        >
+          <RefreshCw
+            className={`h-4 w-4${isRefreshing ? " animate-spin" : ""}`}
+            aria-hidden="true"
           />
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-            aria-label={t("dashboard.page.refresh")}
-            title={t("dashboard.page.refresh")}
-          >
-            <RefreshCw
-              className={`h-4 w-4${isRefreshing ? " animate-spin" : ""}`}
-              aria-hidden="true"
-            />
-          </button>
-        </div>
+        </button>
       </div>
 
       {errorMessage ? (
@@ -255,7 +294,7 @@ export function DashboardPage() {
             aria-busy={overviewRetryBusy}
             disabled={overviewRetryBusy}
             onClick={() => {
-              const retryTimeframe = dashboardTimeframe;
+              const retryTimeframe = overviewTimeframe;
               setRetainedDashboardLoadError({
                 timeframe: retryTimeframe,
                 message: displayedDashboardLoadError ?? "Request failed",
@@ -275,6 +314,7 @@ export function DashboardPage() {
         <>
           <QuotaSection
             view={view}
+            codexAccounts={codexAccounts}
             primaryCapacityCredits={
               overview?.summary.primaryWindow.capacityCredits ?? 0
             }
@@ -283,93 +323,58 @@ export function DashboardPage() {
             }
             claudeAccounts={claudeAccounts}
             antigravityAccounts={antigravityAccounts}
+            summaries={summariesById}
             modelSourceColors={accountColors.modelSources}
+            keyColors={keyColors}
           />
 
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-3">
-                <h2 className="text-[13px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {t("accounts.page.title")}
-                </h2>
-                <AccountSummaryLine
-                  accounts={overview?.accounts ?? []}
-                  openRouterAccounts={openRouterAccounts}
-                  claudeAccounts={claudeAccounts}
-                  antigravityAccounts={antigravityAccounts}
-                />
-              </div>
-              <div className="h-px min-w-8 flex-1 bg-border" />
+          <section className="flex flex-col gap-2.5" data-testid="accounts-section">
+            <SectionHeader title={t("accounts.page.title")} hint={accountsHint}>
               <AccountViewModeToggle
                 value={accountViewMode}
                 onChange={setAccountViewMode}
               />
-            </div>
+            </SectionHeader>
             {accountViewMode === "list" ? (
-              <AccountList
-                accounts={overview?.accounts ?? []}
-                openRouterAccounts={openRouterAccounts}
-                claudeAccounts={claudeAccounts}
-                antigravityAccounts={antigravityAccounts}
-                accountColors={accountColors}
-                readOnly={!canWriteAccounts}
-                sort={accountListSort}
-                onSortChange={setAccountListSort}
-                onAction={handleAccountAction}
+              <DashboardAccountList
+                summaries={summaries}
+                colors={accountColors}
+                activity={activity}
+                activityAvailable={activityAvailable}
+                actions={actions}
               />
             ) : (
-              <AccountCards
-                accounts={overview?.accounts ?? []}
-                openRouterAccounts={openRouterAccounts}
-                claudeAccounts={claudeAccounts}
-                antigravityAccounts={antigravityAccounts}
-                accountColors={accountColors}
-                readOnly={!canWriteAccounts}
-                onAction={handleAccountAction}
+              <DashboardAccountCards
+                summaries={summaries}
+                colors={accountColors}
+                activity={activity}
+                activityAvailable={activityAvailable}
+                actions={actions}
               />
             )}
-            {openRouterQuery.isLoading && (
+            {providersLoading ? (
               <p className="text-sm text-muted-foreground">
-                Loading OpenRouter accounts…
+                {t("dashboard.accounts.loadingProviders")}
               </p>
-            )}
-            {claudeQuery.isLoading && (
-              <p className="text-sm text-muted-foreground">
-                Loading Claude accounts…
+            ) : null}
+            {providerErrors.map((error) => (
+              <p key={error.message} role="alert" className="text-sm text-destructive">
+                {error.message}
               </p>
-            )}
-            {antigravityQuery.isLoading && (
-              <p className="text-sm text-muted-foreground">
-                Loading Antigravity accounts…
-              </p>
-            )}
-            {claudeQuery.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {claudeQuery.error.message}
-              </p>
-            )}
-            {antigravityQuery.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {antigravityQuery.error.message}
-              </p>
-            )}
-            {openRouterQuery.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {openRouterQuery.error.message}
-              </p>
-            )}
+            ))}
           </section>
 
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-[13px] font-medium uppercase tracking-wider text-muted-foreground">
-                {t("dashboard.activity.title")}
-              </h2>
-              <div className="h-px min-w-8 flex-1 bg-border" />
-            </div>
-            <StatsGrid stats={view.stats} />
+          <section className="flex flex-col gap-2.5" data-testid="activity-section">
+            <SectionHeader title={t("dashboard.activity.title")}>
+              <ChartToggle<OverviewTimeframe>
+                label={t("dashboard.filters.overviewTimeframe")}
+                value={overviewTimeframe}
+                onChange={handleOverviewTimeframeChange}
+                options={OVERVIEW_TIMEFRAMES.map((value) => ({ value, label: value }))}
+              />
+            </SectionHeader>
+            <ActivityStrip stats={view.stats} />
           </section>
-
         </>
       )}
 

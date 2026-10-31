@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
-from sqlalchemy import case, func, select, union_all
+from sqlalchemy import case, func, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.usage.coverage import CostCoverage, coverage_from_values, request_cost_expressions
+from app.core.usage.coverage import CostCoverage, coverage_from_values, known_request_cost, request_cost_expressions
 from app.core.usage.types import BucketConversationAggregate, BucketModelAggregate, RequestActivityAggregate
+from app.core.utils.time import to_utc_naive
 from app.db.models import (
     Account,
     AccountLimitWarmup,
@@ -88,6 +90,8 @@ class ApiKeyAttributionRow:
     cached_tokens: int
     dominant_model: str
     cost_coverage: CostCoverage
+    # Known cost per equal slice of the attribution window, oldest first.
+    cost_buckets: list[float]
 
 
 class DashboardRepository:
@@ -245,6 +249,7 @@ class DashboardRepository:
         now: datetime,
         provider: QuotaProvider,
         per_metric_limit: int = 3,
+        bucket_minutes: int = 10,
     ) -> list[ApiKeyAttributionRow]:
         key_name = func.coalesce(func.nullif(ApiKey.name, ""), "(unnamed)")
         billable_tokens = func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(
@@ -254,6 +259,15 @@ class DashboardRepository:
             RequestLog.model_source_kind.is_(None)
             if provider == "codex"
             else RequestLog.model_source_kind == _PROVIDER_SOURCE_KINDS[provider]
+        )
+        window_clauses = (
+            RequestLog.requested_at >= since,
+            RequestLog.requested_at <= now,
+            RequestLog.deleted_at.is_(None),
+            provider_clause,
+            # Warmup probes are internal traffic and must not surface as
+            # top consumers, matching the request-log usage queries.
+            RequestLogsRepository._exclude_warmup_clause(),
         )
         grouped_models = (
             select(
@@ -267,15 +281,7 @@ class DashboardRepository:
             )
             .select_from(RequestLog)
             .outerjoin(ApiKey, ApiKey.id == RequestLog.api_key_id)
-            .where(
-                RequestLog.requested_at >= since,
-                RequestLog.requested_at <= now,
-                RequestLog.deleted_at.is_(None),
-                provider_clause,
-                # Warmup probes are internal traffic and must not surface as
-                # top consumers, matching the request-log usage queries.
-                RequestLogsRepository._exclude_warmup_clause(),
-            )
+            .where(*window_clauses)
             .group_by(RequestLog.api_key_id, key_name, RequestLog.model)
             .cte("weekly_pace_key_models")
         )
@@ -359,6 +365,13 @@ class DashboardRepository:
             .limit(per_metric_limit * 2)
         )
         rows = (await self._session.execute(statement)).all()
+        buckets = await self._api_key_cost_buckets(
+            [row.api_key_id for row in rows],
+            since=since,
+            now=now,
+            bucket_minutes=bucket_minutes,
+            clauses=window_clauses,
+        )
         return [
             ApiKeyAttributionRow(
                 api_key_id=str(row.api_key_id) if row.api_key_id is not None else None,
@@ -370,9 +383,39 @@ class DashboardRepository:
                 cost_coverage=coverage_from_values(
                     row.known_cost_usd, row.priced_requests, row.unpriced_requests, row.unmetered_requests
                 ),
+                cost_buckets=buckets[row.api_key_id],
             )
             for row in rows
         ]
+
+    async def _api_key_cost_buckets(
+        self,
+        api_key_ids: list[str | None],
+        *,
+        since: datetime,
+        now: datetime,
+        bucket_minutes: int,
+        clauses: tuple,
+    ) -> dict[str | None, list[float]]:
+        bucket_seconds = bucket_minutes * 60
+        count = max(1, math.ceil((now - since).total_seconds() / bucket_seconds))
+        buckets: dict[str | None, list[float]] = {key_id: [0.0] * count for key_id in api_key_ids}
+        if not api_key_ids:
+            return buckets
+        named = [key_id for key_id in api_key_ids if key_id is not None]
+        key_clause = RequestLog.api_key_id.in_(named)
+        if None in buckets:
+            key_clause = or_(key_clause, RequestLog.api_key_id.is_(None))
+        known_cost = known_request_cost(RequestLog)
+        statement = select(RequestLog.api_key_id, RequestLog.requested_at, known_cost.label("known_cost_usd")).where(
+            *clauses, key_clause, known_cost.is_not(None)
+        )
+        for key_id, requested_at, cost in (await self._session.execute(statement)).all():
+            index = min(
+                count - 1, int((to_utc_naive(requested_at) - to_utc_naive(since)).total_seconds() // bucket_seconds)
+            )
+            buckets[key_id][index] += float(cost)
+        return buckets
 
     async def latest_additional_recorded_at(self) -> datetime | None:
         return await self._additional_usage_repo.latest_recorded_at()

@@ -780,6 +780,7 @@ describe("buildDashboardView", () => {
           cachedTokens: 4_000_000,
           dominantModel: "gpt-5.2-codex",
           costCoverage: { knownCostUsd: 12.5, pricedRequests: 12_400, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false },
+          costBuckets: [0, 0, 0, 0, 0, 0, 0, 0, 0, 2.5, 4, 6],
         },
       ],
       claude: [],
@@ -1157,9 +1158,11 @@ describe("buildDashboardView", () => {
     const view = buildDashboardView(overview, {});
     const burn = view.stats[3];
 
-    expect(burn.label).toBe("Account burn projection (5h/7d)");
-    expect(burn.value).toBe("0.7 / 0.8");
-    expect(burn.meta).toBe("Projected account-equivalents: 0.7/5h · 0.8/7d");
+    expect(burn.label).toBe("Account burn");
+    expect(burn.value).toBe("0.8");
+    expect(burn.unit).toBe("Plus / 7d");
+    expect(burn.meta).toBe("0.7 per 5h");
+    expect(burn.description).toBe("Projected account-equivalents: 0.7/5h · 0.8/7d");
     expect(view.stats[4]?.label).toBe("Error rate (7d)");
   });
 
@@ -1170,7 +1173,7 @@ describe("buildDashboardView", () => {
       showAccountBurnrate: false,
     });
 
-    expect(view.stats.map((stat) => stat.label)).not.toContain("Account burn projection (5h/7d)");
+    expect(view.stats.map((stat) => stat.label)).not.toContain("Account burn");
     expect(view.stats).toHaveLength(4);
   });
 
@@ -1196,8 +1199,8 @@ describe("buildDashboardView", () => {
     const view = buildDashboardView(overview, {});
     const burn = view.stats[3];
 
-    expect(burn.value).toBe("0.0 / 1.0");
-    expect(burn.meta).toBe("Projected account-equivalents: 0.0/5h · 1.0/7d");
+    expect(burn.value).toBe("1.0");
+    expect(burn.meta).toBe("0.0 per 5h");
   });
 
   it("shows only the averaged cost text on the estimated cost card", () => {

@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import type { LimitRule } from "@/features/api-keys/schemas";
 import {
   KEY_TONE,
-  WEEK_BUCKETS,
   formatLimitAmount,
   limitPercent,
   limitName,
@@ -61,7 +60,7 @@ export function KeyLimitMeter({ limit, color }: { limit: LimitRule; color: strin
   );
 }
 
-/** Cost of the last seven days in six-hour buckets; a flat line when the key was idle. */
+/** Cost of a key over equal time buckets, oldest first; a flat line when the key was idle. */
 export function KeySparkline({ buckets, color, width = 72, height = 24 }: {
   buckets: number[] | undefined;
   color: string | undefined;
@@ -77,7 +76,7 @@ export function KeySparkline({ buckets, color, width = 72, height = 24 }: {
     );
   }
   const points = buckets.map((value, index) => [
-    (index / (WEEK_BUCKETS - 1)) * width,
+    (index / (buckets.length - 1)) * width,
     height - 2 - (value / max) * (height - 4),
   ]);
   const line = "M" + points.map((point) => point.join(",")).join("L");

@@ -3,9 +3,9 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { renderProvidersList } from "@/features/accounts/test-utils";
-import { AccountList as DashboardList } from "@/features/dashboard/components/account-list";
+import { renderDashboardAccounts } from "@/features/dashboard/test-utils";
 import { AntigravityAccountSchema } from "./api";
-import { AntigravityAccountCard, AntigravityQuota } from "./account-display";
+import { AntigravityQuota } from "./account-display";
 import { AntigravityAccountControls } from "./account-controls";
 import { antigravityStatus, bindingWindow } from "./display-values";
 import { createAntigravityAccount, createAntigravityWindow } from "./test-fixtures";
@@ -98,26 +98,20 @@ describe("Antigravity account display", () => {
     expect(parsed.state.catalog[0]?.tiers).toEqual({ low: "gemini-3.5-pro-low", high: "gemini-3.5-pro-high" });
   });
 
-  it("shows each family's binding window in compact views and every window in detail", () => {
+  it("shows every window of every family in the account quota", () => {
     const account = createAntigravityAccount();
     expect(bindingWindow(account, "claude")?.window).toBe("five_hour");
     expect(bindingWindow(account, "gemini")?.window).toBe("weekly");
     const view = render(<AntigravityQuota account={account} />);
-    expect(view.container).toHaveTextContent("Gemini · Weekly");
-    expect(view.container).toHaveTextContent("Claude & GPT · 5h");
-    expect(view.container).not.toHaveTextContent("Gemini · 5h");
-    view.rerender(<AntigravityQuota account={account} detailed />);
     for (const label of ["Gemini 5h", "Gemini Weekly", "Claude & GPT 5h", "Claude & GPT Weekly"])
       expect(view.container).toHaveTextContent(label);
   });
 
   it("renders a dashboard card with provider and plan", () => {
-    render(
-      <MemoryRouter>
-        <AntigravityAccountCard account={createAntigravityAccount({ planType: "ultra_5x" })} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId("antigravity-account-card")).toHaveTextContent("Antigravity · Ultra 5×");
+    renderDashboardAccounts({ antigravityAccounts: [createAntigravityAccount({ planType: "ultra_5x" })] });
+    const card = screen.getByTestId("dashboard-account-card");
+    expect(card).toHaveTextContent("Antigravity");
+    expect(card.querySelector(".plan-badge")).toHaveTextContent("Ultra 5×");
   });
 
   it("lists accounts on the Providers page and dashboard", () => {
@@ -128,13 +122,9 @@ describe("Antigravity account display", () => {
     expect(listRow).toHaveTextContent("Claude & GPT · 5h");
     expect(listRow).toHaveTextContent("Gemini · Weekly");
     view.unmount();
-    render(
-      <MemoryRouter>
-        <DashboardList accounts={[]} antigravityAccounts={[account]} />
-      </MemoryRouter>,
-    );
-    const row = screen.getByTestId("account-list-row");
-    expect(within(row).getByText("Google One")).toBeVisible();
+    renderDashboardAccounts({ antigravityAccounts: [account] }, { view: "list" });
+    const row = screen.getByTestId("dashboard-account-row");
+    expect(within(row).getByRole("link", { name: "Google One" })).toHaveAttribute("href", "/providers/" + account.id);
     expect(row).toHaveTextContent("Gemini");
     expect(row).toHaveTextContent("Claude");
     expect(row).toHaveTextContent("Pro");

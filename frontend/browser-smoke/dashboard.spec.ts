@@ -105,17 +105,15 @@ for (const width of [320, 390, 1440]) {
         const svg = await asset.text();
         expect(svg).toContain("#000");
         expect(svg).not.toMatch(/<(?:script|text|image|foreignObject|use|style)\b|onload|onclick|href=/);
-        const mark = cards.locator(`img[data-provider="${provider}"]`);
+        // Account logos are masks filled with the account's chart colour.
+        const mark = cards.locator(`[data-provider="${provider}"][aria-hidden="true"]`).first();
         await expect(mark).toBeVisible();
-        await expect(mark).toHaveAttribute("src", assetPath);
-        await expect.poll(() => mark.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
-        await expect(mark).toHaveCSS("width", "16px");
-        await expect(mark).toHaveCSS("filter", theme === "dark" ? "invert(1)" : "none");
+        expect(await mark.evaluate((element) => getComputedStyle(element).maskImage)).toContain(assetPath);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`provider-dashboard-${theme}-${width}.png`), fullPage: true });
       await page.getByRole("radio", { name: "View accounts as list" }).click();
-      await expect(page.getByTestId("dashboard-account-list").locator("img[data-provider]")).toHaveCount(3);
+      await expect(page.getByTestId("dashboard-account-row")).toHaveCount(3);
       await page.goto("/logs");
       const table = page.getByRole("table").first();
       const nativeLabel = table.getByTitle("gpt-6-astra", { exact: true });
@@ -142,42 +140,32 @@ for (const width of [320, 390, 1440]) {
     });
   }
 
-  test(`weekly consumer costs and concise account subtitles ${width}`, async ({ page }, testInfo) => {
+  test(`top consumers and concise account subtitles ${width}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width, height: 1000 });
     const accounts = [createAccountSummary({ displayName: "Codex account" })];
     await installMobileContainmentFixtures(page, accounts);
-    const pace = {
-      totalFullCredits: 1000, totalActualRemainingCredits: 600, totalExpectedRemainingCredits: 600,
-      actualUsedPercent: 40, scheduledUsedPercent: 40, deltaPercent: 0, scheduleGapCredits: 0,
-      overPlanCredits: 0, projectedShortfallCredits: 0, pauseForBreakEvenHours: null,
-      paceMultiplier: null, throttleToPercent: null, reduceByPercent: null,
-      proAccountEquivalentToCoverOverPlan: null, proAccountsToCoverOverPlan: null,
-      projectedDepletionHours: 60, projectedMinimumRemainingCredits: 0,
-      forecastBurnRateCreditsPerHour: 10, scheduledBurnRateCreditsPerHour: 10,
-      status: "on_track" as const, accountCount: 1, staleAccountCount: 0, inactiveAccountCount: 0,
-      confidence: "high" as const, runwayStatus: "safe" as const,
-      headroomPercent: 60, headroomCredits: 600, burnRateRecentCreditsPerHour: 10,
-      depletionEtaHours: 60, nextReliefInHours: 26, nextReliefCredits: 400, resetEvents: [],
-      topApiKeys: [
+    const buckets = (last: number) => [...Array.from({ length: 11 }, () => 0), last];
+    const topConsumers = {
+      codex: [
         { apiKeyId: "paid", name: "Long consumer name for a production automation", requests: 12500,
-          billableTokens: 18000000, cachedTokens: 0, dominantModel: "anthropic/claude-opus-5-5",
+          billableTokens: 18000000, cachedTokens: 0, dominantModel: "gpt-6-astra",
           costCoverage: { knownCostUsd: 44248.05, pricedRequests: 12499, unpricedRequests: 1,
-            unmeteredRequests: 0, coverageUnknown: false } },
+            unmeteredRequests: 0, coverageUnknown: false }, costBuckets: buckets(44248.05) },
         { apiKeyId: "free", name: "Free consumer", requests: 25, billableTokens: 10000,
-          cachedTokens: 0, dominantModel: "openrouter/qwen/free",
+          cachedTokens: 0, dominantModel: "gpt-6-luna",
           costCoverage: { knownCostUsd: 0, pricedRequests: 25, unpricedRequests: 0,
-            unmeteredRequests: 0, coverageUnknown: false } },
+            unmeteredRequests: 0, coverageUnknown: false }, costBuckets: buckets(0) },
         { apiKeyId: "unknown", name: "Unknown consumer", requests: 10, billableTokens: 1000,
           cachedTokens: 0, dominantModel: "unknown-model",
           costCoverage: { knownCostUsd: 0, pricedRequests: 0, unpricedRequests: 10,
-            unmeteredRequests: 0, coverageUnknown: false } },
+            unmeteredRequests: 0, coverageUnknown: false }, costBuckets: buckets(0) },
       ],
+      claude: [],
+      antigravity: [],
     };
     await page.route(/\/api\/dashboard\/overview(?:\?|$)/, (route) =>
-      route.fulfill({ json: createDashboardOverview({ accounts, weeklyCreditPace: pace }) }));
-    await page.route(/\/api\/dashboard\/projections(?:\?|$)/, (route) =>
-      route.fulfill({ json: createDashboardProjections({ weeklyCreditPace: pace }) }));
+      route.fulfill({ json: createDashboardOverview({ accounts, topConsumers }) }));
     await page.route("**/api/openrouter-accounts", (route) =>
       route.fulfill({ json: { accounts: [createOpenRouterAccount()] } }));
     await page.route("**/api/claude-accounts", (route) => route.fulfill({ json: { accounts: [{
@@ -190,14 +178,14 @@ for (const width of [320, 390, 1440]) {
       quota: { observedAt: null, models: [], windows: [] },
     }] } }));
     await page.goto("/dashboard");
-    const attribution = page.getByTestId("runway-attribution");
-    await expect(attribution.getByText("Top consumers · last 2h", { exact: true })).toBeVisible();
-    await expect(attribution.getByText("Est. API Cost", { exact: true })).toBeVisible();
-    await expect(attribution.getByText("$44,248.05", { exact: true })).toBeVisible();
-    await expect(attribution.getByText("$0.00", { exact: true })).toBeVisible();
-    await expect(attribution.getByText("Unknown", { exact: true })).toBeVisible();
-    await expect(attribution).not.toContainText("known · incomplete");
-    for (const row of await attribution.locator("li").all()) {
+    const consumersCard = page.getByTestId("top-consumers-card");
+    await expect(consumersCard.getByText("Codex · last 2h", { exact: true })).toBeVisible();
+    await expect(consumersCard.getByText("Est. API Cost", { exact: true })).toBeVisible();
+    await expect(consumersCard.getByText("$44,248.05", { exact: true })).toBeVisible();
+    await expect(consumersCard.getByText("$0.00", { exact: true })).toBeVisible();
+    await expect(consumersCard.getByText("Unknown", { exact: true })).toBeVisible();
+    await expect(consumersCard).not.toContainText("known · incomplete");
+    for (const row of await consumersCard.getByTestId("top-consumer-row").all()) {
       expect(await row.evaluate((el) => {
         const box = el.getBoundingClientRect();
         return Array.from(el.children).every((child) => {
@@ -207,13 +195,12 @@ for (const width of [320, 390, 1440]) {
       })).toBe(true);
     }
     const cards = page.getByTestId("dashboard-account-cards");
-    await expect(cards.getByTestId("codex-account-card").getByText("Plus", { exact: true })).toBeVisible();
-    await expect(cards.getByTestId("openrouter-account-card")).toContainText("OpenRouter · Paid");
-    await expect(cards.getByTestId("claude-account-card")).toContainText("Claude · Pro");
-    await expect(cards).not.toContainText("models selected");
-    await expect(cards).not.toContainText("All models");
+    await expect(cards.locator('[data-provider="codex"] .plan-badge')).toHaveText("Plus");
+    await expect(cards.locator('[data-provider="openrouter"] .plan-badge')).toHaveText("Paid");
+    await expect(cards.locator('[data-provider="claude"] .plan-badge')).toHaveText("Pro");
+    await expect(cards).not.toContainText("models");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath(`weekly-consumer-costs-${width}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`top-consumers-${width}.png`), fullPage: true });
   });
 }
 
@@ -438,65 +425,32 @@ test("the built dashboard accepts real backend responses", async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
-test("dashboard usage donuts stay within supported viewports", async ({ page }) => {
-  const viewportCases = [
-    { size: { width: 320, height: 568 }, donutColumns: 1 },
-    { size: { width: 390, height: 844 }, donutColumns: 1 },
-    { size: { width: 1440, height: 900 }, donutColumns: 2 },
+test("the dashboard quota section stays within supported viewports", async ({ page }) => {
+  const viewportSizes = [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 1024, height: 900 },
+    { width: 1440, height: 900 },
   ] as const;
 
   await installMobileContainmentFixtures(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.setViewportSize(viewportCases[0].size);
+  await page.setViewportSize(viewportSizes[0]);
   await page.goto("/dashboard", { waitUntil: "networkidle" });
+  await expect(page.getByTestId("quota-remaining-card")).toBeVisible();
 
-  // Match only the two usage donut headings ("5-Hour Credits" / "Weekly
-  // Credits"); the weekly runway card also carries a "Weekly credits pace"
-  // h3 now that a null backend pace falls back to the local projection.
-  const usageHeadings = page.getByRole("heading", { level: 3 }).filter({ hasText: /Credits$/ });
-  await expect(usageHeadings).toHaveCount(2);
-
-  for (const viewportCase of viewportCases) {
-    await resizeViewportAndSettle(page, viewportCase.size);
-
-    const usageMetrics = await usageHeadings.evaluateAll((headings) =>
-      headings.map((heading) => {
-        const card = heading.parentElement?.parentElement;
-        const row = heading.parentElement?.nextElementSibling;
-        const chart = row?.querySelector("svg")?.parentElement;
-        const legend = row?.querySelector('[data-testid="donut-legend-list"]');
-        if (!card || !row || !chart || !legend) {
-          throw new Error("Expected the rendered donut card structure");
-        }
-        const bounds = (element: Element) => {
-          const box = element.getBoundingClientRect();
-          return { left: box.left, right: box.right, width: box.width };
-        };
-        return {
-          card: bounds(card),
-          row: bounds(row),
-          chart: bounds(chart),
-          legend: bounds(legend),
-          gridColumns: getComputedStyle(card.parentElement!).gridTemplateColumns.split(" ").filter(Boolean).length,
-        };
-      }),
-    );
-    const documentMetrics = await page.evaluate(() => ({
-      clientWidth: document.documentElement.clientWidth,
-      scrollWidth: document.documentElement.scrollWidth,
-    }));
-    const summaryRight = await page
-      .getByTestId("dashboard-account-summary-line")
-      .evaluate((element) => element.getBoundingClientRect().right);
-
-    expect(documentMetrics.scrollWidth).toBeLessThanOrEqual(documentMetrics.clientWidth);
-    expect(summaryRight).toBeLessThanOrEqual(documentMetrics.clientWidth);
-    for (const metrics of usageMetrics) {
-      expect(metrics.gridColumns).toBe(viewportCase.donutColumns);
-      for (const bounds of [metrics.card, metrics.row, metrics.chart, metrics.legend]) {
-        expect(bounds.left).toBeGreaterThanOrEqual(0);
-        expect(bounds.right).toBeLessThanOrEqual(documentMetrics.clientWidth);
-      }
+  for (const size of viewportSizes) {
+    await resizeViewportAndSettle(page, size);
+    const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(clientWidth);
+    for (const testId of ["dashboard-status-line", "quota-remaining-card", "top-consumers-card", "activity-strip"]) {
+      const box = await page.getByTestId(testId).boundingBox();
+      expect(box, testId).not.toBeNull();
+      expect(box!.x, testId).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width, testId).toBeLessThanOrEqual(clientWidth);
+    }
+    for (const ring of ["quota-ring-5h", "quota-ring-weekly"]) {
+      await expect(page.getByTestId(ring)).toBeVisible();
     }
   }
 });
@@ -670,7 +624,7 @@ test("the API key create dialog stays inside supported viewports", async ({ page
 });
 
 
-test("deactivated account actions stay inside list cells and responsive cards", async ({ page }) => {
+test("account remedies stay inside list rows and responsive cards", async ({ page }) => {
   const accounts = [
     createAccountSummary({ accountId: "acc_recover", displayName: "Recovery account", status: "deactivated", availableResetCredits: 1 }),
     createAccountSummary({ accountId: "acc_reauth", displayName: "Reauth account", status: "reauth_required" }),
@@ -678,32 +632,25 @@ test("deactivated account actions stay inside list cells and responsive cards", 
   ];
   await installMobileContainmentFixtures(page, accounts);
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
-  await page.getByRole("radio", { name: "View accounts as list" }).click();
-  const row = page.getByTestId("account-list-row").filter({ hasText: "Recovery account" });
-  await expect(row.getByRole("button", { name: "Resume Recovery account", exact: true })).toBeVisible();
-  await expect(row.getByRole("button", { name: "Re-authenticate Recovery account", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Resume Reauth account", exact: true })).toHaveCount(0);
-  const actions = row.locator(":scope > div").last();
-  await expect.poll(() => actions.evaluate((el) => {
-    const parent = el.getBoundingClientRect();
-    return Array.from(el.querySelectorAll("button")).every((button) => {
-      const box = button.getBoundingClientRect();
-      return box.left >= parent.left - 1 && box.right <= parent.right + 1 && box.top >= parent.top - 1 && box.bottom <= parent.bottom + 1;
+  const contained = (el: Element) => {
+    const box = el.getBoundingClientRect();
+    return Array.from(el.querySelectorAll("a, button")).every((action) => {
+      const bounds = action.getBoundingClientRect();
+      return bounds.left >= box.left - 1 && bounds.right <= box.right + 1;
     });
-  })).toBe(true);
-  for (const width of [640, 1024, 1440]) {
+  };
+  for (const width of [390, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.getByRole("radio", { name: "View accounts as cards" }).click();
-    const card = page.getByTestId("dashboard-account-cards").locator(":scope > div").filter({ hasText: "Recovery account" });
-    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
-    await expect(card.getByRole("button", { name: "Re-auth", exact: true })).toBeVisible();
-    await expect.poll(() => card.evaluate((el) => {
-      const box = el.getBoundingClientRect();
-      return Array.from(el.querySelectorAll("button")).every((button) => {
-        const action = button.getBoundingClientRect();
-        return action.left >= box.left - 1 && action.right <= box.right + 1;
-      });
-    })).toBe(true);
+    const cards = page.getByTestId("dashboard-account-card");
+    await expect(cards.filter({ hasText: "Recovery account" }).getByRole("link", { name: "Re-auth", exact: true })).toBeVisible();
+    await expect(cards.filter({ hasText: "Reauth account" }).getByRole("link", { name: "Re-auth", exact: true })).toBeVisible();
+    await expect(cards.filter({ hasText: "Paused account" }).getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+    for (const card of await cards.all()) expect(await card.evaluate(contained)).toBe(true);
+    await page.getByRole("radio", { name: "View accounts as list" }).click();
+    const rows = page.getByTestId("dashboard-account-row");
+    await expect(rows.filter({ hasText: "Paused account" }).getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+    for (const row of await rows.all()) expect(await row.evaluate(contained)).toBe(true);
   }
 });
 

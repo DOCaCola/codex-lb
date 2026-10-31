@@ -51,7 +51,7 @@ import {
   formatDateTimeInline,
   formatIdTokenLabel,
   formatRefreshTokenLabel,
-  formatSingleUnitRemaining,
+  formatTimeRemaining,
   formatSlug,
 } from "@/utils/formatters";
 
@@ -132,7 +132,7 @@ export function AccountDetail({
   const availableResetCredits = account.availableResetCredits ?? 0;
   const resetCountdown =
     showResetCreditExpiryBadge && account.resetCreditNearestExpiresAt
-      ? formatSingleUnitRemaining(account.resetCreditNearestExpiresAt)
+      ? formatTimeRemaining(account.resetCreditNearestExpiresAt)
       : null;
   const resetCreditDisabled = disabled || paused || recovery;
   const usageResetDisabled = disabled || paused || recovery || (resetCredits?.availableCount ?? 0) <= 0;

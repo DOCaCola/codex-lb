@@ -434,6 +434,10 @@ async def test_weekly_pace_attribution_merges_rankings_and_dedupes_unnamed_key(d
     assert alpha.cost_coverage.known_cost_usd == pytest.approx(2.75)
     assert alpha.cost_coverage.priced_requests == 4
     assert alpha.cost_coverage.complete
+    # Twelve 10-minute buckets over the 2h window; all of Alpha's cost falls in the newest one.
+    assert alpha.cost_buckets == pytest.approx([0.0] * 11 + [2.75])
+    # Unpriced requests contribute no known cost.
+    assert rows[1].cost_buckets == [0.0] * 12
     assert rows[1].cost_coverage.unpriced_requests == 3
     assert rows[2].cost_coverage.unpriced_requests == 1
     assert any(row.billable_tokens == 1_500 for row in rows)

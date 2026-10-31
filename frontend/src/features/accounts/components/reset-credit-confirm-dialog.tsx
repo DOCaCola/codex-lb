@@ -7,7 +7,7 @@ import type { RateLimitResetCreditItem } from "@/features/accounts/schemas";
 import { useDateDisplayFormatStore, type DateDisplayFormat } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
 import { getErrorMessage } from "@/utils/errors";
-import { formatDateTimeInline, formatSingleUnitRemaining } from "@/utils/formatters";
+import { formatDateTimeInline, formatTimeRemaining } from "@/utils/formatters";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -56,7 +56,7 @@ function CreditExpiryLine({
   if (!expiresAt) {
     return <p className="text-xs text-muted-foreground">{label}{suffix ? ` ${suffix}` : ""}</p>;
   }
-  const countdown = formatSingleUnitRemaining(expiresAt);
+  const countdown = formatTimeRemaining(expiresAt);
   return (
     <p className="text-xs text-muted-foreground">
       {label}{" "}

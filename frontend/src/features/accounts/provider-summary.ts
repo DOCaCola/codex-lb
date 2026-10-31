@@ -85,7 +85,12 @@ export type LimitSummary = {
 
 export type SummaryTone = "ok" | "warn" | "bad" | "off";
 
-export type ProviderNotice = { tone: Exclude<SummaryTone, "ok">; text: string };
+/** Why an account needs attention: a full sentence and a short headline for tight spaces. */
+export type ProviderNotice = { tone: Exclude<SummaryTone, "ok">; text: string; label: string };
+
+function notice(tone: ProviderNotice["tone"], text: string, label = text): ProviderNotice {
+  return { tone, text, label };
+}
 
 export type ProviderSummary = {
   entry: ProviderEntry;
@@ -185,13 +190,11 @@ function preferredWindows<T>(weekly: T | null, fiveHour: T | null, preference: A
   return [weekly, fiveHour].filter((value): value is T => value !== null);
 }
 
-function exhaustedNotice(limits: LimitSummary[], tone: "warn" | "bad"): ProviderNotice | null {
+function exhaustedNotice(limits: LimitSummary[], tone: "warn" | "bad", now: number): ProviderNotice | null {
   const drained = limits.find((limit) => limit.percentLeft === 0);
   if (!drained) return null;
-  return {
-    tone,
-    text: drained.resetAt ? `${drained.label} limit · back in ${formatQuotaResetLabel(drained.resetAt)}` : `${drained.label} limit reached`,
-  };
+  const label = `${drained.label} limit`;
+  return notice(tone, drained.resetAt ? `${label} · back ${formatQuotaResetLabel(drained.resetAt, now)}` : `${label} reached`, label);
 }
 
 function subscriptionNotice(ends: AccountSubscriptionEnd[] | undefined, target: AccountColorTarget, now: number): ProviderNotice | null {
@@ -200,13 +203,13 @@ function subscriptionNotice(ends: AccountSubscriptionEnd[] | undefined, target: 
   const end = Date.parse(endsAt);
   if (end <= now) return null;
   const date = new Date(end).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  return { tone: "warn", text: `Subscription ends ${date}` };
+  return notice("warn", `Subscription ends ${date}`);
 }
 
 function statusNotice(status: DashboardAccountStatus, t: TFunction): ProviderNotice | null {
-  if (status === "paused") return { tone: "off", text: t("providers.notice.paused") };
-  if (status === "reauth") return { tone: "bad", text: t("providers.notice.reauth") };
-  if (status === "deactivated") return { tone: "bad", text: t("common.status.deactivated") };
+  if (status === "paused") return notice("off", t("providers.notice.paused"));
+  if (status === "reauth") return notice("bad", t("providers.notice.reauth"));
+  if (status === "deactivated") return notice("bad", t("common.status.deactivated"));
   return null;
 }
 
@@ -248,7 +251,7 @@ function codexSummary(account: AccountSummary, context: SummaryContext, now: num
     tone: STATUS_TONE[status],
     notice:
       statusNotice(status, context.t) ??
-      (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, fiveHour].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn") : null) ??
+      (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, fiveHour].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
       subscriptionNotice(context.subscriptionEnds, target, now),
     limits,
     routingPolicy: status === "reauth" || status === "deactivated" ? null : (account.routingPolicy ?? "normal"),
@@ -297,8 +300,8 @@ function claudeSummary(account: ClaudeAccount, context: SummaryContext, now: num
     tone: STATUS_TONE[status],
     notice:
       statusNotice(status, context.t) ??
-      (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, short].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn") : null) ??
-      (account.state.usage_error ? { tone: "warn", text: context.t("providers.notice.usageUnavailable") } : null) ??
+      (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, short].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
+      (account.state.usage_error ? notice("warn", context.t("providers.notice.usageUnavailable")) : null) ??
       subscriptionNotice(context.subscriptionEnds, target, now),
     limits: preferredWindows(weekly, short, context.quotaDisplay),
     routingPolicy: account.routingPolicy,
@@ -335,9 +338,7 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
   const status = normalizeStatus(antigravityStatus(account, now));
   const target = { modelSourceId: account.id };
   const plan = context.t(`antigravity.plan.${account.planType}`);
-  const holdNotice: ProviderNotice | null = account.hold
-    ? { tone: "bad", text: context.t(`providers.notice.hold.${account.hold}`) }
-    : null;
+  const holdNotice: ProviderNotice | null = account.hold ? notice("bad", context.t(`providers.notice.hold.${account.hold}`)) : null;
   return {
     entry: { kind: "antigravity", account },
     kind: "antigravity",
@@ -353,8 +354,8 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
     notice:
       holdNotice ??
       statusNotice(status, context.t) ??
-      (account.state.verification ? { tone: "warn", text: context.t("providers.notice.verification") } : null) ??
-      (status === "limited" || status === "exceeded" ? exhaustedNotice(limits, STATUS_TONE[status] === "bad" ? "bad" : "warn") : null) ??
+      (account.state.verification ? notice("warn", context.t("providers.notice.verification")) : null) ??
+      (status === "limited" || status === "exceeded" ? exhaustedNotice(limits, STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
       subscriptionNotice(context.subscriptionEnds, target, now),
     limits,
     routingPolicy: account.routingPolicy,
@@ -403,16 +404,16 @@ function openRouterSummary(account: OpenRouterAccount, context: SummaryContext):
     id: account.id,
     name: account.name,
     blurName: true,
-    subtitle: account.state.all_models ? "All conversation models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`,
+    subtitle: null,
     blurSubtitle: false,
     plan,
     planKey: plan.toLowerCase(),
     status,
     tone: STATUS_TONE[status],
-    notice: statusNotice(status, context.t) ?? (monitoringStale ? { tone: "warn", text: context.t("providers.notice.monitoringStale") } : null),
+    notice: statusNotice(status, context.t) ?? (monitoringStale ? notice("warn", context.t("providers.notice.monitoringStale")) : null),
     limits: [balanceLimit, allowanceLimit],
     routingPolicy: account.routingPolicy,
-    models: null,
+    models: account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"}`,
     resetCredits: 0,
     trustedAccess: false,
     warmupEnabled: null,

@@ -364,30 +364,41 @@ export function formatExpiresIn(iso: string): string | null {
   return remaining > 0 ? formatRelative(remaining) : null;
 }
 
-export function formatResetRelative(ms: number): string {
-  if (ms <= 60_000) {
-    return t("formatters.relative.minutes", { count: 1 });
-  }
-
-  const totalMinutes = Math.floor(ms / 60_000);
+/** The two largest units of a positive duration, rounded down; at least one minute. */
+function formatTwoUnits(ms: number, prefix: "formatters.relative" | "formatters.duration"): string {
+  const totalMinutes = Math.max(1, Math.floor(ms / 60_000));
   if (totalMinutes < 60) {
-    return t("formatters.relative.minutes", { count: totalMinutes });
+    return t(prefix + ".minutes", { count: totalMinutes });
   }
-
   if (totalMinutes < 1440) {
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
-    return minutes > 0
-      ? t("formatters.relative.hoursMinutes", { hours, minutes })
-      : t("formatters.relative.hours", { count: hours });
+    return minutes > 0 ? t(prefix + ".hoursMinutes", { hours, minutes }) : t(prefix + ".hours", { count: hours });
   }
-
-  const totalHours = Math.floor(ms / 3_600_000);
+  const totalHours = Math.floor(totalMinutes / 60);
   const days = Math.floor(totalHours / 24);
   const hours = totalHours % 24;
-  return hours > 0
-    ? t("formatters.relative.daysHours", { days, hours })
-    : t("formatters.relative.days", { count: days });
+  return hours > 0 ? t(prefix + ".daysHours", { days, hours }) : t(prefix + ".days", { count: days });
+}
+
+/** Time until something happens, for example "in 2h 40m". */
+export function formatResetRelative(ms: number): string {
+  return formatTwoUnits(ms, "formatters.relative");
+}
+
+/** A bare duration, for example "2h 40m" or "1d 15h". */
+export function formatDuration(ms: number): string {
+  return formatTwoUnits(ms, "formatters.duration");
+}
+
+/** Countdown to a quota reset without the "in" prefix; "now" once it has passed. */
+export function formatResetCountdown(resetAt: string | null | undefined): string | null {
+  const date = parseDate(resetAt);
+  if (!date) {
+    return null;
+  }
+  const diffMs = date.getTime() - Date.now();
+  return diffMs > 0 ? formatDuration(diffMs) : t("formatters.now");
 }
 
 export function formatCountdown(seconds: number): string {
@@ -397,45 +408,32 @@ export function formatCountdown(seconds: number): string {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
-export function formatQuotaResetLabel(resetAt: string | null | undefined): string {
+export function formatQuotaResetLabel(resetAt: string | null | undefined, now = Date.now()): string {
   const date = parseDate(resetAt);
   if (!date || date.getTime() <= 0) {
     return RESET_ERROR_LABEL;
   }
-  const diffMs = date.getTime() - Date.now();
+  const diffMs = date.getTime() - now;
   if (diffMs <= 0) {
     return t("formatters.now");
   }
   return formatResetRelative(diffMs);
 }
 
-const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
-const MINUTE_MS = 60_000;
-const EXPIRING_SOON_THRESHOLD_MS = 7 * DAY_MS;
+const EXPIRING_SOON_THRESHOLD_MS = 7 * 86_400_000;
 
-export type SingleUnitRemaining = {
+export type TimeRemaining = {
   label: string;
   expiringSoon: boolean;
 };
 
-export function formatSingleUnitRemaining(expiresAtIso: string): SingleUnitRemaining {
+/** Two-unit time left until an expiry, flagged when it is less than a week away. */
+export function formatTimeRemaining(expiresAtIso: string): TimeRemaining {
   const ms = new Date(expiresAtIso).getTime() - Date.now();
-  if (ms <= 0) {
+  if (ms < 60_000) {
     return { label: t("formatters.now"), expiringSoon: true };
   }
-  const days = Math.floor(ms / DAY_MS);
-  const hours = Math.floor(ms / HOUR_MS);
-  const minutes = Math.floor(ms / MINUTE_MS);
-  const label =
-    days >= 1
-      ? `${days}d`
-      : hours >= 1
-        ? `${hours}h`
-        : minutes >= 1
-          ? `${minutes}m`
-          : t("formatters.now");
-  return { label, expiringSoon: ms < EXPIRING_SOON_THRESHOLD_MS };
+  return { label: formatDuration(ms), expiringSoon: ms < EXPIRING_SOON_THRESHOLD_MS };
 }
 
 export function formatAccessTokenLabel(auth: AccountAuthStatus | null | undefined): string {

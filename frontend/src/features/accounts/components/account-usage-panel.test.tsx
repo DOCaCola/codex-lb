@@ -195,7 +195,7 @@ describe("AccountUsagePanel", () => {
     expect(
       screen.getByText((_, element) => {
         const text = element?.textContent ?? "";
-        return text.startsWith("Expires ") && text.includes("(2h)") && !text.includes("available");
+        return text.startsWith("Expires ") && text.includes("(2h 34m)") && !text.includes("available");
       }),
     ).toBeInTheDocument();
     const row = screen.getByText("Usage resets").closest("div");

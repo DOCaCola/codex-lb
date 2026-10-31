@@ -33,20 +33,34 @@ class CostCoverage:
         )
 
 
-def request_cost_expressions(log):
-    """SQL mirror of the request-level priced/unpriced/unmetered contract.
+def _observed_usage(log):
+    return or_(log.input_tokens.is_not(None), log.output_tokens.is_not(None))
+
+
+def _in_scope(log):
+    attempted = or_(_observed_usage(log), log.upstream_status_code.is_not(None), log.latency_ms.is_not(None))
+    return (log.request_kind != "count_tokens") & or_(log.status.in_(("success", "ok")), attempted)
+
+
+def known_request_cost(log):
+    """Known cost of one request, or NULL when it is unpriced, unmetered or out of scope.
 
     A local refusal has no upstream status, attempt duration or observed usage.
     It cannot have generated billable output and stays outside coverage.
     """
 
-    observed_usage = or_(log.input_tokens.is_not(None), log.output_tokens.is_not(None))
-    attempted = or_(observed_usage, log.upstream_status_code.is_not(None), log.latency_ms.is_not(None))
-    in_scope = (log.request_kind != "count_tokens") & or_(log.status.in_(("success", "ok")), attempted)
     legacy_claude_zero = (
         func.coalesce(log.model_source_kind == "claude", False) & log.cost_provenance.is_(None) & (log.cost_usd == 0)
     )
-    known_cost = case((in_scope & ~legacy_claude_zero, log.cost_usd), else_=None)
+    return case((_in_scope(log) & ~legacy_claude_zero, log.cost_usd), else_=None)
+
+
+def request_cost_expressions(log):
+    """SQL mirror of the request-level priced/unpriced/unmetered contract."""
+
+    observed_usage = _observed_usage(log)
+    in_scope = _in_scope(log)
+    known_cost = known_request_cost(log)
     priced = in_scope & known_cost.is_not(None)
     unpriced = in_scope & known_cost.is_(None) & observed_usage
     unmetered = in_scope & known_cost.is_(None) & ~observed_usage

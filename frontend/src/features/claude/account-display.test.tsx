@@ -1,12 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AccountCards } from "@/features/dashboard/components/account-cards";
-import { AccountList as DashboardList } from "@/features/dashboard/components/account-list";
 import { renderProvidersList } from "@/features/accounts/test-utils";
+import { renderDashboardAccounts } from "@/features/dashboard/test-utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import {
-  ClaudeAccountCard,
   ClaudeQuota,
 } from "./account-display";
 import { claudeStatus } from "./display-values";
@@ -75,7 +73,7 @@ afterEach(() => {
 describe("Claude shared account surfaces", () => {
   it.each([false, true])("warns about billed extra usage only when the account enables it (%s)", (extraUsageEnabled) => {
     const selected = { ...account, extraUsageEnabled };
-    render(<MemoryRouter><ClaudeAccountCard account={selected} /></MemoryRouter>);
+    renderDashboardAccounts({ claudeAccounts: [selected] });
     renderProvidersList({ claudeAccounts: [selected] });
     const badges = screen.queryAllByText("Extra usage");
     expect(badges).toHaveLength(extraUsageEnabled ? 2 : 0);
@@ -86,15 +84,12 @@ describe("Claude shared account surfaces", () => {
     ["free", "Free"], ["pro", "Pro"], ["max", "Max"],
     ["ultra", "Ultra"],
     ["team", "Team"], ["enterprise", "Enterprise"], ["unknown", "Unknown plan"],
-  ] as const)("shows %s in cards, the Providers table and dashboard plan cells", (planType, label) => {
+  ] as const)("shows %s in dashboard cards and the Providers table", (planType, label) => {
     const selected = { ...account, planType };
-    const view = render(<MemoryRouter><ClaudeAccountCard account={selected} /></MemoryRouter>);
+    const view = renderDashboardAccounts({ claudeAccounts: [selected] });
     expect(screen.getByText(label, { exact: true })).toBeVisible();
     view.unmount();
-    const list = renderProvidersList({ claudeAccounts: [selected] });
-    expect(screen.getByText(label, { exact: true })).toBeVisible();
-    list.unmount();
-    render(<MemoryRouter><DashboardList accounts={[]} claudeAccounts={[selected]} /></MemoryRouter>);
+    renderProvidersList({ claudeAccounts: [selected] });
     expect(screen.getByText(label, { exact: true })).toBeVisible();
   });
 
@@ -106,19 +101,6 @@ describe("Claude shared account surfaces", () => {
     await userEvent.type(screen.getByPlaceholderText("Search accounts..."), "Ultra");
     expect(screen.getByText(account.name)).toBeVisible();
     expect(screen.queryByText("Other Claude")).not.toBeInTheDocument();
-  });
-
-  it("sorts dashboard Claude rows by detected plan instead of provider name", () => {
-    render(<MemoryRouter><DashboardList accounts={[]} claudeAccounts={[
-      { ...account, id: "aaa", name: "A account", planType: "pro" },
-      { ...account, id: "zzz", name: "Z account", planType: "free" },
-    ]} /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: /^Plan/ }));
-    let rows = screen.getAllByTestId("account-list-row");
-    expect(within(rows[0]).getByText("Free")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /^Plan/ }));
-    rows = screen.getAllByTestId("account-list-row");
-    expect(within(rows[0]).getByText("Pro")).toBeVisible();
   });
 
   it("shows retained plan diagnostics in account details without offering a plan editor", () => {
@@ -136,14 +118,12 @@ describe("Claude shared account surfaces", () => {
     expect(screen.queryByRole("combobox", { name: /subscription|plan/i })).not.toBeInTheDocument();
   });
 
-  it("uses two card quota columns and responsive detail columns", () => {
+  it("uses responsive quota columns only when there are several windows", () => {
     const view = render(<ClaudeQuota account={account} />);
-    expect(view.container.firstElementChild).toHaveClass("grid-cols-2");
-    expect(view.container.firstElementChild).not.toHaveClass("sm:grid-cols-2");
+    expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
     view.rerender(<ClaudeQuota account={{ ...account, quota: { ...account.quota, windows: [account.quota.windows[1]] } }} />);
     expect(view.container.firstElementChild).toHaveClass("grid-cols-1");
-    view.rerender(<ClaudeQuota account={account} detailed />);
-    expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
+    expect(view.container.firstElementChild).not.toHaveClass("sm:grid-cols-2");
   });
 
   it("keeps model selection details out of dashboard card subtitles", () => {
@@ -151,19 +131,15 @@ describe("Claude shared account surfaces", () => {
       ...account,
       state: { ...account.state, all_models: true },
     };
-    const view = render(
-      <MemoryRouter>
-        <ClaudeAccountCard account={automatic} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId("claude-account-card")).toHaveTextContent("Claude · Pro");
+    const view = renderDashboardAccounts({ claudeAccounts: [automatic] });
+    expect(screen.getByTestId("dashboard-account-card")).toHaveTextContent("Claude · doca@example.com");
     expect(screen.queryByText(/All models/)).not.toBeInTheDocument();
     view.unmount();
     renderProvidersList({ claudeAccounts: [automatic] });
     expect(within(screen.getByTestId("provider-account-row")).getByText("All models")).toBeInTheDocument();
   });
   it("renders only returned quota windows, including genuine unknown or stale scoped observations", () => {
-    const { rerender } = render(<ClaudeQuota account={account} detailed />);
+    const { rerender } = render(<ClaudeQuota account={account} />);
     expect(screen.queryByText("Weekly Opus remaining")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Weekly Sonnet remaining"),
@@ -193,7 +169,6 @@ describe("Claude shared account surfaces", () => {
             ],
           },
         }}
-        detailed
       />,
     );
     expect(screen.getByText("Weekly Opus remaining")).toBeInTheDocument();
@@ -528,46 +503,30 @@ describe("Claude shared account surfaces", () => {
     expect(within(row).getByText("stale")).toBeInTheDocument();
   });
   it("orders dashboard cards Codex, Claude, then OpenRouter", () => {
-    render(
-      <MemoryRouter>
-        <AccountCards
-          accounts={[createAccountSummary()]}
-          claudeAccounts={[account]}
-          openRouterAccounts={[createOpenRouterAccount()]}
-        />
-      </MemoryRouter>,
-    );
-    const cards = screen.getByTestId("dashboard-account-cards").children;
+    renderDashboardAccounts({
+      accounts: [createAccountSummary()],
+      claudeAccounts: [account],
+      openRouterAccounts: [createOpenRouterAccount()],
+    });
     expect(
-      Array.from(cards, (card) => card.firstElementChild?.getAttribute("data-testid")),
-    ).toEqual(["codex-account-card", "claude-account-card", "openrouter-account-card"]);
+      screen.getAllByTestId("dashboard-account-card").map((card) => card.getAttribute("data-provider")),
+    ).toEqual(["codex", "claude", "openrouter"]);
   });
 
-  it.each([AccountCards, DashboardList])(
-    "includes provider-only accounts in dashboard layouts",
-    (Component) => {
-      render(
-        <MemoryRouter>
-          <Component accounts={[]} claudeAccounts={[account]} />
-        </MemoryRouter>,
-      );
-      expect(screen.getByText(account.name)).toBeInTheDocument();
-      if (Component === DashboardList)
-        expect(screen.getAllByTestId("account-list-quota-meter")).toHaveLength(
-          2,
-        );
-      expect(screen.getByRole("link", { name: "Details" })).toHaveAttribute(
+  it.each(["cards", "list"] as const)(
+    "includes provider-only accounts in the dashboard %s",
+    (view) => {
+      renderDashboardAccounts({ claudeAccounts: [account] }, { view });
+      expect(screen.getByRole("link", { name: account.name })).toHaveAttribute(
         "href",
         "/providers/claude-test",
       );
+      expect(screen.getByText(/^5h/)).toBeInTheDocument();
+      expect(screen.getByText(/^Weekly/)).toBeInTheDocument();
     },
   );
   it("keeps the routing policy off the dashboard card but in the Providers table", () => {
-    const { unmount } = render(
-      <MemoryRouter>
-        <AccountCards accounts={[]} claudeAccounts={[account]} />
-      </MemoryRouter>,
-    );
+    const { unmount } = renderDashboardAccounts({ claudeAccounts: [account] });
     expect(screen.queryByText("Normal")).not.toBeInTheDocument();
     unmount();
     renderProvidersList({ claudeAccounts: [account] });

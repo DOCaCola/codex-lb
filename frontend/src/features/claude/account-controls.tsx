@@ -296,7 +296,7 @@ function ClaudeDetail({
         <>
           <DetailCard title={t("accounts.usage.title")} data-testid="account-usage">
             <div className="min-w-0 space-y-4">
-              <ClaudeQuota account={account} detailed />
+              <ClaudeQuota account={account} />
               <ClaudeResetGrants accountId={account.id} readOnly={readOnly} />
               <ProviderAccountTrends provider="claude" accountId={account.id} embedded />
               <p className="text-xs text-muted-foreground">
