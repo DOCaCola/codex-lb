@@ -164,6 +164,118 @@ def test_system_tools_and_history_translation():
     ]
 
 
+def _tool(name: str) -> dict:
+    return {"name": name, "input_schema": {"type": "object", "properties": {}}}
+
+
+def _reference(change: str, name: str) -> dict:
+    return {"type": change, "tool": {"type": "tool_reference", "name": name}}
+
+
+def _definition(name: str) -> dict:
+    return {"type": "tool_addition", "tool": {"type": "tool_definition", "definition": _tool(name)}}
+
+
+def _tool_names(payload: dict) -> list[str]:
+    return [tool["name"] for tool in payload.get("tools", [])]
+
+
+def test_mid_conversation_tool_changes_edit_the_top_level_tools():
+    translated = _translate(
+        {
+            "tools": [_tool("Read"), _tool("Bash"), {**_tool("mcp__docs__search"), "defer_loading": True}],
+            "messages": [
+                {"role": "user", "content": "Start"},
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "Bash", "input": {}}]},
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "text", "text": "Tools changed"},
+                        _reference("tool_removal", "Bash"),
+                        _definition(LONG_NAME),
+                        _reference("tool_removal", "Read"),
+                    ],
+                },
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "ok"}]},
+                {"role": "system", "content": [_reference("tool_addition", "Read")], "clear_at": "never"},
+                {"role": "user", "content": "Continue"},
+            ],
+        }
+    )
+    payload = translated.payload
+    alias = tool_alias(LONG_NAME)
+    assert _tool_names(payload) == ["Read", "mcp__docs__search", alias]
+    assert translated.tool_names == {alias: LONG_NAME}
+    assert [item.get("role") or item["type"] for item in payload["input"]] == [
+        "user",
+        "function_call",
+        "function_call_output",
+        "developer",
+        "user",
+    ]
+    assert payload["input"][3]["content"] == [{"type": "input_text", "text": "Tools changed"}]
+
+
+def test_inline_definition_replaces_a_declaration_in_place():
+    replacement = {**_tool("Read"), "description": "Read v2"}
+    translated = _translate(
+        {
+            "tools": [_tool("Read"), _tool("Bash")],
+            "messages": [
+                {"role": "user", "content": "Start"},
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "tool_addition", "tool": {"type": "tool_definition", "definition": replacement}}
+                    ],
+                },
+            ],
+        }
+    )
+    tools = translated.payload["tools"]
+    assert _tool_names(translated.payload) == ["Read", "Bash"]
+    assert tools[0]["description"] == "Read v2"
+    assert translated.payload["input"] == [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Start"}]}
+    ]
+
+
+def test_tools_added_only_mid_conversation_set_tool_choice():
+    translated = _translate(
+        {"messages": [{"role": "user", "content": "Start"}, {"role": "system", "content": [_definition("Read")]}]}
+    )
+    assert _tool_names(translated.payload) == ["Read"]
+    assert translated.payload["tool_choice"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            {"messages": [{"role": "system", "content": [_reference("tool_addition", "Missing")]}]},
+            "Tool reference 'Missing' does not name a declared tool",
+        ),
+        (
+            {
+                "tools": [_tool("Read")],
+                "messages": [
+                    {"role": "system", "clear_at": "next_user_message", "content": [_reference("tool_removal", "Read")]}
+                ],
+            },
+            "Tool changes require a system message without a clear_at scope",
+        ),
+        ({"tools": [_tool("Read"), _tool("Read")], "messages": []}, "Tool 'Read' is declared more than once"),
+        (
+            {"messages": [{"role": "user", "content": [_definition("Read")]}]},
+            "Content block type 'tool_addition' is not supported in user messages",
+        ),
+    ],
+)
+def test_invalid_tool_changes_are_rejected(body: dict, message: str):
+    with pytest.raises(MessagesRequestError, match=message):
+        _translate(body)
+
+
 def test_foreign_and_other_model_thinking_and_search_replay_are_omitted():
     translated = _translate(
         {

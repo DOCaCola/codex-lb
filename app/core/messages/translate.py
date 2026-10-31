@@ -5,6 +5,11 @@ The mapping follows CLIProxyAPI's Codex/Claude translator, including its product
 attribution removal, PDF documents, hosted web search, and system messages placed after
 pending tool outputs. Reasoning continuity uses the signed envelope in `envelope`.
 
+Claude Code's mid-conversation tool changes (`tool_addition` and `tool_removal` blocks in system messages) edit
+the request's tool catalog, which is sent as top-level tools like agent-lb's flattening (f57da05). The Responses
+`additional_tools` item CLIProxyAPI emits (12d97cf) belongs to the Responses Lite request shape, which translated
+requests do not use.
+
 The requested effort is projected onto the target model's supported levels like CLIProxyAPI's cross-family
 thinking validation (`internal/thinking/validate.go`): Claude effort values and disabled thinking do not map
 onto every OpenAI model's levels, so the nearest supported level is sent, the lower one on a tie.
@@ -28,6 +33,7 @@ _NAME_LIMIT = 64
 _BILLING_ATTRIBUTION_PREFIX = "x-anthropic-billing-header:"
 _WEB_SEARCH_TOOL_TYPES = frozenset({"web_search_20250305", "web_search_20260209"})
 _FUNCTION_TOOL_TYPES = frozenset({"custom"})
+_TOOL_CHANGE_TYPES = frozenset({"tool_addition", "tool_removal"})
 _UNSUPPORTED_FIELDS = ("top_k", "container")
 _SCHEMA_DIALECT_KEYS = ("$schema", "$id")
 _SCHEMA_MAP_KEYWORDS = ("properties", "$defs", "definitions", "dependentSchemas")
@@ -96,9 +102,13 @@ def translate_messages_request(
     tools_value = body.get("tools") or []
     if not isinstance(tools_value, list):
         raise MessagesRequestError("tools must be an array")
-    tools, web_search_names, has_web_search = _translate_tools(tools_value, model)
+    catalog = _ToolCatalog(tools_value)
     instructions = _instructions(body.get("system"))
-    input_items = _MessagesInput(model=model, envelope_key=envelope_key).translate(body.get("messages"))
+    input_items = _MessagesInput(model=model, envelope_key=envelope_key, catalog=catalog).translate(
+        body.get("messages")
+    )
+    declarations = catalog.declarations()
+    tools, web_search_names, has_web_search = _translate_tools(declarations, model)
 
     payload: dict[str, JsonValue] = {
         "model": model,
@@ -130,7 +140,7 @@ def translate_messages_request(
         payload["service_tier"] = "priority"
     return TranslatedMessages(
         payload=payload,
-        tool_names={alias: name for name in _declared_tool_names(tools_value) if (alias := tool_alias(name)) != name},
+        tool_names={alias: name for name in _declared_tool_names(declarations) if (alias := tool_alias(name)) != name},
         stream=body.get("stream") is True,
     )
 
@@ -204,17 +214,64 @@ def _declared_tool_names(tools: list[JsonValue]) -> list[str]:
     ]
 
 
+class _ToolCatalog:
+    """The tool set: top-level declarations edited in message order by system-message tool changes."""
+
+    def __init__(self, tools: list[JsonValue]) -> None:
+        self._definitions: dict[str, JsonValue] = {}
+        self._withdrawn: set[str] = set()
+        for tool in tools:
+            if not isinstance(tool, dict):
+                raise MessagesRequestError("Each tool must be an object")
+            name = _tool_name(tool)
+            if name in self._definitions:
+                raise MessagesRequestError(f"Tool '{name}' is declared more than once")
+            self._definitions[name] = tool
+
+    def change(self, block: dict[str, JsonValue]) -> None:
+        tool = block.get("tool")
+        if not isinstance(tool, dict):
+            raise MessagesRequestError(f"{block['type']} blocks require a tool")
+        kind = tool.get("type")
+        if block["type"] == "tool_addition" and kind == "tool_definition":
+            definition = tool.get("definition")
+            if not isinstance(definition, dict):
+                raise MessagesRequestError("tool_definition requires a definition object")
+            name = _tool_name(definition)
+            self._definitions[name] = definition
+            self._withdrawn.discard(name)
+            return
+        if kind != "tool_reference":
+            raise MessagesRequestError(f"Unsupported {block['type']} tool type '{kind}'")
+        name = tool.get("name")
+        if not isinstance(name, str) or name not in self._definitions:
+            raise MessagesRequestError(f"Tool reference '{name}' does not name a declared tool")
+        if block["type"] == "tool_addition":
+            self._withdrawn.discard(name)
+        else:
+            self._withdrawn.add(name)
+
+    def declarations(self) -> list[JsonValue]:
+        return [tool for name, tool in self._definitions.items() if name not in self._withdrawn]
+
+
+def _tool_name(tool: dict[str, JsonValue]) -> str:
+    name = tool.get("name")
+    if not isinstance(name, str) or not name:
+        raise MessagesRequestError("Each tool requires a name")
+    return name
+
+
 def _translate_tools(tools: list[JsonValue], model: str) -> tuple[list[JsonValue], set[str], bool]:
     translated: list[JsonValue] = []
     web_search_names: set[str] = set()
     for tool in tools:
-        if not isinstance(tool, dict):
-            raise MessagesRequestError("Each tool must be an object")
+        assert isinstance(tool, dict)
         tool_type = tool.get("type")
         name = tool.get("name")
         if tool_type in _WEB_SEARCH_TOOL_TYPES:
-            if isinstance(name, str):
-                web_search_names.add(name)
+            assert isinstance(name, str)
+            web_search_names.add(name)
             web_search: dict[str, JsonValue] = {"type": "web_search"}
             allowed_domains = tool.get("allowed_domains")
             if isinstance(allowed_domains, list):
@@ -226,8 +283,7 @@ def _translate_tools(tools: list[JsonValue], model: str) -> tuple[list[JsonValue
             continue
         if tool_type is not None and tool_type not in _FUNCTION_TOOL_TYPES:
             raise MessagesRequestError(f"Tool type '{tool_type}' is not supported for model '{model}'")
-        if not isinstance(name, str) or not name:
-            raise MessagesRequestError("Each tool requires a name")
+        assert isinstance(name, str)
         function: dict[str, JsonValue] = {
             "type": "function",
             "name": tool_alias(name),
@@ -389,9 +445,10 @@ def _schema_misses_required(schema: JsonValue) -> bool:
 
 
 class _MessagesInput:
-    def __init__(self, *, model: str, envelope_key: bytes) -> None:
+    def __init__(self, *, model: str, envelope_key: bytes, catalog: _ToolCatalog) -> None:
         self._model = model
         self._envelope_key = envelope_key
+        self._catalog = catalog
         self._items: list[JsonValue] = []
         self._parts: list[JsonValue] = []
         self._role = "user"
@@ -406,7 +463,7 @@ class _MessagesInput:
                 raise MessagesRequestError("Each message must be an object")
             role = message.get("role")
             if role == "system":
-                self._system_message(message.get("content"))
+                self._system_message(message)
                 continue
             if role not in ("user", "assistant"):
                 raise MessagesRequestError(f"Unsupported message role '{role}'")
@@ -415,9 +472,21 @@ class _MessagesInput:
         self._flush_deferred()
         return self._items
 
-    def _system_message(self, content: JsonValue) -> None:
+    def _system_message(self, message: dict[str, JsonValue]) -> None:
         # Responses requires each function call to be followed by its output, so a system
         # message between a tool call and its result waits for the outputs (CLIProxyAPI 9fdc4605).
+        content = message.get("content")
+        if isinstance(content, list):
+            changes = [
+                block for block in content if isinstance(block, dict) and block.get("type") in _TOOL_CHANGE_TYPES
+            ]
+            if changes:
+                # Anthropic refuses tool changes in a turn-scoped system message.
+                if message.get("clear_at") not in (None, "never"):
+                    raise MessagesRequestError("Tool changes require a system message without a clear_at scope")
+                for block in changes:
+                    self._catalog.change(block)
+                content = [block for block in content if not any(block is change for change in changes)]
         text = _instructions(content)
         if not text:
             return
