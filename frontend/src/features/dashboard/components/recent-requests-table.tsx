@@ -1,7 +1,8 @@
-import { Inbox } from "lucide-react";
+import { ArrowUp, Inbox } from "lucide-react";
 import { formatGenerationSpeed, isGatewayMeasuredSpeed } from "@/features/dashboard/generation-speed";
 import { requestOperationLabel, requestTypeLabel } from "@/features/dashboard/request-operation";
 import { useFreshLogIds } from "@/features/dashboard/hooks/use-fresh-log-ids";
+import { useArrivalAnchor } from "@/features/dashboard/hooks/use-arrival-anchor";
 import {
   useMemo,
   useRef,
@@ -35,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaginationControls } from "@/features/dashboard/components/filters/pagination-controls";
+import { LOG_TABLE_HEADER_CLASS, LogTablePane } from "@/features/dashboard/components/log-table-pane";
 import { ConversationDetailsDialog } from "@/features/dashboard/components/conversation-details-dialog";
 import { RequestArchivePanel } from "@/features/conversation-archive/components/request-archive-panel";
 import {
@@ -114,6 +116,8 @@ export type RecentRequestsTableProps = {
   limit: number;
   offset: number;
   hasMore: boolean;
+  /** Identifies the shown page (query and offset); a change returns the pane to its first row. */
+  scrollKey: string;
   filtersApplied?: boolean;
   /**
    * Query context of `requests`. Rows that arrive through a refresh of the same
@@ -309,6 +313,7 @@ export function RecentRequestsTable({
   limit,
   offset,
   hasMore,
+  scrollKey,
   filtersApplied = false,
   liveContextKey = null,
   visibleColumns: configuredVisibleColumns,
@@ -320,6 +325,8 @@ export function RecentRequestsTable({
 }: RecentRequestsTableProps) {
   const { t } = useTranslation();
   const freshLogIds = useFreshLogIds(requests, liveContextKey);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const arrivals = useArrivalAnchor(scrollRef, freshLogIds, liveContextKey);
   const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.name])), [models]);
   const requestPlanLabel = (request: RequestLog | null, missing: string): string => {
     if (!request?.planType) return missing;
@@ -394,34 +401,61 @@ export function RecentRequestsTable({
       ? accountColors.accounts.get(request.accountId)
       : undefined;
 
-  if (requests.length === 0) {
-    const emptyFromExistingLogs = filtersApplied || total > 0;
-    return (
-      <EmptyState
-        icon={Inbox}
-        title={
-          emptyFromExistingLogs
-            ? t("dashboard.requests.emptyFilteredTitle")
-            : t("dashboard.requests.emptyTitle")
-        }
-        description={
-          emptyFromExistingLogs
-            ? t("dashboard.requests.emptyFilteredDescription")
-            : t("dashboard.requests.emptyDescription")
-        }
-      />
-    );
-  }
+  const emptyFromExistingLogs = filtersApplied || total > 0;
 
   return (
-    <div className="space-y-3">
-    <div className="rounded-xl border bg-card">
-      <div className="relative overflow-x-auto">
+    <>
+    <LogTablePane
+      scrollRef={scrollRef}
+      scrollKey={scrollKey}
+      onScroll={arrivals.onScroll}
+      overlay={arrivals.unseenCount > 0 ? (
+        <Button
+          type="button"
+          size="sm"
+          className="absolute top-12 left-1/2 z-20 h-7 -translate-x-1/2 gap-1.5 rounded-full px-3 text-xs shadow-md"
+          onClick={arrivals.reveal}
+        >
+          <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+          {t("dashboard.requests.newArrivals", { count: arrivals.unseenCount })}
+        </Button>
+      ) : null}
+      footer={
+        requests.length === 0 && offset === 0 ? null : (
+          <PaginationControls
+            total={total}
+            limit={limit}
+            offset={offset}
+            hasMore={hasMore}
+            onLimitChange={onLimitChange}
+            onOffsetChange={onOffsetChange}
+          />
+        )
+      }
+    >
+      {requests.length === 0 ? (
+        <div className="p-4">
+          <EmptyState
+            icon={Inbox}
+            title={
+              emptyFromExistingLogs
+                ? t("dashboard.requests.emptyFilteredTitle")
+                : t("dashboard.requests.emptyTitle")
+            }
+            description={
+              emptyFromExistingLogs
+                ? t("dashboard.requests.emptyFilteredDescription")
+                : t("dashboard.requests.emptyDescription")
+            }
+          />
+        </div>
+      ) : (
         <Table
+          containerClassName="overflow-visible"
           className="w-full table-fixed"
           style={tableWidth === undefined ? undefined : { width: tableWidth, minWidth: tableWidth }}
         >
-          <TableHeader>
+          <TableHeader className={LOG_TABLE_HEADER_CLASS}>
             <TableRow className="hover:bg-transparent">
               {isColumnVisible("time") ? <RequestLogTableHead column="time" label={t("dashboard.requests.columns.time")} resizeLabel={resizeLabel(t("dashboard.requests.columns.time"))} className="pl-4" width={columnWidths?.time} onWidthChange={onColumnWidthChange} /> : null}
               {isColumnVisible("account") ? <RequestLogTableHead column="account" label={t("dashboard.requests.columns.account")} resizeLabel={resizeLabel(t("dashboard.requests.columns.account"))} width={columnWidths?.account} onWidthChange={onColumnWidthChange} /> : null}
@@ -442,8 +476,6 @@ export function RecentRequestsTable({
               const time = formatDateTimeLines(request.requestedAt, dateDisplayFormat);
               const accountLabel = requestAccountLabel(request);
               const isEmailLabel = privateAccountLabel(request);
-              const errorPreview = request.errorMessage || request.errorCode || "-";
-              const hasError = !!(request.errorCode || request.errorMessage);
               const reasoningEffort = request.reasoningEffort?.trim();
               const billedTier = visibleServiceTier(request.serviceTier);
               const tierDowngraded = isServiceTierDowngrade(request.requestedServiceTier, request.serviceTier);
@@ -452,10 +484,29 @@ export function RecentRequestsTable({
               const upstreamTransport = request.upstreamTransport;
               const generationSpeed = formatGenerationSpeed(request);
               const typeLabel = requestTypeLabel(request, t);
+              const tierNote = tierDowngraded
+                ? t("dashboard.requests.tierDowngraded", {
+                    requested: serviceTierLabel(request.requestedServiceTier, t),
+                    billed: serviceTierLabel(request.serviceTier, t),
+                  })
+                : null;
+              const modelNote = [typeLabel, tierNote].filter(Boolean).join(" · ");
+              const tokenNote = [
+                request.cachedInputTokens != null && request.cachedInputTokens > 0
+                  ? t("common.units.cachedShort", { count: formatCompactNumber(request.cachedInputTokens) })
+                  : null,
+                request.cacheCreationTokens != null && request.cacheCreationTokens > 0
+                  ? `${formatCompactNumber(request.cacheCreationTokens)} ${t("dashboard.requests.cacheWrite", "cache write")}`
+                  : null,
+                request.reasoningTokens != null
+                  ? t("dashboard.requests.reasoningTokensShort", { count: formatCompactNumber(request.reasoningTokens) })
+                  : null,
+              ].filter(Boolean).join(" · ");
 
               return (
                 <TableRow
                   key={request.id}
+                  data-log-id={request.id}
                   className={freshLogIds.has(request.id) ? "request-log-row-arrived" : undefined}
                 >
                   {isColumnVisible("time") ? <TableCell className="pl-4 align-top">
@@ -483,31 +534,23 @@ export function RecentRequestsTable({
                   {isColumnVisible("apiKey") ? <TableCell className="truncate align-top text-xs text-muted-foreground">
                     {request.apiKeyName || "--"}
                   </TableCell> : null}
-                  {isColumnVisible("model") ? <TableCell className="truncate align-top">
-                    <div className="leading-tight">
-                      <span className="text-xs" title={request.model || undefined}>
+                  {isColumnVisible("model") ? <TableCell className="align-top">
+                    <div className="min-w-0 leading-tight">
+                      <div className="truncate text-xs" title={request.model || undefined}>
                         {modelDisplayName(request.model, modelNames.get(request.model))}
                         {reasoningEffort ? <> <span className="text-muted-foreground">{reasoningEffort}</span></> : null}
                         {billedTier ? <> <ServiceTierMark tier={billedTier} label={serviceTierLabel(billedTier, t)} /></> : null}
-                      </span>
-                      {typeLabel ? (
-                        <div className="mt-1 truncate text-xs text-muted-foreground" title={typeLabel}>
-                          {typeLabel}
-                        </div>
-                      ) : null}
-                      {tierDowngraded ? (
-                        <div className="text-[11px] text-muted-foreground">
-                          {t("dashboard.requests.tierDowngraded", {
-                            requested: serviceTierLabel(request.requestedServiceTier, t),
-                            billed: serviceTierLabel(request.serviceTier, t),
-                          })}
+                      </div>
+                      {modelNote ? (
+                        <div className="mt-1 truncate text-[11px] text-muted-foreground" title={modelNote}>
+                          {modelNote}
                         </div>
                       ) : null}
                     </div>
                   </TableCell> : null}
                   {isColumnVisible("transport") ? <TableCell className="pr-3 align-top">
                     {request.transport ? (
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Badge
                           variant="outline"
                           className={TRANSPORT_CLASS_MAP[request.transport] ?? TRANSPORT_CLASS_MAP.http}
@@ -516,7 +559,7 @@ export function RecentRequestsTable({
                           {TRANSPORT_LABELS[request.transport] ?? request.transport}
                         </Badge>
                         {upstreamTransport ? (
-                          <div className="text-[11px] text-muted-foreground">
+                          <div className="truncate text-[11px] text-muted-foreground">
                             {t("dashboard.requests.upstreamTransport", { transport: TRANSPORT_LABELS[upstreamTransport] ?? upstreamTransport })}
                           </div>
                         ) : null}
@@ -542,23 +585,11 @@ export function RecentRequestsTable({
                     {generationSpeed ?? "--"}
                   </TableCell> : null}
                   {isColumnVisible("tokens") ? <TableCell className="text-right align-top font-mono text-xs tabular-nums">
-                    <div className="leading-tight">
+                    <div className="min-w-0 leading-tight">
                       <div>{formatCompactNumber(request.tokens)}</div>
-                      {request.cachedInputTokens != null && request.cachedInputTokens > 0 && (
-                        <div className="text-[11px] text-muted-foreground">
-                          {t("common.units.cachedShort", { count: formatCompactNumber(request.cachedInputTokens) })}
-                        </div>
-                      )}
-                      {request.cacheCreationTokens != null && request.cacheCreationTokens > 0 && (
-                        <div className="text-[11px] text-muted-foreground">
-                          {formatCompactNumber(request.cacheCreationTokens)} {t("dashboard.requests.cacheWrite", "cache write")}
-                        </div>
-                      )}
-                      {request.reasoningTokens != null ? (
-                        <div className="text-[11px] text-muted-foreground">
-                          {t("dashboard.requests.reasoningTokensShort", {
-                            count: formatCompactNumber(request.reasoningTokens),
-                          })}
+                      {tokenNote ? (
+                        <div className="mt-1 truncate text-[11px] text-muted-foreground" title={tokenNote}>
+                          {tokenNote}
                         </div>
                       ) : null}
                     </div>
@@ -567,59 +598,36 @@ export function RecentRequestsTable({
                     title={request.modelSourceKind === "claude" && request.costProvenance === "api_equivalent_estimate" ? t("dashboard.requests.claudeCostBasis", "API-equivalent estimate; not a subscription charge") : undefined}>
                     {formatCurrency(request.costUsd)}
                   </TableCell> : null}
-                  {isColumnVisible("details") ? <TableCell className="pr-4 align-top whitespace-normal">
-                    {hasError ? (
-                      <div className="space-y-2">
-                        {request.errorCode ? (
-                          <div>
-                            <Badge variant="outline" className="max-w-full font-mono text-[10px]">
-                              <span className="truncate">{request.errorCode}</span>
-                            </Badge>
-                          </div>
-                        ) : null}
-                        <p className="line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">
-                          {errorPreview}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 text-[11px]"
-                          onClick={() => setSelectedRequest(request)}
-                        >
-                          {t("dashboard.requests.viewDetails")}
-                        </Button>
-                      </div>
-                    ) : (
+                  {isColumnVisible("details") ? <TableCell className="pr-4 align-top">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {request.errorCode ? (
+                        <Badge variant="outline" className="min-w-0 max-w-[45%] shrink font-mono text-[10px]" title={request.errorCode}>
+                          <span className="truncate">{request.errorCode}</span>
+                        </Badge>
+                      ) : null}
+                      {request.errorMessage ? (
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={request.errorMessage}>
+                          {request.errorMessage}
+                        </span>
+                      ) : null}
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-6 px-2 text-[11px]"
+                        className="h-6 shrink-0 px-2 text-[11px]"
                         onClick={() => setSelectedRequest(request)}
                       >
                         {t("dashboard.requests.viewDetails")}
                       </Button>
-                    )}
+                    </div>
                   </TableCell> : null}
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
-      </div>
-    </div>
-
-      <div className="flex justify-end">
-        <PaginationControls
-          total={total}
-          limit={limit}
-          offset={offset}
-          hasMore={hasMore}
-          onLimitChange={onLimitChange}
-          onOffsetChange={onOffsetChange}
-        />
-      </div>
+      )}
+    </LogTablePane>
 
       <Dialog open={selectedRequest !== null} onOpenChange={(open) => { if (!open) setSelectedRequest(null); }}>
         <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] sm:max-w-2xl">
@@ -853,7 +861,7 @@ export function RecentRequestsTable({
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 

@@ -15,17 +15,13 @@ from app.modules.request_logs.repository import RequestLogsRepository
 pytestmark = pytest.mark.integration
 
 
-def _conversation_summary(request_count: int, cost_usd: float) -> dict:
+def _cost_coverage(request_count: int, cost_usd: float) -> dict:
     return {
-        "requestCount": request_count,
-        "aggregatedCostUsd": cost_usd,
-        "costCoverage": {
-            "knownCostUsd": cost_usd,
-            "pricedRequests": request_count,
-            "unpricedRequests": 0,
-            "unmeteredRequests": 0,
-            "coverageUnknown": False,
-        },
+        "knownCostUsd": cost_usd,
+        "pricedRequests": request_count,
+        "unpricedRequests": 0,
+        "unmeteredRequests": 0,
+        "coverageUnknown": False,
     }
 
 
@@ -1203,33 +1199,29 @@ async def test_request_logs_conversation_filter_aggregates_all_matching_rows(asy
     assert [entry["requestId"] for entry in body["requests"]] == ["req_conv_target_new"]
     assert body["requests"][0]["conversationId"] == "conv-a"
     assert body["total"] == 2
-    assert body["conversation"] == _conversation_summary(2, 3.0)
+    assert body["costCoverage"] == _cost_coverage(2, 3.0)
 
     second_page = await async_client.get(f"/api/request-logs?{query}&offset=1")
     assert second_page.status_code == 200
     second_body = second_page.json()
     assert [entry["requestId"] for entry in second_body["requests"]] == ["req_conv_target_old"]
-    assert second_body["conversation"] == body["conversation"]
+    assert second_body["costCoverage"] == body["costCoverage"]
     assert second_body["total"] == body["total"]
 
     no_matches = await async_client.get("/api/request-logs?conversation_id=conv-a&status=quota")
     assert no_matches.status_code == 200
     assert no_matches.json()["requests"] == []
     assert no_matches.json()["total"] == 0
-    assert no_matches.json()["conversation"] == _conversation_summary(0, 0.0)
+    assert no_matches.json()["costCoverage"] == _cost_coverage(0, 0.0)
 
     other_conversation = await async_client.get("/api/request-logs?conversation_id=conv-b")
     assert other_conversation.status_code == 200
     assert other_conversation.json()["total"] == 1
-    assert other_conversation.json()["conversation"] == _conversation_summary(1, 9.0)
-
-    unfiltered = await async_client.get("/api/request-logs")
-    assert unfiltered.status_code == 200
-    assert unfiltered.json()["conversation"] is None
+    assert other_conversation.json()["costCoverage"] == _cost_coverage(1, 9.0)
 
 
 @pytest.mark.asyncio
-async def test_request_logs_conversation_summary_does_not_mix_cached_count_with_fresh_cost(
+async def test_request_logs_conversation_cost_does_not_mix_cached_count_with_fresh_cost(
     async_client, db_setup, monkeypatch
 ):
     from app.modules.request_logs import repository as logs_repository_module
@@ -1254,7 +1246,7 @@ async def test_request_logs_conversation_summary_does_not_mix_cached_count_with_
     first = await async_client.get("/api/request-logs?conversation_id=conv-snapshot&limit=1")
     assert first.status_code == 200
     assert first.json()["total"] == 1
-    assert first.json()["conversation"] == _conversation_summary(1, 1.25)
+    assert first.json()["costCoverage"] == _cost_coverage(1, 1.25)
     assert first.json()["hasMore"] is False
 
     async with SessionLocal() as session:
@@ -1276,7 +1268,7 @@ async def test_request_logs_conversation_summary_does_not_mix_cached_count_with_
     assert second.status_code == 200
     body = second.json()
     assert body["total"] == 2
-    assert body["conversation"] == _conversation_summary(2, 10.0)
+    assert body["costCoverage"] == _cost_coverage(2, 10.0)
     assert body["hasMore"] is True
     assert [entry["requestId"] for entry in body["requests"]] == ["req_conv_snapshot_new"]
     logs_repository_module._clear_recent_count_cache()

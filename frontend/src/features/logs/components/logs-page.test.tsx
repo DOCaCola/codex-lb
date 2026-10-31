@@ -8,12 +8,14 @@ import {
   OPERATOR_PERMISSIONS,
   VIEWER_PERMISSIONS,
   createDashboardOverview,
+  createRequestLogEntry,
 } from "@/test/mocks/factories";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { useDashboard } from "@/features/dashboard/hooks/use-dashboard";
 import { useRequestLogs } from "@/features/dashboard/hooks/use-request-logs";
 import { useConversations } from "@/features/dashboard/hooks/use-conversations";
 import { REQUEST_LOG_TABLE_PREFERENCES_STORAGE_KEY } from "@/features/dashboard/hooks/use-request-log-table-preferences";
+import { parseConversationTimeframe } from "@/features/dashboard/schemas";
 import type { RecentRequestsTableProps } from "@/features/dashboard/components/recent-requests-table";
 
 import { LogsPage } from "./logs-page";
@@ -72,7 +74,18 @@ const useRequestLogsMock = vi.mocked(useRequestLogs);
 const useConversationsMock = vi.mocked(useConversations);
 
 type RequestLogsQueryOverrides = {
-  data?: undefined;
+  data?: {
+    requests: ReturnType<typeof createRequestLogEntry>[];
+    total: number;
+    hasMore: boolean;
+    costCoverage?: {
+      knownCostUsd: number;
+      pricedRequests: number;
+      unpricedRequests: number;
+      unmeteredRequests: number;
+      coverageUnknown: boolean;
+    };
+  };
   error?: Error | null;
   isFetching?: boolean;
   isLoading?: boolean;
@@ -159,7 +172,14 @@ describe("LogsPage", () => {
       updateFilters: vi.fn(),
     } as unknown as ReturnType<typeof useRequestLogs>);
     useConversationsMock.mockReturnValue({
-      filters: { search: "", limit: 25, offset: 0 },
+      filters: {
+        search: "",
+        limit: 25,
+        offset: 0,
+        timeframe: parseConversationTimeframe(
+          new URLSearchParams(window.location.search).get("conversationTimeframe"),
+        ),
+      },
       listFilters: { limit: 25, offset: 0 },
       conversationsQuery: {
         data: { conversations: [], total: 0, hasMore: false },
@@ -188,10 +208,11 @@ describe("LogsPage", () => {
 
     renderWithProviders(<LogsPage />);
 
-    expect(screen.getByRole("heading", { level: 1, name: "Logs" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Log controls" })).toBeInTheDocument();
     expect(within(logSection()).getByText("Loading...")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /reset/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("recent-requests-table")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("compact-pagination")).not.toBeInTheDocument();
   });
 
   it("surfaces request-log option errors only while Request Logs is active", () => {
@@ -474,7 +495,7 @@ describe("LogsPage", () => {
       listFilters: { search: undefined, limit: 25, offset: 0, accountIds: [], apiKeyIds: [], statuses: ["ok"], modelOptions: [], since: undefined },
       facetFilters: { since: undefined, accountIds: [], apiKeyIds: [], modelOptions: [] },
       logsQuery: {
-        data: { requests: [], total: 0, hasMore: false, conversation: null },
+        data: { requests: [], total: 0, hasMore: false },
         isFetching: false,
         error: null,
         isLoading: false,
@@ -500,204 +521,75 @@ describe("LogsPage", () => {
     expect(screen.getByRole("button", { name: /remove conversation/i })).toBeInTheDocument();
   });
 
-  it("renders conversation summary between filters and table when conversation data present", () => {
-    mockReadyLogs();
-    const updateFilters = vi.fn();
-
-    useRequestLogsMock.mockReturnValue({
-      filters: {
-        search: "quota",
-        timeframe: "24h",
-        accountIds: ["acc_primary"],
-        apiKeyIds: ["key_1"],
-        modelOptions: ["gpt-5.1:::high"],
-        statuses: ["ok"],
-        conversationId: "conv_page_summary",
-        limit: 25,
-        offset: 0,
-      },
-      listFilters: { search: "quota", limit: 25, offset: 0, accountIds: ["acc_primary"], apiKeyIds: ["key_1"], statuses: ["ok"], modelOptions: ["gpt-5.1:::high"], since: expect.any(String) as string, conversationId: "conv_page_summary" },
-      facetFilters: { since: expect.any(String) as string, accountIds: ["acc_primary"], apiKeyIds: ["key_1"], modelOptions: ["gpt-5.1:::high"] },
-      logsQuery: {
-        data: {
-          requests: [],
-          total: 0,
-          hasMore: false,
-          conversation: { requestCount: 42, aggregatedCostUsd: 3.14, costCoverage: { knownCostUsd: 3.14, pricedRequests: 42, unpricedRequests: 0, unmeteredRequests: 0, coverageUnknown: false } },
+  it("summarizes the filtered requests and their cost in the toolbar", () => {
+    mockReadyLogs({
+      data: {
+        requests: [],
+        total: 1234,
+        hasMore: true,
+        costCoverage: {
+          knownCostUsd: 3.14,
+          pricedRequests: 1234,
+          unpricedRequests: 0,
+          unmeteredRequests: 0,
+          coverageUnknown: false,
         },
-        isFetching: false,
-        error: null,
-        isLoading: false,
-        isPending: false,
-        isSuccess: true,
-        refetch: vi.fn(),
       },
-      optionsQuery: {
-        data: {
-          accountIds: ["acc_primary"],
-          apiKeys: [{ id: "key_1", name: "Primary Key" }],
-          modelOptions: [{ model: "gpt-5.1", reasoningEffort: "high" }],
-          statuses: ["ok"],
-        },
-        error: null,
-      },
-      updateFilters,
-    } as unknown as ReturnType<typeof useRequestLogs>);
-
+    });
 
     renderWithProviders(<LogsPage />);
 
-    // Summary sentence contains count and cost — text split by Trans/code elements
-    const summaryEls = screen.getAllByText((_, el) => el?.textContent?.includes("The conversation conv_page_summary") ?? false);
-    const summaryEl = summaryEls[summaryEls.length - 1];
-    expect(summaryEl).toBeInTheDocument();
-
-    // Rendered text contains cost = with no literal backticks
-    expect(summaryEl.textContent).toMatch(/\bcost = /);
-    expect(summaryEl.textContent).not.toMatch(/`cost =`/);
-
-    // Exactly three <code> elements with expected values
-    const codeElements = summaryEl.querySelectorAll("code");
-    expect(codeElements).toHaveLength(3);
-    expect(codeElements[0].textContent).toBe("conv_page_summary");
-    expect(codeElements[1].textContent).toBe("42");
-    expect(codeElements[2].textContent).toBe("$3.14");
-
-    // Prove summary is between filters and table via DOM order
-    const allSectionElements = Array.from(logSection().querySelectorAll("div.rounded-xl, [data-testid]"));
-    const filterIdx = allSectionElements.findIndex((c) => c.getAttribute("class")?.includes("rounded-xl") && c.getAttribute("class")?.includes("bg-card"));
-    const summaryIdx = allSectionElements.findIndex((c) => c.textContent?.includes("The conversation"));
-    const tableIdx = allSectionElements.findIndex((c) => c.getAttribute("data-testid") === "recent-requests-table");
-
-    expect(filterIdx).toBeGreaterThan(-1);
-    expect(summaryIdx).toBeGreaterThan(-1);
-    expect(tableIdx).toBeGreaterThan(-1);
-    expect(filterIdx).toBeLessThan(summaryIdx);
-    expect(summaryIdx).toBeLessThan(tableIdx);
-
-    // Suffix contains localized filter labels
-    expect(summaryEl.textContent).toMatch(/24h/);
-    expect(summaryEl.textContent).toMatch(/OK/i);
-    // Uses decoded model label, not raw model:::effort
-    expect(summaryEl.textContent).toMatch(/gpt-5\.1 \(high\)/);
-    // Uses account display name from overview accounts
-    expect(summaryEl.textContent).toMatch(/primary@example\.com/);
-    // Uses user-facing API key name, not raw ID
-    expect(summaryEl.textContent).toMatch(/Primary Key/);
-    // Uses search value, not raw API key ID
-    expect(summaryEl.textContent).toMatch(/"quota"/);
-    // No raw IDs or internal encodings leak
-    expect(summaryEl.textContent).not.toMatch(/acc_primary/);
-    expect(summaryEl.textContent).not.toMatch(/key_1/);
-    expect(summaryEl.textContent).not.toMatch(/:::/);
+    expect(screen.getByTestId("logs-summary")).toHaveTextContent("1,234 requests · $3.14");
+    expect(screen.queryByText(/The conversation/)).not.toBeInTheDocument();
   });
 
-  it("never exposes raw IDs when option lists are empty or missing", () => {
-    mockReadyLogs();
-    const updateFilters = vi.fn();
-
-    useRequestLogsMock.mockReturnValue({
-      filters: {
-        search: "test_search",
-        timeframe: "7d",
-        accountIds: ["acc_missing"],
-        apiKeyIds: ["key_missing"],
-        modelOptions: ["gpt-5.1:::high"],
-        statuses: ["error"],
-        conversationId: "conv_safety",
-        limit: 25,
-        offset: 0,
-      },
-      listFilters: { search: "test_search", limit: 25, offset: 0, accountIds: ["acc_missing"], apiKeyIds: ["key_missing"], statuses: ["error"], modelOptions: ["gpt-5.1:::high"], since: expect.any(String) as string, conversationId: "conv_safety" },
-      facetFilters: { since: expect.any(String) as string, accountIds: ["acc_missing"], apiKeyIds: [], modelOptions: [] },
-      logsQuery: {
-        data: {
-          requests: [],
-          total: 0,
-          hasMore: false,
-          conversation: { requestCount: 3, aggregatedCostUsd: 0.01 },
+  it("keeps an incomplete cost short and explains its coverage on hover", () => {
+    mockReadyLogs({
+      data: {
+        requests: [],
+        total: 42,
+        hasMore: true,
+        costCoverage: {
+          knownCostUsd: 3.14,
+          pricedRequests: 40,
+          unpricedRequests: 2,
+          unmeteredRequests: 0,
+          coverageUnknown: false,
         },
-        isFetching: false,
-        error: null,
-        isLoading: false,
-        isPending: false,
-        isSuccess: true,
-        refetch: vi.fn(),
       },
-      optionsQuery: {
-        data: { accountIds: [], apiKeys: [], modelOptions: [], statuses: ["error"] },
-        error: null,
-      },
-      updateFilters,
-    } as unknown as ReturnType<typeof useRequestLogs>);
-
+    });
 
     renderWithProviders(<LogsPage />);
 
-    const summaryEls = screen.getAllByText((_, el) => el?.textContent?.includes("The conversation conv_safety") ?? false);
-    const summaryEl = summaryEls[summaryEls.length - 1];
-    // Must never leak raw internal IDs
-    expect(summaryEl.textContent).not.toMatch(/acc_missing/);
-    expect(summaryEl.textContent).not.toMatch(/key_missing/);
-    expect(summaryEl.textContent).not.toMatch(/:::/);
-    // Model must be decoded from the filter value itself via formatModelLabel
-    expect(summaryEl.textContent).toMatch(/gpt-5\.1\s+\(high\)/);
-    // Timeframe, status, search render normally
-    expect(summaryEl.textContent).toMatch(/7d/);
-    expect(summaryEl.textContent).toMatch(/Error/i);
-    expect(summaryEl.textContent).toMatch(/"test_search"/);
-    // Safe fallback labels used when options missing
-    expect(summaryEl.textContent).toMatch(/Accounts/);
-    expect(summaryEl.textContent).toMatch(/API Keys/);
+    const summary = screen.getByTestId("logs-summary");
+    expect(summary).toHaveTextContent("42 requests · $3.14");
+    expect(summary.firstElementChild).toHaveAttribute(
+      "title",
+      "$3.14 known · incomplete (40 priced, 2 unpriced)",
+    );
   });
 
-  it("omits summary suffix when no other filters are active", () => {
-    mockReadyLogs();
-    const updateFilters = vi.fn();
-
-    useRequestLogsMock.mockReturnValue({
-      filters: {
-        search: "",
-        timeframe: "all",
-        accountIds: [],
-        apiKeyIds: [],
-        modelOptions: [],
-        statuses: [],
-        conversationId: "conv_no_suffix",
-        limit: 25,
-        offset: 0,
-      },
-      listFilters: { search: undefined, limit: 25, offset: 0, accountIds: [], apiKeyIds: [], statuses: [], modelOptions: [], since: undefined },
-      facetFilters: { since: undefined, accountIds: [], apiKeyIds: [], modelOptions: [] },
-      logsQuery: {
-        data: {
-          requests: [],
-          total: 0,
-          hasMore: false,
-          conversation: { requestCount: 7, aggregatedCostUsd: 0.05 },
-        },
-        isFetching: false,
-        error: null,
-        isLoading: false,
-        isPending: false,
-        isSuccess: true,
-        refetch: vi.fn(),
-      },
-      optionsQuery: {
-        data: { accountIds: [], apiKeys: [], modelOptions: [], statuses: [] },
-        error: null,
-      },
-      updateFilters,
-    } as unknown as ReturnType<typeof useRequestLogs>);
-
+  it("pages request logs from the toolbar pager", async () => {
+    const user = userEvent.setup();
+    mockReadyLogs({ data: { requests: [createRequestLogEntry()], total: 60, hasMore: true } });
 
     renderWithProviders(<LogsPage />);
 
-    const summaryEl = screen.getByText((_, el) => el?.tagName === "P" && (el?.textContent?.includes("The conversation conv_no_suffix") ?? false));
-    expect(summaryEl).toBeInTheDocument();
-    // No filter suffix separator
-    expect(summaryEl.textContent).not.toMatch(/filters:/i);
-    expect(summaryEl.textContent).toMatch(/request\(s\), cost =/);
+    const pager = within(screen.getByTestId("compact-pagination"));
+    expect(pager.getByText("1–25 of 60")).toBeInTheDocument();
+    expect(pager.getByRole("button", { name: "Previous page" })).toBeDisabled();
+    await user.click(pager.getByRole("button", { name: "Next page" }));
+
+    expect(useRequestLogsMock.mock.results[0]?.value.updateFilters).toHaveBeenCalledWith({ offset: 25 });
+  });
+
+  it("passes a page key that changes with the query and offset", () => {
+    mockReadyLogs({ data: { requests: [], total: 60, hasMore: true } });
+
+    renderWithProviders(<LogsPage />);
+
+    const props = recentRequestsTableSpy.mock.calls.at(-1)?.[0] as RecentRequestsTableProps;
+    expect(JSON.parse(props.scrollKey)).toMatchObject({ offset: 0, limit: 25, timeframe: "all" });
   });
 
   it("dismiss button clears conversationId and resets offset, preserving other filters", () => {
@@ -723,7 +615,6 @@ describe("LogsPage", () => {
           requests: [],
           total: 0,
           hasMore: false,
-          conversation: { requestCount: 1, aggregatedCostUsd: 0.01 },
         },
         isFetching: false,
         error: null,
@@ -772,7 +663,6 @@ describe("LogsPage", () => {
           requests: [],
           total: 0,
           hasMore: false,
-          conversation: { requestCount: 1, aggregatedCostUsd: 0.01 },
         },
         isFetching: false,
         error: null,

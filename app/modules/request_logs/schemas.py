@@ -84,17 +84,10 @@ class RequestLogEntry(DashboardModel):
     latency_queue_ms: int | None = None
 
 
-class RequestLogConversation(DashboardModel):
-    request_count: int
-    aggregated_cost_usd: float
-    cost_coverage: RequestCostCoverage | None = None
-
-
 class RequestLogsResponse(DashboardModel):
     requests: list[RequestLogEntry] = Field(default_factory=list)
     total: int
     has_more: bool
-    conversation: RequestLogConversation | None = None
     cost_coverage: RequestCostCoverage = Field(default_factory=RequestCostCoverage)
 
 

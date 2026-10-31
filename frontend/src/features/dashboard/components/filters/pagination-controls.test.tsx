@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { PaginationControls } from "./pagination-controls";
+import { CompactPaginationControls, PaginationControls } from "./pagination-controls";
 
 describe("PaginationControls", () => {
   it("disables First and Previous buttons on first page", () => {
@@ -167,5 +167,29 @@ describe("PaginationControls", () => {
     expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Last page" })).toBeEnabled();
+  });
+
+  it("compact variant shows only the range and previous/next", async () => {
+    const user = userEvent.setup();
+    const onOffsetChange = vi.fn();
+    render(
+      <CompactPaginationControls
+        total={42}
+        limit={10}
+        offset={10}
+        hasMore={true}
+        onOffsetChange={onOffsetChange}
+      />,
+    );
+
+    expect(screen.getByText("11–20 of 42")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "First page" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Last page" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(onOffsetChange).toHaveBeenNthCalledWith(1, 0);
+    expect(onOffsetChange).toHaveBeenNthCalledWith(2, 20);
   });
 });

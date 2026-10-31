@@ -124,7 +124,6 @@ class _DemandCountParams:
 class RequestLogsResult:
     logs: list[RequestLog]
     total: int
-    aggregated_cost_usd: float | None = None
     cost_coverage: CostCoverage = field(default_factory=CostCoverage)
 
 
@@ -1434,9 +1433,7 @@ class RequestLogsRepository:
 
         if conversation_id is not None:
             total, coverage = await self._count_and_sum_recent(filters)
-            return RequestLogsResult(
-                logs=logs, total=total, aggregated_cost_usd=coverage.known_cost_usd, cost_coverage=coverage
-            )
+            return RequestLogsResult(logs=logs, total=total, cost_coverage=coverage)
 
         demand_params: _DemandCountParams | None = None
         if (

@@ -32,7 +32,6 @@ function renderFilters(
     statusOptions,
     ...extraProps,
     onSearchChange: vi.fn(),
-    onTimeframeChange: vi.fn(),
     onAccountChange: vi.fn(),
     onApiKeyChange: vi.fn(),
     onModelChange: vi.fn(),

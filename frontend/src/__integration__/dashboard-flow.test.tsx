@@ -134,7 +134,7 @@ describe("dashboard flow integration", () => {
     renderWithProviders(<App />);
 
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Logs" }),
+      await screen.findByRole("region", { name: "Log controls" }),
     ).toBeInTheDocument();
 
     await waitFor(() => {
@@ -158,7 +158,9 @@ describe("dashboard flow integration", () => {
     expect(overviewCalls).toBe(overviewAfterLoad);
 
     const logsAfterFilter = requestLogCalls;
-    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await user.click(
+      within(await screen.findByTestId("compact-pagination")).getByRole("button", { name: "Next page" }),
+    );
 
     await waitFor(() => {
       expect(requestLogCalls).toBeGreaterThan(logsAfterFilter);
@@ -232,7 +234,7 @@ describe("dashboard flow integration", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Logs" }),
+      await screen.findByRole("region", { name: "Log controls" }),
     ).toBeInTheDocument();
     const requestLogs = logsSection();
     const errorAlert = await requestLogs.findByRole("alert");

@@ -518,16 +518,13 @@ async def test_request_logs_api_rejects_guest_conversation_filter_and_preserves_
         "req_conversation_filter_target",
     ]
     assert admin_payload["total"] == 1
-    assert admin_payload["conversation"] == {
-        "requestCount": 1,
-        "aggregatedCostUsd": 4.25,
-        "costCoverage": {
-            "knownCostUsd": 4.25,
-            "pricedRequests": 1,
-            "unpricedRequests": 0,
-            "unmeteredRequests": 0,
-            "coverageUnknown": False,
-        },
+    assert "conversation" not in admin_payload
+    assert admin_payload["costCoverage"] == {
+        "knownCostUsd": 4.25,
+        "pricedRequests": 1,
+        "unpricedRequests": 0,
+        "unmeteredRequests": 0,
+        "coverageUnknown": False,
     }
 
 

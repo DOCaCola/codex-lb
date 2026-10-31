@@ -1,5 +1,5 @@
 import { Inbox } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { isEmailLabel } from "@/components/blur-email";
@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaginationControls } from "@/features/dashboard/components/filters/pagination-controls";
+import { LOG_TABLE_HEADER_CLASS, LogTablePane } from "@/features/dashboard/components/log-table-pane";
 import { formatCoveredCostShort } from "@/features/dashboard/cost-coverage";
 import type { AccountSummary, ConversationEntry } from "@/features/dashboard/schemas";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -32,6 +33,8 @@ export type ConversationTableProps = {
   limit: number;
   offset: number;
   hasMore: boolean;
+  /** Identifies the shown page (filters and offset); a change returns the pane to its first row. */
+  scrollKey: string;
   onLimitChange: (limit: number) => void;
   onOffsetChange: (offset: number) => void;
   onSelect: (conversationId: string) => void;
@@ -46,11 +49,13 @@ export function ConversationTable({
   limit,
   offset,
   hasMore,
+  scrollKey,
   onLimitChange,
   onOffsetChange,
   onSelect,
 }: ConversationTableProps) {
   const { t } = useTranslation();
+  const scrollRef = useRef<HTMLDivElement>(null);
   const dateDisplayFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
   const blurred = usePrivacyStore((s) => s.blurred);
   const accountLabelMap = useMemo(() => {
@@ -73,46 +78,34 @@ export function ConversationTable({
     return ids;
   }, [accounts]);
 
-  const emptyState = (
-    <EmptyState
-      icon={Inbox}
-      title={t("dashboard.conversations.emptyTitle")}
-      description={t("dashboard.conversations.emptyDescription")}
-    />
-  );
-
-  const paginationControls = (
-    <div className="flex justify-end">
-      <PaginationControls
-        total={total}
-        limit={limit}
-        offset={offset}
-        hasMore={hasMore}
-        onLimitChange={onLimitChange}
-        onOffsetChange={onOffsetChange}
-      />
-    </div>
-  );
-
-  if (conversations.length === 0) {
-    if (offset === 0) {
-      return emptyState;
-    }
-
-    return (
-      <div className="space-y-3">
-        {emptyState}
-        {paginationControls}
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      <div className="rounded-xl border bg-card shadow-sm shadow-black/[0.02] dark:shadow-black/20">
-        <div className="relative overflow-x-auto">
-          <Table className="min-w-[980px] table-fixed">
-            <TableHeader>
+    <LogTablePane
+      scrollRef={scrollRef}
+      scrollKey={scrollKey}
+      footer={
+        conversations.length === 0 && offset === 0 ? null : (
+          <PaginationControls
+            total={total}
+            limit={limit}
+            offset={offset}
+            hasMore={hasMore}
+            onLimitChange={onLimitChange}
+            onOffsetChange={onOffsetChange}
+          />
+        )
+      }
+    >
+      {conversations.length === 0 ? (
+        <div className="p-4">
+          <EmptyState
+            icon={Inbox}
+            title={t("dashboard.conversations.emptyTitle")}
+            description={t("dashboard.conversations.emptyDescription")}
+          />
+        </div>
+      ) : (
+          <Table containerClassName="overflow-visible" className="min-w-[980px] table-fixed">
+            <TableHeader className={LOG_TABLE_HEADER_CLASS}>
               <TableRow className="hover:bg-transparent">
                 <TableHead className={`w-[10%] pl-4 ${headerClass}`}>{t("dashboard.conversations.columns.lastRequest")}</TableHead>
                 <TableHead className={`w-[9%] ${headerClass}`}>{t("dashboard.conversations.columns.lasted")}</TableHead>
@@ -204,10 +197,8 @@ export function ConversationTable({
               })}
             </TableBody>
           </Table>
-        </div>
-      </div>
-      {paginationControls}
-    </div>
+      )}
+    </LogTablePane>
   );
 }
 

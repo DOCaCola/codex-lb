@@ -482,7 +482,7 @@ describe("RequestLogsResponseSchema", () => {
     expect(parsed.requests[0]?.clientIp).toBeNull();
   });
 
-  it("parses row-level conversationId and response-level conversation", () => {
+  it("parses row-level conversationId", () => {
     const parsed = RequestLogsResponseSchema.parse({
       requests: [
         {
@@ -519,69 +519,10 @@ describe("RequestLogsResponseSchema", () => {
       ],
       total: 2,
       hasMore: false,
-      conversation: {
-        requestCount: 2,
-        aggregatedCostUsd: 0.001,
-      },
     });
 
     expect(parsed.requests[0]?.conversationId).toBe("conv_abc123");
     expect(parsed.requests[1]?.conversationId).toBeNull();
-    expect(parsed.conversation?.requestCount).toBe(2);
-    expect(parsed.conversation?.aggregatedCostUsd).toBe(0.001);
-  });
-
-  it("accepts null response-level conversation", () => {
-    const parsed = RequestLogsResponseSchema.parse({
-      requests: [
-        {
-          id: 9,
-          requestedAt: ISO,
-          accountId: "acc-1",
-          requestId: "req-cid-null",
-          model: "gpt-5.1",
-          status: "ok",
-          errorCode: null,
-          errorMessage: null,
-          tokens: 10,
-          cachedInputTokens: 0,
-          reasoningEffort: null,
-          costUsd: 0.001,
-          latencyMs: 42,
-        },
-      ],
-      total: 1,
-      hasMore: false,
-      conversation: null,
-    });
-
-    expect(parsed.conversation).toBeNull();
-  });
-
-  it("omits response-level conversation when absent", () => {
-    const parsed = RequestLogsResponseSchema.parse({
-      requests: [
-        {
-          id: 10,
-          requestedAt: ISO,
-          accountId: "acc-1",
-          requestId: "req-no-conv-key",
-          model: "gpt-5.1",
-          status: "ok",
-          errorCode: null,
-          errorMessage: null,
-          tokens: 10,
-          cachedInputTokens: 0,
-          reasoningEffort: null,
-          costUsd: 0.001,
-          latencyMs: 42,
-        },
-      ],
-      total: 1,
-      hasMore: false,
-    });
-
-    expect(parsed.conversation).toBeNull();
   });
 
   it("defaults omitted nested cost breakdown fields to null", () => {

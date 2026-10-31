@@ -28,7 +28,6 @@ from app.modules.request_logs.schemas import (
     ConversationTraceRequest,
     ConversationTraceResponse,
     RequestCostCoverage,
-    RequestLogConversation,
     RequestLogEntry,
 )
 from app.modules.request_logs.trace import TraceSample, cache_event, cache_lifetime, idle_gap, prompt_split
@@ -70,7 +69,6 @@ class RequestLogsPage:
     requests: list[RequestLogEntry]
     total: int
     has_more: bool
-    conversation: RequestLogConversation | None
     cost_coverage: RequestCostCoverage = field(default_factory=RequestCostCoverage)
 
 
@@ -147,14 +145,6 @@ class RequestLogsService:
         )
         logs = result.logs
         total = result.total
-        conversation = None
-        if conversation_id is not None:
-            assert result.aggregated_cost_usd is not None
-            conversation = RequestLogConversation(
-                request_count=total,
-                aggregated_cost_usd=result.aggregated_cost_usd,
-                cost_coverage=RequestCostCoverage(**asdict(result.cost_coverage)),
-            )
         api_key_ids = [log.api_key_id for log in logs if log.api_key_id] if include_api_key_identity else []
         api_key_name_by_id = await self._repo.get_api_key_names_by_ids(api_key_ids) if api_key_ids else {}
         source_ids = list({log.model_source_id for log in logs if log.model_source_id})
@@ -177,7 +167,6 @@ class RequestLogsService:
             requests=requests,
             total=total,
             has_more=offset + limit < total,
-            conversation=conversation,
             cost_coverage=RequestCostCoverage(**asdict(result.cost_coverage)),
         )
 

@@ -122,7 +122,6 @@ async def list_request_logs(
         requests=page.requests,
         total=page.total,
         has_more=page.has_more,
-        conversation=page.conversation,
         cost_coverage=page.cost_coverage,
     )
 

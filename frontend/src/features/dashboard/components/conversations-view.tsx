@@ -37,9 +37,9 @@ function ConversationsViewContent({ state, accounts }: { state: UseConversations
     : t("dashboard.conversations.errorDescription");
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {conversationsQuery.error ? (
-        <div className="space-y-3 rounded-xl border bg-card p-4">
+        <div className="shrink-0 space-y-3 rounded-xl border bg-card p-4">
           <div role="alert">
             <AlertMessage variant="error">{errorMessage}</AlertMessage>
           </div>
@@ -50,7 +50,7 @@ function ConversationsViewContent({ state, accounts }: { state: UseConversations
       ) : null}
 
       {!conversationsQuery.error && conversationsQuery.isPending && !data ? (
-        <div className="rounded-xl border bg-card py-8">
+        <div className="flex flex-1 items-center justify-center rounded-xl border bg-card py-8">
           <SpinnerBlock />
         </div>
       ) : null}
@@ -63,6 +63,7 @@ function ConversationsViewContent({ state, accounts }: { state: UseConversations
           limit={filters.limit}
           offset={filters.offset}
           hasMore={data.hasMore}
+          scrollKey={JSON.stringify(filters)}
           onLimitChange={(limit) => updateFilters({ limit, offset: 0 })}
           onOffsetChange={(offset) => updateFilters({ offset })}
           onSelect={setSelectedConversationId}

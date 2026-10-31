@@ -34,6 +34,60 @@ it("highlights only rows that just arrived", () => {
   expect(screen.getByTitle("model-old").closest("tr")).not.toHaveClass("request-log-row-arrived");
 });
 
+it("returns the pane to its first row when the page changes", () => {
+  const rows = [createRequestLogEntry({ requestId: "row" })];
+  const { rerender } = render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={rows} />);
+  const region = screen.getByTestId("log-table-scroll-region");
+  region.scrollTop = 120;
+
+  rerender(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} requests={rows} />);
+  expect(region.scrollTop).toBe(120);
+
+  rerender(<RecentRequestsTable {...PAGINATION_PROPS} scrollKey="next-page" accounts={[]} requests={rows} />);
+  expect(region.scrollTop).toBe(0);
+});
+
+it("keeps arrivals out of a scrolled reader's way and offers a jump back to them", () => {
+  const old = createRequestLogEntry({ id: 1, requestId: "old" });
+  const { rerender } = render(
+    <RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[old]} />,
+  );
+  const region = screen.getByTestId("log-table-scroll-region");
+  region.scrollTop = 200;
+  fireEvent.scroll(region);
+
+  rerender(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[
+    createRequestLogEntry({ id: 3, requestId: "newer" }),
+    createRequestLogEntry({ id: 2, requestId: "new" }),
+    old,
+  ]} />);
+
+  const pill = screen.getByRole("button", { name: "2 new requests" });
+  const scrollTo = vi.fn();
+  region.scrollTo = scrollTo;
+  fireEvent.click(pill);
+  expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+
+  region.scrollTop = 0;
+  fireEvent.scroll(region);
+  expect(screen.queryByRole("button", { name: /new request/ })).not.toBeInTheDocument();
+});
+
+it("shows arrivals in place without a jump button while the reader is at the top", () => {
+  const old = createRequestLogEntry({ id: 1, requestId: "old" });
+  const { rerender } = render(
+    <RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[old]} />,
+  );
+
+  rerender(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]} liveContextKey="k" requests={[
+    createRequestLogEntry({ id: 2, requestId: "new" }),
+    old,
+  ]} />);
+
+  expect(screen.queryByRole("button", { name: /new request/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("row")).toHaveLength(3);
+});
+
 it("keeps retried rows that share a request ID in server order", () => {
   const attempt = createRequestLogEntry({ id: 1, requestId: "req_retry", model: "model-attempt" });
   const retry = createRequestLogEntry({ id: 2, requestId: "req_retry", model: "model-retry" });
@@ -130,6 +184,7 @@ const PAGINATION_PROPS = {
   limit: 25,
   offset: 0,
   hasMore: false,
+  scrollKey: "page",
   onLimitChange: vi.fn(),
   onOffsetChange: vi.fn(),
 };
@@ -228,7 +283,7 @@ describe("Provider identity and readable models", () => {
   it("notes a request billed below its requested tier", () => {
     render(<RecentRequestsTable {...PAGINATION_PROPS} accounts={[]}
       requests={[createRequestLogEntry({ model: "gpt-6.1-sol", serviceTier: "flex", requestedServiceTier: "priority", actualServiceTier: "flex" })]} />);
-    expect(screen.getByText("Fast requested · billed Flex")).toHaveClass("text-muted-foreground");
+    expect(screen.getByText(/Fast requested · billed Flex$/)).toHaveClass("text-muted-foreground");
   });
 
   it.each([
@@ -678,7 +733,7 @@ describe("RecentRequestsTable", () => {
     expect(modelLabel).toHaveTextContent("GPT 5.1 high");
     expect(modelLabel.textContent).not.toContain("default");
     expect(within(modelLabel).getByText("high")).toHaveClass("text-muted-foreground");
-    expect(screen.getByText("Fast requested · billed Default")).toBeInTheDocument();
+    expect(screen.getByText(/Fast requested · billed Default$/)).toBeInTheDocument();
     expect(screen.getByText("WS")).toBeInTheDocument();
     expect(screen.getByText("Up Auto")).toBeInTheDocument();
     expect(screen.getByText("Rate limit")).toBeInTheDocument();

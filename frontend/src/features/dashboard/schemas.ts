@@ -315,11 +315,6 @@ export const RequestLogsResponseSchema = z.object({
   requests: z.array(RequestLogSchema),
   total: z.number().int().nonnegative(),
   hasMore: z.boolean(),
-  conversation: z.object({
-    requestCount: z.number().int().nonnegative(),
-    aggregatedCostUsd: z.number(),
-    costCoverage: CostCoverageSchema.nullable().optional(),
-  }).nullable().optional().default(null),
   costCoverage: CostCoverageSchema.optional(),
 });
 
