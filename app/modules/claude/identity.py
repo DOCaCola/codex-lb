@@ -11,7 +11,7 @@ from app.db.session import get_background_session
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.repository import ClaudeRepository
-from app.modules.claude.schemas import AccountState, AuthenticatedProfile, Credentials
+from app.modules.claude.schemas import AccountState, AuthenticatedProfile, Credentials, PendingReconnectView
 from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
@@ -47,30 +47,32 @@ async def require_current_identity(source_id: str, identity_generation: int) -> 
 
 
 class ReconnectIdentityMismatch(ClaudeError):
-    """A verified fingerprint mismatch, classified using the saved account UUID."""
+    """A verified fingerprint mismatch, classified using the saved account UUID and held for confirmation."""
 
-    def __init__(self, saved_account_uuid: str | None, incoming_account_uuid: str) -> None:
+    def __init__(
+        self, saved_account_uuid: str | None, incoming_account_uuid: str, pending: PendingReconnectView
+    ) -> None:
+        self.pending = pending
         if saved_account_uuid is None:
             self.code = "claude_reconnect_identity_unverified"
             message = (
-                "Reconnect identity differs from the enrolled identity; the saved account UUID is unavailable, "
-                "so an account change cannot be distinguished from an organization change. "
-                "Existing credentials were not replaced. To use this sign-in for this entry, "
-                "reconnect with Replace the saved identity selected."
+                "This sign-in differs from the saved identity, which cannot be compared in detail, so an "
+                "account change cannot be distinguished from an organization change. Existing credentials "
+                "were not replaced. Confirm to replace the saved identity with this sign-in."
             )
         elif saved_account_uuid != incoming_account_uuid:
             self.code = "claude_reconnect_account_mismatch"
             message = (
-                "Reconnect authenticated a different Claude account. Sign in with the original account, "
-                "select Replace the saved identity to use this sign-in for this entry, or add it separately. "
-                "Existing credentials were not replaced."
+                "This sign-in authenticated a different Claude account. Existing credentials were not replaced. "
+                "Confirm to replace the saved identity, or sign in with the original account or add this "
+                "account separately."
             )
         else:
             self.code = "claude_reconnect_organization_changed"
             message = (
-                "Reconnect authenticated the same Claude account, but a different organization. "
-                "Existing credentials were not replaced. Select Replace the saved identity to use this "
-                "organization for this entry; resources owned by the previous organization stay unavailable."
+                "This sign-in authenticated the same Claude account, but a different organization. "
+                "Existing credentials were not replaced. Confirm to use this organization for this entry; "
+                "resources owned by the previous organization stay unavailable."
             )
         super().__init__(message)
 
@@ -111,6 +113,8 @@ async def bind_identity(
             .values(
                 identity_fingerprint=fingerprint,
                 provider_account_uuid=account_uuid,
+                account_email=profile.account.email,
+                organization_name=profile.organization.name,
                 version=ClaudeAccount.version + 1,
             )
             .returning(ClaudeAccount.source_id)

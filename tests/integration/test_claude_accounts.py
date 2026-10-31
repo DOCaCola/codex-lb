@@ -146,7 +146,7 @@ async def test_reconnect_preserves_identity_and_invalidates_old_refresh_generati
         assert not await ClaudeRepository(session).finish_refresh(source_id, 1, "old-intent", status="ready")
     body["credentials"]["claudeAiOauth"]["accessToken"] = "other-account"
     rejected = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
-    assert rejected.status_code == 400
+    assert rejected.status_code == 409
     assert rejected.json()["error"]["code"] == "claude_reconnect_account_mismatch"
 
 
@@ -234,12 +234,12 @@ async def test_reconnect_reports_identity_component_without_mutation(
         )
     else:
         response = await async_client.post(f"/api/claude-accounts/{source_id}/reconnect", json=body)
-    assert response.status_code == 400, response.text
+    assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == code
     if code == "claude_reconnect_organization_changed":
         assert "same Claude account, but a different organization" in response.json()["error"]["message"]
-    records = [record.getMessage() for record in caplog.records if "claude_reconnect_rejected" in record.getMessage()]
-    assert records == [f"claude_reconnect_rejected source_id={source_id} reason={code}"]
+    records = [record.getMessage() for record in caplog.records if "claude_reconnect_held" in record.getMessage()]
+    assert records == [f"claude_reconnect_held source_id={source_id} reason={code}"]
     for private in ("replacement-access", "replacement-refresh", account_uuid, organization_uuid):
         assert private not in response.text
         assert private not in records[0]

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AccountListItem } from "@/features/accounts/components/account-list-item";
-import { AddAccountDialog } from "@/features/accounts/components/add-account-dialog";
+import { AddAccountDialog, type EnrollmentHandlers } from "@/features/accounts/components/add-account-dialog";
 import { WindowsOauthHelp } from "@/features/accounts/components/windows-oauth-help";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { buildAccountListEntries } from "@/features/accounts/list-entries";
@@ -49,9 +49,9 @@ export type AccountListProps = {
   openRouterAccounts?: OpenRouterAccount[];
   onOpenRouter?: () => void;
   claudeAccounts?: ClaudeAccount[];
-  onClaude?: () => void;
+  claudeEnrollment?: EnrollmentHandlers;
   antigravityAccounts?: AntigravityAccount[];
-  onAntigravity?: () => void;
+  antigravityEnrollment?: EnrollmentHandlers;
   /** User-defined OpenAI-compatible sources. */
   modelSources?: ModelSource[];
   onOpenAICompatible?: () => void;
@@ -71,9 +71,9 @@ export function AccountList({
   openRouterAccounts = [],
   onOpenRouter,
   claudeAccounts = [],
-  onClaude,
+  claudeEnrollment,
   antigravityAccounts = [],
-  onAntigravity,
+  antigravityEnrollment,
   modelSources = [],
   onOpenAICompatible,
   accountColors = NO_ACCOUNT_COLORS,
@@ -291,11 +291,10 @@ export function AccountList({
       <AddAccountDialog
         open={chooserOpen}
         onOpenChange={setChooserOpen}
-        onImport={onOpenImport}
-        onAddAccount={onOpenOauth}
+        codex={{ onSignIn: onOpenOauth, onImport: onOpenImport }}
+        claude={claudeEnrollment}
+        antigravity={antigravityEnrollment}
         onOpenRouter={onOpenRouter}
-        onClaude={onClaude}
-        onAntigravity={onAntigravity}
         onOpenAICompatible={onOpenAICompatible}
       />
     </div>

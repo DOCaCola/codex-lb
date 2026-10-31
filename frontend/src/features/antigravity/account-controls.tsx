@@ -1,10 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { Layers, LogIn, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Layers, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
@@ -12,6 +10,9 @@ import { AccountColorPicker } from "@/features/accounts/components/account-color
 import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
+import { CredentialImportDialog } from "@/features/accounts/components/credential-import-dialog";
+import { ProviderSignInDialog } from "@/features/accounts/components/provider-sign-in-dialog";
+import { ReauthenticateMenu } from "@/features/accounts/components/reauthenticate-menu";
 import { ClaudeCapacitySettings } from "@/features/claude/capacity-settings";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -21,7 +22,7 @@ import { modelSummary } from "./display-values";
 import { AntigravityModelSelection } from "./model-selection";
 import { AntigravityVersionControls } from "./version-controls";
 import { useAntigravity } from "./use-antigravity";
-import type { AntigravityAccount, OAuthStarted } from "./api";
+import type { AntigravityAccount } from "./api";
 
 const HOLD_LABELS: Record<NonNullable<AntigravityAccount["hold"]>, string> = {
   banned: "Google suspended this account",
@@ -29,14 +30,7 @@ const HOLD_LABELS: Record<NonNullable<AntigravityAccount["hold"]>, string> = {
   location_unsupported: "Antigravity is not available in this account's location",
 };
 
-async function readCredentialFile(file: File): Promise<unknown> {
-  if (file.size > 1024 * 1024) throw new Error("Credential file exceeds 1 MB");
-  try {
-    return JSON.parse(await file.text());
-  } catch {
-    throw new Error("Credential file must contain valid JSON");
-  }
-}
+type Enrollment = { method: "signIn" | "import"; reauth: AntigravityAccount | null };
 
 export function AntigravityAccountControls({
   account,
@@ -47,18 +41,13 @@ export function AntigravityAccountControls({
   account: AntigravityAccount | null;
   readOnly: boolean;
   onCreated: (id: string) => void;
-  children: (controls: { onAdd: () => void; detail: ReactNode }) => ReactNode;
+  children: (controls: { onSignIn: () => void; onImport: () => void; detail: ReactNode }) => ReactNode;
 }) {
   const api = useAntigravity();
   const accountColors = useAccountColorHexes();
   const blurred = usePrivacyStore((s) => s.blurred);
   const dateFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
-  const [open, setOpen] = useState(false);
-  const [reconnectId, setReconnectId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [flow, setFlow] = useState<OAuthStarted | null>(null);
-  const [code, setCode] = useState("");
+  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [modelAccountId, setModelAccountId] = useState<string | null>(null);
@@ -71,18 +60,20 @@ export function AntigravityAccountControls({
       setError(cause instanceof Error ? cause.message : "Antigravity account operation failed");
     }
   }
-  function close() {
-    setOpen(false);
-    setReconnectId(null);
-    setFile(null);
-    setCode("");
-    setFlow(null);
-    setName("");
+  function enroll(next: Enrollment) {
+    if (readOnly) return;
+    // Defer so the menu or chooser releases its pointer lock before the dialog opens.
+    requestAnimationFrame(() => setEnrollment(next));
   }
-  function created(result: AntigravityAccount) {
-    close();
-    onCreated(result.id);
-  }
+  const reauthAccount = enrollment?.reauth ?? null;
+  const reauth = reauthAccount
+    ? {
+        name: reauthAccount.name,
+        identity: reauthAccount.email ? (
+          <span className={blurred ? "privacy-blur" : undefined}>{reauthAccount.email}</span>
+        ) : null,
+      }
+    : undefined;
   const update = (body: Parameters<typeof api.update.mutateAsync>[0]["body"]) =>
     account ? run(() => api.update.mutateAsync({ id: account.id, body })) : Promise.resolve();
   const metadata = account?.state.metadata;
@@ -223,21 +214,11 @@ export function AntigravityAccountControls({
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
+          <ReauthenticateMenu
             disabled={readOnly || busy}
-            onClick={() => {
-              setReconnectId(account.id);
-              setName(account.name);
-              setError(null);
-              setOpen(true);
-            }}
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            Reconnect
-          </Button>
+            onSignIn={() => enroll({ method: "signIn", reauth: account })}
+            onImport={() => enroll({ method: "import", reauth: account })}
+          />
           <Button
             size="sm"
             variant="destructive"
@@ -256,12 +237,8 @@ export function AntigravityAccountControls({
   return (
     <>
       {children({
-        onAdd: () => {
-          if (!readOnly) {
-            setError(null);
-            setOpen(true);
-          }
-        },
+        onSignIn: () => enroll({ method: "signIn", reauth: null }),
+        onImport: () => enroll({ method: "import", reauth: null }),
         detail,
       })}
       {account && modelAccountId === account.id && (
@@ -273,100 +250,27 @@ export function AntigravityAccountControls({
           onSave={(body) => api.update.mutateAsync({ id: account.id, body })}
         />
       )}
-      <Dialog
-        open={open}
-        onOpenChange={(value) => {
-          if (!busy && !value) close();
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{reconnectId ? "Reconnect Antigravity account" : "Add Antigravity account"}</DialogTitle>
-            <DialogDescription>
-              Sign in with Google or import an Antigravity credential file (agy, OmniRoute or CLIProxyAPI). Only the
-              refresh token is used; credentials are encrypted and never displayed.
-            </DialogDescription>
-          </DialogHeader>
-          <label className="space-y-1 text-sm">
-            Account name
-            <Input value={name} disabled={busy || !!flow || !!reconnectId} onChange={(event) => setName(event.target.value)} />
-          </label>
-          {reconnectId && (
-            <p className="text-xs text-muted-foreground">
-              Reconnect with the same Google account. Its settings, statistics and conversation ownership are kept.
-            </p>
-          )}
-          {flow ? (
-            <div className="space-y-3">
-              <a href={flow.authorizationUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline">
-                Open Google sign-in
-              </a>
-              <p className="text-xs text-muted-foreground">
-                After signing in, paste the full antigravity.google callback URL or its code. Expires{" "}
-                {formatDateTimeInline(flow.expiresAt, dateFormat)}.
-              </p>
-              <Input
-                aria-label="Callback URL or authorization code"
-                type="password"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-              />
-              <Button
-                disabled={readOnly || busy || !code.trim()}
-                onClick={() =>
-                  void run(async () => created(await api.complete.mutateAsync({ state: flow.state, code: code.trim() })))
-                }
-              >
-                Complete sign-in
-              </Button>
-            </div>
-          ) : (
-            <>
-              <Button
-                disabled={readOnly || busy || !name.trim()}
-                onClick={() =>
-                  void run(async () =>
-                    setFlow(await api.start.mutateAsync({ name: name.trim(), sourceId: reconnectId ?? undefined })),
-                  )
-                }
-              >
-                Sign in with Google
-              </Button>
-              <label className="space-y-1 text-sm">
-                Or import a credential file
-                <Input
-                  type="file"
-                  accept=".json,application/json"
-                  disabled={busy}
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
-              <Button
-                variant="outline"
-                disabled={readOnly || busy || !file || !name.trim()}
-                onClick={() =>
-                  void run(async () => {
-                    if (!file) return;
-                    const credentials = await readCredentialFile(file);
-                    created(
-                      reconnectId
-                        ? await api.reconnect.mutateAsync({ id: reconnectId, credentials })
-                        : await api.enroll.mutateAsync({ name: name.trim(), credentials }),
-                    );
-                  })
-                }
-              >
-                Import credentials
-              </Button>
-            </>
-          )}
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ProviderSignInDialog
+        provider="antigravity"
+        open={enrollment?.method === "signIn"}
+        onOpenChange={(open) => !open && setEnrollment(null)}
+        reauth={reauth}
+        start={(name) => api.start.mutateAsync({ name, sourceId: reauthAccount?.id })}
+        complete={(flow, code) => api.complete.mutateAsync({ state: flow.state, code })}
+        onConnected={onCreated}
+      />
+      <CredentialImportDialog
+        provider="antigravity"
+        open={enrollment?.method === "import"}
+        onOpenChange={(open) => !open && setEnrollment(null)}
+        reauth={reauth}
+        importCredentials={(name, credentials) =>
+          reauthAccount
+            ? api.reconnect.mutateAsync({ id: reauthAccount.id, credentials })
+            : api.enroll.mutateAsync({ name, credentials })
+        }
+        onImported={onCreated}
+      />
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}

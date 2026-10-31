@@ -24,13 +24,16 @@ export function useClaude() {
   });
   const start = useMutation({ mutationFn: api.startOAuth });
   const reconnect = useMutation({
-    mutationFn: ({ id, credentials, replaceIdentity }: { id: string; credentials: unknown; replaceIdentity?: boolean }) =>
-      api.reconnectAccount(id, {
-        credentials,
-        acknowledgeExclusiveRefresh: true,
-        replaceIdentity,
-      }),
+    mutationFn: ({ id, credentials }: { id: string; credentials: unknown }) =>
+      api.reconnectAccount(id, { credentials, acknowledgeExclusiveRefresh: true }),
     onSuccess: invalidate,
+  });
+  const confirmReconnect = useMutation({
+    mutationFn: ({ id, pendingId }: { id: string; pendingId: string }) => api.confirmReconnect(id, pendingId),
+    onSuccess: invalidate,
+  });
+  const discardReconnect = useMutation({
+    mutationFn: ({ id, pendingId }: { id: string; pendingId: string }) => api.discardReconnect(id, pendingId),
   });
   const complete = useMutation({
     mutationFn: api.completeOAuth,
@@ -49,5 +52,5 @@ export function useClaude() {
     mutationFn: api.deleteAccount,
     onSuccess: invalidate,
   });
-  return { enroll, reconnect, start, complete, update, refresh, remove };
+  return { enroll, reconnect, confirmReconnect, discardReconnect, start, complete, update, refresh, remove };
 }

@@ -1,23 +1,28 @@
-import { KeyRound, Plus, Server, Upload, type LucideIcon } from "lucide-react";
+import { LogIn, Upload } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ProviderLogo } from "@/components/brand/provider-account-name";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import type { AccountProvider } from "@/components/brand/account-provider";
+
+/** The two enrollment methods every subscription provider offers. */
+export type EnrollmentHandlers = { onSignIn: () => void; onImport: () => void };
 
 export type AddAccountDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImport: () => void;
-  onAddAccount: () => void;
+  codex: EnrollmentHandlers;
+  claude?: EnrollmentHandlers;
+  antigravity?: EnrollmentHandlers;
   onOpenRouter?: () => void;
-  onClaude?: () => void;
-  onAntigravity?: () => void;
   onOpenAICompatible?: () => void;
 };
 
-function AccountOption({ icon: Icon, title, description, onClick }: {
-  icon: LucideIcon;
+function AccountOption({ icon, title, description, onClick }: {
+  icon: ReactNode;
   title: string;
   description: string;
   onClick: () => void;
@@ -25,8 +30,8 @@ function AccountOption({ icon: Icon, title, description, onClick }: {
   return (
     <button type="button" onClick={onClick}
       className="flex w-full cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50">
-        <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50 text-muted-foreground">
+        {icon}
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium">{title}</span>
@@ -36,65 +41,87 @@ function AccountOption({ icon: Icon, title, description, onClick }: {
   );
 }
 
+const methodIcon = (Icon: typeof LogIn) => <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />;
+
+function SubscriptionProvider({ provider, name, handlers, signInDescription, importDescription, select }: {
+  provider: AccountProvider;
+  name: string;
+  handlers: EnrollmentHandlers;
+  signInDescription: string;
+  importDescription: string;
+  select: (action: () => void) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <fieldset className="min-w-0">
+      <legend className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+        <ProviderLogo provider={provider} />
+        {name}
+      </legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <AccountOption icon={methodIcon(LogIn)} title={t("accounts.addDialog.signIn")}
+          description={signInDescription} onClick={() => select(handlers.onSignIn)} />
+        <AccountOption icon={methodIcon(Upload)} title={t("accounts.addDialog.importFile")}
+          description={importDescription} onClick={() => select(handlers.onImport)} />
+      </div>
+    </fieldset>
+  );
+}
+
 export function AddAccountDialog({
-  open, onOpenChange, onImport, onAddAccount, onOpenRouter, onClaude, onAntigravity, onOpenAICompatible,
+  open, onOpenChange, codex, claude, antigravity, onOpenRouter, onOpenAICompatible,
 }: AddAccountDialogProps) {
   const { t } = useTranslation();
   // Close first so Radix releases its pointer lock before the next modal opens.
-  const handleSelect = (action: () => void) => {
+  const select = (action: () => void) => {
     onOpenChange(false);
     requestAnimationFrame(() => action());
   };
+  const apiProviders = onOpenRouter || onOpenAICompatible;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t("accounts.addDialog.title")}</DialogTitle>
-          <DialogDescription>
-            {t("accounts.addDialog.providerDescription", "Choose a provider and how to connect your account.")}
-          </DialogDescription>
+          <DialogDescription>{t("accounts.addDialog.description")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
-          <fieldset className="min-w-0 space-y-2">
-            <legend className="mb-2 text-xs font-semibold text-muted-foreground">Codex</legend>
-            <AccountOption icon={Plus} title={t("accounts.addDialog.oauthTitle")}
-              description={t("accounts.addDialog.oauthDescription")} onClick={() => handleSelect(onAddAccount)} />
-            <AccountOption icon={Upload} title={t("common.actions.import")}
-              description={t("accounts.addDialog.importDescription")} onClick={() => handleSelect(onImport)} />
-          </fieldset>
-          {onClaude && (
-            <fieldset className="min-w-0 space-y-2">
-              <legend className="mb-2 text-xs font-semibold text-muted-foreground">Claude</legend>
-              <AccountOption icon={KeyRound} title={t("accounts.addDialog.claudeTitle", "OAuth or file import")}
-                description={t("accounts.addDialog.claudeDescription", "Sign in with OAuth or import a Claude Code credential file.")}
-                onClick={() => handleSelect(onClaude)} />
+          <section className="space-y-3" aria-labelledby="add-account-subscriptions">
+            <h3 id="add-account-subscriptions" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {t("accounts.addDialog.subscriptions")}
+            </h3>
+            <SubscriptionProvider provider="codex" name="Codex" handlers={codex} select={select}
+              signInDescription={t("accounts.addDialog.codex.signIn")}
+              importDescription={t("accounts.addDialog.codex.import")} />
+            {claude ? (
+              <SubscriptionProvider provider="claude" name="Claude" handlers={claude} select={select}
+                signInDescription={t("accounts.addDialog.claude.signIn")}
+                importDescription={t("accounts.addDialog.claude.import")} />
+            ) : null}
+            {antigravity ? (
+              <SubscriptionProvider provider="antigravity" name="Antigravity" handlers={antigravity} select={select}
+                signInDescription={t("accounts.addDialog.antigravity.signIn")}
+                importDescription={t("accounts.addDialog.antigravity.import")} />
+            ) : null}
+          </section>
+          {apiProviders ? (
+            <fieldset className="min-w-0">
+              <legend className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {t("accounts.addDialog.apiProviders")}
+              </legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {onOpenRouter ? (
+                  <AccountOption icon={<ProviderLogo provider="openrouter" />} title="OpenRouter"
+                    description={t("accounts.addDialog.openRouter")} onClick={() => select(onOpenRouter)} />
+                ) : null}
+                {onOpenAICompatible ? (
+                  <AccountOption icon={<ProviderLogo provider="openai_compatible" />} title="OpenAI-compatible"
+                    description={t("accounts.addDialog.openAICompatible")} onClick={() => select(onOpenAICompatible)} />
+                ) : null}
+              </div>
             </fieldset>
-          )}
-          {onAntigravity && (
-            <fieldset className="min-w-0 space-y-2">
-              <legend className="mb-2 text-xs font-semibold text-muted-foreground">Antigravity</legend>
-              <AccountOption icon={KeyRound} title={t("accounts.addDialog.antigravityTitle", "OAuth or file import")}
-                description={t("accounts.addDialog.antigravityDescription", "Sign in with Google or import an Antigravity credential file.")}
-                onClick={() => handleSelect(onAntigravity)} />
-            </fieldset>
-          )}
-          {onOpenRouter && (
-            <fieldset className="min-w-0 space-y-2">
-              <legend className="mb-2 text-xs font-semibold text-muted-foreground">OpenRouter</legend>
-              <AccountOption icon={KeyRound} title={t("accounts.addDialog.openRouterTitle", "API key")}
-                description={t("accounts.addDialog.openRouterDescription", "Connect an API key and choose models to make available to clients.")}
-                onClick={() => handleSelect(onOpenRouter)} />
-            </fieldset>
-          )}
-          {onOpenAICompatible && (
-            <fieldset className="min-w-0 space-y-2">
-              <legend className="mb-2 text-xs font-semibold text-muted-foreground">OpenAI-compatible</legend>
-              <AccountOption icon={Server} title={t("accounts.addDialog.openAICompatibleTitle", "API endpoint")}
-                description={t("accounts.addDialog.openAICompatibleDescription", "Connect any OpenAI-compatible API, such as LiteLLM, and define its models.")}
-                onClick={() => handleSelect(onOpenAICompatible)} />
-            </fieldset>
-          )}
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

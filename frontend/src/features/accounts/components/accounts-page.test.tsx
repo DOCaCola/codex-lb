@@ -32,7 +32,7 @@ vi.mock("@/features/openrouter/use-openrouter", () => ({
 const claudeMocks = vi.hoisted(() => ({ accounts: [] as import("@/features/claude/api").ClaudeAccount[] }));
 vi.mock("@/features/claude/use-claude", () => ({
   useClaudeAccounts: () => ({ data: { accounts: claudeMocks.accounts }, error: null, isLoading: false }),
-  useClaude: () => ({ enroll: idleMutation(), reconnect: idleMutation(), start: idleMutation(), complete: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
+  useClaude: () => ({ enroll: idleMutation(), reconnect: idleMutation(), confirmReconnect: idleMutation(), discardReconnect: idleMutation(), start: idleMutation(), complete: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
 }));
 
 vi.mock("@/features/accounts/hooks/use-accounts", () => ({
@@ -177,7 +177,7 @@ describe("AccountsPage", () => {
     render(<MemoryRouter><AccountsPage /></MemoryRouter>);
     expect(screen.queryByRole("button", { name: "Add OpenRouter account" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add account" }));
-    await userEvent.click(within(screen.getByRole("group", { name: "OpenRouter" })).getByRole("button", { name: /API key/ }));
+    await userEvent.click(within(screen.getByRole("group", { name: "API providers" })).getByRole("button", { name: /OpenRouter/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Add OpenRouter account" })).toBeVisible());
     expect(screen.getByLabelText("Inference API key")).toHaveAttribute("type", "password");
   });

@@ -99,7 +99,8 @@ async def start_reconnect(client, source_id):
     return response.json()["state"]
 
 
-async def reconnect(client, monkeypatch, source_id, *, oauth=False, replace_identity=True, state=None):
+async def reconnect(client, monkeypatch, source_id, *, oauth=False, confirm=True, state=None):
+    """Reconnect, confirming the held sign-in when its identity differs."""
     credentials = Credentials(
         access_token="replacement-access",
         refresh_token="replacement-refresh",
@@ -109,31 +110,31 @@ async def reconnect(client, monkeypatch, source_id, *, oauth=False, replace_iden
     if oauth:
         state = state or await start_reconnect(client, source_id)
         monkeypatch.setattr(ClaudeClient, "exchange", AsyncMock(return_value=credentials))
-        return await client.post(
+        response = await client.post(
             "/api/claude-accounts/oauth/complete",
+            json={"state": state, "code": "new-code"},
+        )
+    else:
+        response = await client.post(
+            f"/api/claude-accounts/{source_id}/reconnect",
             json={
-                "state": state,
-                "code": "new-code",
-                "replaceIdentity": replace_identity,
+                "acknowledgeExclusiveRefresh": True,
+                "credentials": {
+                    "claudeAiOauth": {
+                        "accessToken": "replacement-access",
+                        "refreshToken": "replacement-refresh",
+                        "expiresAt": int(credentials.expires_at.timestamp() * 1000),
+                        "scopes": credentials.scopes,
+                        "subscriptionType": "claude_pro",
+                        "rateLimitTier": "default_claude_pro",
+                    }
+                },
             },
         )
-    return await client.post(
-        f"/api/claude-accounts/{source_id}/reconnect",
-        json={
-            "acknowledgeExclusiveRefresh": True,
-            "replaceIdentity": replace_identity,
-            "credentials": {
-                "claudeAiOauth": {
-                    "accessToken": "replacement-access",
-                    "refreshToken": "replacement-refresh",
-                    "expiresAt": int(credentials.expires_at.timestamp() * 1000),
-                    "scopes": credentials.scopes,
-                    "subscriptionType": "claude_pro",
-                    "rateLimitTier": "default_claude_pro",
-                }
-            },
-        },
-    )
+    if confirm and response.status_code == 409:
+        pending_id = response.json()["error"]["details"]["pendingId"]
+        return await client.post(f"/api/claude-accounts/{source_id}/pending-reconnects/{pending_id}/confirm")
+    return response
 
 
 @pytest.mark.parametrize("oauth", [False, True], ids=["import", "oauth"])

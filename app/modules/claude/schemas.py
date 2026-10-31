@@ -17,10 +17,12 @@ CLAUDE_BASE_URL = "https://api.anthropic.com"
 
 class ProfileAccount(BaseModel):
     uuid: str = Field(min_length=1)
+    email: str | None = None
 
 
 class ProfileOrganization(BaseModel):
     uuid: str = Field(min_length=1)
+    name: str | None = None
 
 
 class AuthenticatedProfile(BaseModel):
@@ -300,6 +302,8 @@ class ClaudeAccountResponse(DashboardModel):
     max_concurrency: int | None
     id: str
     name: str
+    account_email: str | None
+    organization_name: str | None
     is_enabled: bool
     credential_status: str
     expires_at: datetime
@@ -319,9 +323,23 @@ class OAuthStart(DashboardModel):
 
 
 class ClaudeReconnect(DashboardModel):
-    replace_identity: bool = False
     credentials: CredentialFile = Field(repr=False)
     acknowledge_exclusive_refresh: Literal[True]
+
+
+class IdentitySummary(DashboardModel):
+    email: str | None
+    organization: str | None
+    plan: ClaudePlanType
+
+
+class PendingReconnectView(DashboardModel):
+    """A held reconnect: what the operator confirms before the saved identity is replaced."""
+
+    pending_id: str
+    expires_at: datetime
+    saved: IdentitySummary
+    incoming: IdentitySummary
 
 
 class OAuthStarted(DashboardModel):
@@ -331,6 +349,5 @@ class OAuthStarted(DashboardModel):
 
 
 class OAuthComplete(DashboardModel):
-    replace_identity: bool = False
     state: str = Field(min_length=32, max_length=128)
     code: SecretStr = Field(min_length=1, max_length=4096)

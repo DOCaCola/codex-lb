@@ -9,7 +9,7 @@ from app.core.auth.dependencies import (
     set_dashboard_error_format,
     validate_dashboard_session,
 )
-from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
+from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.dependencies import get_claude_service
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.identity import ReconnectIdentityMismatch
@@ -44,6 +44,11 @@ def _audit(request: Request, principal: DashboardPrincipal, action: str, source_
         actor=AuditActor.from_principal(principal),
         target=AuditTarget("model_source", source_id),
     )
+
+
+def _held(exc: ReconnectIdentityMismatch) -> DashboardConflictError:
+    """A reconnect with a different identity, answered with what the operator confirms."""
+    return DashboardConflictError(str(exc), code=exc.code, details=exc.pending.model_dump(mode="json", by_alias=True))
 
 
 @router.get("", response_model=ClaudeAccountsResponse)
@@ -128,7 +133,7 @@ async def complete_oauth(
     try:
         result = await service.complete_oauth(payload)
     except ReconnectIdentityMismatch as exc:
-        raise DashboardBadRequestError(str(exc), code=exc.code) from exc
+        raise _held(exc) from exc
     except ClaudeError as exc:
         raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_account_created", result.id)
@@ -204,11 +209,43 @@ async def reconnect_account(
     except ModelSourceNotFoundError as exc:
         raise DashboardNotFoundError(str(exc)) from exc
     except ReconnectIdentityMismatch as exc:
-        raise DashboardBadRequestError(str(exc), code=exc.code) from exc
+        raise _held(exc) from exc
     except ClaudeError as exc:
         raise DashboardBadRequestError(str(exc), code="claude_error") from exc
     _audit(request, principal, "claude_account_reconnected", source_id)
     return result
+
+
+@router.post("/{source_id}/pending-reconnects/{pending_id}/confirm", response_model=ClaudeAccountResponse)
+async def confirm_reconnect(
+    source_id: str,
+    pending_id: str,
+    request: Request,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+    service: ClaudeService = Depends(get_claude_service),
+) -> ClaudeAccountResponse:
+    try:
+        result = await service.confirm_reconnect(source_id, pending_id)
+    except ModelSourceNotFoundError as exc:
+        raise DashboardNotFoundError(str(exc)) from exc
+    except ClaudeError as exc:
+        raise DashboardBadRequestError(str(exc), code="claude_error") from exc
+    _audit(request, principal, "claude_identity_replaced", source_id)
+    return result
+
+
+@router.delete("/{source_id}/pending-reconnects/{pending_id}", status_code=204)
+async def discard_reconnect(
+    source_id: str,
+    pending_id: str,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+    service: ClaudeService = Depends(get_claude_service),
+) -> Response:
+    try:
+        await service.discard_reconnect(source_id, pending_id)
+    except ModelSourceNotFoundError as exc:
+        raise DashboardNotFoundError(str(exc)) from exc
+    return Response(status_code=204)
 
 
 @router.delete("/{source_id}", status_code=204)

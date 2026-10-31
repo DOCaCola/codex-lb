@@ -18,6 +18,7 @@ from app.db.models import (
     ClaudeAccount,
     ClaudeCooldown,
     ClaudeOAuthFlow,
+    ClaudePendingReconnect,
     ClaudeSessionOwner,
     ModelSource,
     ModelSourceModel,
@@ -25,7 +26,7 @@ from app.db.models import (
 from app.modules.claude.auth import ClaudeAuth, grant_fingerprint
 from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.client import ClaudeClient
-from app.modules.claude.credentials import PKCE, ClaudeError, encrypt_credentials
+from app.modules.claude.credentials import PKCE, ClaudeError, decrypt_credentials, encrypt_credentials
 from app.modules.claude.identity import ReconnectIdentityMismatch, authenticated_profile, profile_identity
 from app.modules.claude.metadata import (
     CLAIM_LEASE,
@@ -50,11 +51,13 @@ from app.modules.claude.schemas import (
     ClaudeReconnect,
     ClaudeUpdate,
     Credentials,
+    IdentitySummary,
     MetadataEndpoint,
     MetadataRefreshState,
     OAuthComplete,
     OAuthStart,
     OAuthStarted,
+    PendingReconnectView,
     ProfileAccount,
     ProfileOrganization,
     SubscriptionMetadata,
@@ -65,6 +68,9 @@ from app.modules.claude.version import ClaudeVersionService
 from app.modules.model_sources.service import ModelSourceNotFoundError
 
 logger = logging.getLogger(__name__)
+
+#: How long a reconnect with a different identity waits for the operator's decision.
+PENDING_RECONNECT_TTL = timedelta(minutes=10)
 
 
 class ClaudeService:
@@ -120,11 +126,7 @@ class ClaudeService:
         )
         if flow.source_id is not None:
             assert flow.generation is not None
-            return await self._replace(
-                flow.source_id, flow.generation, credentials, replace_identity=payload.replace_identity
-            )
-        if payload.replace_identity:
-            raise ClaudeError("Identity replacement requires an existing account")
+            return await self._replace(flow.source_id, flow.generation, credentials)
         return await self._create(flow.name, credentials)
 
     async def _create(
@@ -158,6 +160,8 @@ class ClaudeService:
             grant_fingerprint=grant_fingerprint(credentials),
             identity_fingerprint=profile_identity(profile) if profile else None,
             provider_account_uuid=profile.account.uuid if profile else None,
+            account_email=profile.account.email if profile else None,
+            organization_name=profile.organization.name if profile else None,
             expires_at=credentials.expires_at.replace(tzinfo=None),
             credential_status="ready",
             state_json=AccountState(subscription=subscription).model_dump_json(),
@@ -178,8 +182,27 @@ class ClaudeService:
             row.generation,
             imported.credentials(),
             imported.subscription_metadata(),
-            replace_identity=payload.replace_identity,
         )
+
+    async def confirm_reconnect(self, source_id: str, pending_id: str) -> ClaudeAccountResponse:
+        await self._get(source_id)
+        pending = await self.repository.take_pending_reconnect(source_id, pending_id, utcnow())
+        if pending is None:
+            raise ClaudeError("This sign-in is no longer awaiting confirmation; sign in again")
+        subscription = (
+            SubscriptionMetadata.model_validate_json(pending.subscription_json) if pending.subscription_json else None
+        )
+        return await self._replace(
+            source_id,
+            pending.generation,
+            decrypt_credentials(pending.credentials_encrypted, self.encryptor),
+            subscription,
+            confirmed_identity=pending.identity_fingerprint,
+        )
+
+    async def discard_reconnect(self, source_id: str, pending_id: str) -> None:
+        await self._get(source_id)
+        await self.repository.take_pending_reconnect(source_id, pending_id, utcnow())
 
     async def _replace(
         self,
@@ -188,23 +211,22 @@ class ClaudeService:
         credentials: Credentials,
         subscription: SubscriptionMetadata | None = None,
         *,
-        replace_identity: bool = False,
+        confirmed_identity: str | None = None,
     ) -> ClaudeAccountResponse:
+        """Install new credentials; an identity change is held unless it is the one the operator confirmed."""
         row = await self._get(source_id)
-        if row.identity_fingerprint is None and not replace_identity:
-            raise ClaudeError(
-                "Account identity has not been verified; refresh it before reconnecting, or remove it and enroll again"
-            )
+        if row.generation != generation:
+            raise ClaudeError("Claude credentials changed during reconnect; start a new enrollment")
         if credentials.expires_at <= datetime.now(UTC):
             raise ClaudeError("Reconnect requires a current credential file or a new OAuth sign-in")
         profile = await authenticated_profile(self.client, self.repository, credentials)
         identity = profile_identity(profile)
         previous_identity = row.identity_fingerprint
         identity_changed = identity != previous_identity
-        if identity_changed and not replace_identity:
-            error = ReconnectIdentityMismatch(row.provider_account_uuid, profile.account.uuid)
-            logger.warning("claude_reconnect_rejected source_id=%s reason=%s", source_id, error.code)
-            raise error
+        if identity_changed and identity != confirmed_identity:
+            if confirmed_identity is not None:
+                raise ClaudeError("This sign-in no longer authenticates the confirmed identity; sign in again")
+            raise await self._hold_reconnect(row, credentials, subscription, profile, identity)
         try:
             changed = await self.repository.session.scalar(
                 update(ClaudeAccount)
@@ -217,6 +239,8 @@ class ClaudeService:
                     credentials_encrypted=encrypt_credentials(credentials, self.encryptor),
                     grant_fingerprint=grant_fingerprint(credentials),
                     provider_account_uuid=profile.account.uuid,
+                    account_email=profile.account.email,
+                    organization_name=profile.organization.name,
                     identity_fingerprint=identity,
                     expires_at=credentials.expires_at.replace(tzinfo=None),
                     credential_status="ready",
@@ -262,6 +286,74 @@ class ClaudeService:
         if identity_changed:
             logger.info("claude_identity_replaced source_id=%s generation=%d", source_id, generation + 1)
         return self._response(await self._get(source_id))
+
+    async def _hold_reconnect(
+        self,
+        row: ClaudeAccount,
+        credentials: Credentials,
+        subscription: SubscriptionMetadata | None,
+        profile: AuthenticatedProfile,
+        identity: str,
+    ) -> ReconnectIdentityMismatch:
+        """Keep credentials of a different identity until the operator confirms or discards them."""
+        incoming_subscription = subscription or await self._incoming_subscription(row.source_id, credentials, profile)
+        source_id = row.source_id
+        saved = IdentitySummary(
+            email=row.account_email,
+            organization=row.organization_name,
+            plan=subscription_plan(AccountState.model_validate_json(row.state_json).subscription),
+        )
+        saved_account_uuid = row.provider_account_uuid if row.identity_fingerprint is not None else None
+        now = utcnow()
+        pending_id = f"crp_{uuid.uuid4().hex}"
+        expires_at = now + PENDING_RECONNECT_TTL
+        pending = ClaudePendingReconnect(
+            id=pending_id,
+            source_id=source_id,
+            generation=row.generation,
+            identity_fingerprint=identity,
+            credentials_encrypted=encrypt_credentials(credentials, self.encryptor),
+            subscription_json=incoming_subscription.model_dump_json() if incoming_subscription else None,
+            expires_at=expires_at,
+        )
+        session = self.repository.session
+        await session.execute(delete(ClaudePendingReconnect).where(ClaudePendingReconnect.expires_at <= now))
+        session.add(pending)
+        await session.commit()
+        view = PendingReconnectView(
+            pending_id=pending_id,
+            expires_at=expires_at.replace(tzinfo=UTC),
+            saved=saved,
+            incoming=IdentitySummary(
+                email=profile.account.email,
+                organization=profile.organization.name,
+                plan=subscription_plan(incoming_subscription),
+            ),
+        )
+        error = ReconnectIdentityMismatch(saved_account_uuid, profile.account.uuid, view)
+        logger.warning("claude_reconnect_held source_id=%s reason=%s", source_id, error.code)
+        return error
+
+    async def _incoming_subscription(
+        self, source_id: str, credentials: Credentials, profile: AuthenticatedProfile
+    ) -> SubscriptionMetadata | None:
+        """The plan of a sign-in that carries none, so the operator can compare it; unknown when unreadable."""
+        version = await ClaudeVersionService(self.repository.session).snapshot()
+        try:
+            bootstrap = await self.client.bootstrap(credentials.access_token.get_secret_value(), version.version)
+        except ClaudeError:
+            logger.info("claude_reconnect_plan_unavailable source_id=%s", source_id)
+            return None
+        account = bootstrap.oauth_account
+        if (account.account_uuid, account.organization_uuid) != (profile.account.uuid, profile.organization.uuid):
+            logger.info("claude_reconnect_plan_unavailable source_id=%s reason=identity", source_id)
+            return None
+        return SubscriptionMetadata(
+            subscription_type=account.organization_type,
+            rate_limit_tier=account.organization_rate_limit_tier,
+            source="bootstrap",
+            observed_at=datetime.now(UTC),
+        )
 
     async def update(self, source_id: str, payload: ClaudeUpdate) -> ClaudeAccountResponse:
         row = await self._get(source_id)
@@ -487,6 +579,8 @@ class ClaudeService:
             max_concurrency=row.source.max_concurrency,
             id=row.source_id,
             name=row.source.name,
+            account_email=row.account_email,
+            organization_name=row.organization_name,
             is_enabled=row.source.is_enabled,
             credential_status=status,
             expires_at=row.expires_at.replace(tzinfo=UTC),

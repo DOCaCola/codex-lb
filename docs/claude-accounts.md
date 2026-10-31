@@ -94,7 +94,7 @@ Model-specific Opus/Sonnet weekly rows appear only when
 reported after a successful usage refresh; missing rows do not imply unlimited
 quota or unavailable models. Known stale observations remain visible.
 
-Pause/resume, quota monitoring, model selection and reconnect are in the shared
+Pause/resume, quota monitoring, model selection and **Re-authenticate** are in the shared
 account detail. **Models** opens the searchable selection dialog; provider
 capacity and CLI-version controls are under **Provider settings**. See
 [shared model controls](../openspec/specs/account-model-controls/spec.md).
@@ -103,11 +103,15 @@ Claude pool, using the same strategy-specific semantics as Codex. Hard owners an
 eligible conversation affinity still take precedence. Unknown quota is not zero usage. Model-specific exhaustion only
 blocks applicable models. API-equivalent costs are not subscription charges.
 
-An uncertain rotating refresh requires reconnect with a fresh grant. Reconnect
-checks that the account and organization match. To deliberately replace a changed
-identity on the same dashboard entry, select **Replace the saved identity if this
-sign-in differs** in the reconnect dialog, then sign in or import current credentials.
-The option is off by default. Add a separate entry instead to keep both accounts.
+An uncertain rotating refresh requires re-authentication with a fresh grant:
+**Re-authenticate** offers **Sign in again** or **Import credential file**. Both check
+that the account and organization match the saved identity. A sign-in whose
+identity differs is held by the server for ten minutes and the dashboard shows the
+saved and new account, organization and plan side by side. **Replace saved identity**
+applies the held sign-in without a second browser round-trip; **Cancel** discards it
+and leaves the saved credentials unchanged. Add a separate entry instead to keep
+both accounts. The saved email and organization are recorded at each sign-in, so
+entries enrolled earlier show them after their next one.
 
 Replacement keeps the account ID, name, colour, pause state, routing policy, model
 selections and historical usage. It clears current quota/subscription observations,
@@ -123,12 +127,12 @@ its history. A reconnect with unchanged identity retains ownership.
 Importing an expired file for a new account defers identity verification until refresh succeeds;
 replacement requires current credentials and a verified profile.
 
-Reconnect errors distinguish a different authenticated account
+Held reconnects distinguish a different authenticated account
 (`claude_reconnect_account_mismatch`) from the same account under a different
 organization (`claude_reconnect_organization_changed`). A legacy entry without a
 saved account UUID reports `claude_reconnect_identity_unverified` if its combined
-identity differs. Rejected reconnects leave existing credentials and ownership
-unchanged; each of these errors names the replacement option. Expiry or a
+identity differs. Until confirmed, existing credentials and ownership are
+unchanged. Expiry or a
 subscription-tier change alone does not block reconnect.
 
 The global version control follows stable Claude Code releases daily, or can pin

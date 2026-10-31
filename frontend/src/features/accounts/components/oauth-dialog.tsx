@@ -1,8 +1,8 @@
-import { Check, CircleAlert, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useState, type MouseEvent } from "react";
+import { Check, CircleAlert, ExternalLink, Loader2 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 
+import { ProviderLogo } from "@/components/brand/provider-account-name";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,8 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { OAuthState } from "@/features/accounts/schemas";
+import { CopyButton, OAuthLinkStage } from "@/features/accounts/components/oauth-link-stage";
 import { formatCountdown } from "@/utils/formatters";
-import { copyToClipboard } from "@/utils/clipboard";
 
 type Stage = "intro" | "browser" | "device" | "success" | "error";
 
@@ -25,118 +25,6 @@ function getStage(state: OAuthState): Stage {
   if (state.method === "browser" && (state.status === "pending" || state.status === "starting")) return "browser";
   if (state.method === "device" && (state.status === "pending" || state.status === "starting")) return "device";
   return "intro";
-}
-
-function CopyButton({ text }: { text: string }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async (event: MouseEvent<HTMLButtonElement>) => {
-    const trigger = event.currentTarget;
-    const dialogContainer = trigger.closest("[role='dialog']");
-    const blurAfterCopy = event.detail > 0;
-
-    try {
-      const copiedToClipboard = await copyToClipboard(text, {
-        container: dialogContainer instanceof HTMLElement ? dialogContainer : undefined,
-      });
-      if (!copiedToClipboard) {
-        toast.error(t("components.copyButton.toasts.failed"));
-        return;
-      }
-
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error(t("components.copyButton.toasts.failed"));
-    } finally {
-      if (blurAfterCopy) {
-        trigger.blur();
-      }
-    }
-  }, [text, t]);
-
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      className="h-7 cursor-pointer gap-1 px-2 text-xs disabled:cursor-not-allowed"
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={(event) => void handleCopy(event)}
-    >
-      {copied ? (
-        <>
-          <Check className="h-3 w-3" />
-          {t("components.copyButton.copiedBang")}
-        </>
-      ) : (
-        <>
-          <Copy className="h-3 w-3" />
-          {t("components.copyButton.copy")}
-        </>
-      )}
-    </Button>
-  );
-}
-
-type ManualCallbackInputProps = {
-  onSubmit: (callbackUrl: string) => Promise<void>;
-  disabled?: boolean;
-};
-
-function ManualCallbackInput(props: ManualCallbackInputProps) {
-  return <ManualCallbackInputBody key={props.disabled ? "disabled" : "enabled"} {...props} />;
-}
-
-function ManualCallbackInputBody({
-  onSubmit,
-  disabled = false,
-}: ManualCallbackInputProps) {
-  const { t } = useTranslation();
-  const [callbackUrl, setCallbackUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleSubmit = useCallback(async () => {
-    if (!callbackUrl.trim()) return;
-    setSubmitting(true);
-    try {
-      await onSubmit(callbackUrl.trim());
-      setCallbackUrl("");
-    } catch {
-      // Parent state renders the error stage/message.
-    } finally {
-      setSubmitting(false);
-    }
-  }, [callbackUrl, onSubmit]);
-
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs font-medium text-muted-foreground">
-        {t("accounts.oauth.manualCallback.title")}
-      </p>
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          aria-label={t("accounts.oauth.manualCallback.aria")}
-          value={callbackUrl}
-          onChange={(e) => setCallbackUrl(e.target.value)}
-          disabled={disabled}
-          placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-          className="flex-1 rounded-lg border bg-muted/20 px-3 py-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
-        />
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 cursor-pointer px-3 text-xs disabled:cursor-not-allowed"
-          disabled={disabled || !callbackUrl.trim() || submitting}
-          onClick={() => void handleSubmit()}
-        >
-          {submitting ? t("common.states.submitting") : t("common.actions.submit")}
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 export type OauthDialogProps = {
@@ -186,7 +74,8 @@ export function OauthDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <ProviderLogo provider="codex" />
             {stage === "success"
               ? t("accounts.oauth.titles.success")
               : stage === "error"
@@ -236,52 +125,18 @@ export function OauthDialog({
 
         {/* Browser stage */}
         {stage === "browser" ? (
-          <div className="min-w-0 space-y-3 text-sm">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-muted-foreground">{t("accounts.oauth.authorizationUrl")}</p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 cursor-pointer gap-1 px-2 text-xs disabled:cursor-not-allowed"
-                  disabled={browserRefreshInProgress}
-                  onClick={handleRefreshBrowserLink}
-                >
-                  {browserRefreshInProgress ? (
-                    <>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      {t("common.states.refreshing")}
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-3 w-3" />
-                      {t("accounts.oauth.refreshLink")}
-                    </>
-                  )}
-                </Button>
-              </div>
-              {browserRefreshInProgress ? (
-                <div className="flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>{t("accounts.oauth.generatingLink")}</span>
-                </div>
-              ) : state.authorizationUrl ? (
-                <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2">
-                  <p className="min-w-0 flex-1 truncate font-mono text-xs">{state.authorizationUrl}</p>
-                  <CopyButton text={state.authorizationUrl} />
-                </div>
-              ) : null}
-              <p className="text-xs text-muted-foreground">
-                {t("accounts.oauth.refreshHint")}
-              </p>
-            </div>
-            <ManualCallbackInput onSubmit={onManualCallback} disabled={browserRefreshInProgress} />
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>{t("accounts.oauth.waitingComplete")}</span>
-            </div>
-          </div>
+          <OAuthLinkStage
+            authorizationUrl={state.authorizationUrl}
+            refreshing={browserRefreshInProgress}
+            onRefresh={handleRefreshBrowserLink}
+            callback={{
+              title: t("accounts.oauth.manualCallback.title"),
+              aria: t("accounts.oauth.manualCallback.aria"),
+              placeholder: "http://localhost:1455/auth/callback?code=...&state=...",
+            }}
+            onSubmitCallback={onManualCallback}
+            waiting={t("accounts.oauth.waitingComplete")}
+          />
         ) : null}
 
         {/* Device stage */}

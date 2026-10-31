@@ -22,6 +22,8 @@ export function createClaudeAccount(overrides: Partial<ClaudeAccount> = {}): Cla
     routingPolicy: "normal",
     id: "claude-test",
     name: "Claude Test",
+    accountEmail: null,
+    organizationName: null,
     isEnabled: true,
     credentialStatus: "ready",
     expiresAt: "2026-09-25T20:00:00Z",

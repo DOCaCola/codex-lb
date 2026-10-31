@@ -3,6 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
+import { ProviderLogo } from "@/components/brand/provider-account-name";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -95,7 +96,10 @@ function ModelSourceCreateDialogContent({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-clip p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 px-6 pt-6 pr-12 pb-2">
-          <DialogTitle>{t("modelSources.createDialog.title")}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <ProviderLogo provider="openai_compatible" />
+            {t("modelSources.createDialog.title")}
+          </DialogTitle>
           <DialogDescription>
             {t("modelSources.createDialog.description")}
           </DialogDescription>
@@ -131,6 +135,14 @@ function ModelSourceCreateDialogContent({
               ) : null}
             </div>
             <DialogFooter className="shrink-0 border-t px-6 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || form.formState.isSubmitting}
+                onClick={() => onOpenChange(false)}
+              >
+                {t("common.cancel")}
+              </Button>
               <Button
                 type="submit"
                 disabled={busy || form.formState.isSubmitting}

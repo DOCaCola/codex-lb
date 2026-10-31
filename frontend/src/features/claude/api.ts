@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { del, get, patch, post } from "@/lib/api-client";
+import { ApiError, del, get, patch, post } from "@/lib/api-client";
 
 export const SelectionSchema = z.object({
   model: z.string(),
@@ -15,6 +15,9 @@ export const ClaudeAccountSchema = z.object({
   maxConcurrency: z.number().int().positive().nullable(),
   id: z.string(),
   name: z.string(),
+  /** Email and organization of the last authenticated profile; unknown until the next sign-in. */
+  accountEmail: z.string().nullable(),
+  organizationName: z.string().nullable(),
   isEnabled: z.boolean(),
   credentialStatus: z.string(),
   expiresAt: z.string(),
@@ -100,7 +103,7 @@ export const startOAuth = (body: {
   acknowledgeExclusiveRefresh: true;
   sourceId?: string;
 }) => post(`${path}/oauth/start`, OAuthStartedSchema, { body });
-export const completeOAuth = (body: { state: string; code: string; replaceIdentity?: boolean }) =>
+export const completeOAuth = (body: { state: string; code: string }) =>
   post(`${path}/oauth/complete`, ClaudeAccountSchema, { body });
 export const updateAccount = (id: string, body: ClaudeUpdate) =>
   patch(`${path}/${encodeURIComponent(id)}`, ClaudeAccountSchema, { body });
@@ -110,8 +113,45 @@ export const deleteAccount = (id: string) =>
   del(`${path}/${encodeURIComponent(id)}`);
 export const reconnectAccount = (
   id: string,
-  body: { credentials: unknown; acknowledgeExclusiveRefresh: true; replaceIdentity?: boolean },
+  body: { credentials: unknown; acknowledgeExclusiveRefresh: true },
 ) =>
   post(`${path}/${encodeURIComponent(id)}/reconnect`, ClaudeAccountSchema, {
     body,
   });
+
+const IdentitySummarySchema = z.object({
+  email: z.string().nullable(),
+  organization: z.string().nullable(),
+  plan: ClaudeAccountSchema.shape.planType,
+});
+const HeldReconnectSchema = z.object({
+  code: z.enum([
+    "claude_reconnect_account_mismatch",
+    "claude_reconnect_organization_changed",
+    "claude_reconnect_identity_unverified",
+  ]),
+  message: z.string(),
+  details: z.object({
+    pendingId: z.string(),
+    expiresAt: z.string(),
+    saved: IdentitySummarySchema,
+    incoming: IdentitySummarySchema,
+  }),
+});
+export type IdentitySummary = z.infer<typeof IdentitySummarySchema>;
+/** A reconnect whose identity differs, held by the server until it is confirmed or discarded. */
+export type HeldReconnect = { code: z.infer<typeof HeldReconnectSchema>["code"]; message: string } & z.infer<
+  typeof HeldReconnectSchema
+>["details"];
+
+export function heldReconnectFrom(error: unknown): HeldReconnect | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const parsed = HeldReconnectSchema.safeParse(error.details);
+  return parsed.success ? { code: parsed.data.code, message: parsed.data.message, ...parsed.data.details } : null;
+}
+
+const pendingPath = (id: string, pendingId: string) =>
+  `${path}/${encodeURIComponent(id)}/pending-reconnects/${encodeURIComponent(pendingId)}`;
+export const confirmReconnect = (id: string, pendingId: string) =>
+  post(`${pendingPath(id, pendingId)}/confirm`, ClaudeAccountSchema);
+export const discardReconnect = (id: string, pendingId: string) => del(pendingPath(id, pendingId));

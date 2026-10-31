@@ -54,11 +54,11 @@ describe("ImportDialog", () => {
 
     expect(screen.getByText("first.json")).toBeInTheDocument();
     expect(screen.getByText("second.json")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Import" }));
+    await user.click(screen.getByRole("button", { name: "Import 2 accounts" }));
 
     await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
     expect(onImport).toHaveBeenNthCalledWith(1, firstFile);
-    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Import/ })).toBeDisabled();
 
     expect(input).toBeDisabled();
     await user.keyboard("{Escape}");
@@ -102,7 +102,7 @@ describe("ImportDialog", () => {
     );
 
     await user.upload(screen.getByLabelText(/auth\.json file/i), files);
-    await user.click(screen.getByRole("button", { name: "Import" }));
+    await user.click(screen.getByRole("button", { name: "Import 3 accounts" }));
 
     await waitFor(() => expect(onImport).toHaveBeenCalledTimes(2));
     expect(onImport.mock.calls.map(([file]) => file.name)).toEqual([
@@ -114,7 +114,7 @@ describe("ImportDialog", () => {
     expect(screen.getByText("failed.json")).toBeInTheDocument();
     expect(screen.getByText("unattempted.json")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Import" }));
+    await user.click(screen.getByRole("button", { name: "Import 2 accounts" }));
 
     await waitFor(() => expect(onImport).toHaveBeenCalledTimes(4));
     expect(onImport.mock.calls.map(([file]) => file.name)).toEqual([

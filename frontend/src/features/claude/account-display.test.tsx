@@ -29,6 +29,8 @@ const account: ClaudeAccount = {
   routingPolicy: "normal",
   id: "claude-test",
   name: "Private Claude",
+  accountEmail: "doca@example.com",
+  organizationName: "DOCa Org",
   isEnabled: true,
   credentialStatus: "ready",
   expiresAt: "2026-09-25T20:00:00Z",
@@ -253,48 +255,102 @@ describe("Claude shared account surfaces", () => {
           readOnly={false}
           onCreated={vi.fn()}
         >
-          {({ onAdd }) => <button onClick={onAdd}>Add Claude</button>}
+          {({ onSignIn }) => <button onClick={onSignIn}>Add Claude</button>}
         </ClaudeAccountControls>
       </QueryClientProvider>,
     );
     await userEvent.click(screen.getByRole("button", { name: "Add Claude" }));
-    await userEvent.type(screen.getByLabelText("Account name"), "Research");
+    await userEvent.type(await screen.findByLabelText("Account name"), "Research");
     expect(
-      screen.getByRole("button", { name: "Sign in with Claude" }),
+      screen.getByRole("button", { name: "Start sign-in" }),
     ).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox"));
     expect(
-      screen.getByRole("button", { name: "Sign in with Claude" }),
+      screen.getByRole("button", { name: "Start sign-in" }),
     ).toBeEnabled();
   });
-  it.each([false, true])("requires explicit identity replacement consent (%s)", async (replaceIdentity) => {
-    const completions: unknown[] = [];
-    server.use(
-      http.post("/api/claude-accounts/oauth/start", () => HttpResponse.json({
-        state: "test-state", authorizationUrl: "https://claude.ai/authorize", expiresAt: "2030-01-01T00:00:00Z",
-      })),
-      http.post("/api/claude-accounts/oauth/complete", async ({ request }) => {
-        completions.push(await request.json());
-        return HttpResponse.json(account);
-      }),
-    );
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}>
-      <ClaudeAccountControls account={account} readOnly={false} onCreated={vi.fn()}>
-        {({ detail }) => detail}
-      </ClaudeAccountControls>
-    </QueryClientProvider>);
-    await userEvent.click(screen.getByRole("button", { name: "Reconnect" }));
-    const replace = screen.getByRole("checkbox", { name: /Replace the saved identity/ });
-    expect(replace).not.toBeChecked();
-    if (replaceIdentity) await userEvent.click(replace);
-    await userEvent.click(screen.getByRole("checkbox", { name: /I will not use this refresh grant/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Sign in with Claude" }));
-    await userEvent.type(await screen.findByLabelText("Authorization code"), "new-code");
-    await userEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
-    expect(completions).toEqual([{ state: "test-state", code: "new-code", replaceIdentity }]);
-    await userEvent.click(screen.getByRole("button", { name: "Reconnect" }));
-    expect(screen.getByRole("checkbox", { name: /Replace the saved identity/ })).not.toBeChecked();
+  describe("re-authentication", () => {
+    const held = {
+      error: {
+        code: "claude_reconnect_organization_changed",
+        message: "Confirm to replace the saved organization.",
+        details: {
+          pendingId: "pending-1",
+          expiresAt: "2030-01-01T00:10:00Z",
+          saved: { email: "doca@example.com", organization: "DOCa Org", plan: "max" },
+          incoming: { email: "doca@example.com", organization: "DOCa Org (new)", plan: "pro" },
+        },
+      },
+    };
+    function renderDetail() {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+      render(<QueryClientProvider client={client}>
+        <ClaudeAccountControls account={account} readOnly={false} onCreated={vi.fn()}>
+          {({ detail }) => detail}
+        </ClaudeAccountControls>
+      </QueryClientProvider>);
+    }
+    async function signInAgain() {
+      await userEvent.click(screen.getByRole("button", { name: "Re-authenticate" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Sign in again" }));
+      const dialog = await screen.findByRole("dialog", { name: /Re-authenticate Private Claude/ });
+      expect(within(dialog).getByText("doca@example.com")).toBeVisible();
+      expect(within(dialog).queryByRole("checkbox", { name: /Replace the saved identity/ })).not.toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole("checkbox", { name: /I will not use this refresh grant/ }));
+      await userEvent.click(within(dialog).getByRole("button", { name: "Start sign-in" }));
+      await userEvent.type(await screen.findByRole("textbox", { name: "Authorization code" }), "new-code");
+      await userEvent.click(screen.getByRole("button", { name: "Submit" }));
+    }
+
+    it("completes a matching sign-in without a confirmation", async () => {
+      const completions: unknown[] = [];
+      server.use(
+        http.post("/api/claude-accounts/oauth/start", () => HttpResponse.json({
+          state: "test-state", authorizationUrl: "https://claude.ai/authorize", expiresAt: "2030-01-01T00:00:00Z",
+        })),
+        http.post("/api/claude-accounts/oauth/complete", async ({ request }) => {
+          completions.push(await request.json());
+          return HttpResponse.json(account);
+        }),
+      );
+      renderDetail();
+      await signInAgain();
+      expect(await screen.findByText("Private Claude is connected.")).toBeVisible();
+      expect(completions).toEqual([{ state: "test-state", code: "new-code" }]);
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it.each([true, false])("asks before replacing a differing identity (confirm: %s)", async (confirm) => {
+      const calls: string[] = [];
+      server.use(
+        http.post("/api/claude-accounts/oauth/start", () => HttpResponse.json({
+          state: "test-state", authorizationUrl: "https://claude.ai/authorize", expiresAt: "2030-01-01T00:00:00Z",
+        })),
+        http.post("/api/claude-accounts/oauth/complete", () => HttpResponse.json(held, { status: 409 })),
+        http.post("/api/claude-accounts/claude-test/pending-reconnects/pending-1/confirm", () => {
+          calls.push("confirm");
+          return HttpResponse.json(account);
+        }),
+        http.delete("/api/claude-accounts/claude-test/pending-reconnects/pending-1", () => {
+          calls.push("discard");
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+      renderDetail();
+      await signInAgain();
+      const confirmation = await screen.findByRole("alertdialog", { name: /This sign-in differs from Private Claude/ });
+      expect(within(confirmation).getByText("DOCa Org (new)").closest("td")).toHaveAttribute("data-differs");
+      expect(within(confirmation).getAllByText("doca@example.com")[1]!.closest("td")).not.toHaveAttribute("data-differs");
+      expect(within(confirmation).getByText("Pro").closest("td")).toHaveAttribute("data-differs");
+      await userEvent.click(within(confirmation).getByRole("button", { name: confirm ? "Replace saved identity" : "Cancel" }));
+      if (confirm) {
+        expect(await screen.findByText("Private Claude is connected.")).toBeVisible();
+        expect(calls).toEqual(["confirm"]);
+      } else {
+        expect(await screen.findByText(/The new sign-in was discarded/)).toBeVisible();
+        expect(calls).toEqual(["discard"]);
+      }
+    });
   });
   it("pauses through the account API and blocks mutations for read-only users", async () => {
     const changes: unknown[] = [];
@@ -350,7 +406,7 @@ describe("Claude shared account surfaces", () => {
     ).toBeDisabled();
     for (const name of [
       "Pause",
-      "Reconnect",
+      "Re-authenticate",
       "Refresh",
       "Models (0)",
       "Delete Claude account",
@@ -545,7 +601,7 @@ describe("Claude shared account surfaces", () => {
         onSelect={vi.fn()}
         onOpenImport={vi.fn()}
         onOpenOauth={vi.fn()}
-        onClaude={vi.fn()}
+        claudeEnrollment={{ onSignIn: vi.fn(), onImport: vi.fn() }}
       />,
     );
     expect(screen.getByText("Normal")).toBeInTheDocument();
@@ -560,7 +616,7 @@ describe("Claude shared account surfaces", () => {
         onSelect={vi.fn()}
         onOpenImport={vi.fn()}
         onOpenOauth={vi.fn()}
-        onClaude={vi.fn()}
+        claudeEnrollment={{ onSignIn: vi.fn(), onImport: vi.fn() }}
         readOnly
       />,
     );

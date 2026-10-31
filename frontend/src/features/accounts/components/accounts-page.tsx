@@ -231,13 +231,13 @@ export function AccountsPage() {
       onCreated={handleSelectAccount}
       readOnly={!canWrite}
     >
-      {({ onAdd: onAddClaude, detail: claudeDetail }) => (
+      {({ onSignIn: onClaudeSignIn, onImport: onClaudeImport, detail: claudeDetail }) => (
         <AntigravityAccountControls
           account={selectedAntigravityAccount}
           onCreated={handleSelectAccount}
           readOnly={!canWrite}
         >
-          {({ onAdd: onAddAntigravity, detail: antigravityDetail }) => (
+          {({ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport, detail: antigravityDetail }) => (
             <OpenRouterAccountControls
               account={selectedOpenRouterAccount}
               onCreated={handleSelectAccount}
@@ -321,9 +321,9 @@ export function AccountsPage() {
                                 openRouterAccounts={openRouterAccounts}
                                 onOpenRouter={onAdd}
                                 claudeAccounts={claudeAccounts}
-                                onClaude={onAddClaude}
+                                claudeEnrollment={{ onSignIn: onClaudeSignIn, onImport: onClaudeImport }}
                                 antigravityAccounts={antigravityAccounts}
-                                onAntigravity={onAddAntigravity}
+                                antigravityEnrollment={{ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport }}
                                 modelSources={modelSources}
                                 onOpenAICompatible={onAddOpenAICompatible}
                                 accountColors={accountColors}

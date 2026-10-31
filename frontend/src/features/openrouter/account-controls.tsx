@@ -4,9 +4,11 @@ import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ProviderLogo } from "@/components/brand/provider-account-name";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -113,7 +115,8 @@ export function OpenRouterAccountControls({
       >
         <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <ProviderLogo provider="openrouter" />
               {editing === "new"
                 ? "Add OpenRouter account"
                 : "OpenRouter API keys"}
@@ -201,9 +204,14 @@ export function OpenRouterAccountControls({
                 {(create.error || update.error)?.message}
               </p>
             )}
-            <Button type="submit" disabled={readOnly || busy || !name.trim()}>
-              Save account
-            </Button>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={busy} onClick={closeEditor}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={readOnly || busy || !name.trim()}>
+                Save account
+              </Button>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

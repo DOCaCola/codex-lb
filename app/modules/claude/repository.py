@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudeQuotaHistory
+from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudePendingReconnect, ClaudeQuotaHistory
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.schemas import AccountState, QuotaProvenance, UsageSnapshot
 from app.modules.model_sources.repository import ModelSourcesRepository
@@ -124,6 +124,18 @@ class ClaudeRepository:
         )
         await self.session.commit()
         return row
+
+    async def take_pending_reconnect(
+        self, source_id: str, pending_id: str, now: datetime
+    ) -> ClaudePendingReconnect | None:
+        """Remove a held reconnect; it is returned only while it is still current."""
+        row = await self.session.scalar(
+            delete(ClaudePendingReconnect)
+            .where(ClaudePendingReconnect.id == pending_id, ClaudePendingReconnect.source_id == source_id)
+            .returning(ClaudePendingReconnect)
+        )
+        await self.session.commit()
+        return row if row is not None and row.expires_at > now else None
 
     async def claim_refresh(self, source_id: str, generation: int, intent: str, now: datetime) -> bool:
         claimed = await self.session.scalar(

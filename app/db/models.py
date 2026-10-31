@@ -2063,6 +2063,9 @@ class ClaudeAccount(Base):
     identity_fingerprint: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     # Anthropic account UUID verified with identity_fingerprint; named in serving metadata.
     provider_account_uuid: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Labels of the last authenticated profile, shown when an operator re-authenticates.
+    account_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    organization_name: Mapped[str | None] = mapped_column(String, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     credential_status: Mapped[str] = mapped_column(String, nullable=False, default="ready", server_default="ready")
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
@@ -2118,6 +2121,24 @@ class ClaudeOAuthFlow(Base):
         String, ForeignKey("claude_accounts.source_id", ondelete="CASCADE"), nullable=True
     )
     generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ClaudePendingReconnect(Base):
+    """Reconnect credentials whose identity differs, held until the operator confirms or discards them."""
+
+    __tablename__ = "claude_pending_reconnects"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        String, ForeignKey("claude_accounts.source_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Credential generation the reconnect was started against; confirmation fails once it moved on.
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Identity the operator was shown; confirmation fails if the credentials now authenticate another.
+    identity_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    credentials_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    subscription_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

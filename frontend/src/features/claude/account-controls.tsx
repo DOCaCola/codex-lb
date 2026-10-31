@@ -1,20 +1,14 @@
 import { useState, type ReactNode } from "react";
-import { Layers, LogIn, RefreshCw, Trash2 } from "lucide-react";
+import { Layers, RefreshCw, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { ClaudeName, ClaudePlan, ClaudeQuota } from "./account-display";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { useClaude } from "./use-claude";
-import type { ClaudeAccount, OAuthStarted } from "./api";
+import type { ClaudeAccount } from "./api";
+import { useIdentityConfirmation } from "./use-identity-confirmation";
 import { ClaudeVersionControls } from "./version-controls";
 import { ClaudeCapacitySettings } from "./capacity-settings";
 import { ClaudeResetGrants } from "./reset-grants";
@@ -25,8 +19,28 @@ import { AccountColorPicker } from "@/features/accounts/components/account-color
 import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
+import { CredentialImportDialog } from "@/features/accounts/components/credential-import-dialog";
+import { ProviderSignInDialog } from "@/features/accounts/components/provider-sign-in-dialog";
+import { ReauthenticateMenu } from "@/features/accounts/components/reauthenticate-menu";
+import { usePrivacyStore } from "@/hooks/use-privacy";
 import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
+
+type Enrollment = { method: "signIn" | "import"; reauth: ClaudeAccount | null };
+
+/** Saved identity shown when re-authenticating; null until the account's next sign-in records it. */
+function savedIdentity(account: ClaudeAccount, blurred: boolean): ReactNode {
+  if (!account.accountEmail && !account.organizationName) return null;
+  return (
+    <>
+      {account.accountEmail ? (
+        <span className={blurred ? "privacy-blur" : undefined}>{account.accountEmail}</span>
+      ) : null}
+      {account.accountEmail && account.organizationName ? " · " : null}
+      {account.organizationName}
+    </>
+  );
+}
 
 export function ClaudeAccountControls({
   account,
@@ -37,21 +51,17 @@ export function ClaudeAccountControls({
   account: ClaudeAccount | null;
   readOnly: boolean;
   onCreated: (id: string) => void;
-  children: (controls: { onAdd: () => void; detail: ReactNode }) => ReactNode;
+  children: (controls: { onSignIn: () => void; onImport: () => void; detail: ReactNode }) => ReactNode;
 }) {
+  const { t } = useTranslation();
   const api = useClaude();
+  const identity = useIdentityConfirmation();
+  const blurred = usePrivacyStore((s) => s.blurred);
   const accountColors = useAccountColorHexes();
   const dateFormat = useDateDisplayFormatStore(
     (state) => state.dateDisplayFormat,
   );
-  const [open, setOpen] = useState(false);
-  const [reconnectId, setReconnectId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [acknowledged, setAcknowledged] = useState(false);
-  const [replaceIdentity, setReplaceIdentity] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [flow, setFlow] = useState<OAuthStarted | null>(null);
-  const [code, setCode] = useState("");
+  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [modelAccountId, setModelAccountId] = useState<string | null>(null);
@@ -68,20 +78,17 @@ export function ClaudeAccountControls({
       );
     }
   }
-  function close() {
-    setOpen(false);
-    setReconnectId(null);
-    setFile(null);
-    setCode("");
-    setFlow(null);
-    setName("");
-    setAcknowledged(false);
-    setReplaceIdentity(false);
+  function enroll(next: Enrollment) {
+    if (readOnly) return;
+    // Defer so the menu or chooser releases its pointer lock before the dialog opens.
+    requestAnimationFrame(() => setEnrollment(next));
   }
-  function created(result: ClaudeAccount) {
-    close();
-    onCreated(result.id);
-  }
+  const reauthAccount = enrollment?.reauth ?? null;
+  const reauth = reauthAccount
+    ? { name: reauthAccount.name, identity: savedIdentity(reauthAccount, blurred) }
+    : undefined;
+  const reconnect = (action: () => Promise<ClaudeAccount>) =>
+    reauthAccount ? identity.guard(reauthAccount.id, reauthAccount.name, action) : action();
   const detail = account && (
     <section className="animate-fade-in-up min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
       <div>
@@ -235,21 +242,11 @@ export function ClaudeAccountControls({
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
+          <ReauthenticateMenu
             disabled={readOnly || busy}
-            onClick={() => {
-              setReconnectId(account.id);
-              setName(account.name);
-              setError(null);
-              setOpen(true);
-            }}
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            Reconnect
-          </Button>
+            onSignIn={() => enroll({ method: "signIn", reauth: account })}
+            onImport={() => enroll({ method: "import", reauth: account })}
+          />
           <Button
             size="sm"
             variant="destructive"
@@ -268,12 +265,8 @@ export function ClaudeAccountControls({
   return (
     <>
       {children({
-        onAdd: () => {
-          if (!readOnly) {
-            setError(null);
-            setOpen(true);
-          }
-        },
+        onSignIn: () => enroll({ method: "signIn", reauth: null }),
+        onImport: () => enroll({ method: "import", reauth: null }),
         detail,
       })}
       {account && modelAccountId === account.id && (
@@ -285,166 +278,32 @@ export function ClaudeAccountControls({
           onSave={(body) => api.update.mutateAsync({ id: account.id, body })}
         />
       )}
-      <Dialog
-        open={open}
-        onOpenChange={(value) => {
-          if (!busy && !value) close();
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {reconnectId ? "Reconnect Claude account" : "Add Claude account"}
-            </DialogTitle>
-            <DialogDescription>
-              Sign in with OAuth or explicitly import a Claude Code credential
-              file. Credentials are encrypted and never displayed.
-            </DialogDescription>
-          </DialogHeader>
-          <label className="space-y-1 text-sm">
-            Account name
-            <Input
-              value={name}
-              disabled={busy || !!flow || !!reconnectId}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </label>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={acknowledged}
-              disabled={busy || !!flow}
-              onChange={(event) => setAcknowledged(event.target.checked)}
-            />
-            I will not use this refresh grant in another client. Concurrent
-            refresh consumers can invalidate access.
-          </label>
-          {reconnectId && (
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={replaceIdentity}
-                disabled={busy}
-                onChange={(event) => setReplaceIdentity(event.target.checked)}
-              />
-              <span>
-                Replace the saved identity if this sign-in differs.
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  Keeps this account’s settings and statistics. Clears old quota and
-                  session ownership; active server-owned tools may need a new turn.
-                </span>
-              </span>
-            </label>
-          )}
-          {flow ? (
-            <div className="space-y-3">
-              <a
-                href={flow.authorizationUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm underline"
-              >
-                Open Claude authorization
-              </a>
-              <p className="text-xs text-muted-foreground">
-                Paste the returned authorization code. Expires{" "}
-                {new Date(flow.expiresAt).toLocaleString()}.
-              </p>
-              <Input
-                aria-label="Authorization code"
-                type="password"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-              />
-              <Button
-                disabled={readOnly || busy || !code.trim()}
-                onClick={() =>
-                  void run(async () =>
-                    created(
-                      await api.complete.mutateAsync({
-                        state: flow.state,
-                        code: code.trim(),
-                        replaceIdentity: !!reconnectId && replaceIdentity,
-                      }),
-                    ),
-                  )
-                }
-              >
-                Complete sign-in
-              </Button>
-            </div>
-          ) : (
-            <>
-              <Button
-                disabled={readOnly || busy || !name.trim() || !acknowledged}
-                onClick={() =>
-                  void run(async () =>
-                    setFlow(
-                      await api.start.mutateAsync({
-                        name: name.trim(),
-                        acknowledgeExclusiveRefresh: true,
-                        sourceId: reconnectId ?? undefined,
-                      }),
-                    ),
-                  )
-                }
-              >
-                Sign in with Claude
-              </Button>
-              <label className="space-y-1 text-sm">
-                Or import a credential file
-                <Input
-                  type="file"
-                  accept=".json,application/json"
-                  disabled={busy}
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
-              <Button
-                variant="outline"
-                disabled={
-                  readOnly || busy || !file || !name.trim() || !acknowledged
-                }
-                onClick={() =>
-                  void run(async () => {
-                    if (!file) return;
-                    if (file.size > 1024 * 1024)
-                      throw new Error("Credential file exceeds 1 MB");
-                    let credentials: unknown;
-                    try {
-                      credentials = JSON.parse(await file.text());
-                    } catch {
-                      throw new Error(
-                        "Credential file must contain valid JSON",
-                      );
-                    }
-                    created(
-                      reconnectId
-                        ? await api.reconnect.mutateAsync({
-                            id: reconnectId,
-                            credentials,
-                            replaceIdentity,
-                          })
-                        : await api.enroll.mutateAsync({
-                            name: name.trim(),
-                            credentials,
-                            acknowledgeExclusiveRefresh: true,
-                          }),
-                    );
-                  })
-                }
-              >
-                Import credentials
-              </Button>
-            </>
-          )}
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ProviderSignInDialog
+        provider="claude"
+        open={enrollment?.method === "signIn"}
+        onOpenChange={(open) => !open && setEnrollment(null)}
+        reauth={reauth}
+        acknowledgement={t("accounts.signIn.claude.acknowledgement")}
+        start={(name) =>
+          api.start.mutateAsync({ name, acknowledgeExclusiveRefresh: true, sourceId: reauthAccount?.id })
+        }
+        complete={(flow, code) => reconnect(() => api.complete.mutateAsync({ state: flow.state, code }))}
+        onConnected={onCreated}
+      />
+      <CredentialImportDialog
+        provider="claude"
+        open={enrollment?.method === "import"}
+        onOpenChange={(open) => !open && setEnrollment(null)}
+        reauth={reauth}
+        acknowledgement={t("accounts.signIn.claude.acknowledgement")}
+        importCredentials={(name, credentials) =>
+          reauthAccount
+            ? reconnect(() => api.reconnect.mutateAsync({ id: reauthAccount.id, credentials }))
+            : api.enroll.mutateAsync({ name, credentials, acknowledgeExclusiveRefresh: true })
+        }
+        onImported={onCreated}
+      />
+      {identity.dialog}
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
