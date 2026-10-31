@@ -76,3 +76,21 @@ async def test_metadata_reply_over_the_cap_is_rejected(split_upstream, monkeypat
 async def test_token_reply_split_across_reads_is_read_whole(split_upstream) -> None:
     credentials = await oauth.refresh("refresh")
     assert credentials.access_token.get_secret_value() == "access"
+
+
+def test_exhausted_credit_without_amount_reads_as_zero() -> None:
+    """Proto3 JSON omits a zero creditAmount; the minimum arrives as int64 text."""
+    load = client.LoadCodeAssist.model_validate(
+        {
+            "currentTier": {"id": "standard-tier", "name": "Antigravity"},
+            "paidTier": {
+                "id": "g1-pro-tier",
+                "name": "Google AI Pro",
+                "availableCredits": [{"creditType": "GOOGLE_ONE_AI", "minimumCreditAmountForUsage": "50"}],
+            },
+            "cloudaicompanionProject": "project-1",
+        }
+    )
+    assert load.paid_tier is not None
+    credit = load.paid_tier.available_credits[0]
+    assert (credit.credit_amount, credit.minimum_for_usage) == (0, 50)

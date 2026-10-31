@@ -68,7 +68,8 @@ class Tier(BaseModel):
 class Credit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     credit_type: str = Field(alias="creditType")
-    credit_amount: float = Field(alias="creditAmount")
+    # Proto3 JSON omits zero values: an exhausted balance arrives without creditAmount.
+    credit_amount: float = Field(default=0, alias="creditAmount")
     minimum_for_usage: float | None = Field(default=None, alias="minimumCreditAmountForUsage")
 
 
