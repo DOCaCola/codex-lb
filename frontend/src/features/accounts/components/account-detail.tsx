@@ -165,9 +165,6 @@ export function AccountDetail({
           {workspaceLabel} | {formatSlug(account.planType)}{seatLabel}
         </p>
       </div>
-      <AccountNotePanel target={{ accountId: account.accountId }} readOnly={readOnly} />
-      <AccountSubscriptionEndPanel target={{ accountId: account.accountId }} readOnly={readOnly} />
-
       {onProxyBindingSave ? (
         <AccountProxyBinding
           account={account}
@@ -188,6 +185,8 @@ export function AccountDetail({
         onReset={onResetUsage}
       />
       <AccountTokenInfo account={account} />
+      <AccountNotePanel target={{ accountId: account.accountId }} readOnly={readOnly} />
+      <AccountSubscriptionEndPanel target={{ accountId: account.accountId }} readOnly={readOnly} />
       <CodexModelControls key={account.accountId} accountId={account.accountId} name={localLabel} disabled={busy || readOnly}>
         {({ mode, action }) => (
           <AccountActions

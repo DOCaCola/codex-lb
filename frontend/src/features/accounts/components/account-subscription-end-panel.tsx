@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  browserTimeZone,
   findSubscriptionEnd,
   fromLocalDateTimeInput,
   toLocalDateTimeInput,
@@ -47,6 +48,7 @@ export function AccountSubscriptionEndPanel({
   };
 
   const remainingMs = endsAt !== null ? Date.parse(endsAt) - now : null;
+  const timeZone = browserTimeZone();
 
   return (
     <div className="space-y-2 rounded-lg border bg-muted/30 p-4">
@@ -72,7 +74,7 @@ export function AccountSubscriptionEndPanel({
         <div className="space-y-2">
           <Input
             type="datetime-local"
-            aria-label={t("accounts.detail.subscriptionEnd.label")}
+            aria-label={t("accounts.detail.subscriptionEnd.label", { zone: timeZone })}
             className="h-8 text-xs"
             value={draft}
             autoFocus
@@ -85,6 +87,9 @@ export function AccountSubscriptionEndPanel({
               }
             }}
           />
+          <p className="text-[11px] text-muted-foreground">
+            {t("accounts.detail.subscriptionEnd.zoneHint", { zone: timeZone })}
+          </p>
           <div className="flex justify-end gap-2">
             {endsAt !== null ? (
               <Button
@@ -116,6 +121,7 @@ export function AccountSubscriptionEndPanel({
         <p className="text-xs tabular-nums">
           {t(remainingMs > 0 ? "accounts.detail.subscriptionEnd.endsAt" : "accounts.detail.subscriptionEnd.passedAt", {
             time: formatDateTimeInline(endsAt, dateDisplayFormat),
+            zone: timeZone,
           })}
           {remainingMs > 0 ? <span className="ml-1.5 text-muted-foreground">{formatRelative(remainingMs)}</span> : null}
         </p>

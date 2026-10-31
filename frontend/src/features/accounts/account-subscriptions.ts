@@ -45,6 +45,11 @@ export function fromLocalDateTimeInput(value: string): string {
   return new Date(value).toISOString();
 }
 
+/** The browser's IANA time zone, in which end dates are entered and shown. */
+export function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 export function useAccountSubscriptionEnds() {
   return useQuery({
     queryKey: ACCOUNT_SUBSCRIPTIONS_QUERY_KEY,

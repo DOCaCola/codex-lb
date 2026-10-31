@@ -81,7 +81,6 @@ export function OpenRouterAccountDetail({
           {message}
         </p>
       ))}
-      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
       <section
         className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4"
         aria-label="OpenRouter usage"
@@ -101,6 +100,7 @@ export function OpenRouterAccountDetail({
         { label: "Credits updated", value: updated(state.credits_updated_at) },
         { label: "Catalog updated", value: updated(state.catalog_updated_at) },
       ]} />
+      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
       {/* Actions last, matching the Codex account detail. */}
       <div className="space-y-3 border-t pt-4">
         <AccountRoutingPolicyControl policy={account.routingPolicy} disabled={readOnly || busy} onChange={onRoutingPolicy} />

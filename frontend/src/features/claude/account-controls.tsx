@@ -129,8 +129,6 @@ export function ClaudeAccountControls({
             {message}
           </p>
         ))}
-      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-      <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
       <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Usage
@@ -195,6 +193,8 @@ export function ClaudeAccountControls({
           <ClaudeVersionControls readOnly={readOnly} />
         </div>
       </details>
+      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+      <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
       {/* Actions last, matching the Codex account detail. */}
       <div className="space-y-3 border-t pt-4">
         <AccountRoutingPolicyControl

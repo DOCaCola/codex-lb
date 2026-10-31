@@ -83,7 +83,6 @@ export function ModelSourceAccountDetail({
         </p>
       </div>
       {error && <AlertMessage variant="error">{error}</AlertMessage>}
-      <AccountNotePanel target={{ modelSourceId: source.id }} readOnly={readOnly} />
       <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4" aria-label="Provider usage">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
         <ProviderAccountTrends provider="openai_compatible" accountId={source.id} embedded />
@@ -106,6 +105,7 @@ export function ModelSourceAccountDetail({
         { label: "Timeout", value: source.timeoutSeconds === null ? "Default" : `${source.timeoutSeconds} s` },
         { label: "Max concurrency", value: source.maxConcurrency ?? "Unlimited" },
       ]} />
+      <AccountNotePanel target={{ modelSourceId: source.id }} readOnly={readOnly} />
       {/* Actions last, matching the Codex account detail. */}
       <div className="flex flex-wrap gap-2 border-t pt-4">
         <AccountPauseButton
