@@ -5,11 +5,9 @@ import {
   AccountCardAction,
   AccountCardNotice,
   AccountCardSurface,
-  AccountSelectionSurface,
 } from "@/components/account-surfaces";
 import { StatusBadge } from "@/components/status-badge";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
-import { RoutingPolicyBadge } from "@/features/accounts/components/routing-policy";
 import { useTranslation } from "react-i18next";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
@@ -173,61 +171,6 @@ export function OpenRouterFreshness({
   );
 }
 
-export function OpenRouterListItem({
-  account,
-  color,
-  selected,
-  onSelect,
-}: {
-  account: OpenRouterAccount;
-  color?: string;
-  selected: boolean;
-  onSelect: (id: string) => void;
-}) {
-  // Same row anatomy as the Codex list item: title/subtitle and status, a
-  // compact meter, then a one-line muted footer.
-  const { key, key_error, credits, credits_error } = account.state;
-  const percent = keyAllowancePercent(account);
-  return (
-    <AccountSelectionSurface
-      selected={selected}
-      onClick={() => onSelect(account.id)}
-    >
-      <div className="flex items-start gap-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">
-            <OpenRouterName account={account} color={color} />
-          </p>
-          <p className="truncate text-xs text-muted-foreground">
-            OpenRouter | <OpenRouterTier account={account} /> | {account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"}`}
-          </p>
-        </div>
-        <RoutingPolicyBadge policy={account.routingPolicy} />
-        <StatusBadge status={openRouterStatus(account)} />
-      </div>
-      <div className="mt-2 space-y-1">
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-muted-foreground">Key allowance</span>
-          <span className="tabular-nums font-medium">
-            {keyAllowance(account)}
-            {key && key_error ? <span className="ml-1 text-amber-600 dark:text-amber-400">· stale</span> : null}
-          </span>
-        </div>
-        {percent !== null && (
-          <MiniQuotaBar aria-label="Key allowance remaining" percent={percent} testId="openrouter-list-key-allowance" />
-        )}
-      </div>
-      <div className="mt-2 flex min-w-0 items-center justify-between gap-2 text-[10px] text-muted-foreground">
-        <span className="shrink-0 tabular-nums">
-          Balance {money(openRouterBalance(account))}
-          {credits && credits_error ? " · stale" : ""}
-        </span>
-        <span className="min-w-0 truncate tabular-nums">Used today {money(key?.usage_daily)}</span>
-      </div>
-    </AccountSelectionSurface>
-  );
-}
-
 export function OpenRouterAccountCard({
   account,
   color,
@@ -253,7 +196,7 @@ export function OpenRouterAccountCard({
       status={<StatusBadge status={openRouterStatus(account)} />}
       actions={
         <AccountCardAction asChild>
-          <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
+          <Link to={`/providers/${encodeURIComponent(account.id)}`}>
             <ExternalLink className="h-3 w-3" />
             {t("common.actions.details")}
           </Link>

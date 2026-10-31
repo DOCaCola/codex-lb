@@ -112,7 +112,7 @@ export function AppHeader({
             >
               <span className="relative inline-flex items-center">
                 {t(item.labelKey)}
-                {item.to === "/accounts" && accountsResetBadge ? (
+                {item.to === "/providers" && accountsResetBadge ? (
                   <span className="absolute -top-2 -right-4 z-10 grid h-4 min-w-[1rem] place-items-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
                     {accountsResetBadge}
                   </span>
@@ -209,7 +209,7 @@ export function AppHeader({
                         )}
                       >
                         {t(item.labelKey)}
-                        {item.to === "/accounts" && accountsResetBadge ? (
+                        {item.to === "/providers" && accountsResetBadge ? (
                           <span className="absolute right-2 top-1 z-10 grid h-5 min-w-[1.25rem] place-items-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
                             {accountsResetBadge}
                           </span>

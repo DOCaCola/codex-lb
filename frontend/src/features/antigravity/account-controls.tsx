@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { Layers, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { BadgeAlert, Clock, KeyRound, Layers, PauseCircle, RefreshCw, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -9,17 +10,28 @@ import { AccountNameEditor } from "@/features/accounts/components/account-name-e
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
 import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { AccountSubscriptionEndPanel } from "@/features/accounts/components/account-subscription-end-panel";
+import { AccountActivityCard } from "@/features/accounts/components/account-activity-card";
+import {
+  DetailBanner,
+  DetailCard,
+  DetailParts,
+  DetailRows,
+  ProviderDetail,
+  SettingRow,
+} from "@/features/accounts/components/provider-detail";
+import { useCommonMenuItems } from "@/features/accounts/hooks/use-common-menu-items";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
-import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
+import { useSummaryContext } from "@/features/accounts/hooks/use-summary-context";
+import { summarizeEntry } from "@/features/accounts/provider-summary";
 import { CredentialImportDialog } from "@/features/accounts/components/credential-import-dialog";
 import { ProviderSignInDialog } from "@/features/accounts/components/provider-sign-in-dialog";
 import { ReauthenticateMenu } from "@/features/accounts/components/reauthenticate-menu";
 import { ClaudeCapacitySettings } from "@/features/claude/capacity-settings";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
+import { cn } from "@/lib/utils";
 import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
-import { AntigravityName, AntigravityPlan, AntigravityQuota } from "./account-display";
-import { modelSummary } from "./display-values";
+import { AntigravityPlan, AntigravityQuota } from "./account-display";
 import { AntigravityModelSelection } from "./model-selection";
 import { AntigravityVersionControls } from "./version-controls";
 import { useAntigravity } from "./use-antigravity";
@@ -45,9 +57,7 @@ export function AntigravityAccountControls({
   children: (controls: { onSignIn: () => void; onImport: () => void; detail: ReactNode }) => ReactNode;
 }) {
   const api = useAntigravity();
-  const accountColors = useAccountColorHexes();
   const blurred = usePrivacyStore((s) => s.blurred);
-  const dateFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -75,166 +85,19 @@ export function AntigravityAccountControls({
         ) : null,
       }
     : undefined;
-  const update = (body: Parameters<typeof api.update.mutateAsync>[0]["body"]) =>
-    account ? run(() => api.update.mutateAsync({ id: account.id, body })) : Promise.resolve();
-  const metadata = account?.state.metadata;
   const detail = account && (
-    <section className="animate-fade-in-up min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
-      <div>
-        <AccountNameEditor
-          key={account.id}
-          value={account.name}
-          labels={{ edit: "Rename account", input: "Account name", save: "Save name", cancel: "Cancel" }}
-          disabled={readOnly || busy}
-          accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={readOnly || busy} />}
-          onSave={(value) => update({ name: value ?? account.name })}
-        >
-          <AntigravityName account={account} color={accountColors.modelSources.get(account.id)} />
-        </AccountNameEditor>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Antigravity | <AntigravityPlan account={account} /> | {modelSummary(account)}
-        </p>
-      </div>
-      {account.hold && (
-        <div role="alert" className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
-          <p className="font-medium text-destructive">{HOLD_LABELS[account.hold]}</p>
-          {account.holdReason && <p className="text-xs text-muted-foreground">{account.holdReason}</p>}
-          <p className="text-xs text-muted-foreground">
-            Routing skips this account until the hold is cleared. Clear it only after resolving the cause.
-          </p>
-        </div>
-      )}
-      {account.state.verification && (
-        <div role="alert" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
-          <p className="font-medium">Google asked to verify this account</p>
-          <p className="text-xs text-muted-foreground">
-            Observed {formatDateTimeInline(account.state.verification.observed_at, dateFormat)}. Requests pause
-            briefly after each challenge.
-            {account.state.verification.url && (
-              <>
-                {" "}
-                <a href={account.state.verification.url} target="_blank" rel="noopener noreferrer" className="underline">
-                  Open verification
-                </a>
-              </>
-            )}
-          </p>
-        </div>
-      )}
-      {[error, metadata?.account?.error, metadata?.catalog?.error, metadata?.quota?.error]
-        .filter(Boolean)
-        .map((message, index) => (
-          <p key={index} role="alert" className="text-sm text-destructive">
-            {message}
-          </p>
-        ))}
-      <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
-        <AntigravityQuota account={account} detailed />
-        <ProviderAccountTrends provider="antigravity" accountId={account.id} embedded />
-      </section>
-      <p className="text-xs text-muted-foreground">
-        Quota readings are provider-reported per model family. Recorded API-equivalent costs are not subscription
-        charges.
-      </p>
-      <AccountInfoPanel
-        title="Monitoring"
-        rows={[
-          { label: "Status", value: formatSlug(account.credentialStatus) },
-          {
-            label: "Google account",
-            value: <span className={blurred ? "privacy-blur" : undefined}>{account.email}</span>,
-          },
-          { label: "Project", value: account.projectId ?? "Not assigned" },
-          { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
-          { label: "Catalog updated", value: formatDateTimeInline(metadata?.catalog?.updated_at ?? null, dateFormat) },
-          { label: "Quota updated", value: formatDateTimeInline(metadata?.quota?.updated_at ?? null, dateFormat) },
-          ...account.cooldowns.map((cooldown) => ({
-            label: "Cooldown " + cooldown.scope.replace(/^(family|model):/, ""),
-            value: formatSlug(cooldown.reason) + " until " + formatDateTimeInline(cooldown.until, dateFormat),
-          })),
-        ]}
-      />
-      <details className="min-w-0 rounded-lg border bg-muted/30 p-4">
-        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Provider settings
-        </summary>
-        <div className="mt-4 space-y-4">
-          <ClaudeCapacitySettings
-            key={account.id + ":" + account.maxConcurrency}
-            value={account.maxConcurrency}
-            readOnly={readOnly}
-            onSave={(maxConcurrency) => api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })}
-          />
-          <AntigravityVersionControls readOnly={readOnly} />
-        </div>
-      </details>
-      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-      <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-      {/* Actions last, matching the Codex account detail. */}
-      <div className="space-y-3 border-t pt-4">
-        <AccountRoutingPolicyControl
-          policy={account.routingPolicy}
-          disabled={readOnly || busy}
-          onChange={(routingPolicy) => void update({ routingPolicy })}
-        />
-        <div className="flex flex-wrap gap-2">
-          <AccountPauseButton
-            paused={!account.isEnabled}
-            disabled={readOnly || busy || (!account.isEnabled && account.hold !== null)}
-            onClick={() => void update({ isEnabled: !account.isEnabled })}
-          />
-          {account.hold && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 text-xs"
-              disabled={readOnly || busy}
-              onClick={() => void update({ clearHold: true })}
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Clear hold
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={() => setModelAccountId(account.id)}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            Models ({account.state.all_models ? "All" : account.state.selections.length})
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={() => void run(() => api.refresh.mutateAsync(account.id))}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </Button>
-          <ReauthenticateMenu
-            disabled={readOnly || busy}
-            onSignIn={() => enroll({ method: "signIn", reauth: account })}
-            onImport={() => enroll({ method: "import", reauth: account })}
-          />
-          <Button
-            size="sm"
-            variant="destructive"
-            className="h-8 gap-1.5 text-xs"
-            aria-label="Delete Antigravity account"
-            disabled={readOnly || busy}
-            onClick={() => setDeleteOpen(true)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </Button>
-        </div>
-      </div>
-    </section>
+    <AntigravityDetail
+      key={account.id}
+      account={account}
+      busy={busy}
+      readOnly={readOnly}
+      error={error}
+      run={run}
+      onModels={() => setModelAccountId(account.id)}
+      onSignIn={() => enroll({ method: "signIn", reauth: account })}
+      onImport={() => enroll({ method: "import", reauth: account })}
+      onDelete={() => setDeleteOpen(true)}
+    />
   );
   return (
     <>
@@ -285,5 +148,224 @@ export function AntigravityAccountControls({
         }}
       />
     </>
+  );
+}
+
+/** Account page of an Antigravity account. */
+function AntigravityDetail({
+  account,
+  busy,
+  readOnly,
+  error,
+  run,
+  onModels,
+  onSignIn,
+  onImport,
+  onDelete,
+}: {
+  account: AntigravityAccount;
+  busy: boolean;
+  readOnly: boolean;
+  error: string | null;
+  run: (action: () => Promise<unknown>) => Promise<void>;
+  onModels: () => void;
+  onSignIn: () => void;
+  onImport: () => void;
+  onDelete: () => void;
+}) {
+  const { t } = useTranslation();
+  const api = useAntigravity();
+  const blurred = usePrivacyStore((s) => s.blurred);
+  const accountColors = useAccountColorHexes();
+  const dateFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
+  const summary = summarizeEntry({ kind: "antigravity", account }, useSummaryContext());
+  const commonMenu = useCommonMenuItems(account.id, summary.logsAccountId);
+  const color = accountColors.modelSources.get(account.id);
+  const disabled = readOnly || busy;
+  const metadata = account.state.metadata;
+  const update = (body: Parameters<typeof api.update.mutateAsync>[0]["body"]) =>
+    run(() => api.update.mutateAsync({ id: account.id, body }));
+  const reauthenticate = <ReauthenticateMenu disabled={disabled} onSignIn={onSignIn} onImport={onImport} />;
+  const banner = account.hold ? (
+    <DetailBanner
+      tone="bad"
+      icon={<ShieldAlert />}
+      action={
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={disabled} onClick={() => void update({ clearHold: true })}>
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Clear hold
+        </Button>
+      }
+    >
+      <p className="font-medium text-destructive">{HOLD_LABELS[account.hold]}</p>
+      {account.holdReason && <p className="text-xs text-muted-foreground">{account.holdReason}</p>}
+      <p className="text-xs text-muted-foreground">
+        Routing skips this account until the hold is cleared. Clear it only after resolving the cause.
+      </p>
+    </DetailBanner>
+  ) : summary.status === "reauth" ? (
+    <DetailBanner tone="bad" icon={<KeyRound />} action={reauthenticate}>
+      {t("providers.banner.recovery")}
+    </DetailBanner>
+  ) : summary.status === "paused" ? (
+    <DetailBanner tone="off" icon={<PauseCircle />}>
+      {t("providers.banner.paused")}
+    </DetailBanner>
+  ) : summary.status === "limited" || summary.status === "exceeded" ? (
+    <DetailBanner tone={summary.tone === "bad" ? "bad" : "warn"} icon={<Clock />}>
+      {summary.notice?.text ?? t("providers.banner.limited")}
+    </DetailBanner>
+  ) : null;
+  const errors = [error, metadata?.account?.error, metadata?.catalog?.error, metadata?.quota?.error].filter(Boolean);
+  return (
+    <ProviderDetail
+      data-testid="antigravity-account-detail"
+      provider="antigravity"
+      color={color}
+      name={
+        <AccountNameEditor
+          value={account.name}
+          labels={{ edit: "Rename account", input: "Account name", save: "Save name", cancel: "Cancel" }}
+          disabled={disabled}
+          accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={disabled} />}
+          onSave={(value) => update({ name: value ?? account.name })}
+        >
+          <span className={cn(blurred && "privacy-blur")}>{account.name}</span>
+        </AccountNameEditor>
+      }
+      plan={<AntigravityPlan account={account} />}
+      planKey={summary.planKey}
+      status={summary.status}
+      subline={[
+        account.email ? <span className={cn(blurred && "privacy-blur")}>{account.email}</span> : null,
+        summary.models,
+      ]}
+      actions={
+        <>
+          <AccountPauseButton
+            paused={!account.isEnabled}
+            disabled={disabled || (!account.isEnabled && account.hold !== null)}
+            onClick={() => void update({ isEnabled: !account.isEnabled })}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={disabled}
+            onClick={() => void run(() => api.refresh.mutateAsync(account.id))}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t("providers.detail.checkLimits")}
+          </Button>
+        </>
+      }
+      menu={[
+        ...commonMenu,
+        {
+          key: "delete",
+          label: t("providers.detail.deleteAccount"),
+          icon: <Trash2 />,
+          destructive: true,
+          disabled,
+          onSelect: onDelete,
+        },
+      ]}
+      banner={banner}
+      alerts={
+        <>
+          {account.state.verification && (
+            <DetailBanner tone="warn" icon={<BadgeAlert />}>
+              <p className="font-medium">Google asked to verify this account</p>
+              <p className="text-xs text-muted-foreground">
+                Observed {formatDateTimeInline(account.state.verification.observed_at, dateFormat)}. Requests pause
+                briefly after each challenge.
+                {account.state.verification.url && (
+                  <>
+                    {" "}
+                    <a href={account.state.verification.url} target="_blank" rel="noopener noreferrer" className="underline">
+                      Open verification
+                    </a>
+                  </>
+                )}
+              </p>
+            </DetailBanner>
+          )}
+          {errors.map((message, index) => (
+            <p key={index} role="alert" className="text-sm text-destructive">
+              {message}
+            </p>
+          ))}
+        </>
+      }
+      main={
+        <>
+          <DetailCard title={t("accounts.usage.title")} data-testid="account-usage">
+            <div className="min-w-0 space-y-4">
+              <AntigravityQuota account={account} detailed />
+              <ProviderAccountTrends provider="antigravity" accountId={account.id} embedded />
+              <p className="text-xs text-muted-foreground">
+                Quota readings are provider-reported per model family. Recorded API-equivalent costs are not subscription
+                charges.
+              </p>
+            </div>
+          </DetailCard>
+          <AccountActivityCard activityKey={summary.activityKey} logsAccountId={summary.logsAccountId} color={color} />
+        </>
+      }
+      side={
+        <>
+          <DetailCard title={t("providers.detail.routing")}>
+            <DetailParts>
+              <AccountRoutingPolicyControl
+                policy={account.routingPolicy}
+                disabled={disabled}
+                onChange={(routingPolicy) => void update({ routingPolicy })}
+              />
+              <SettingRow
+                label={t("providers.detail.models")}
+                control={
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={disabled} onClick={onModels}>
+                    <Layers className="h-3.5 w-3.5" />
+                    Models ({account.state.all_models ? "All" : account.state.selections.length})
+                  </Button>
+                }
+              />
+              <ClaudeCapacitySettings
+                key={account.id + ":" + account.maxConcurrency}
+                value={account.maxConcurrency}
+                readOnly={readOnly}
+                onSave={(maxConcurrency) => api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })}
+              />
+              <AntigravityVersionControls readOnly={readOnly} />
+            </DetailParts>
+          </DetailCard>
+          <DetailCard title={t("providers.detail.signIn")} action={summary.status === "reauth" ? null : reauthenticate}>
+            <DetailRows
+              rows={[
+                { label: "Status", value: formatSlug(account.credentialStatus) },
+                {
+                  label: "Google account",
+                  value: <span className={blurred ? "privacy-blur" : undefined}>{account.email}</span>,
+                },
+                { label: "Project", value: account.projectId ?? "Not assigned" },
+                { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
+                { label: "Catalog updated", value: formatDateTimeInline(metadata?.catalog?.updated_at ?? null, dateFormat) },
+                { label: "Quota updated", value: formatDateTimeInline(metadata?.quota?.updated_at ?? null, dateFormat) },
+                ...account.cooldowns.map((cooldown) => ({
+                  label: "Cooldown " + cooldown.scope.replace(/^(family|model):/, ""),
+                  value: formatSlug(cooldown.reason) + " until " + formatDateTimeInline(cooldown.until, dateFormat),
+                })),
+              ]}
+            />
+          </DetailCard>
+          <DetailCard title={t("providers.detail.details")}>
+            <DetailParts>
+              <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+              <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+            </DetailParts>
+          </DetailCard>
+        </>
+      }
+    />
   );
 }

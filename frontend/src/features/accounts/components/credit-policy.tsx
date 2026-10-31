@@ -9,14 +9,14 @@ export function AccountCreditPolicyControl({ policy, disabled, onChange }: {
   onChange: (policy: AccountCreditPolicy) => void;
 }) {
   const { t } = useTranslation();
-  return <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3">
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-      <div className="flex min-w-0 items-center gap-2 text-sm font-medium sm:min-w-36">
-        <Coins className="h-4 w-4 text-muted-foreground" />
+  return <div className="flex min-w-0 flex-col gap-1">
+    <div className="flex min-w-0 items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2 text-[13px] font-medium">
+        <Coins className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {t("accounts.actions.creditPolicy")}
       </div>
       <Select value={policy} onValueChange={(value) => onChange(value as AccountCreditPolicy)} disabled={disabled}>
-        <SelectTrigger aria-label={t("accounts.actions.creditPolicy")} size="sm" className="h-8 w-full min-w-0 text-xs sm:min-w-32 sm:flex-1"><SelectValue /></SelectTrigger>
+        <SelectTrigger aria-label={t("accounts.actions.creditPolicy")} size="sm" className="h-8 w-36 min-w-0 text-xs"><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value="spend">{t("accounts.creditPolicies.spend")}</SelectItem>
           <SelectItem value="never">{t("accounts.creditPolicies.never")}</SelectItem>

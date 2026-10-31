@@ -19,6 +19,7 @@ import {
 } from "./fixtures";
 import { createOpenRouterAccount } from "../src/features/openrouter/test-fixtures";
 import { createClaudeAccount, createClaudeQuotaWindow } from "../src/features/claude/test-fixtures";
+import { EMPTY_REPORT } from "../src/features/reports/test-fixtures";
 import type { ClaudeAccount } from "../src/features/claude/api";
 import type { WeeklyCreditPace } from "../src/features/dashboard/schemas";
 import {
@@ -546,7 +547,7 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     for (const [id, label, expectedAll] of [[native.accountId, "codex", true], [provider.id, "openrouter", false]] as const) {
-      await page.goto(`${BASE_URL}/accounts?selected=${id}`);
+      await page.goto(`${BASE_URL}/providers/${id}`);
       await expect(page.getByRole("switch", { name: /All models/ })).toHaveCount(0);
       if (label === "openrouter") {
         const curve = page.locator('[aria-label="OpenRouter activity"] .recharts-area-curve');
@@ -567,7 +568,7 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
     }
   }
-  await page.goto(`${BASE_URL}/accounts?selected=${native.accountId}`);
+  await page.goto(`${BASE_URL}/providers/${native.accountId}`);
   await page.getByRole("button", { name: "Models (All)", exact: true }).click();
   await page.getByRole("switch", { name: /All models/ }).click();
   await page.getByRole("button", { name: "Save 1 model", exact: true }).click();
@@ -583,7 +584,7 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
 test("Claude automatic models and shared account presentation", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
-  const account: ClaudeAccount = {
+  const account: ClaudeAccount = createClaudeAccount({
     planType: "pro",
     id: "claude-preview", name: "Claude Research", isEnabled: true,
     maxConcurrency: null, routingPolicy: "burn_first", credentialStatus: "ready",
@@ -605,7 +606,7 @@ test("Claude automatic models and shared account presentation", async ({ page },
       { name: "five_hour", utilization: 24, resetsAt: "2026-09-29T13:00:00Z", freshness: "fresh", exhausted: false },
       { name: "seven_day", utilization: 62, resetsAt: "2026-10-03T12:00:00Z", freshness: "stale", exhausted: false },
     ] },
-  };
+  });
   await interceptApi(page, authSession, accounts.slice(0, 1));
   await page.route("**/api/dashboard/overview**", route => fulfill(route, { ...overview, accounts: accounts.slice(0, 1) }));
   await page.route("**/health/ready", route => fulfill(route, { status: "ok" }));
@@ -613,7 +614,7 @@ test("Claude automatic models and shared account presentation", async ({ page },
     const p = new URL(route.request().url()).pathname;
     if (p === "/api/claude-accounts") return fulfill(route, { accounts: [account] });
     if (p === "/api/claude-accounts/claude-preview/refresh" && route.request().method() === "POST") {
-      account.planType = "max_20x";
+      account.planType = "ultra";
       account.state.subscription = {
         subscription_type: "claude_max", rate_limit_tier: "default_claude_max_20x",
         source: "bootstrap", observed_at: "2026-10-01T12:00:00Z",
@@ -642,12 +643,12 @@ test("Claude automatic models and shared account presentation", async ({ page },
   });
   await applyTheme(page, "light");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto(`${BASE_URL}/accounts?selected=claude-preview`);
-  const detail = page.locator("section").filter({ has: page.getByRole("button", { name: "Rename account", exact: true }) });
+  await page.goto(`${BASE_URL}/providers/claude-preview`);
+  const detail = page.getByTestId("claude-account-detail");
   await expect(detail.getByText("Pro", { exact: true })).toBeVisible();
-  await detail.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(detail.getByText("Max 20×", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("account-list-scroll-region").getByText("Max 20×", { exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "Check limits", exact: true }).click();
+  await expect(detail.getByText("Ultra", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("provider-rail").getByText("Ultra", { exact: true })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Routing policy" })).toBeVisible();
   await expect(page.getByRole("switch", { name: /All models/ })).toHaveCount(0);
   await expect(page.locator('[aria-label="Claude quota history"] .recharts-surface')).toBeVisible();
@@ -675,13 +676,13 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.goto(BASE_URL);
   await expect(page.getByTestId("claude-account-card")).toBeVisible();
-  await expect(page.getByTestId("claude-account-card")).toContainText("Claude · Max 20×");
+  await expect(page.getByTestId("claude-account-card")).toContainText("Claude · Ultra");
   await page.getByTestId("claude-account-card").scrollIntoViewIfNeeded();
   await page.getByTestId("claude-account-card").screenshot({ path: testInfo.outputPath("claude-dashboard.png"), animations: "disabled" });
   await page.getByRole("radio", { name: /List/i }).click();
   const rows = page.getByTestId("dashboard-account-list");
   await expect(rows.getByText("Claude Research")).toBeVisible();
-  await expect(rows.getByText("Max 20×", { exact: true })).toBeVisible();
+  await expect(rows.getByText("Ultra", { exact: true })).toBeVisible();
   await rows.screenshot({ path: testInfo.outputPath("claude-dashboard-list.png"), animations: "disabled" });
   expect(browserErrors).toEqual([]);
 });
@@ -856,6 +857,9 @@ async function interceptApi(
     if (p === "/api/accounts") return fulfill(route, { accounts: accountList });
     if (p === "/api/openrouter-accounts") return fulfill(route, { accounts: [] });
     if (p === "/api/claude-accounts") return fulfill(route, { accounts: [] });
+    if (p === "/api/antigravity-accounts") return fulfill(route, { accounts: [] });
+    if (p === "/api/model-sources/") return fulfill(route, { sources: [] });
+    if (p === "/api/reports") return fulfill(route, EMPTY_REPORT);
     const trendsMatch = p.match(/^\/api\/accounts\/([^/]+)\/trends$/);
     if (trendsMatch) {
       const trends = accountTrends[trendsMatch[1]];
@@ -1034,14 +1038,14 @@ test("logs conversation details dialog", async ({ page }) => {
 });
 
 test("accounts — light", async ({ page }) => {
-  await capture(page, { file: "accounts.jpg", theme: "light", route: "/accounts" });
+  await capture(page, { file: "accounts.jpg", theme: "light", route: "/providers" });
 });
 
 test("accounts — dark", async ({ page }) => {
-  await capture(page, { file: "accounts-dark.jpg", theme: "dark", route: "/accounts" });
+  await capture(page, { file: "accounts-dark.jpg", theme: "dark", route: "/providers" });
 });
 
-test("accounts list keeps many rows in an internal scroll region", async ({ page }) => {
+test("provider rail keeps many accounts in an internal scroll region", async ({ page }) => {
   const manyAccounts = Array.from({ length: 40 }, (_, index) =>
     createAccountSummary({
       accountId: `acc_overflow_${index}`,
@@ -1061,119 +1065,25 @@ test("accounts list keeps many rows in an internal scroll region", async ({ page
     (document.head ?? document.documentElement).appendChild(style);
   }, DISABLE_ANIMATIONS_CSS);
   await page.setViewportSize({ width: 1440, height: 1200 });
-  await page.goto(`${BASE_URL}/accounts`, { waitUntil: "networkidle" });
-  await page.waitForSelector('[data-testid="account-list-scroll-region"]', { timeout: 10_000 });
+  await page.goto(`${BASE_URL}/providers/acc_overflow_0`, { waitUntil: "networkidle" });
 
-  const scrollRegion = page.getByTestId("account-list-scroll-region");
-  const listCard = page.getByTestId("accounts-list-card");
-  const addAccountButton = page.getByRole("button", { name: "Add account" });
-  const statusBar = page.locator("footer");
-
-  await expect(addAccountButton).toBeVisible();
-  const initialDimensions = await scrollRegion.evaluate((element) => ({
+  const rail = page.getByTestId("provider-rail");
+  await expect(rail.getByRole("link", { name: "All providers" })).toBeVisible();
+  const railList = page.getByTestId("provider-rail-scroll");
+  const dimensions = await railList.evaluate((element) => ({
     clientHeight: element.clientHeight,
     scrollHeight: element.scrollHeight,
   }));
-  expect(initialDimensions.clientHeight).toBeGreaterThan(512);
-  expect(initialDimensions.scrollHeight).toBeGreaterThan(initialDimensions.clientHeight);
-  const listCardBox = await listCard.boundingBox();
-  const scrollRegionBox = await scrollRegion.boundingBox();
-  const statusBarBox = await statusBar.boundingBox();
-  if (!listCardBox || !scrollRegionBox || !statusBarBox) {
-    throw new Error("Accounts list card, scroll region, or status bar is not measurable");
+  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+  const railBox = await rail.boundingBox();
+  const statusBarBox = await page.locator("footer").boundingBox();
+  if (!railBox || !statusBarBox) {
+    throw new Error("Provider rail or status bar is not measurable");
   }
-  const bottomGap = listCardBox.y + listCardBox.height - (scrollRegionBox.y + scrollRegionBox.height);
-  expect(bottomGap).toBeLessThanOrEqual(18);
-  expect(scrollRegionBox.y + scrollRegionBox.height).toBeLessThanOrEqual(statusBarBox.y - 8);
-  expect(await scrollRegion.evaluate((element) => element.scrollTop)).toBe(0);
+  expect(railBox.y + railBox.height).toBeLessThanOrEqual(statusBarBox.y - 8);
 
-  const reachedBottom = await scrollRegion.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-    const lastRow = element.lastElementChild;
-    if (!lastRow) {
-      return { scrollTop: element.scrollTop, lastRowVisible: false };
-    }
-    const rowRect = lastRow.getBoundingClientRect();
-    const regionRect = element.getBoundingClientRect();
-    return {
-      scrollTop: element.scrollTop,
-      lastRowVisible: rowRect.top >= regionRect.top && rowRect.bottom <= regionRect.bottom,
-    };
-  });
-  expect(reachedBottom.scrollTop).toBeGreaterThan(0);
-  expect(reachedBottom.lastRowVisible).toBe(true);
-  await expect(addAccountButton).toBeVisible();
-
-  await scrollRegion.evaluate((element) => {
-    element.scrollTop = 0;
-  });
-  await page.getByRole("button", { name: "Need help?" }).click();
-  await expect(page.getByText("Windows OAuth Help")).toBeVisible();
-
-  const helpOpenDimensions = await scrollRegion.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }));
-  expect(helpOpenDimensions.clientHeight).toBeLessThan(initialDimensions.clientHeight);
-  expect(helpOpenDimensions.scrollHeight).toBeGreaterThan(helpOpenDimensions.clientHeight);
-
-  const helpOpenScrollRegionBox = await scrollRegion.boundingBox();
-  const helpOpenStatusBarBox = await statusBar.boundingBox();
-  if (!helpOpenScrollRegionBox || !helpOpenStatusBarBox) {
-    throw new Error("Help-open account scroll region or status bar is not measurable");
-  }
-  expect(helpOpenScrollRegionBox.y + helpOpenScrollRegionBox.height).toBeLessThanOrEqual(
-    helpOpenStatusBarBox.y - 8,
-  );
-  await expect(page.getByRole("button", { name: "Need help?" })).toBeVisible();
-  await expect(addAccountButton).toBeVisible();
-
-  const helpOpenReachedBottom = await scrollRegion.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-    const lastRow = element.lastElementChild;
-    if (!lastRow) {
-      return { scrollTop: element.scrollTop, lastRowVisible: false };
-    }
-    const rowRect = lastRow.getBoundingClientRect();
-    const regionRect = element.getBoundingClientRect();
-    return {
-      scrollTop: element.scrollTop,
-      lastRowVisible: rowRect.top >= regionRect.top && rowRect.bottom <= regionRect.bottom,
-    };
-  });
-  expect(helpOpenReachedBottom.scrollTop).toBeGreaterThan(0);
-  expect(helpOpenReachedBottom.lastRowVisible).toBe(true);
-});
-
-test("accounts list card ends after the final row when all accounts fit", async ({ page }) => {
-  await applyTheme(page, "light");
-  await interceptApi(page, authSession, accounts.slice(0, 4));
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.addInitScript((css: string) => {
-    const style = document.createElement("style");
-    style.textContent = css;
-    (document.head ?? document.documentElement).appendChild(style);
-  }, DISABLE_ANIMATIONS_CSS);
-  await page.setViewportSize({ width: 1440, height: 1200 });
-  await page.goto(`${BASE_URL}/accounts`, { waitUntil: "networkidle" });
-
-  const scrollRegion = page.getByTestId("account-list-scroll-region");
-  const listCard = page.getByTestId("accounts-list-card");
-  const dimensions = await scrollRegion.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }));
-  expect(dimensions.scrollHeight).toBeLessThanOrEqual(dimensions.clientHeight);
-
-  const listCardBox = await listCard.boundingBox();
-  const scrollRegionBox = await scrollRegion.boundingBox();
-  if (!listCardBox || !scrollRegionBox) {
-    throw new Error("Accounts list card or scroll region is not measurable");
-  }
-  const bottomGap =
-    listCardBox.y + listCardBox.height -
-    (scrollRegionBox.y + scrollRegionBox.height);
-  expect(bottomGap).toBeLessThanOrEqual(18);
+  await page.goto(`${BASE_URL}/providers`, { waitUntil: "networkidle" });
+  await expect(page.getByTestId("provider-account-row")).toHaveCount(40);
   await expect(page.getByRole("button", { name: "Add account" })).toBeVisible();
 });
 
@@ -1302,24 +1212,25 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await applyTheme(page, "light");
     await interceptApi(page);
-    const account = {
+    const account = createClaudeAccount({
       id: "src_claude_demo", name: "Research Claude", isEnabled: true, maxConcurrency: null, routingPolicy: "normal", credentialStatus: "ready", expiresAt: "2026-09-26T12:00:00Z",
       planType: "pro",
-      state: { subscription: null, subscription_updated_at: null, subscription_error: null, all_models: false, selections: [{ model: "claude-opus-5" }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000 }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
+      state: { subscription: null, subscription_updated_at: null, subscription_error: null, all_models: false, reasoning_restrictions: {}, selections: [{ model: "claude-opus-5" }], catalog: [{ id: "claude-opus-5", display_name: "Claude Opus 5", max_input_tokens: 1000000, max_tokens: 128000, reasoning_levels: ["low", "medium", "high", "max"], default_reasoning_level: "high" }], catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null, usage_updated_at: null, usage_error: null },
       quota: { observedAt: null, models: [], windows: [
         { name: "five_hour", utilization: 32, resetsAt: "2026-09-25T17:00:00Z", freshness: "fresh", exhausted: false },
         { name: "seven_day", utilization: null, resetsAt: null, freshness: "unknown", exhausted: false },
       ] },
-    };
+    });
     await page.route("**/api/claude-accounts", route => fulfill(route, { accounts: [account] }));
     await page.route("**/api/claude-accounts/version", route => fulfill(route, { effectiveVersion: "2.1.282", discoveredVersion: "2.1.282", pinnedVersion: null, lastCheckedAt: null, lastChangedAt: null, error: null }));
-    await page.goto(`${BASE_URL}/accounts?selected=src_claude_demo`);
+    await page.goto(`${BASE_URL}/providers/src_claude_demo`);
     await expect(page.getByRole("heading", { name: "Research Claude", exact: true })).toBeVisible();
     await expect(page.getByRole("spinbutton", { name: "Maximum concurrent requests" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     await page.screenshot({ animations: "disabled", fullPage: true, path: test.info().outputPath(`claude-accounts-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await page.getByRole("button", { name: "Re-authenticate", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Sign in again", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.screenshot({ animations: "disabled", path: test.info().outputPath(`claude-reconnect-${width}.png`) });
     await page.keyboard.press("Escape");
@@ -1354,6 +1265,7 @@ for (const width of [1440, 390]) {
       id: "src_openrouter_demo", name: "Research", isEnabled: true, hasManagementKey: true, routingPolicy: "normal",
       state: {
         all_models: false,
+        reasoning_restrictions: {},
         catalog_updated_at: "2026-09-25T12:00:00Z", catalog_error: null,
         key_updated_at: "2026-09-25T12:00:00Z", key_error: null,
         credits_updated_at: "2026-09-25T12:00:00Z", credits_error: null,
@@ -1371,9 +1283,11 @@ for (const width of [1440, 390]) {
       },
     };
     await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
-    await page.goto(`${BASE_URL}/accounts?selected=src_openrouter_demo`);
+    await page.goto(`${BASE_URL}/providers/src_openrouter_demo`);
     await expect(page.getByTestId("openrouter-account-detail")).toBeVisible();
-    await page.getByTestId("account-list-scroll-region").getByRole("button", { name: /Research/ }).scrollIntoViewIfNeeded();
+    if (width >= 1024) {
+      await page.getByTestId("provider-rail").getByRole("link", { name: /Research/ }).scrollIntoViewIfNeeded();
+    }
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-accounts-${width}.png`)});
     if (width < 640) {
       await page.getByTestId("openrouter-account-detail").scrollIntoViewIfNeeded();
@@ -1381,7 +1295,7 @@ for (const width of [1440, 390]) {
     }
     await page.getByRole("button", {name: "Models (1)", exact: true}).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByLabel("Context cap for vendor/coder")).toHaveValue("262144");
+    await expect(dialog.getByLabel("Display name for vendor/coder")).toBeVisible();
     const box = await dialog.boundingBox();
     expect(box!.width).toBeLessThanOrEqual(width);
     await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-models-${width}.png`)});
@@ -1417,7 +1331,7 @@ for (const width of [1440, 390]) {
       ]}]},
     }];
     await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
-    await page.goto(`${BASE_URL}/accounts?selected=${account.id}`);
+    await page.goto(`${BASE_URL}/providers/${account.id}`);
     await expect(page.getByRole("button", {name: "Models (0)", exact: true})).toBeVisible();
     await page.getByRole("button", {name: "Image models (1)", exact: true}).click();
     const dialog = page.getByRole("dialog");

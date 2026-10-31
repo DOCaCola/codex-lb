@@ -1,36 +1,46 @@
-import { Suspense, lazy, useCallback, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Plus, UserX } from "lucide-react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AlertMessage } from "@/components/alert-message";
 import { LoadingOverlay } from "@/components/layout/loading-overlay";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { AccountDetail } from "@/features/accounts/components/account-detail";
-import { AccountList } from "@/features/accounts/components/account-list";
 import { AccountsSkeleton } from "@/features/accounts/components/accounts-skeleton";
+import { AddAccountDialog } from "@/features/accounts/components/add-account-dialog";
 import { ImportDialog } from "@/features/accounts/components/import-dialog";
+import { ProviderRail } from "@/features/accounts/components/provider-rail";
+import { ProvidersList } from "@/features/accounts/components/providers-list";
+import { useRailCollapsed } from "@/features/accounts/hooks/use-rail-collapsed";
+import { accountHref } from "@/features/accounts/provider-summary";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { AuthExportDialog } from "@/features/accounts/components/auth-export-dialog";
+import { WindowsOauthHelp } from "@/features/accounts/components/windows-oauth-help";
 import {
   useAccounts,
   useAccountUsageResetCredits,
 } from "@/features/accounts/hooks/use-accounts";
+import { useProviderActivity } from "@/features/accounts/hooks/use-provider-activity";
+import { useSummaryContext } from "@/features/accounts/hooks/use-summary-context";
+import { PROVIDER_LABELS, buildProviderGroups, needsAttention } from "@/features/accounts/provider-summary";
 import {
   DEFAULT_ACCOUNT_SORT_MODE,
   type AccountSortMode,
 } from "@/features/accounts/sorting";
-import { buildAccountListEntries } from "@/features/accounts/list-entries";
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import {
   useSettings,
   useUpstreamProxyAdmin,
 } from "@/features/settings/hooks/use-settings";
-import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import type { AccountAuthExportResponse } from "@/features/accounts/schemas";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import { getErrorMessageOrNull } from "@/utils/errors";
+import { cn } from "@/lib/utils";
 import { OpenRouterAccountControls } from "@/features/openrouter/account-controls";
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
 import { ClaudeAccountControls } from "@/features/claude/account-controls";
@@ -48,13 +58,18 @@ const OauthDialog = lazy(() =>
   })),
 );
 
-export function AccountsPage() {
+/** The Providers page: every account grouped by provider at /providers, one account at /providers/:accountId. */
+export function ProvidersPage() {
   const { t } = useTranslation();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { accountId: selectedId = null } = useParams();
   const [accountSortMode, setAccountSortMode] = useState<AccountSortMode>(
     DEFAULT_ACCOUNT_SORT_MODE,
   );
   const [oauthAccountId, setOauthAccountId] = useState<string | null>(null);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [railCollapsed, toggleRail] = useRailCollapsed();
   const {
     accountsQuery,
     importMutation,
@@ -92,7 +107,7 @@ export function AccountsPage() {
     () => (modelSourcesQuery.data?.sources ?? []).filter(isUserDefinedSource),
     [modelSourcesQuery.data],
   );
-  // Upstream-proxy administration is an `ops:write` read on the backend; cached
+  // Upstream-proxy administration is an ops:write read on the backend; cached
   // data from an earlier admin session must not be rendered either.
   const canReadUpstreamProxy = usePermission("ops:write");
   const { upstreamProxyQuery, accountBindingMutation, testEndpointMutation } =
@@ -101,6 +116,8 @@ export function AccountsPage() {
     });
   const oauth = useOauth();
   const accountColors = useAccountColorHexes();
+  const { activity, available: activityAvailable } = useProviderActivity();
+  const { t: summaryT, quotaDisplay, subscriptionEnds } = useSummaryContext();
 
   const importDialog = useDialogState();
   const oauthDialog = useDialogState();
@@ -123,73 +140,33 @@ export function AccountsPage() {
   const showResetCreditExpiryBadge =
     settingsQuery.data?.showResetCreditExpiryBadge ?? true;
   const limitWarmupGloballyEnabled = settingsQuery.data?.limitWarmupEnabled;
-  const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
-  const selectedAccountId = searchParams.get("selected");
 
-  const handleSelectAccount = useCallback(
-    (accountId: string) => {
-      const nextSearchParams = new URLSearchParams(searchParams);
-      nextSearchParams.set("selected", accountId);
-      setSearchParams(nextSearchParams);
-    },
-    [searchParams, setSearchParams],
-  );
-
-  const resolvedSelectedAccountId = useMemo(() => {
-    if (
-      selectedAccountId &&
-      (accounts.some((account) => account.accountId === selectedAccountId) ||
-        claudeAccounts.some((account) => account.id === selectedAccountId) ||
-        antigravityAccounts.some((account) => account.id === selectedAccountId) ||
-        openRouterAccounts.some((account) => account.id === selectedAccountId) ||
-        modelSources.some((source) => source.id === selectedAccountId))
-    ) {
-      return selectedAccountId;
-    }
-    const [firstRow] = buildAccountListEntries(
-      { accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources },
-      { search: "", statusFilter: "all", sortMode: accountSortMode, quotaDisplay, t },
-    );
-    return firstRow?.id ?? null;
-  }, [
-    accounts,
-    selectedAccountId,
-    accountSortMode,
-    quotaDisplay,
-    t,
-    openRouterAccounts,
-    claudeAccounts,
-    antigravityAccounts,
-    modelSources,
-  ]);
-  const selectedClaudeAccount =
-    claudeAccounts.find(
-      (account) => account.id === resolvedSelectedAccountId,
-    ) ?? null;
-  const selectedAntigravityAccount =
-    antigravityAccounts.find(
-      (account) => account.id === resolvedSelectedAccountId,
-    ) ?? null;
-  const selectedOpenRouterAccount =
-    openRouterAccounts.find(
-      (account) => account.id === resolvedSelectedAccountId,
-    ) ?? null;
-  const selectedModelSource =
-    modelSources.find((source) => source.id === resolvedSelectedAccountId) ??
-    null;
-
-  const selectedAccount = useMemo(
+  const groups = useMemo(
     () =>
-      resolvedSelectedAccountId
-        ? (accounts.find(
-            (account) => account.accountId === resolvedSelectedAccountId,
-          ) ?? null)
-        : null,
-    [accounts, resolvedSelectedAccountId],
+      buildProviderGroups(
+        { accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources },
+        accountSortMode,
+        { t: summaryT, quotaDisplay, subscriptionEnds },
+      ),
+    [accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources, accountSortMode, summaryT, quotaDisplay, subscriptionEnds],
   );
+  const summaries = groups.flatMap((group) => group.summaries);
+  const selectedSummary = summaries.find((summary) => summary.id === selectedId) ?? null;
+  const selectedClaudeAccount = selectedSummary?.entry.kind === "claude" ? selectedSummary.entry.account : null;
+  const selectedAntigravityAccount = selectedSummary?.entry.kind === "antigravity" ? selectedSummary.entry.account : null;
+  const selectedOpenRouterAccount = selectedSummary?.entry.kind === "openrouter" ? selectedSummary.entry.account : null;
+  const selectedModelSource = selectedSummary?.entry.kind === "openai_compatible" ? selectedSummary.entry.account : null;
+  const selectedAccount = selectedSummary?.entry.kind === "codex" ? selectedSummary.entry.account : null;
   const resetCreditsQuery = useAccountUsageResetCredits(
     selectedAccount?.accountId ?? null,
   );
+  const providersLoading =
+    !accountsQuery.data ||
+    claudeQuery.isLoading ||
+    antigravityQuery.isLoading ||
+    openRouterQuery.isLoading ||
+    modelSourcesQuery.isLoading;
+  const openAccount = (id: string) => navigate(accountHref(id));
 
   const mutationBusy =
     importMutation.isPending ||
@@ -225,46 +202,102 @@ export function AccountsPage() {
     getErrorMessageOrNull(accountBindingMutation.error) ||
     getErrorMessageOrNull(testEndpointMutation.error);
 
+  const readyCount = summaries.filter((summary) => summary.tone === "ok").length;
+  const attentionCount = summaries.filter(needsAttention).length;
+  const pausedCount = summaries.filter((summary) => summary.status === "paused").length;
+
   return (
     <ClaudeAccountControls
       account={selectedClaudeAccount}
-      onCreated={handleSelectAccount}
+      onCreated={openAccount}
       readOnly={!canWrite}
     >
       {({ onSignIn: onClaudeSignIn, onImport: onClaudeImport, detail: claudeDetail }) => (
         <AntigravityAccountControls
           account={selectedAntigravityAccount}
-          onCreated={handleSelectAccount}
+          onCreated={openAccount}
           readOnly={!canWrite}
         >
           {({ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport, detail: antigravityDetail }) => (
             <OpenRouterAccountControls
               account={selectedOpenRouterAccount}
-              onCreated={handleSelectAccount}
+              onCreated={openAccount}
               readOnly={!canWrite}
             >
               {({ onAdd, detail }) => (
                 <ModelSourceAccountControls
                   source={selectedModelSource}
-                  onCreated={handleSelectAccount}
+                  onCreated={openAccount}
                   readOnly={!canWrite}
                 >
                   {({ onAdd: onAddOpenAICompatible, detail: modelSourceDetail }) => (
-                    <div className="animate-fade-in-up space-y-6">
-                      {/* Page header */}
-                      <div>
-                        <h1 className="text-2xl font-semibold tracking-tight">
-                          {t("accounts.page.title")}
-                        </h1>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {t("accounts.page.subtitle")}
-                        </p>
-                      </div>
+                    <div className="animate-fade-in-up space-y-4">
+                      {selectedId === null ? (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                          <h1 className="text-xl font-semibold tracking-tight">{t("providers.page.title")}</h1>
+                          {summaries.length > 0 ? (
+                            <p className="text-sm text-muted-foreground" data-testid="providers-summary">
+                              {t("providers.page.ready", { ready: readyCount, total: summaries.length })}
+                              {attentionCount > 0 ? " · " + t("providers.page.attention", { count: attentionCount }) : null}
+                              {pausedCount > 0 ? " · " + t("providers.page.paused", { count: pausedCount }) : null}
+                            </p>
+                          ) : null}
+                          <div className="ml-auto flex items-center gap-2">
+                            {canWrite ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1 text-xs"
+                                aria-expanded={helpOpen}
+                                onClick={() => setHelpOpen((current) => !current)}
+                              >
+                                {t("accounts.list.needHelp")}
+                                {helpOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                              </Button>
+                            ) : null}
+                            <Button type="button" size="sm" className="gap-1.5" disabled={!canWrite} onClick={() => setChooserOpen(true)}>
+                              <Plus className="h-3.5 w-3.5" />
+                              {t("accounts.list.addAccount")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+                          <Link to="/providers" className="hover:text-foreground">
+                            {t("providers.page.title")}
+                          </Link>
+                          {selectedSummary ? (
+                            <>
+                              <span aria-hidden="true">/</span>
+                              <span>{PROVIDER_LABELS[selectedSummary.kind]}</span>
+                              <span aria-hidden="true" className="hidden lg:inline">/</span>
+                              <span className="hidden truncate text-foreground lg:inline">{selectedSummary.name}</span>
+                              <Select value={selectedSummary.id} onValueChange={openAccount}>
+                                <SelectTrigger size="sm" className="h-7 max-w-56 min-w-0 text-xs lg:hidden" aria-label={t("providers.rail.switch")}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {groups.map((group) => (
+                                    <SelectGroup key={group.kind}>
+                                      <SelectLabel>{PROVIDER_LABELS[group.kind]}</SelectLabel>
+                                      {group.summaries.map((summary) => (
+                                        <SelectItem key={summary.id} value={summary.id}>
+                                          {summary.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectGroup>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </>
+                          ) : null}
+                        </div>
+                      )}
 
                       {mutationError ? (
                         <AlertMessage variant="error">{mutationError}</AlertMessage>
                       ) : null}
-
                       {openRouterQuery.error && (
                         <AlertMessage variant="error">
                           {openRouterQuery.error.message}
@@ -285,63 +318,37 @@ export function AccountsPage() {
                           {modelSourcesQuery.error.message}
                         </AlertMessage>
                       )}
-                      {claudeQuery.isLoading && (
-                        <p className="text-sm text-muted-foreground">
-                          Loading Claude accounts…
-                        </p>
-                      )}
-                      {antigravityQuery.isLoading && (
-                        <p className="text-sm text-muted-foreground">
-                          Loading Antigravity accounts…
-                        </p>
-                      )}
-                      {openRouterQuery.isLoading && (
-                        <p className="text-sm text-muted-foreground">
-                          Loading OpenRouter accounts…
-                        </p>
-                      )}
+                      {helpOpen && canWrite && selectedId === null ? <WindowsOauthHelp /> : null}
 
-                      {!accountsQuery.data ? (
+                      {providersLoading ? (
                         <AccountsSkeleton />
+                      ) : selectedId === null ? (
+                        <ProvidersList
+                          groups={groups}
+                          activity={activity}
+                          activityAvailable={activityAvailable}
+                          colors={accountColors}
+                          sortMode={accountSortMode}
+                          onSortModeChange={setAccountSortMode}
+                          showResetCreditBadges={showResetCreditBadges}
+                          readOnly={!canWrite}
+                          onAdd={() => setChooserOpen(true)}
+                        />
                       ) : (
                         <div
-                          data-testid="accounts-layout"
-                          className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]"
+                          data-testid="provider-detail-layout"
+                          className={cn(
+                            "grid min-w-0 grid-cols-1 items-start gap-4",
+                            railCollapsed ? "lg:grid-cols-[3.5rem_minmax(0,1fr)]" : "lg:grid-cols-[18rem_minmax(0,1fr)]",
+                          )}
                         >
-                          <div
-                            data-testid="accounts-list-panel"
-                            className="min-w-0 min-h-0 self-start"
-                          >
-                            <div
-                              data-testid="accounts-list-card"
-                              className="flex min-h-0 min-w-0 flex-col rounded-xl border bg-card p-3 sm:p-4"
-                            >
-                              <AccountList
-                                accounts={accounts}
-                                openRouterAccounts={openRouterAccounts}
-                                onOpenRouter={onAdd}
-                                claudeAccounts={claudeAccounts}
-                                claudeEnrollment={{ onSignIn: onClaudeSignIn, onImport: onClaudeImport }}
-                                antigravityAccounts={antigravityAccounts}
-                                antigravityEnrollment={{ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport }}
-                                modelSources={modelSources}
-                                onOpenAICompatible={onAddOpenAICompatible}
-                                accountColors={accountColors}
-                                selectedAccountId={resolvedSelectedAccountId}
-                                onSelect={handleSelectAccount}
-                                sortMode={accountSortMode}
-                                onSortModeChange={setAccountSortMode}
-                                showResetCreditBadges={showResetCreditBadges}
-                                onOpenImport={() => importDialog.show()}
-                                onOpenOauth={() => {
-                                  setOauthAccountId(null);
-                                  oauthDialog.show();
-                                }}
-                                readOnly={!canWrite}
-                              />
-                            </div>
-                          </div>
-
+                          <ProviderRail
+                            groups={groups}
+                            selectedId={selectedId}
+                            colors={accountColors}
+                            collapsed={railCollapsed}
+                            onToggleCollapsed={toggleRail}
+                          />
                           {selectedClaudeAccount ? (
                             claudeDetail
                           ) : selectedAntigravityAccount ? (
@@ -350,10 +357,9 @@ export function AccountsPage() {
                             detail
                           ) : selectedModelSource ? (
                             modelSourceDetail
-                          ) : (
+                          ) : selectedAccount ? (
                             <AccountDetail
                               account={selectedAccount}
-                              showAccountId={selectedAccount?.isEmailDuplicate === true}
                               busy={mutationBusy}
                               readOnly={!canWrite}
                               onPause={(accountId) =>
@@ -373,7 +379,7 @@ export function AccountsPage() {
                               }
                               onDelete={(accountId) => deleteDialog.show(accountId)}
                               onReauth={() => {
-                                setOauthAccountId(selectedAccount?.accountId ?? null);
+                                setOauthAccountId(selectedAccount.accountId);
                                 oauthDialog.show();
                               }}
                               onExportAuth={(accountId) => {
@@ -383,13 +389,10 @@ export function AccountsPage() {
                                   .catch(() => null);
                               }}
                               onResetCredit={(accountId) => {
-                                const account = accountsQuery.data?.find(
-                                  (item) => item.accountId === accountId,
-                                );
                                 resetCreditDialog.show({
                                   accountId,
                                   availableResetCredits:
-                                    account?.availableResetCredits ?? 0,
+                                    selectedAccount.availableResetCredits ?? 0,
                                 });
                               }}
                               showResetCreditExpiryBadge={showResetCreditExpiryBadge}
@@ -438,9 +441,36 @@ export function AccountsPage() {
                               resetCreditsLoading={resetCreditsQuery.isFetching}
                               resetCreditsUnavailable={!!resetCreditsQuery.error}
                             />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center" data-testid="provider-not-found">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted">
+                                <UserX className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <p className="mt-3 text-sm font-medium text-muted-foreground">{t("providers.notFound.title")}</p>
+                              <p className="mt-1 text-xs text-muted-foreground/70">{t("providers.notFound.description")}</p>
+                              <Button asChild variant="outline" size="sm" className="mt-4">
+                                <Link to="/providers">{t("providers.rail.all")}</Link>
+                              </Button>
+                            </div>
                           )}
                         </div>
                       )}
+
+                      <AddAccountDialog
+                        open={chooserOpen}
+                        onOpenChange={setChooserOpen}
+                        codex={{
+                          onSignIn: () => {
+                            setOauthAccountId(null);
+                            oauthDialog.show();
+                          },
+                          onImport: () => importDialog.show(),
+                        }}
+                        claude={{ onSignIn: onClaudeSignIn, onImport: onClaudeImport }}
+                        antigravity={{ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport }}
+                        onOpenRouter={onAdd}
+                        onOpenAICompatible={onAddOpenAICompatible}
+                      />
 
                       <ImportDialog
                         open={importDialog.open}

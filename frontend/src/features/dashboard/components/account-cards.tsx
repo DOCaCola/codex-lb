@@ -51,7 +51,7 @@ export function AccountCards({
         description={t("dashboard.accounts.emptyDescription")}
         action={
           <Button asChild size="sm">
-            <Link to="/accounts">{t("dashboard.accounts.emptyAction")}</Link>
+            <Link to="/providers">{t("dashboard.accounts.emptyAction")}</Link>
           </Button>
         }
       />

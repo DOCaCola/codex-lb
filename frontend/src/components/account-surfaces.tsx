@@ -97,22 +97,3 @@ export function AccountCardNotice({
     />
   );
 }
-
-export function AccountSelectionSurface({
-  selected,
-  className,
-  ...props
-}: ComponentProps<"button"> & { selected: boolean }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      className={cn(
-        "relative min-w-0 w-full rounded-lg px-3 py-2.5 text-left transition-colors",
-        selected ? "bg-primary/8 ring-1 ring-primary/25" : "hover:bg-muted/50",
-        className,
-      )}
-      {...props}
-    />
-  );
-}

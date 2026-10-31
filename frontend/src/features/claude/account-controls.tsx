@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { Layers, RefreshCw, Trash2 } from "lucide-react";
+import { Clock, KeyRound, Layers, PauseCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
-import { ClaudeName, ClaudePlan, ClaudeQuota } from "./account-display";
+import { ClaudePlan, ClaudeQuota, ExtraUsageBadge } from "./account-display";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
 import { useClaude } from "./use-claude";
 import type { ClaudeAccount } from "./api";
@@ -18,12 +18,24 @@ import { AccountNameEditor } from "@/features/accounts/components/account-name-e
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
 import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { AccountSubscriptionEndPanel } from "@/features/accounts/components/account-subscription-end-panel";
+import { AccountActivityCard } from "@/features/accounts/components/account-activity-card";
+import {
+  DetailBanner,
+  DetailCard,
+  DetailParts,
+  DetailRows,
+  ProviderDetail,
+  SettingRow,
+} from "@/features/accounts/components/provider-detail";
+import { useCommonMenuItems } from "@/features/accounts/hooks/use-common-menu-items";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
-import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
+import { useSummaryContext } from "@/features/accounts/hooks/use-summary-context";
+import { summarizeEntry } from "@/features/accounts/provider-summary";
 import { CredentialImportDialog } from "@/features/accounts/components/credential-import-dialog";
 import { ProviderSignInDialog } from "@/features/accounts/components/provider-sign-in-dialog";
 import { ReauthenticateMenu } from "@/features/accounts/components/reauthenticate-menu";
 import { usePrivacyStore } from "@/hooks/use-privacy";
+import { cn } from "@/lib/utils";
 import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 
@@ -58,10 +70,6 @@ export function ClaudeAccountControls({
   const api = useClaude();
   const identity = useIdentityConfirmation();
   const blurred = usePrivacyStore((s) => s.blurred);
-  const accountColors = useAccountColorHexes();
-  const dateFormat = useDateDisplayFormatStore(
-    (state) => state.dateDisplayFormat,
-  );
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -91,178 +99,18 @@ export function ClaudeAccountControls({
   const reconnect = (action: () => Promise<ClaudeAccount>) =>
     reauthAccount ? identity.guard(reauthAccount.id, reauthAccount.name, action) : action();
   const detail = account && (
-    <section className="animate-fade-in-up min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
-      <div>
-        <AccountNameEditor
-          key={account.id}
-          value={account.name}
-          labels={{
-            edit: "Rename account",
-            input: "Account name",
-            save: "Save name",
-            cancel: "Cancel",
-          }}
-          disabled={readOnly || busy}
-          accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={readOnly || busy} />}
-          onSave={(name) =>
-            run(() =>
-              api.update.mutateAsync({
-                id: account.id,
-                body: { name: name ?? account.name },
-              }),
-            )
-          }
-        >
-          <ClaudeName account={account} color={accountColors.modelSources.get(account.id)} />
-        </AccountNameEditor>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Claude | <ClaudePlan account={account} /> |{" "}
-          {account.state.all_models
-            ? "All models"
-            : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
-        </p>
-      </div>
-      {[error, account.state.catalog_error, account.state.usage_error, account.state.subscription_error]
-        .filter(Boolean)
-        .map((message, index) => (
-          <p key={index} role="alert" className="text-sm text-destructive">
-            {message}
-          </p>
-        ))}
-      <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Usage
-        </h3>
-        <ClaudeQuota account={account} detailed />
-        <ClaudeResetGrants
-          key={account.id}
-          accountId={account.id}
-          readOnly={readOnly}
-        />
-        <ProviderAccountTrends
-          provider="claude"
-          accountId={account.id}
-          embedded
-        />
-      </section>
-      <p className="text-xs text-muted-foreground">
-        Quota observations are provider-reported. Recorded API-equivalent costs
-        are not subscription charges. OAuth acceptance and included-plan billing
-        require live qualification.
-      </p>
-      <AccountInfoPanel
-        title="Monitoring"
-        rows={[
-          { label: "Status", value: formatSlug(account.credentialStatus) },
-          {
-            label: "Access token expires",
-            value: formatDateTimeInline(account.expiresAt, dateFormat),
-          },
-          {
-            label: "Catalog updated",
-            value: formatDateTimeInline(
-              account.state.catalog_updated_at,
-              dateFormat,
-            ),
-          },
-          {
-            label: "Usage updated",
-            value: formatDateTimeInline(
-              account.state.usage_updated_at,
-              dateFormat,
-            ),
-          },
-        ]}
-      />
-      <details className="min-w-0 rounded-lg border bg-muted/30 p-4">
-        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Provider settings
-        </summary>
-        <div className="mt-4 space-y-4">
-          <ClaudeCapacitySettings
-            key={`${account.id}:${account.maxConcurrency}`}
-            value={account.maxConcurrency}
-            readOnly={readOnly}
-            onSave={(maxConcurrency) =>
-              api.update.mutateAsync({
-                id: account.id,
-                body: { maxConcurrency },
-              })
-            }
-          />
-          <ClaudeVersionControls readOnly={readOnly} />
-        </div>
-      </details>
-      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-      <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-      {/* Actions last, matching the Codex account detail. */}
-      <div className="space-y-3 border-t pt-4">
-        <AccountRoutingPolicyControl
-          policy={account.routingPolicy}
-          disabled={readOnly || busy}
-          onChange={(routingPolicy) =>
-            void run(() =>
-              api.update.mutateAsync({
-                id: account.id,
-                body: { routingPolicy },
-              }),
-            )
-          }
-        />
-        <div className="flex flex-wrap gap-2">
-          <AccountPauseButton
-            paused={!account.isEnabled}
-            disabled={readOnly || busy}
-            onClick={() =>
-              void run(() =>
-                api.update.mutateAsync({
-                  id: account.id,
-                  body: { isEnabled: !account.isEnabled },
-                }),
-              )
-            }
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={() => setModelAccountId(account.id)}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            Models (
-            {account.state.all_models ? "All" : account.state.selections.length}
-            )
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs"
-            disabled={readOnly || busy}
-            onClick={() => void run(() => api.refresh.mutateAsync(account.id))}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </Button>
-          <ReauthenticateMenu
-            disabled={readOnly || busy}
-            onSignIn={() => enroll({ method: "signIn", reauth: account })}
-            onImport={() => enroll({ method: "import", reauth: account })}
-          />
-          <Button
-            size="sm"
-            variant="destructive"
-            className="h-8 gap-1.5 text-xs"
-            aria-label="Delete Claude account"
-            disabled={readOnly || busy}
-            onClick={() => setDeleteOpen(true)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </Button>
-        </div>
-      </div>
-    </section>
+    <ClaudeDetail
+      key={account.id}
+      account={account}
+      busy={busy}
+      readOnly={readOnly}
+      error={error}
+      run={run}
+      onModels={() => setModelAccountId(account.id)}
+      onSignIn={() => enroll({ method: "signIn", reauth: account })}
+      onImport={() => enroll({ method: "import", reauth: account })}
+      onDelete={() => setDeleteOpen(true)}
+    />
   );
   return (
     <>
@@ -319,5 +167,192 @@ export function ClaudeAccountControls({
         }}
       />
     </>
+  );
+}
+
+/** Account page of a Claude account. */
+function ClaudeDetail({
+  account,
+  busy,
+  readOnly,
+  error,
+  run,
+  onModels,
+  onSignIn,
+  onImport,
+  onDelete,
+}: {
+  account: ClaudeAccount;
+  busy: boolean;
+  readOnly: boolean;
+  error: string | null;
+  run: (action: () => Promise<unknown>) => Promise<void>;
+  onModels: () => void;
+  onSignIn: () => void;
+  onImport: () => void;
+  onDelete: () => void;
+}) {
+  const { t } = useTranslation();
+  const api = useClaude();
+  const blurred = usePrivacyStore((s) => s.blurred);
+  const accountColors = useAccountColorHexes();
+  const dateFormat = useDateDisplayFormatStore((state) => state.dateDisplayFormat);
+  const summary = summarizeEntry({ kind: "claude", account }, useSummaryContext());
+  const commonMenu = useCommonMenuItems(account.id, summary.logsAccountId);
+  const color = accountColors.modelSources.get(account.id);
+  const disabled = readOnly || busy;
+  const update = (body: Parameters<typeof api.update.mutateAsync>[0]["body"]) =>
+    run(() => api.update.mutateAsync({ id: account.id, body }));
+  const reauthenticate = <ReauthenticateMenu disabled={disabled} onSignIn={onSignIn} onImport={onImport} />;
+  const banner =
+    summary.status === "reauth" ? (
+      <DetailBanner tone="bad" icon={<KeyRound />} action={reauthenticate}>
+        {t("providers.banner.recovery")}
+      </DetailBanner>
+    ) : summary.status === "paused" ? (
+      <DetailBanner tone="off" icon={<PauseCircle />}>
+        {t("providers.banner.paused")}
+      </DetailBanner>
+    ) : summary.status === "limited" || summary.status === "exceeded" ? (
+      <DetailBanner tone={summary.tone === "bad" ? "bad" : "warn"} icon={<Clock />}>
+        {summary.notice?.text ?? t("providers.banner.limited")}
+      </DetailBanner>
+    ) : null;
+  const errors = [error, account.state.catalog_error, account.state.usage_error, account.state.subscription_error].filter(Boolean);
+  return (
+    <ProviderDetail
+      data-testid="claude-account-detail"
+      provider="claude"
+      color={color}
+      name={
+        <AccountNameEditor
+          value={account.name}
+          labels={{
+            edit: "Rename account",
+            input: "Account name",
+            save: "Save name",
+            cancel: "Cancel",
+          }}
+          disabled={disabled}
+          accessory={<AccountColorPicker target={{ modelSourceId: account.id }} disabled={disabled} />}
+          onSave={(name) => update({ name: name ?? account.name })}
+        >
+          <span className={cn(blurred && "privacy-blur")}>{account.name}</span>
+        </AccountNameEditor>
+      }
+      plan={<ClaudePlan account={account} />}
+      planKey={summary.planKey}
+      status={summary.status}
+      badges={<ExtraUsageBadge account={account} />}
+      subline={[
+        account.accountEmail ? <span className={cn(blurred && "privacy-blur")}>{account.accountEmail}</span> : null,
+        account.organizationName,
+        summary.models,
+      ]}
+      actions={
+        <>
+          <AccountPauseButton
+            paused={!account.isEnabled}
+            disabled={disabled}
+            onClick={() => void update({ isEnabled: !account.isEnabled })}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={disabled}
+            onClick={() => void run(() => api.refresh.mutateAsync(account.id))}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t("providers.detail.checkLimits")}
+          </Button>
+        </>
+      }
+      menu={[
+        ...commonMenu,
+        {
+          key: "delete",
+          label: t("providers.detail.deleteAccount"),
+          icon: <Trash2 />,
+          destructive: true,
+          disabled,
+          onSelect: onDelete,
+        },
+      ]}
+      banner={banner}
+      alerts={
+        errors.length > 0 ? (
+          <div className="space-y-1">
+            {errors.map((message, index) => (
+              <p key={index} role="alert" className="text-sm text-destructive">
+                {message}
+              </p>
+            ))}
+          </div>
+        ) : null
+      }
+      main={
+        <>
+          <DetailCard title={t("accounts.usage.title")} data-testid="account-usage">
+            <div className="min-w-0 space-y-4">
+              <ClaudeQuota account={account} detailed />
+              <ClaudeResetGrants accountId={account.id} readOnly={readOnly} />
+              <ProviderAccountTrends provider="claude" accountId={account.id} embedded />
+              <p className="text-xs text-muted-foreground">
+                Quota observations are provider-reported. Recorded API-equivalent costs
+                are not subscription charges. OAuth acceptance and included-plan billing
+                require live qualification.
+              </p>
+            </div>
+          </DetailCard>
+          <AccountActivityCard activityKey={summary.activityKey} logsAccountId={summary.logsAccountId} color={color} />
+        </>
+      }
+      side={
+        <>
+          <DetailCard title={t("providers.detail.routing")}>
+            <DetailParts>
+              <AccountRoutingPolicyControl
+                policy={account.routingPolicy}
+                disabled={disabled}
+                onChange={(routingPolicy) => void update({ routingPolicy })}
+              />
+              <SettingRow
+                label={t("providers.detail.models")}
+                control={
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={disabled} onClick={onModels}>
+                    <Layers className="h-3.5 w-3.5" />
+                    Models ({account.state.all_models ? "All" : account.state.selections.length})
+                  </Button>
+                }
+              />
+              <ClaudeCapacitySettings
+                key={account.id + ":" + account.maxConcurrency}
+                value={account.maxConcurrency}
+                readOnly={readOnly}
+                onSave={(maxConcurrency) => api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })}
+              />
+              <ClaudeVersionControls readOnly={readOnly} />
+            </DetailParts>
+          </DetailCard>
+          <DetailCard title={t("providers.detail.signIn")} action={summary.status === "reauth" ? null : reauthenticate}>
+            <DetailRows
+              rows={[
+                { label: "Status", value: formatSlug(account.credentialStatus) },
+                { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
+                { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
+                { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
+              ]}
+            />
+          </DetailCard>
+          <DetailCard title={t("providers.detail.details")}>
+            <DetailParts>
+              <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+              <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+            </DetailParts>
+          </DetailCard>
+        </>
+      }
+    />
   );
 }

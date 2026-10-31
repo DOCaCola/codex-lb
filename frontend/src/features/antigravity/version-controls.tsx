@@ -16,15 +16,15 @@ export function AntigravityVersionControls({ readOnly }: { readOnly: boolean }) 
   const status = query.data;
   const busy = readOnly || save.isPending || !status;
   return (
-    <section className="space-y-3 border-t pt-4">
-      <h3 className="font-medium">Antigravity CLI identity · all Antigravity accounts</h3>
+    <section className="space-y-2">
+      <h3 className="text-[13px] font-medium">Antigravity CLI identity · all Antigravity accounts</h3>
       <p className="text-xs text-muted-foreground">
         Checks the CLI update manifest at startup and every 24 hours. A build is advertised only after its
         archive verified and its version and build changelist were read from it. Pin a verified build to hold
         or roll back the advertised identity.
       </p>
       {status && (
-        <p className="text-sm">
+        <p className="text-xs">
           Effective:{" "}
           {status.effective ? status.effective.version + " (cl " + status.effective.changelist + ")" : "No verified build"}{" "}
           · {status.pinnedSha512 ? "Pinned" : "Following latest"}
@@ -39,7 +39,7 @@ export function AntigravityVersionControls({ readOnly }: { readOnly: boolean }) 
           disabled={busy}
           onValueChange={(platform) => save.mutate({ platform })}
         >
-          <SelectTrigger aria-label="Antigravity CLI platform" className="h-8 w-48 text-xs">
+          <SelectTrigger aria-label="Antigravity CLI platform" className="h-8 w-full min-w-0 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -55,7 +55,7 @@ export function AntigravityVersionControls({ readOnly }: { readOnly: boolean }) 
           disabled={busy || status.builds.length === 0}
           onValueChange={(pinnedSha512) => save.mutate({ pinnedSha512 })}
         >
-          <SelectTrigger aria-label="Pinned Antigravity CLI build" className="h-8 w-64 text-xs">
+          <SelectTrigger aria-label="Pinned Antigravity CLI build" className="h-8 w-full min-w-0 text-xs">
             <SelectValue placeholder="Pin a verified build" />
           </SelectTrigger>
           <SelectContent>

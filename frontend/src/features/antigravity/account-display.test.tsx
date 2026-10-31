@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
-import { AccountList } from "@/features/accounts/components/account-list";
+import { renderProvidersList } from "@/features/accounts/test-utils";
 import { AccountList as DashboardList } from "@/features/dashboard/components/account-list";
 import { AntigravityAccountSchema } from "./api";
 import { AntigravityAccountCard, AntigravityQuota } from "./account-display";
@@ -102,7 +102,7 @@ describe("Antigravity account display", () => {
     const account = createAntigravityAccount();
     expect(bindingWindow(account, "claude")?.window).toBe("five_hour");
     expect(bindingWindow(account, "gemini")?.window).toBe("weekly");
-    const view = render(<AntigravityQuota account={account} variant="card" />);
+    const view = render(<AntigravityQuota account={account} />);
     expect(view.container).toHaveTextContent("Gemini · Weekly");
     expect(view.container).toHaveTextContent("Claude & GPT · 5h");
     expect(view.container).not.toHaveTextContent("Gemini · 5h");
@@ -120,21 +120,13 @@ describe("Antigravity account display", () => {
     expect(screen.getByTestId("antigravity-account-card")).toHaveTextContent("Antigravity · Ultra 5×");
   });
 
-  it("lists accounts on the accounts page and dashboard", () => {
+  it("lists accounts on the Providers page and dashboard", () => {
     const account = createAntigravityAccount({ name: "Google One" });
-    const view = render(
-      <MemoryRouter>
-        <AccountList
-          accounts={[]}
-          antigravityAccounts={[account]}
-          selectedAccountId={null}
-          onSelect={vi.fn()}
-          onOpenImport={vi.fn()}
-          onOpenOauth={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText("Google One")).toBeVisible();
+    const view = renderProvidersList({ antigravityAccounts: [account] });
+    const listRow = screen.getByTestId("provider-account-row");
+    expect(within(listRow).getByRole("link", { name: "Google One" })).toHaveAttribute("href", "/providers/" + account.id);
+    expect(listRow).toHaveTextContent("Claude & GPT · 5h");
+    expect(listRow).toHaveTextContent("Gemini · Weekly");
     view.unmount();
     render(
       <MemoryRouter>

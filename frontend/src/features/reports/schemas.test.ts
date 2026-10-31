@@ -31,6 +31,7 @@ describe("ReportsResponseSchema", () => {
       outputTokens: 50,
       reasoningTokens: null,
       costUsd: 1,
+      errorCount: 2,
     };
     const parsed = ReportsResponseSchema.parse({
       ...validReportsPayload(),
@@ -40,7 +41,7 @@ describe("ReportsResponseSchema", () => {
       dailyByModel: [{ ...split, model: "gpt-5.1" }],
     });
 
-    expect(parsed.dailyByAccount[0]).toMatchObject({ modelSourceId: "src-claude", provider: "claude", unpricedRequests: 0 });
+    expect(parsed.dailyByAccount[0]).toMatchObject({ modelSourceId: "src-claude", provider: "claude", unpricedRequests: 0, errorCount: 2 });
     expect(parsed.dailyByModel[0]).toMatchObject({ model: "gpt-5.1", reasoningTokens: null });
   });
 

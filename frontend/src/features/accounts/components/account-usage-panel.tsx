@@ -216,8 +216,7 @@ function AccountUsagePanelContent({
     primaryTrendPoints.length > 0 || secondaryTrendPoints.length > 0 || secondaryScheduledTrendPoints.length > 0;
 
   return (
-    <div className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("accounts.usage.title")}</h3>
+    <div className="min-w-0 space-y-4">
       <div className={cn("grid gap-4", weeklyOnly || monthlyOnly ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
         {monthlyOnly ? (
           <QuotaRow label={t("common.quota.monthly")} percent={monthly} resetAt={account.resetAtMonthly} />

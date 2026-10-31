@@ -53,7 +53,7 @@ describe("AppHeader", () => {
     });
   });
 
-  it("shows the summed Accounts reset-credit badge capped at 99+", async () => {
+  it("shows the summed Providers reset-credit badge capped at 99+", async () => {
     server.use(
       http.get("/api/accounts", () =>
         HttpResponse.json({
@@ -89,7 +89,7 @@ describe("AppHeader", () => {
     expect(await screen.findAllByText("8")).not.toHaveLength(0);
   });
 
-  it("hides the Accounts reset-credit badge when no resets are available", async () => {
+  it("hides the Providers reset-credit badge when no resets are available", async () => {
     server.use(
       http.get("/api/accounts", () =>
         HttpResponse.json({
@@ -103,11 +103,11 @@ describe("AppHeader", () => {
 
     renderHeader();
 
-    await screen.findByRole("link", { name: /Accounts/i });
+    await screen.findByRole("link", { name: /Providers/i });
     expect(screen.queryByText("99+")).not.toBeInTheDocument();
   });
 
-  it("hides the Accounts reset-credit badge when settings disable reset-credit badges", async () => {
+  it("hides the Providers reset-credit badge when settings disable reset-credit badges", async () => {
     server.use(
       http.get("/api/accounts", () =>
         HttpResponse.json({
@@ -121,7 +121,7 @@ describe("AppHeader", () => {
 
     renderHeader();
 
-    await screen.findByRole("link", { name: /Accounts/i });
+    await screen.findByRole("link", { name: /Providers/i });
     await waitFor(() => {
       expect(screen.queryByText("5")).not.toBeInTheDocument();
     });
@@ -132,7 +132,7 @@ describe("AppHeader", () => {
 
     expect(await screen.findByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Reports/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Accounts/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Providers/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /APIs/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Settings/i })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Automations" })).not.toBeInTheDocument();
@@ -301,7 +301,7 @@ describe("AppHeader", () => {
 
       expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: /Settings/i })).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: /Accounts/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /Providers/i })).not.toBeInTheDocument();
     });
 
     it.each([
@@ -313,7 +313,7 @@ describe("AppHeader", () => {
 
       renderHeader();
 
-      for (const name of [/Dashboard/i, /Reports/i, /Accounts/i, /APIs/i, /Settings/i]) {
+      for (const name of [/Dashboard/i, /Reports/i, /Providers/i, /APIs/i, /Settings/i]) {
         expect(screen.getByRole("link", { name })).toBeInTheDocument();
       }
     });

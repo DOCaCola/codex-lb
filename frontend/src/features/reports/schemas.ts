@@ -64,6 +64,7 @@ const DailySplitMeasuresFields = {
   outputTokens: z.number(),
   reasoningTokens: z.number().nullable(),
   costUsd: z.number(),
+  errorCount: z.number(),
 };
 
 const DailyAccountSplitSchema = z.object({

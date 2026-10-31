@@ -28,15 +28,15 @@ export function ClaudeVersionControls({ readOnly }: { readOnly: boolean }) {
     onSuccess: () => client.invalidateQueries({ queryKey: ["claude-version"] }),
   });
   return (
-    <section className="space-y-3 border-t pt-4">
-      <h3 className="font-medium">Claude Code version · all Claude accounts</h3>
+    <section className="space-y-2">
+      <h3 className="text-[13px] font-medium">Claude Code version · all Claude accounts</h3>
       <p className="text-xs text-muted-foreground">
         Checks stable releases at startup and every 24 hours. Pin an exact
         version to hold or roll back the advertised version. This does not
         install Claude Code or qualify a new compatibility profile.
       </p>
       {query.data && (
-        <p className="text-sm">
+        <p className="text-xs">
           Effective: {query.data.effectiveVersion} ·{" "}
           {query.data.pinnedVersion ? "Pinned" : "Following stable"}
           <br />
@@ -46,15 +46,17 @@ export function ClaudeVersionControls({ readOnly }: { readOnly: boolean }) {
             : "Never"}
         </p>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Input
           aria-label="Pinned Claude Code version"
           placeholder="major.minor.patch"
+          className="h-8 min-w-0 flex-1 basis-32 text-xs"
           value={version}
           disabled={readOnly || pin.isPending}
           onChange={(event) => setVersion(event.target.value)}
         />
         <Button
+          size="sm"
           disabled={
             readOnly ||
             pin.isPending ||
@@ -66,6 +68,7 @@ export function ClaudeVersionControls({ readOnly }: { readOnly: boolean }) {
         </Button>
         <Button
           variant="outline"
+          size="sm"
           disabled={readOnly || pin.isPending || !query.data?.pinnedVersion}
           onClick={() => pin.mutate(null)}
         >

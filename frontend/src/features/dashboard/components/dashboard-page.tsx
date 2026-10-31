@@ -116,7 +116,7 @@ export function DashboardPage() {
     (account: AccountSummary, action: string) => {
       switch (action) {
         case "details":
-          navigate(`/accounts?selected=${account.accountId}`);
+          navigate(`/providers/${encodeURIComponent(account.accountId)}`);
           break;
         case "resume":
           if (canWriteAccounts) {
@@ -124,7 +124,7 @@ export function DashboardPage() {
           }
           break;
         case "reauth":
-          navigate(`/accounts?selected=${account.accountId}`);
+          navigate(`/providers/${encodeURIComponent(account.accountId)}`);
           break;
         case "warmup-toggle":
           if (canWriteAccounts) {

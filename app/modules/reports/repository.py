@@ -88,6 +88,7 @@ class SplitMeasures:
     output_tokens: int
     reasoning_tokens: int | None
     cost_usd: float
+    error_count: int
     priced_requests: int = 0
     unpriced_requests: int = 0
     unmetered_requests: int = 0
@@ -383,6 +384,7 @@ _SPLIT_SUMS = (
     "reasoning_tokens",
     "reasoning_usage_known_requests",
     "cost_usd",
+    "error_count",
     *_COVERAGE,
 )
 
@@ -399,6 +401,7 @@ def _split_measures(row) -> SplitMeasures:
         output_tokens=int(row.output_tokens),
         reasoning_tokens=int(row.reasoning_tokens) if row.reasoning_usage_known_requests else None,
         cost_usd=float(row.cost_usd),
+        error_count=int(row.error_count),
         priced_requests=int(row.priced_requests),
         unpriced_requests=int(row.unpriced_requests),
         unmetered_requests=int(row.unmetered_requests),

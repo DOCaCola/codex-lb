@@ -53,7 +53,7 @@ vi.mock("@/features/dashboard/components/dashboard-page", async (importOriginal)
   };
 });
 
-vi.mock("@/features/accounts/components/accounts-page", () => {
+vi.mock("@/features/accounts/components/providers-page", () => {
   throw new Error("Rejected route chunk");
 });
 
@@ -106,7 +106,7 @@ describe("route recovery flow integration", () => {
 
   it("contains a rejected lazy route and exposes keyboard recovery", async () => {
     const user = userEvent.setup({ delay: null });
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/providers");
 
     renderWithProviders(<App />);
     const recovery = await screen.findByTestId("route-load-error");

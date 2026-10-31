@@ -82,6 +82,6 @@ describe("AccountCards", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: "Add accounts" })).toHaveAttribute("href", "/accounts");
+    expect(screen.getByRole("link", { name: "Add accounts" })).toHaveAttribute("href", "/providers");
   });
 });

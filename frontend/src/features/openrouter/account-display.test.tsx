@@ -6,9 +6,10 @@ import { OpenRouterAccountCard, OpenRouterMetrics } from "./account-display";
 import { createOpenRouterAccount } from "./test-fixtures";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { AccountList as DashboardAccountList } from "@/features/dashboard/components/account-list";
-import { AccountList } from "@/features/accounts/components/account-list";
+import { renderProvidersList } from "@/features/accounts/test-utils";
 import { AccountSummaryLine } from "@/features/dashboard/components/account-summary-line";
 import { usePrivacyStore } from "@/hooks/use-privacy";
+import { renderWithProviders } from "@/test/utils";
 import { OpenRouterAccountDetail } from "./account-detail";
 
 vi.mock("@/features/accounts/components/provider-account-trends", () => ({
@@ -40,29 +41,24 @@ describe("Unified provider accounts", () => {
     [false, "Paid"],
     [null, "Unknown"],
   ] as const)(
-    "displays key tier %s in account cards and lists",
+    "displays key tier %s in account cards, lists and the Providers table",
     (free, label) => {
       const account = createOpenRouterAccount();
       if (free === null) account.state.key = null;
       else account.state.key!.is_free_tier = free;
-      render(
+      const view = render(
         <MemoryRouter>
           <OpenRouterAccountCard account={account} />
           <DashboardAccountList accounts={[]} openRouterAccounts={[account]} />
-          <AccountList
-            accounts={[]}
-            openRouterAccounts={[account]}
-            selectedAccountId={null}
-            onSelect={vi.fn()}
-            onOpenImport={vi.fn()}
-            onOpenOauth={vi.fn()}
-          />
         </MemoryRouter>,
       );
-      expect(screen.getAllByTitle(/API key tier reported/)).toHaveLength(3);
+      expect(screen.getAllByTitle(/API key tier reported/)).toHaveLength(2);
       for (const tier of screen.getAllByTitle(/API key tier reported/)) {
         expect(tier).toHaveTextContent(label);
       }
+      view.unmount();
+      renderProvidersList({ openRouterAccounts: [account] });
+      expect(screen.getByTestId("provider-account-row").querySelector(".plan-badge")).toHaveTextContent(label);
     },
   );
 
@@ -95,7 +91,7 @@ describe("Unified provider accounts", () => {
       onAllModels: vi.fn(),
       onRoutingPolicy: vi.fn(),
     };
-    const view = render(
+    const view = renderWithProviders(
       <OpenRouterAccountDetail account={account} {...props} />,
     );
     expect(
@@ -137,7 +133,7 @@ describe("Unified provider accounts", () => {
   });
   it("renames inline from the detail heading like Codex accounts", async () => {
     const onRename = vi.fn().mockResolvedValue(undefined);
-    render(
+    renderWithProviders(
       <OpenRouterAccountDetail
         account={createOpenRouterAccount({ name: "Research" })}
         readOnly={false}
@@ -183,25 +179,17 @@ describe("Unified provider accounts", () => {
   });
 
   it("includes OpenRouter in common status filtering", async () => {
-    render(
-      <AccountList
-        accounts={[]}
-        openRouterAccounts={[
-          createOpenRouterAccount(),
-          createOpenRouterAccount({
-            id: "paused",
-            name: "Paused provider",
-            isEnabled: false,
-          }),
-        ]}
-        selectedAccountId={null}
-        onSelect={vi.fn()}
-        onOpenImport={vi.fn()}
-        onOpenOauth={vi.fn()}
-      />,
-    );
-    await userEvent.click(screen.getByRole("combobox", { name: /status/i }));
-    await userEvent.click(screen.getByRole("option", { name: "Paused" }));
+    renderProvidersList({
+      openRouterAccounts: [
+        createOpenRouterAccount(),
+        createOpenRouterAccount({
+          id: "paused",
+          name: "Paused provider",
+          isEnabled: false,
+        }),
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: /^Paused/ }));
     expect(screen.queryByText("Research")).not.toBeInTheDocument();
     expect(screen.getByText("Paused provider")).toBeVisible();
   });
@@ -230,7 +218,7 @@ describe("Unified provider accounts", () => {
         .getAllByRole("link")
         .every(
           (link) =>
-            link.getAttribute("href") === "/accounts?selected=src_research",
+            link.getAttribute("href") === "/providers/src_research",
         ),
     ).toBe(true);
     expect(
@@ -269,11 +257,10 @@ describe("Unified provider accounts", () => {
     expect(screen.getByText("$75.50")).toBeVisible();
   });
 
-  it("uses common search and name ordering across providers", async () => {
-    const select = vi.fn();
-    render(
-      <AccountList
-        accounts={[
+  it("groups providers, sorts within each group and searches across them", async () => {
+    renderProvidersList(
+      {
+        accounts: [
           {
             accountId: "codex",
             email: "z@example.com",
@@ -284,20 +271,22 @@ describe("Unified provider accounts", () => {
             limitWarmupEnabled: false,
             creditPolicy: "spend",
           },
-        ]}
-        openRouterAccounts={[createOpenRouterAccount({ name: "Alpha" })]}
-        sortMode="name_asc"
-        selectedAccountId="src_research"
-        onSelect={select}
-        onOpenImport={vi.fn()}
-        onOpenOauth={vi.fn()}
-      />,
+        ],
+        openRouterAccounts: [
+          createOpenRouterAccount({ id: "src_beta", name: "Beta" }),
+          createOpenRouterAccount({ name: "Alpha" }),
+        ],
+      },
+      { sortMode: "name_asc" },
     );
-    const list = screen.getByTestId("account-list-scroll-region");
-    expect(within(list).getAllByRole("button")[0]).toHaveTextContent("Alpha");
+    const groups = screen.getAllByRole("rowgroup");
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Codex", "OpenRouter"]);
+    expect(within(groups[1]).getAllByTestId("provider-account-row").map((row) => within(row).getByRole("link").textContent)).toEqual([
+      "Alpha",
+      "Beta",
+    ]);
     await userEvent.type(screen.getByRole("textbox"), "openrouter");
-    expect(within(list).queryByText("Zulu")).not.toBeInTheDocument();
-    await userEvent.click(within(list).getByRole("button"));
-    expect(select).toHaveBeenCalledWith("src_research");
+    expect(screen.queryByText("Zulu")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Alpha" })).toHaveAttribute("href", "/providers/src_research");
   });
 });

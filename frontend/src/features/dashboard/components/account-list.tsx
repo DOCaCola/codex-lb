@@ -556,7 +556,7 @@ export function AccountList({
         description={t("dashboard.accountList.emptyDescription")}
         action={
           <Button asChild size="sm">
-            <Link to="/accounts">{t("dashboard.accountList.emptyAction")}</Link>
+            <Link to="/providers">{t("dashboard.accountList.emptyAction")}</Link>
           </Button>
         }
       />
@@ -862,7 +862,7 @@ function ClaudeRow({ account, color }: { account: ClaudeAccount; color: string |
       <div className="flex justify-end">
         <Button asChild size="sm" variant="ghost"
           className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground">
-          <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`} aria-label="Details">
+          <Link to={`/providers/${encodeURIComponent(account.id)}`} aria-label="Details">
             <ExternalLink className="h-3.5 w-3.5" />
           </Link>
         </Button>
@@ -903,7 +903,7 @@ function AntigravityRow({ account, color }: { account: AntigravityAccount; color
       <div className="flex justify-end">
         <Button asChild size="sm" variant="ghost"
           className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground">
-          <Link to={"/accounts?selected=" + encodeURIComponent(account.id)} aria-label="Details">
+          <Link to={"/providers/" + encodeURIComponent(account.id)} aria-label="Details">
             <ExternalLink className="h-3.5 w-3.5" />
           </Link>
         </Button>
@@ -963,7 +963,7 @@ function OpenRouterRow({ account, color }: { account: OpenRouterAccount; color: 
           className="h-7 w-7 rounded-md p-0 text-muted-foreground hover:text-foreground"
         >
           <Link
-            to={`/accounts?selected=${encodeURIComponent(account.id)}`}
+            to={`/providers/${encodeURIComponent(account.id)}`}
             aria-label={`View details for ${account.name}`}
           >
             <ExternalLink className="h-3.5 w-3.5" />

@@ -70,6 +70,7 @@ class DailySplitMeasures(DashboardModel):
     output_tokens: int
     reasoning_tokens: int | None
     cost_usd: float
+    error_count: int
     priced_requests: int = 0
     unpriced_requests: int = 0
     unmetered_requests: int = 0

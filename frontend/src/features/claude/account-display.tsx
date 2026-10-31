@@ -3,19 +3,15 @@ import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import {
   AccountCardAction,
   AccountCardSurface,
-  AccountSelectionSurface,
 } from "@/components/account-surfaces";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { CircleDollarSign, ExternalLink } from "lucide-react";
 import {
   CardQuotaGrid,
-  MiniQuotaRow,
   QuotaBar,
   QuotaRow,
 } from "@/features/accounts/components/quota-display";
-import { RoutingPolicyBadge } from "@/features/accounts/components/routing-policy";
-import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import {
   formatPercentNullable,
   formatQuotaResetLabel,
@@ -51,30 +47,17 @@ const labels = {
   seven_day_opus: "Weekly Opus",
   seven_day_sonnet: "Weekly Sonnet",
 };
+/** Quota windows of a Claude account: every reported window in detail, the 5-hour and weekly windows on a card. */
 export function ClaudeQuota({
   account,
   detailed = false,
-  variant = "list",
 }: {
   account: ClaudeAccount;
   detailed?: boolean;
-  variant?: "card" | "list";
 }) {
-  const quotaDisplay = useAccountQuotaDisplayStore(
-    (state) => state.quotaDisplay,
+  const windows = account.quota.windows.filter(
+    (window) => detailed || window.name === "five_hour" || window.name === "seven_day",
   );
-  const windows = account.quota.windows.filter((window) => {
-    if (detailed) return true;
-    if (window.name !== "five_hour" && window.name !== "seven_day")
-      return false;
-    if (variant === "card") return true;
-    return (
-      quotaDisplay === "both" ||
-      (quotaDisplay === "weekly"
-        ? window.name === "seven_day"
-        : window.name === "five_hour")
-    );
-  });
   const content = windows.map((window) => {
     const percent =
       window.utilization === null
@@ -85,17 +68,11 @@ export function ClaudeQuota({
       <div key={window.name} className="space-y-1">
         {detailed ? (
           <QuotaRow label={label} percent={percent} resetAt={window.resetsAt} />
-        ) : variant === "card" ? (
+        ) : (
           <QuotaBar
             label={label}
             percent={percent}
             resetLabel={formatQuotaResetLabel(window.resetsAt)}
-          />
-        ) : (
-          <MiniQuotaRow
-            label={label}
-            percent={percent}
-            resetAt={window.resetsAt}
           />
         )}
         {(window.freshness !== "fresh" ||
@@ -112,7 +89,7 @@ export function ClaudeQuota({
       </div>
     );
   });
-  if (variant === "card" && !detailed)
+  if (!detailed)
     return (
       <CardQuotaGrid columns={windows.length > 1 ? 2 : 1}>
         {content}
@@ -131,53 +108,6 @@ export function ClaudeQuota({
   );
 }
 
-function Heading({ account, color }: { account: ClaudeAccount; color: string | undefined }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">
-          <ClaudeName account={account} color={color} />
-        </p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          Claude | <ClaudePlan account={account} /> |{" "}
-          {account.state.all_models
-            ? "All models"
-            : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"} selected`}
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <ExtraUsageBadge account={account} />
-        <RoutingPolicyBadge policy={account.routingPolicy} />
-        <StatusBadge status={normalizeStatus(claudeStatus(account))} />
-      </div>
-    </div>
-  );
-}
-
-export function ClaudeListItem({
-  account,
-  color,
-  selected,
-  onSelect,
-}: {
-  account: ClaudeAccount;
-  color?: string;
-  selected: boolean;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <AccountSelectionSurface
-      selected={selected}
-      onClick={() => onSelect(account.id)}
-    >
-      <Heading account={account} color={color} />
-      <div className="mt-2">
-        <ClaudeQuota account={account} />
-      </div>
-    </AccountSelectionSurface>
-  );
-}
-
 export function ClaudeAccountCard({ account, color }: { account: ClaudeAccount; color?: string }) {
   const { t } = useTranslation();
   return (
@@ -193,19 +123,19 @@ export function ClaudeAccountCard({ account, color }: { account: ClaudeAccount; 
       }
       actions={
         <AccountCardAction asChild>
-          <Link to={`/accounts?selected=${encodeURIComponent(account.id)}`}>
+          <Link to={`/providers/${encodeURIComponent(account.id)}`}>
             <ExternalLink className="h-3 w-3" />
             {t("common.actions.details")}
           </Link>
         </AccountCardAction>
       }
     >
-      <ClaudeQuota account={account} variant="card" />
+      <ClaudeQuota account={account} />
     </AccountCardSurface>
   );
 }
 
-function ExtraUsageBadge({ account }: { account: ClaudeAccount }) {
+export function ExtraUsageBadge({ account }: { account: ClaudeAccount }) {
   const { t } = useTranslation();
   if (!account.extraUsageEnabled) return null;
   return (

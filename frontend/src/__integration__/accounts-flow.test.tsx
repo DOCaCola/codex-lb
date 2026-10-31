@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -6,18 +6,19 @@ import App from "@/App";
 import { renderWithProviders } from "@/test/utils";
 
 describe("accounts flow integration", () => {
-  it("supports account selection and pause/resume actions", async () => {
+  it("opens an account from the Providers table and pauses or resumes it", async () => {
     const user = userEvent.setup({ delay: null });
 
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/providers");
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
-    expect((await screen.findAllByText("primary@example.com")).length).toBeGreaterThan(0);
-    expect(screen.getByText("secondary@example.com")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Providers" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "primary@example.com" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "secondary@example.com" })).toBeInTheDocument();
 
-    await user.click(screen.getByText("secondary@example.com"));
+    await user.click(screen.getByRole("link", { name: "secondary@example.com" }));
     expect(await screen.findByText("Token Status")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/providers/acc_secondary");
 
     const resumeButton = screen.queryByRole("button", { name: "Resume" });
     if (resumeButton) {
@@ -33,13 +34,12 @@ describe("accounts flow integration", () => {
     }
   });
 
-  it("lets operators set, search, and clear an account alias", async () => {
+  it("lets operators set, find, and clear an account alias", async () => {
     const user = userEvent.setup({ delay: null });
 
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/providers/acc_primary");
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Edit alias" }));
     const aliasInput = await screen.findByLabelText("Account alias");
     await user.clear(aliasInput);
@@ -50,9 +50,10 @@ describe("accounts flow integration", () => {
       expect(screen.getByRole("heading", { name: "Personal Plus" })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByPlaceholderText("Search accounts..."), "personal");
-    expect(screen.getAllByText("Personal Plus").length).toBeGreaterThan(0);
-    expect(screen.queryByText("secondary@example.com")).not.toBeInTheDocument();
+    const rail = screen.getByRole("navigation", { name: "Accounts" });
+    await user.type(within(rail).getByPlaceholderText("Find account"), "personal");
+    expect(within(rail).getByRole("link", { name: /Personal Plus/ })).toBeInTheDocument();
+    expect(within(rail).queryByText("secondary@example.com")).not.toBeInTheDocument();
 
     await user.click(await screen.findByRole("button", { name: "Edit alias" }));
     const aliasInputToClear = await screen.findByLabelText("Account alias");

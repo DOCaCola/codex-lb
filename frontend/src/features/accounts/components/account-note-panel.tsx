@@ -31,9 +31,9 @@ export function AccountNotePanel({ target, readOnly }: { target: AccountNoteTarg
   };
 
   return (
-    <div className="space-y-2 rounded-lg border bg-muted/30 p-4">
+    <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <h3 className="text-[13px] font-medium">
           {t("accounts.detail.note.title")}
         </h3>
         {!readOnly && !editing ? (

@@ -39,6 +39,7 @@ const EXPECTED_ENDPOINTS = [
 	"GET /api/antigravity-accounts",
 	"GET /api/antigravity-accounts/:id/trends",
 	"GET /api/openrouter-accounts",
+	"GET /api/reports",
 	"GET /api/accounts",
 	"GET /api/accounts/:accountId/models",
 	"PUT /api/accounts/:accountId/models",

@@ -151,22 +151,24 @@ describe("guest restricted surfaces integration", () => {
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
-  it("renders masked accounts, hides OAuth help, and skips the upstream-proxy query on /accounts", async () => {
+  it("renders masked accounts, hides OAuth help, and skips the upstream-proxy query on /providers", async () => {
     useGuestSession();
+    const user = userEvent.setup();
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/providers");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "p***@example.com" })).toBeInTheDocument();
-    await waitFor(() => expect(paths).toContain("/api/accounts/acc_primary/usage-reset-credits"));
+    expect(await screen.findByRole("heading", { level: 1, name: "Providers" })).toBeInTheDocument();
     // OpenAI-compatible sources are listed with the other provider accounts.
     await waitFor(() => expect(paths).toContain("/api/model-sources/"));
-
-    expect(screen.getAllByText(/Personal \/ unknown workspace/).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Need help?" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
+
+    await user.click(await screen.findByRole("link", { name: "p***@example.com" }));
+    expect(await screen.findByRole("heading", { name: "p***@example.com" })).toBeInTheDocument();
+    await waitFor(() => expect(paths).toContain("/api/accounts/acc_primary/usage-reset-credits"));
+    expect(screen.getAllByText(/Personal \/ unknown workspace/).length).toBeGreaterThan(0);
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
@@ -242,7 +244,7 @@ describe("guest restricted surfaces integration", () => {
     expect(screen.queryByText("API keys are managed by administrators")).not.toBeInTheDocument();
   });
 
-  it("keeps the upstream-proxy query and OAuth help (connect address) for writers on /accounts (regression)", async () => {
+  it("keeps the upstream-proxy query and OAuth help (connect address) for writers on /providers (regression)", async () => {
     const user = userEvent.setup();
     server.use(
       http.get("/api/settings/runtime/connect-address", () =>
@@ -250,11 +252,11 @@ describe("guest restricted surfaces integration", () => {
       ),
     );
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/providers");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Providers" })).toBeInTheDocument();
     await waitFor(() => expect(paths).toContain("/api/settings/upstream-proxy"));
 
     await user.click(await screen.findByRole("button", { name: "Need help?" }));
@@ -282,7 +284,7 @@ describe("guest restricted surfaces integration", () => {
     expect(screen.queryByText("Primary pool")).not.toBeInTheDocument();
     settingsRender.unmount();
 
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/providers/acc_primary");
     const accountsRender = renderWithProviders(<App />);
     accountsRender.queryClient.setQueryData(["settings", "upstream-proxy"], cached);
 

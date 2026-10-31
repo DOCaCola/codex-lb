@@ -33,8 +33,8 @@ const LogsPage = lazy(() =>
 const ReportsPage = lazy(() =>
   import("@/features/reports/components/reports-page").then((m) => ({ default: m.ReportsPage })),
 );
-const AccountsPage = lazy(() =>
-  import("@/features/accounts/components/accounts-page").then((m) => ({ default: m.AccountsPage })),
+const ProvidersPage = lazy(() =>
+  import("@/features/accounts/components/providers-page").then((m) => ({ default: m.ProvidersPage })),
 );
 const ApisPage = lazy(() => import("@/features/apis/components/apis-page").then((m) => ({ default: m.ApisPage })));
 const SettingsLayout = lazy(() =>
@@ -139,7 +139,8 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/logs" element={<LogsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
-              <Route path="/accounts" element={<AccountsPage />} />
+              <Route path="/providers" element={<ProvidersPage />} />
+              <Route path="/providers/:accountId" element={<ProvidersPage />} />
               <Route path="/apis" element={<ApisPage />} />
               <Route path="/settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to={DEFAULT_SETTINGS_SECTION} replace />} />

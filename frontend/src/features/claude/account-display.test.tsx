@@ -3,11 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountCards } from "@/features/dashboard/components/account-cards";
 import { AccountList as DashboardList } from "@/features/dashboard/components/account-list";
-import { AccountList } from "@/features/accounts/components/account-list";
+import { renderProvidersList } from "@/features/accounts/test-utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import {
   ClaudeAccountCard,
-  ClaudeListItem,
   ClaudeQuota,
 } from "./account-display";
 import { claudeStatus } from "./display-values";
@@ -74,44 +73,36 @@ afterEach(() => {
   useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
 });
 describe("Claude shared account surfaces", () => {
-  it("warns about billed extra usage only when the account enables it", () => {
-    const view = render(
-      <MemoryRouter>
-        <ClaudeAccountCard account={account} />
-        <ClaudeListItem account={account} selected={false} onSelect={() => {}} />
-      </MemoryRouter>,
-    );
-    expect(screen.queryByText("Extra usage")).toBeNull();
-    view.rerender(
-      <MemoryRouter>
-        <ClaudeAccountCard account={{ ...account, extraUsageEnabled: true }} />
-        <ClaudeListItem account={{ ...account, extraUsageEnabled: true }} selected={false} onSelect={() => {}} />
-      </MemoryRouter>,
-    );
-    const badges = screen.getAllByText("Extra usage");
-    expect(badges).toHaveLength(2);
-    expect(badges[0].closest("[title]")).toHaveAttribute("title", expect.stringContaining("billed"));
+  it.each([false, true])("warns about billed extra usage only when the account enables it (%s)", (extraUsageEnabled) => {
+    const selected = { ...account, extraUsageEnabled };
+    render(<MemoryRouter><ClaudeAccountCard account={selected} /></MemoryRouter>);
+    renderProvidersList({ claudeAccounts: [selected] });
+    const badges = screen.queryAllByText("Extra usage");
+    expect(badges).toHaveLength(extraUsageEnabled ? 2 : 0);
+    for (const badge of badges) expect(badge.closest("[title]")).toHaveAttribute("title", expect.stringContaining("billed"));
   });
 
   it.each([
     ["free", "Free"], ["pro", "Pro"], ["max", "Max"],
     ["ultra", "Ultra"],
     ["team", "Team"], ["enterprise", "Enterprise"], ["unknown", "Unknown plan"],
-  ] as const)("shows %s in cards, account lists and dashboard plan cells", (planType, label) => {
+  ] as const)("shows %s in cards, the Providers table and dashboard plan cells", (planType, label) => {
     const selected = { ...account, planType };
     const view = render(<MemoryRouter><ClaudeAccountCard account={selected} /></MemoryRouter>);
     expect(screen.getByText(label, { exact: true })).toBeVisible();
-    view.rerender(<ClaudeListItem account={selected} selected onSelect={vi.fn()} />);
+    view.unmount();
+    const list = renderProvidersList({ claudeAccounts: [selected] });
     expect(screen.getByText(label, { exact: true })).toBeVisible();
-    view.rerender(<MemoryRouter><DashboardList accounts={[]} claudeAccounts={[selected]} /></MemoryRouter>);
+    list.unmount();
+    render(<MemoryRouter><DashboardList accounts={[]} claudeAccounts={[selected]} /></MemoryRouter>);
     expect(screen.getByText(label, { exact: true })).toBeVisible();
   });
 
   it("searches Claude accounts by the displayed subscription label", async () => {
-    render(<AccountList accounts={[]} claudeAccounts={[
+    renderProvidersList({ claudeAccounts: [
       { ...account, planType: "ultra" },
       { ...account, id: "other", name: "Other Claude", planType: "pro" },
-    ]} selectedAccountId={account.id} onSelect={vi.fn()} onOpenImport={vi.fn()} onOpenOauth={vi.fn()} />);
+    ] });
     await userEvent.type(screen.getByPlaceholderText("Search accounts..."), "Ultra");
     expect(screen.getByText(account.name)).toBeVisible();
     expect(screen.queryByText("Other Claude")).not.toBeInTheDocument();
@@ -135,24 +126,22 @@ describe("Claude shared account surfaces", () => {
       state: { ...account.state, subscription_error: "Claude /api/claude_cli/bootstrap returned HTTP 429" },
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><MemoryRouter>
       <ClaudeAccountControls account={failed} readOnly onCreated={vi.fn()}>{({ detail }) => detail}</ClaudeAccountControls>
-    </QueryClientProvider>);
+    </MemoryRouter></QueryClientProvider>);
     expect(screen.getByText("Max", { exact: true })).toHaveAttribute("title", "Last known subscription; metadata refresh failed");
-    expect(screen.getByText("Max", { exact: true }).parentElement).toHaveTextContent("Claude | Max");
+    expect(screen.getByRole("heading", { level: 2, name: "Usage" })).toBeInTheDocument();
     expect(screen.queryByText(/Claude OAuth/)).not.toBeInTheDocument();
     expect(screen.getByText(failed.state.subscription_error)).toHaveAttribute("role", "alert");
     expect(screen.queryByRole("combobox", { name: /subscription|plan/i })).not.toBeInTheDocument();
   });
 
-  it("uses two card quota columns without changing the list and detail layout", () => {
-    const view = render(<ClaudeQuota account={account} variant="card" />);
+  it("uses two card quota columns and responsive detail columns", () => {
+    const view = render(<ClaudeQuota account={account} />);
     expect(view.container.firstElementChild).toHaveClass("grid-cols-2");
     expect(view.container.firstElementChild).not.toHaveClass("sm:grid-cols-2");
-    view.rerender(<ClaudeQuota account={{ ...account, quota: { ...account.quota, windows: [account.quota.windows[1]] } }} variant="card" />);
+    view.rerender(<ClaudeQuota account={{ ...account, quota: { ...account.quota, windows: [account.quota.windows[1]] } }} />);
     expect(view.container.firstElementChild).toHaveClass("grid-cols-1");
-    view.rerender(<ClaudeQuota account={account} />);
-    expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
     view.rerender(<ClaudeQuota account={account} detailed />);
     expect(view.container.firstElementChild).toHaveClass("grid-cols-1", "sm:grid-cols-2");
   });
@@ -169,12 +158,9 @@ describe("Claude shared account surfaces", () => {
     );
     expect(screen.getByTestId("claude-account-card")).toHaveTextContent("Claude · Pro");
     expect(screen.queryByText(/All models/)).not.toBeInTheDocument();
-    view.rerender(
-      <MemoryRouter>
-        <ClaudeListItem account={automatic} selected onSelect={vi.fn()} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText(/Claude.*All models/)).toBeVisible();
+    view.unmount();
+    renderProvidersList({ claudeAccounts: [automatic] });
+    expect(within(screen.getByTestId("provider-account-row")).getByText("All models")).toBeInTheDocument();
   });
   it("renders only returned quota windows, including genuine unknown or stale scoped observations", () => {
     const { rerender } = render(<ClaudeQuota account={account} detailed />);
@@ -214,32 +200,19 @@ describe("Claude shared account surfaces", () => {
     expect(screen.getByText("Weekly Sonnet remaining")).toBeInTheDocument();
   });
   it("preserves usage overshoot while bounding the remaining bar", () => {
-    render(
-      <ClaudeQuota
-        account={{
-          ...account,
-          quota: {
-            ...account.quota,
-            windows: [
-              {
-                ...account.quota.windows[0],
-                utilization: 104,
-                freshness: "fresh",
-                exhausted: true,
-              },
-            ],
-          },
-        }}
-      />,
-    );
+    const overshot: ClaudeAccount = {
+      ...account,
+      quota: {
+        ...account.quota,
+        windows: [{ ...account.quota.windows[0], utilization: 104, freshness: "fresh", exhausted: true }],
+      },
+    };
+    const card = render(<ClaudeQuota account={overshot} />);
     expect(screen.getByText("104% used")).toBeInTheDocument();
-    expect(screen.getByTestId("mini-quota-track-5h")).toHaveAttribute(
-      "value",
-      "0",
-    );
-    expect(screen.getByTestId("mini-quota-track-5h-fill")).toHaveStyle({
-      width: "0%",
-    });
+    expect(card.container.querySelector("[style]")).toHaveStyle({ width: "0%" });
+    card.unmount();
+    renderProvidersList({ claudeAccounts: [overshot] });
+    expect(within(screen.getByTestId("provider-account-row")).getByText("0%")).toBeInTheDocument();
   });
   it("requires explicit refresh ownership consent before enrollment", async () => {
     const client = new QueryClient({
@@ -249,7 +222,7 @@ describe("Claude shared account surfaces", () => {
       },
     });
     render(
-      <QueryClientProvider client={client}>
+      <QueryClientProvider client={client}><MemoryRouter>
         <ClaudeAccountControls
           account={null}
           readOnly={false}
@@ -257,7 +230,7 @@ describe("Claude shared account surfaces", () => {
         >
           {({ onSignIn }) => <button onClick={onSignIn}>Add Claude</button>}
         </ClaudeAccountControls>
-      </QueryClientProvider>,
+      </MemoryRouter></QueryClientProvider>,
     );
     await userEvent.click(screen.getByRole("button", { name: "Add Claude" }));
     await userEvent.type(await screen.findByLabelText("Account name"), "Research");
@@ -284,11 +257,11 @@ describe("Claude shared account surfaces", () => {
     };
     function renderDetail() {
       const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-      render(<QueryClientProvider client={client}>
+      render(<QueryClientProvider client={client}><MemoryRouter>
         <ClaudeAccountControls account={account} readOnly={false} onCreated={vi.fn()}>
           {({ detail }) => detail}
         </ClaudeAccountControls>
-      </QueryClientProvider>);
+      </MemoryRouter></QueryClientProvider>);
     }
     async function signInAgain() {
       await userEvent.click(screen.getByRole("button", { name: "Re-authenticate" }));
@@ -374,7 +347,7 @@ describe("Claude shared account surfaces", () => {
       defaultOptions: { queries: { retry: false } },
     });
     const view = render(
-      <QueryClientProvider client={client}>
+      <QueryClientProvider client={client}><MemoryRouter>
         <ClaudeAccountControls
           account={account}
           readOnly={false}
@@ -382,7 +355,7 @@ describe("Claude shared account surfaces", () => {
         >
           {({ detail }) => detail}
         </ClaudeAccountControls>
-      </QueryClientProvider>,
+      </MemoryRouter></QueryClientProvider>,
     );
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(changes).toEqual([{ isEnabled: false }]);
@@ -395,11 +368,11 @@ describe("Claude shared account surfaces", () => {
       { routingPolicy: "burn_first" },
     ]);
     view.rerender(
-      <QueryClientProvider client={client}>
+      <QueryClientProvider client={client}><MemoryRouter>
         <ClaudeAccountControls account={account} readOnly onCreated={vi.fn()}>
           {({ detail }) => detail}
         </ClaudeAccountControls>
-      </QueryClientProvider>,
+      </MemoryRouter></QueryClientProvider>,
     );
     expect(
       screen.getByRole("combobox", { name: "Routing policy" }),
@@ -407,11 +380,12 @@ describe("Claude shared account surfaces", () => {
     for (const name of [
       "Pause",
       "Re-authenticate",
-      "Refresh",
+      "Check limits",
       "Models (0)",
-      "Delete Claude account",
     ])
       expect(screen.getByRole("button", { name })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Delete account" })).toHaveAttribute("aria-disabled", "true");
   });
   it("renames the account inline through the account API", async () => {
     const changes: unknown[] = [];
@@ -426,7 +400,7 @@ describe("Claude shared account surfaces", () => {
       defaultOptions: { queries: { retry: false } },
     });
     render(
-      <QueryClientProvider client={client}>
+      <QueryClientProvider client={client}><MemoryRouter>
         <ClaudeAccountControls
           account={account}
           readOnly={false}
@@ -434,7 +408,7 @@ describe("Claude shared account surfaces", () => {
         >
           {({ detail }) => detail}
         </ClaudeAccountControls>
-      </QueryClientProvider>,
+      </MemoryRouter></QueryClientProvider>,
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Rename account" }),
@@ -445,12 +419,12 @@ describe("Claude shared account surfaces", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save name" }));
     expect(changes).toEqual([{ name: "Team Claude" }]);
   });
-  it("uses the Codex list quota preference", () => {
-    useAccountQuotaDisplayStore.setState({ quotaDisplay: "weekly" });
-    render(<ClaudeQuota account={account} />);
-    expect(screen.queryByText("5h")).not.toBeInTheDocument();
-    expect(screen.getByText("Weekly")).toBeInTheDocument();
-    expect(screen.getByText("60%")).toBeInTheDocument();
+  it("uses the Codex list quota preference in the Providers table", () => {
+    renderProvidersList({ claudeAccounts: [account] }, {}, { quotaDisplay: "weekly" });
+    const row = screen.getByTestId("provider-account-row");
+    expect(within(row).queryByText("5h")).not.toBeInTheDocument();
+    expect(within(row).getByText("Weekly")).toBeInTheDocument();
+    expect(within(row).getByText("60%")).toBeInTheDocument();
   });
   it("shows automatic model limits and saves identifiers only", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
@@ -541,14 +515,15 @@ describe("Claude shared account surfaces", () => {
     });
   });
   it("distinguishes unknown and stale observations", () => {
-    render(<ClaudeQuota account={account} />);
+    const card = render(<ClaudeQuota account={account} />);
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(screen.getByText("60%")).toBeInTheDocument();
     expect(screen.getByText("· stale")).toBeInTheDocument();
-    expect(screen.getByTestId("mini-quota-track-5h")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
+    card.unmount();
+    renderProvidersList({ claudeAccounts: [account] });
+    const row = screen.getByTestId("provider-account-row");
+    expect(within(row).getByText("--")).toBeInTheDocument();
+    expect(within(row).getByText("stale")).toBeInTheDocument();
   });
   it("orders dashboard cards Codex, Claude, then OpenRouter", () => {
     render(
@@ -581,11 +556,11 @@ describe("Claude shared account surfaces", () => {
         );
       expect(screen.getByRole("link", { name: "Details" })).toHaveAttribute(
         "href",
-        "/accounts?selected=claude-test",
+        "/providers/claude-test",
       );
     },
   );
-  it("keeps the routing policy off the dashboard card but in the Accounts list", () => {
+  it("keeps the routing policy off the dashboard card but in the Providers table", () => {
     const { unmount } = render(
       <MemoryRouter>
         <AccountCards accounts={[]} claudeAccounts={[account]} />
@@ -593,35 +568,15 @@ describe("Claude shared account surfaces", () => {
     );
     expect(screen.queryByText("Normal")).not.toBeInTheDocument();
     unmount();
-    render(
-      <AccountList
-        accounts={[]}
-        claudeAccounts={[account]}
-        selectedAccountId={account.id}
-        onSelect={vi.fn()}
-        onOpenImport={vi.fn()}
-        onOpenOauth={vi.fn()}
-        claudeEnrollment={{ onSignIn: vi.fn(), onImport: vi.fn() }}
-      />,
-    );
+    renderProvidersList({ claudeAccounts: [account] });
     expect(screen.getByText("Normal")).toBeInTheDocument();
   });
   it("uses shared privacy and read-only controls", () => {
     usePrivacyStore.setState({ blurred: true });
-    render(
-      <AccountList
-        accounts={[]}
-        claudeAccounts={[account]}
-        selectedAccountId={account.id}
-        onSelect={vi.fn()}
-        onOpenImport={vi.fn()}
-        onOpenOauth={vi.fn()}
-        claudeEnrollment={{ onSignIn: vi.fn(), onImport: vi.fn() }}
-        readOnly
-      />,
-    );
+    renderProvidersList({ claudeAccounts: [account] }, { readOnly: true });
     expect(screen.getByText(account.name)).toHaveClass("privacy-blur");
-    expect(screen.getByRole("button", { name: /Add account/i })).toBeDisabled();
+    expect(screen.getByText(account.accountEmail!)).toHaveClass("privacy-blur");
+    expect(screen.queryByRole("button", { name: "Add Claude account" })).not.toBeInTheDocument();
   });
   it("does not label exhausted or uncertain credentials active", () => {
     expect(claudeStatus({ ...account, credentialStatus: "uncertain" })).toBe(

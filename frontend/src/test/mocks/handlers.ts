@@ -10,6 +10,7 @@ import {
   LIMIT_WINDOWS,
   TRAFFIC_CLASSES,
 } from "@/features/api-keys/schemas";
+import { EMPTY_REPORT } from "@/features/reports/test-fixtures";
 import {
   type AccountSummary,
   type ApiKey,
@@ -974,6 +975,8 @@ export const handlers = [
   http.get("/api/openrouter-accounts/:id/trends", () => HttpResponse.json({ series: [] })),
   http.get("/api/model-sources/:sourceId/trends", () => HttpResponse.json({ series: [] })),
   http.get("/api/openrouter-accounts", () => HttpResponse.json({ accounts: [] })),
+  // Activity of every account on the Providers page.
+  http.get("/api/reports", () => HttpResponse.json(EMPTY_REPORT)),
   http.get("/health", () => {
     return HttpResponse.json({ status: "ok" });
   }),

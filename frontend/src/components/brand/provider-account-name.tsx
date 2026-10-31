@@ -8,14 +8,24 @@ function providerLogoUrl(provider: AccountProvider): string {
   return `/images/providers/${provider === "codex" ? "openai" : provider}.svg`;
 }
 
+const LOGO_SIZES = { sm: "size-4", md: "size-5", lg: "size-7" } as const;
+
 /** Brand logo; with `color`, the logo shape is painted in the account's chart colour. */
-export function ProviderLogo({ provider, color }: { provider: AccountProvider; color?: string }) {
+export function ProviderLogo({
+  provider,
+  color,
+  size = "sm",
+}: {
+  provider: AccountProvider;
+  color?: string;
+  size?: keyof typeof LOGO_SIZES;
+}) {
   if (color) {
     const mask = `url(${providerLogoUrl(provider)}) center / contain no-repeat`;
     return (
       <span
         aria-hidden="true"
-        className="inline-block size-4 shrink-0"
+        className={`inline-block shrink-0 ${LOGO_SIZES[size]}`}
         style={{ backgroundColor: color, mask, WebkitMask: mask }}
         data-provider={provider}
       />
@@ -26,9 +36,7 @@ export function ProviderLogo({ provider, color }: { provider: AccountProvider; c
       src={providerLogoUrl(provider)}
       alt=""
       aria-hidden="true"
-      width={16}
-      height={16}
-      className="size-4 shrink-0 object-contain dark:invert"
+      className={`shrink-0 object-contain dark:invert ${LOGO_SIZES[size]}`}
       data-provider={provider}
     />
   );

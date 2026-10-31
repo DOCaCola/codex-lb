@@ -359,6 +359,7 @@ def _measures(
         output_tokens=2 * requests,
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost_usd,
+        error_count=0,
         priced_requests=requests - unpriced_requests,
         unpriced_requests=unpriced_requests,
     )

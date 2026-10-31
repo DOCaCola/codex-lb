@@ -41,6 +41,7 @@ function accountSplit(index: number, costUsd: number) {
     outputTokens: 10,
     reasoningTokens: 2,
     costUsd,
+    errorCount: 0,
     accountId: `acc-${index}`,
     modelSourceId: null,
     provider: "codex" as const,

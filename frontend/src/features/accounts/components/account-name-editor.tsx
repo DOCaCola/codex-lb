@@ -99,7 +99,7 @@ export function AccountNameEditor({
 
   return (
     <div className="flex min-w-0 items-center gap-1.5">
-      <h2 className="min-w-0 truncate text-base font-semibold">{children}</h2>
+      <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">{children}</h1>
       <Button
         type="button"
         variant="ghost"

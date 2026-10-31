@@ -1,7 +1,6 @@
 import { Clock } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { MiniQuotaBar } from "@/components/mini-quota-bar";
 import { cn } from "@/lib/utils";
 import { quotaBarColor, quotaBarTrack } from "@/utils/account-status";
 import { formatPercentNullable, formatQuotaResetLabel } from "@/utils/formatters";
@@ -98,40 +97,4 @@ export function QuotaRow({
       </div>
     </div>
   );
-}
-
-
-export function MiniQuotaRow({
-  label,
-  percent,
-  resetAt,
-}: {
-  label: string;
-  percent: number | null;
-  resetAt: string | null | undefined;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="tabular-nums font-medium">
-          {formatPercentNullable(percent, 1)}
-        </span>
-      </div>
-      <MiniQuotaBar
-        aria-label={t("accounts.listItem.quotaRemainingAria", { label })}
-        percent={percent}
-        testId={`mini-quota-track-${label.toLowerCase()}`}
-      />
-      <div className="text-[10px] text-muted-foreground">
-        {formatMiniQuotaResetLabel(resetAt ?? null, t)}
-      </div>
-    </div>
-  );
-}
-
-function formatMiniQuotaResetLabel(resetAt: string | null, t: ReturnType<typeof useTranslation>["t"]): string {
-  const label = formatQuotaResetLabel(resetAt);
-  return label.startsWith("Reset ") ? label : t("accounts.listItem.resetAt", { label });
 }
