@@ -45,6 +45,8 @@ from app.core.utils.time import to_utc_naive, utcnow
 # monkeypatch it, and the traffic-parity canary suppresses proactive refresh by
 # stamping its isolated credential inside the window rather than widening it.
 TOKEN_REFRESH_INTERVAL_DAYS: Final[int] = 8
+# Permanent code for a refresh 401 whose own code is not already permanent.
+REFRESH_UNAUTHORIZED_CODE: Final = "refresh_unauthorized"
 # Total timeout of one refresh-token exchange (fixed; issue #1340 / PRINCIPLES.md
 # P2). Per-request budgets may only clamp it lower through the override below.
 TOKEN_REFRESH_TIMEOUT_SECONDS: Final[float] = 8.0
@@ -384,6 +386,9 @@ def _validate_token_payload(data: JsonObject) -> OAuthTokenPayload:
 def _refresh_error_from_payload(payload: OAuthTokenPayload, status_code: int) -> RefreshError:
     code = _extract_error_code(payload) or f"http_{status_code}"
     message = _extract_error_message(payload) or f"Token refresh failed ({status_code})"
+    # The Codex client treats any refresh 401 as a permanent sign-in-again failure, whatever its code.
+    if status_code == 401 and not classify_refresh_error(code):
+        code = REFRESH_UNAUTHORIZED_CODE
     return RefreshError(code, message, classify_refresh_error(code))
 
 

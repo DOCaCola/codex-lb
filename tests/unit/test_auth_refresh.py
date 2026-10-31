@@ -85,6 +85,24 @@ def test_should_refresh_after_interval():
     assert should_refresh(last) is True
 
 
+@pytest.mark.parametrize(
+    ("status", "body", "code", "permanent", "account_status"),
+    [
+        (401, {"error": {"code": "token_revoked", "message": "revoked"}}, "refresh_unauthorized", True, "reauth"),
+        (401, {}, "refresh_unauthorized", True, "reauth"),
+        (401, {"error": {"code": "account_deactivated"}}, "account_deactivated", True, "deactivated"),
+        (400, {"error": {"code": "refresh_token_reused"}}, "refresh_token_reused", True, "reauth"),
+        (500, {"error": {"code": "server_error"}}, "server_error", False, None),
+    ],
+)
+def test_refresh_rejections_follow_the_codex_client(status, body, code, permanent, account_status):
+    error = refresh_module._refresh_error_from_payload(refresh_module._validate_token_payload(body), status)
+    assert (error.code, error.is_permanent) == (code, permanent)
+    if account_status is not None:
+        expected = AccountStatus.REAUTH_REQUIRED if account_status == "reauth" else AccountStatus.DEACTIVATED
+        assert account_status_for_permanent_failure(error.code) == expected
+
+
 def test_should_refresh_within_interval():
     last = utcnow() - timedelta(days=1)
     assert should_refresh(last) is False

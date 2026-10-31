@@ -34,6 +34,8 @@ PERMANENT_FAILURE_CODES = {
     # Keep it in the permanent set so the account is surfaced for re-auth
     # instead of remaining active while every request retries the dead token.
     "invalid_refresh_token": "Refresh token invalid - re-login required",
+    # Any other refresh 401 (the Codex client treats every refresh 401 as requiring sign-in).
+    "refresh_unauthorized": "Refresh token rejected - re-login required",
     "account_deactivated": "Account has been deactivated",
     "deactivated_workspace": "Workspace has been deactivated",
     "account_suspended": "Account has been suspended",
@@ -52,6 +54,7 @@ REAUTH_REQUIRED_FAILURE_CODES = frozenset(
         "account_session_expired",
         "account_auth_invalidated",
         "invalid_refresh_token",
+        "refresh_unauthorized",
     }
 )
 
