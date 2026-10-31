@@ -239,34 +239,6 @@ query parameter and MUST not change request routing or unrelated response data.
 - **WHEN** a conversation filter and existing filters are requested together
 - **THEN** every returned row matches the complete combined filter set
 
-### Requirement: Filtered responses expose pagination-independent conversation aggregates
-
-When `conversation_id` is present, the request-log response MUST include
-`conversation.requestCount` and `conversation.aggregatedCostUsd`. Both values
-MUST use the complete active filter set and MUST be independent of page limit and
-offset. `aggregatedCostUsd` MUST sum stored `cost_usd` values, with no matches
-represented as zero. The top-level listing total MUST remain consistent with the
-filtered request count.
-
-#### Scenario: Aggregates ignore pagination
-- **GIVEN** a filtered conversation has twelve matching requests across multiple
-  pages with a total stored cost of `1.23`
-- **WHEN** page one and a later page are requested with different limit or
-  offset values
-- **THEN** both responses report `conversation.requestCount` as `12`
-- **AND** both responses report `conversation.aggregatedCostUsd` as `1.23`
-
-#### Scenario: No matching rows return zero aggregates
-- **GIVEN** a conversation filter and active filters match no request logs
-- **WHEN** the request-log listing is requested
-- **THEN** the response reports `conversation.requestCount` as `0`
-- **AND** the response reports `conversation.aggregatedCostUsd` as `0`
-
-#### Scenario: No conversation filter returns null metadata
-- **GIVEN** the request-log listing is requested without `conversation_id`
-- **WHEN** the response is generated
-- **THEN** the response's `conversation` metadata is null
-
 ### Requirement: Conversation filters participate in listing-count cache identity
 
 The request-log listing-count cache signature MUST include `conversation_id` in
@@ -1073,3 +1045,24 @@ empty conversation ID and return a detail not-found response.
 - **WHEN** the API handles `GET /api/conversations/`
 - **THEN** it returns the same collection envelope as `GET /api/conversations`
 - **AND** it does not invoke detail lookup for an empty conversation ID
+
+### Requirement: Conversation-filtered totals are pagination-independent
+
+When `conversation_id` is present, the request-log response's `total` and `costCoverage` MUST be computed together
+from the complete active filter set, independent of page limit and offset, and MUST NOT mix a cached count with a
+fresh cost. `costCoverage.knownCostUsd` MUST sum stored `cost_usd` values, with no matches represented as zero. The
+response MUST NOT carry a separate `conversation` block.
+
+#### Scenario: Aggregates ignore pagination
+- **GIVEN** a filtered conversation has twelve matching requests across multiple
+  pages with a total stored cost of `1.23`
+- **WHEN** page one and a later page are requested with different limit or
+  offset values
+- **THEN** both responses report `total` as `12`
+- **AND** both responses report `costCoverage.knownCostUsd` as `1.23`
+
+#### Scenario: No matching rows return zero aggregates
+- **GIVEN** a conversation filter and active filters match no request logs
+- **WHEN** the request-log listing is requested
+- **THEN** the response reports `total` as `0`
+- **AND** the response reports `costCoverage.knownCostUsd` as `0`
