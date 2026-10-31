@@ -59,6 +59,10 @@ const EXPECTED_ENDPOINTS = [
 	// account colours
 	"GET /api/account-colors",
 	"PUT /api/account-colors/accounts/:accountId",
+	// account notes
+	"GET /api/account-notes",
+	"PUT /api/account-notes/accounts/:accountId",
+	"PUT /api/account-notes/model-sources/:sourceId",
 	// oauth
 	"POST /api/oauth/start",
 	"GET /api/oauth/status",

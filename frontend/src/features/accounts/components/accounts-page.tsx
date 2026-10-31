@@ -19,9 +19,9 @@ import {
 } from "@/features/accounts/hooks/use-accounts";
 import {
   DEFAULT_ACCOUNT_SORT_MODE,
-  sortAccountsForDisplay,
   type AccountSortMode,
 } from "@/features/accounts/sorting";
+import { buildAccountListEntries } from "@/features/accounts/list-entries";
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import {
   useSettings,
@@ -124,10 +124,6 @@ export function AccountsPage() {
     settingsQuery.data?.showResetCreditExpiryBadge ?? true;
   const limitWarmupGloballyEnabled = settingsQuery.data?.limitWarmupEnabled;
   const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
-  const sortedAccounts = useMemo(
-    () => sortAccountsForDisplay(accounts, quotaDisplay, accountSortMode),
-    [accounts, quotaDisplay, accountSortMode],
-  );
   const selectedAccountId = searchParams.get("selected");
 
   const handleSelectAccount = useCallback(
@@ -150,18 +146,17 @@ export function AccountsPage() {
     ) {
       return selectedAccountId;
     }
-    return (
-      sortedAccounts[0]?.accountId ??
-      claudeAccounts[0]?.id ??
-      antigravityAccounts[0]?.id ??
-      openRouterAccounts[0]?.id ??
-      modelSources[0]?.id ??
-      null
+    const [firstRow] = buildAccountListEntries(
+      { accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources },
+      { search: "", statusFilter: "all", sortMode: accountSortMode, quotaDisplay, t },
     );
+    return firstRow?.id ?? null;
   }, [
     accounts,
     selectedAccountId,
-    sortedAccounts,
+    accountSortMode,
+    quotaDisplay,
+    t,
     openRouterAccounts,
     claudeAccounts,
     antigravityAccounts,

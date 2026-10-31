@@ -406,6 +406,7 @@ function reservedUsernameRefusal(username: string | null | undefined): Response 
 type MockState = {
   accountModels: Record<string, { allModels: boolean; selectedModels: string[]; reasoningRestrictions: Record<string, string[]> }>;
   accountColorPicks: Record<string, number | null>;
+  accountNotes: Array<{ accountId: string | null; modelSourceId: string | null; note: string }>;
   accounts: AccountSummary[];
   requestLogs: RequestLogEntry[];
   conversations: ConversationEntry[];
@@ -502,6 +503,7 @@ function createInitialState(): MockState {
   return {
     accountModels: {},
     accountColorPicks: {},
+    accountNotes: [],
     accounts: createDefaultAccounts(),
     requestLogs: createDefaultRequestLogs(),
     conversations: createDefaultConversations(),
@@ -717,6 +719,17 @@ function requestLogOptionsFromEntries(
 
 function findAccount(accountId: string): AccountSummary | undefined {
   return state.accounts.find((account) => account.accountId === accountId);
+}
+
+/** Mirrors the backend: notes are trimmed, and an empty note removes the entry. */
+function setMockAccountNote(target: { accountId: string | null; modelSourceId: string | null }, note: string | null) {
+  const trimmed = note?.trim() ?? "";
+  state.accountNotes = [
+    ...state.accountNotes.filter(
+      (entry) => entry.accountId !== target.accountId || entry.modelSourceId !== target.modelSourceId,
+    ),
+    ...(trimmed ? [{ ...target, note: trimmed }] : []),
+  ];
 }
 
 /** Mirrors the backend assignment: picks win, the rest take free palette slots in list order. */
@@ -1067,6 +1080,24 @@ export const handlers = [
     const body = (await request.json()) as { chartColor: number | null };
     state.accountColorPicks[String(params.accountId)] = body.chartColor;
     return HttpResponse.json(mockAccountColors());
+  }),
+
+  http.get("/api/account-notes", () => HttpResponse.json({ notes: state.accountNotes })),
+
+  http.put("/api/account-notes/accounts/:accountId", async ({ params, request }) => {
+    const accountId = String(params.accountId);
+    if (!findAccount(accountId)) {
+      return HttpResponse.json({ error: { code: "account_not_found", message: "Account not found" } }, { status: 404 });
+    }
+    const body = (await request.json()) as { note: string | null };
+    setMockAccountNote({ accountId, modelSourceId: null }, body.note);
+    return HttpResponse.json({ notes: state.accountNotes });
+  }),
+
+  http.put("/api/account-notes/model-sources/:sourceId", async ({ params, request }) => {
+    const body = (await request.json()) as { note: string | null };
+    setMockAccountNote({ accountId: null, modelSourceId: String(params.sourceId) }, body.note);
+    return HttpResponse.json({ notes: state.accountNotes });
   }),
 
   http.get("/api/accounts/:accountId/models", ({ params }) => {

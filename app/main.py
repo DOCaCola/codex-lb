@@ -87,6 +87,7 @@ from app.db.session import (
     mark_sqlite_shutdown_clean,
 )
 from app.modules.account_colors import api as account_colors_api
+from app.modules.account_notes import api as account_notes_api
 from app.modules.accounts import api as accounts_api
 from app.modules.accounts.deletion import build_account_deletion_scheduler
 from app.modules.accounts.repository import AccountsRepository
@@ -1066,6 +1067,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_api.router)
     app.include_router(accounts_api.router)
     app.include_router(account_colors_api.router)
+    app.include_router(account_notes_api.router)
     app.include_router(rate_limit_reset_credits_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(usage_api.router)

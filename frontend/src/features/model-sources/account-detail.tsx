@@ -6,6 +6,7 @@ import { AlertMessage } from "@/components/alert-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
+import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { ProviderAccountTrends } from "@/features/accounts/components/provider-account-trends";
@@ -82,6 +83,7 @@ export function ModelSourceAccountDetail({
         </p>
       </div>
       {error && <AlertMessage variant="error">{error}</AlertMessage>}
+      <AccountNotePanel target={{ modelSourceId: source.id }} readOnly={readOnly} />
       <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4" aria-label="Provider usage">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
         <ProviderAccountTrends provider="openai_compatible" accountId={source.id} embedded />

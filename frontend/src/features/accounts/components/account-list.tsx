@@ -15,10 +15,10 @@ import { AccountListItem } from "@/features/accounts/components/account-list-ite
 import { AddAccountDialog } from "@/features/accounts/components/add-account-dialog";
 import { WindowsOauthHelp } from "@/features/accounts/components/windows-oauth-help";
 import type { AccountSummary } from "@/features/accounts/schemas";
+import { buildAccountListEntries } from "@/features/accounts/list-entries";
 import {
   ACCOUNT_SORT_OPTIONS,
   DEFAULT_ACCOUNT_SORT_MODE,
-  sortAccountsForDisplay,
   type AccountSortMode,
 } from "@/features/accounts/sorting";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
@@ -26,17 +26,13 @@ import { cn } from "@/lib/utils";
 import { formatSlug } from "@/utils/formatters";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
 import { OpenRouterListItem } from "@/features/openrouter/account-display";
-import { openRouterStatus } from "@/features/openrouter/display-values";
 import type { ClaudeAccount } from "@/features/claude/api";
 import { ClaudeListItem } from "@/features/claude/account-display";
 import { type AccountColorHexes, NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
-import { claudeStatus } from "@/features/claude/display-values";
 import type { AntigravityAccount } from "@/features/antigravity/api";
 import { AntigravityListItem } from "@/features/antigravity/account-display";
-import { antigravityStatus } from "@/features/antigravity/display-values";
 import type { ModelSource } from "@/features/model-sources/schemas";
 import { ModelSourceListItem } from "@/features/model-sources/account-display";
-import { modelSourceStatus } from "@/features/model-sources/display-values";
 
 const STATUS_FILTER_OPTIONS = [
   "all",
@@ -98,124 +94,25 @@ export function AccountList({
   const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
   const activeSortMode = sortMode ?? DEFAULT_ACCOUNT_SORT_MODE;
 
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return sortAccountsForDisplay(
+  const entries = useMemo(
+    () =>
+      buildAccountListEntries(
+        { accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources },
+        { search, statusFilter, sortMode: activeSortMode, quotaDisplay, t },
+      ),
+    [
       accounts,
-      quotaDisplay,
+      claudeAccounts,
+      antigravityAccounts,
+      openRouterAccounts,
+      modelSources,
+      search,
+      statusFilter,
       activeSortMode,
-    ).filter((account) => {
-      if (statusFilter !== "all" && account.status !== statusFilter) {
-        return false;
-      }
-      if (!needle) {
-        return true;
-      }
-      return (
-        account.email.toLowerCase().includes(needle) ||
-        (account.alias?.toLowerCase().includes(needle) ?? false) ||
-        account.displayName.toLowerCase().includes(needle) ||
-        account.accountId.toLowerCase().includes(needle) ||
-        account.planType.toLowerCase().includes(needle)
-      );
-    });
-  }, [accounts, quotaDisplay, search, statusFilter, activeSortMode]);
-
-  const entries = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const providerAccounts = openRouterAccounts
-      .filter(
-        (account) =>
-          (statusFilter === "all" ||
-            openRouterStatus(account) === statusFilter) &&
-          (!needle ||
-            `${account.name} ${account.id} openrouter`
-              .toLowerCase()
-              .includes(needle)),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const result = [
-      ...claudeAccounts
-        .filter(
-          (account) =>
-            (statusFilter === "all" ||
-              claudeStatus(account) === statusFilter) &&
-            (!needle ||
-              `${account.name} ${account.id} claude anthropic ${account.planType.replaceAll("_", " ")} ${t(`claude.subscription.${account.planType}`)}`
-                .toLowerCase()
-                .includes(needle)),
-        )
-        .map((account) => ({
-          kind: "claude" as const,
-          id: account.id,
-          name: account.name,
-          account,
-        })),
-      ...antigravityAccounts
-        .filter(
-          (account) =>
-            (statusFilter === "all" ||
-              antigravityStatus(account) === statusFilter) &&
-            (!needle ||
-              `${account.name} ${account.id} ${account.email} antigravity google gemini ${account.planType.replaceAll("_", " ")} ${t(`antigravity.plan.${account.planType}`)}`
-                .toLowerCase()
-                .includes(needle)),
-        )
-        .map((account) => ({
-          kind: "antigravity" as const,
-          id: account.id,
-          name: account.name,
-          account,
-        })),
-      ...filtered.map((account) => ({
-        kind: "codex" as const,
-        id: account.accountId,
-        name: account.displayName || account.email,
-        account,
-      })),
-      ...providerAccounts.map((account) => ({
-        kind: "openrouter" as const,
-        id: account.id,
-        name: account.name,
-        account,
-      })),
-      ...modelSources
-        .filter(
-          (source) =>
-            (statusFilter === "all" ||
-              modelSourceStatus(source) === statusFilter) &&
-            (!needle ||
-              `${source.name} ${source.id} ${source.baseUrl} openai-compatible openai compatible`
-                .toLowerCase()
-                .includes(needle)),
-        )
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((source) => ({
-          kind: "openai_compatible" as const,
-          id: source.id,
-          name: source.name,
-          account: source,
-        })),
-    ];
-    if (activeSortMode === "name_asc" || activeSortMode === "name_desc") {
-      result.sort(
-        (a, b) =>
-          (activeSortMode === "name_desc" ? -1 : 1) *
-          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-      );
-    }
-    return result;
-  }, [
-    filtered,
-    openRouterAccounts,
-    claudeAccounts,
-    antigravityAccounts,
-    modelSources,
-    search,
-    statusFilter,
-    activeSortMode,
-    t,
-  ]);
+      quotaDisplay,
+      t,
+    ],
+  );
   const totalCount =
     accounts.length +
     openRouterAccounts.length +

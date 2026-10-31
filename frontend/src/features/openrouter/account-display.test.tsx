@@ -17,6 +17,9 @@ vi.mock("@/features/accounts/components/provider-account-trends", () => ({
 vi.mock("@/features/accounts/components/account-color-picker", () => ({
   AccountColorPicker: () => null,
 }));
+vi.mock("@/features/accounts/components/account-note-panel", () => ({
+  AccountNotePanel: () => null,
+}));
 
 afterEach(() => usePrivacyStore.setState({ blurred: false }));
 

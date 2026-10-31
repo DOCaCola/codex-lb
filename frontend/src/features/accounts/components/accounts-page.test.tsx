@@ -11,6 +11,7 @@ import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { ADMIN_PERMISSIONS, createUpstreamProxyAdmin } from "@/test/mocks/factories";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
+import { createClaudeAccount } from "@/features/claude/test-fixtures";
 
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -28,8 +29,9 @@ vi.mock("@/features/openrouter/use-openrouter", () => ({
   useOpenRouterAccounts: () => ({ data: { accounts: openRouterMocks.accounts }, error: null, isLoading: false }),
   useOpenRouter: () => ({ create: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
 }));
+const claudeMocks = vi.hoisted(() => ({ accounts: [] as import("@/features/claude/api").ClaudeAccount[] }));
 vi.mock("@/features/claude/use-claude", () => ({
-  useClaudeAccounts: () => ({ data: { accounts: [] }, error: null, isLoading: false }),
+  useClaudeAccounts: () => ({ data: { accounts: claudeMocks.accounts }, error: null, isLoading: false }),
   useClaude: () => ({ enroll: idleMutation(), reconnect: idleMutation(), start: idleMutation(), complete: idleMutation(), update: idleMutation(), refresh: idleMutation(), remove: idleMutation() }),
 }));
 
@@ -156,6 +158,20 @@ describe("AccountsPage", () => {
     expect(screen.queryByText("No accounts yet")).not.toBeInTheDocument();
   });
 
+  it("selects the first listed account when a Claude account precedes the Codex accounts", () => {
+    claudeMocks.accounts = [createClaudeAccount({ id: "src_claude", name: "Team Claude" })];
+    mockAccountsQuery([account({ displayName: "Codex account" })]);
+    render(<MemoryRouter><AccountsPage /></MemoryRouter>);
+    const list = screen.getByTestId("account-list-scroll-region");
+    const rows = within(list).getAllByRole("button", { name: /Team Claude|Codex account/ });
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Team Claude"),
+      expect.stringContaining("Codex account"),
+    ]);
+    expect(rows[0]).toHaveAttribute("aria-pressed", "true");
+    expect(rows[1]).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("adds OpenRouter through the existing account chooser", async () => {
     mockAccountsQuery([]);
     render(<MemoryRouter><AccountsPage /></MemoryRouter>);
@@ -179,6 +195,7 @@ describe("AccountsPage", () => {
 
   beforeEach(() => {
     openRouterMocks.accounts = [];
+    claudeMocks.accounts = [];
     // The auth store starts least-privilege; these cases exercise admin actions.
     useAuthStore.setState({
       initialized: true,

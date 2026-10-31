@@ -9,6 +9,7 @@ import { AccountColorPicker } from "@/features/accounts/components/account-color
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { CodexModelControls } from "./codex-model-controls";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
+import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
@@ -163,6 +164,7 @@ export function AccountDetail({
           {workspaceLabel} | {formatSlug(account.planType)}{seatLabel}
         </p>
       </div>
+      <AccountNotePanel target={{ accountId: account.accountId }} readOnly={readOnly} />
 
       {onProxyBindingSave ? (
         <AccountProxyBinding

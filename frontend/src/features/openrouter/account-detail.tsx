@@ -3,6 +3,7 @@ import { ProviderAccountTrends } from "@/features/accounts/components/provider-a
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
+import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
 import { Button } from "@/components/ui/button";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { useTranslation } from "react-i18next";
@@ -80,6 +81,7 @@ export function OpenRouterAccountDetail({
           {message}
         </p>
       ))}
+      <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
       <section
         className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4"
         aria-label="OpenRouter usage"
