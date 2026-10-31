@@ -30,7 +30,12 @@ from app.modules.dashboard.schemas import (
     WeeklyCreditApiKeyAttribution,
     WeeklyCreditPaceResponse,
 )
-from app.modules.dashboard.weekly_pace import DEMAND_WINDOW, FLEET_BURN_WINDOW, build_weekly_credit_pace
+from app.modules.dashboard.weekly_pace import (
+    DEMAND_WINDOW,
+    FLEET_BURN_WINDOW,
+    build_weekly_credit_pace,
+    subscription_ended,
+)
 from app.modules.usage.builders import (
     align_bucket_window_start,
     build_activity_summaries,
@@ -259,7 +264,12 @@ class DashboardService:
             now,
             smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
         )
-        pri_depletion, sec_depletion = _build_depletion_by_window(primary_history, secondary_history, now)
+        pri_depletion, sec_depletion = _build_depletion_by_window(
+            primary_history,
+            secondary_history,
+            {account.id: account.subscription_ends_at for account in accounts},
+            now,
+        )
         trailing_demand = await self._repo.positive_used_percent_deltas_by_account(
             _weekly_history_windows(primary_usage, secondary_usage),
             since=now - DEMAND_WINDOW,
@@ -496,21 +506,26 @@ async def _load_projection_histories(
 def _build_depletion_by_window(
     primary_history: dict[str, list[UsageHistory]],
     secondary_history: dict[str, list[UsageHistory]],
+    subscription_ends: dict[str, datetime | None],
     now,
 ) -> tuple[DepletionResponse | None, DepletionResponse | None]:
-    """Compute depletion independently per window."""
+    """Compute depletion independently per window, skipping accounts past their subscription end."""
     active_cache_keys = {(account_id, "standard", "primary") for account_id in primary_history}
     active_cache_keys.update((account_id, "standard", "secondary") for account_id in secondary_history)
 
     def _aggregate(history: dict[str, list[UsageHistory]], window: str) -> DepletionResponse | None:
         metrics = []
         for account_id, rows in history.items():
+            ends_at = subscription_ends.get(account_id)
+            if subscription_ended(ends_at, now):
+                continue
             m = compute_depletion_for_account(
                 account_id=account_id,
                 limit_name="standard",
                 window=window,
                 history=rows,
                 now=now,
+                ends_at=ends_at,
             )
             metrics.append(m)
         agg = compute_aggregate_depletion(metrics)

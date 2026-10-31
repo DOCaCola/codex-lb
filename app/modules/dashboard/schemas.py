@@ -85,6 +85,13 @@ class WeeklyCreditResetEvent(DashboardModel):
     credits_returned: float
 
 
+class WeeklyCreditSubscriptionEnd(DashboardModel):
+    """An operator-set subscription end: the account's weekly capacity leaves the pool."""
+
+    at: datetime
+    weekly_credits: float
+
+
 class WeeklyCreditApiKeyAttribution(DashboardModel):
     api_key_id: str | None = None
     name: str
@@ -124,9 +131,11 @@ class WeeklyCreditPaceResponse(DashboardModel):
     headroom_credits: float
     burn_rate_recent_credits_per_hour: float | None = None
     depletion_eta_hours: float | None = None
-    next_relief_in_hours: float
+    # None when every pooled account's subscription ends before its next reset.
+    next_relief_in_hours: float | None = None
     next_relief_credits: float
     reset_events: list[WeeklyCreditResetEvent] = Field(default_factory=list)
+    subscription_ends: list[WeeklyCreditSubscriptionEnd] = Field(default_factory=list)
     runway_status: WeeklyCreditRunwayStatus
     saturated_account_count: int
     add_pro_accounts: int | None = None

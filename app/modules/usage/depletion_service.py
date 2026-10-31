@@ -70,11 +70,14 @@ def compute_depletion_for_account(
     window: str,
     history: list,  # list of objects with: used_percent, recorded_at, reset_at, window_minutes
     now: datetime | None = None,
+    ends_at: datetime | None = None,
 ) -> DepletionMetrics | None:
     """
     Compute depletion metrics for a single account using EWMA.
 
     - history: list of usage entries ordered by recorded_at ASC
+    - ends_at: operator-set subscription end (naive UTC, after ``now``); when it
+      precedes the reset it is the window's horizon, since quota left then lapses
     - Returns None if insufficient data (<2 data points) or rate is unknown
     - Uses module-level _ewma_states for in-memory state
     """
@@ -134,21 +137,24 @@ def compute_depletion_for_account(
 
     total_window_seconds = (latest.window_minutes * 60) if latest.window_minutes else 0.0
     seconds_elapsed = max(0.0, total_window_seconds - seconds_until_reset)
+    horizon_seconds = seconds_until_reset
+    if ends_at is not None:
+        horizon_seconds = min(seconds_until_reset, float(naive_utc_to_epoch(ends_at) - naive_utc_to_epoch(now)))
 
-    risk = compute_depletion_risk(used_percent, state.rate, seconds_until_reset)
+    risk = compute_depletion_risk(used_percent, state.rate, horizon_seconds)
     risk_level = classify_risk(risk)
-    burn_rate = compute_burn_rate(state.rate, 100.0 - used_percent, seconds_until_reset)
-    safe_pct = compute_safe_usage_percent(seconds_elapsed, total_window_seconds)
+    burn_rate = compute_burn_rate(state.rate, 100.0 - used_percent, horizon_seconds)
+    safe_pct = compute_safe_usage_percent(seconds_elapsed, seconds_elapsed + horizon_seconds)
 
     projected_exhaustion_at = None
     seconds_until_exhaustion = None
-    if state.rate > 0 and seconds_until_reset > 0:
+    if state.rate > 0 and horizon_seconds > 0:
         remaining = 100.0 - used_percent
         secs = remaining / state.rate
-        if secs <= seconds_until_reset:
+        if secs <= horizon_seconds:
             seconds_until_exhaustion = secs
             projected_exhaustion_at = now + timedelta(seconds=secs)
-        # else: exhaustion falls after the window resets — leave as None
+        # else: exhaustion falls after the window resets or the subscription ends — leave as None
 
     return DepletionMetrics(
         risk=risk,

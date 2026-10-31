@@ -121,6 +121,11 @@ const WeeklyCreditResetEventSchema = z.object({
   creditsReturned: z.number(),
 });
 
+const WeeklyCreditSubscriptionEndSchema = z.object({
+  at: z.iso.datetime({ offset: true }),
+  weeklyCredits: z.number(),
+});
+
 const WeeklyCreditApiKeyAttributionSchema = z.object({
   // Stable key id; absent on backends that predate per-key attribution ids.
   apiKeyId: z.string().nullable().optional(),
@@ -168,6 +173,7 @@ const WeeklyCreditPaceSchema = z.object({
   nextReliefInHours: z.number().nullable().optional(),
   nextReliefCredits: z.number().nullable().optional(),
   resetEvents: z.array(WeeklyCreditResetEventSchema).optional(),
+  subscriptionEnds: z.array(WeeklyCreditSubscriptionEndSchema).optional(),
   runwayStatus: WeeklyCreditRunwayStatusSchema.optional(),
   saturatedAccountCount: z.number().int().nonnegative().optional(),
   addProAccounts: z.number().int().nullable().optional(),

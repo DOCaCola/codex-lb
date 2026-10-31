@@ -144,7 +144,7 @@ const TIMELINE_MIN_HORIZON_HOURS = 48;
 
 type RunwayTick = {
   leftPercent: number;
-  creditsReturned: number;
+  credits: number;
   atLabel: string;
 };
 
@@ -153,12 +153,27 @@ type RunwayTimeline = {
   horizonHours: number;
   etaPercent: number | null;
   resetTicks: RunwayTick[];
+  endTicks: RunwayTick[];
 };
+
+type UpcomingEvent = { hoursFromNow: number; atMs: number; credits: number };
+
+function upcomingEvents(events: { at: string; credits: number }[], nowMs: number): UpcomingEvent[] {
+  return events.flatMap((event): UpcomingEvent[] => {
+    const atMs = Date.parse(event.at);
+    if (!Number.isFinite(atMs)) {
+      return [];
+    }
+    const hoursFromNow = (atMs - nowMs) / 3_600_000;
+    return hoursFromNow < 0 ? [] : [{ hoursFromNow, atMs, credits: event.credits }];
+  });
+}
 
 function buildRunwayTimeline(
   etaHours: number | null,
   reliefHours: number | null,
   resetEvents: WeeklyCreditPace["resetEvents"],
+  subscriptionEnds: WeeklyCreditPace["subscriptionEnds"],
   formatAbsolute: (epochMs: number) => string,
 ): RunwayTimeline {
   const nowMs = Date.now();
@@ -166,31 +181,36 @@ function buildRunwayTimeline(
   // range; formatting would throw, so the absolute label is skipped instead.
   const etaDate = etaHours != null ? new Date(nowMs + etaHours * 3_600_000) : null;
   const etaAtLabel = etaDate != null && Number.isFinite(etaDate.getTime()) ? formatAbsolute(etaDate.getTime()) : null;
-  const upcomingResets = (resetEvents ?? []).flatMap((event): { hoursFromNow: number; atMs: number; creditsReturned: number }[] => {
-    const atMs = Date.parse(event.at);
-    if (!Number.isFinite(atMs)) {
-      return [];
-    }
-    const hoursFromNow = (atMs - nowMs) / 3_600_000;
-    return hoursFromNow < 0 ? [] : [{ hoursFromNow, atMs, creditsReturned: event.creditsReturned }];
-  });
-  // The horizon stretches to the latest reset event so later relief from the
-  // backend's seven-day event window is never silently dropped off the rail.
+  const upcomingResets = upcomingEvents(
+    (resetEvents ?? []).map((event) => ({ at: event.at, credits: event.creditsReturned })),
+    nowMs,
+  );
+  const upcomingEnds = upcomingEvents(
+    (subscriptionEnds ?? []).map((event) => ({ at: event.at, credits: event.weeklyCredits })),
+    nowMs,
+  );
+  // The horizon stretches to the latest reset or subscription end so later
+  // events from the backend's seven-day window are never dropped off the rail.
   const horizonHours = Math.max(
     etaHours ?? 0,
     reliefHours ?? 0,
     ...upcomingResets.map((event) => event.hoursFromNow),
+    ...upcomingEnds.map((event) => event.hoursFromNow),
     TIMELINE_MIN_HORIZON_HOURS,
   );
   const etaPercent = etaHours != null ? Math.min(100, Math.max(0, (etaHours / horizonHours) * 100)) : null;
-  const resetTicks = upcomingResets.map(
-    (event): RunwayTick => ({
-      leftPercent: Math.min(100, (event.hoursFromNow / horizonHours) * 100),
-      creditsReturned: event.creditsReturned,
-      atLabel: formatAbsolute(event.atMs),
-    }),
-  );
-  return { etaAtLabel, horizonHours, etaPercent, resetTicks };
+  const toTick = (event: UpcomingEvent): RunwayTick => ({
+    leftPercent: Math.min(100, (event.hoursFromNow / horizonHours) * 100),
+    credits: event.credits,
+    atLabel: formatAbsolute(event.atMs),
+  });
+  return {
+    etaAtLabel,
+    horizonHours,
+    etaPercent,
+    resetTicks: upcomingResets.map(toTick),
+    endTicks: upcomingEnds.map(toTick),
+  };
 }
 
 function clampPercent(value: number): number {
@@ -328,10 +348,11 @@ function RunwayWeeklyCreditsPaceCard({
   // The depletion/reset tooltips are read-only timestamps, so they follow the
   // dashboard's date-display and 12/24-hour preferences via the shared
   // formatter rather than a locale-default Intl instance.
-  const { etaAtLabel, horizonHours, etaPercent, resetTicks } = buildRunwayTimeline(
+  const { etaAtLabel, horizonHours, etaPercent, resetTicks, endTicks } = buildRunwayTimeline(
     etaHours,
     reliefHours,
     pace.resetEvents,
+    pace.subscriptionEnds,
     (epochMs) => formatDateTimeInline(new Date(epochMs).toISOString(), dateDisplayFormat),
   );
 
@@ -407,6 +428,8 @@ function RunwayWeeklyCreditsPaceCard({
                 amount: formatUnitAmount(Math.max(0, reliefCredits ?? 0), unit, t),
               })}
             </p>
+          ) : endTicks.length > 0 ? (
+            <p className="tabular-nums text-muted-foreground">{t("dashboard.weeklyPace.noReliefBeforeEnd")}</p>
           ) : null}
         </div>
 
@@ -423,10 +446,22 @@ function RunwayWeeklyCreditsPaceCard({
                 key={`reset-${index}`}
                 data-testid="runway-reset-tick"
                 title={t("dashboard.weeklyPace.resetTickTooltip", {
-                  amount: formatUnitAmount(tick.creditsReturned, unit, t),
+                  amount: formatUnitAmount(tick.credits, unit, t),
                   time: tick.atLabel,
                 })}
                 className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-foreground/50"
+                style={{ left: `${tick.leftPercent}%` }}
+              />
+            ))}
+            {endTicks.map((tick, index) => (
+              <div
+                key={`end-${index}`}
+                data-testid="runway-subscription-end-tick"
+                title={t("dashboard.weeklyPace.subscriptionEndTickTooltip", {
+                  amount: formatUnitAmount(tick.credits, unit, t),
+                  time: tick.atLabel,
+                })}
+                className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-amber-500"
                 style={{ left: `${tick.leftPercent}%` }}
               />
             ))}

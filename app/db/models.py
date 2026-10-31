@@ -115,6 +115,8 @@ class Account(Base):
     # Palette index picked by the operator; NULL means automatic assignment.
     chart_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Operator-set end of a cancelled subscription (naive UTC); NULL means renewing.
+    subscription_ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     workspace_id: Mapped[str | None] = mapped_column(String, nullable=True)
     workspace_label: Mapped[str | None] = mapped_column(String, nullable=True)
     seat_type: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -1985,6 +1987,8 @@ class ModelSource(Base):
     # Palette index picked by the operator; NULL means automatic assignment.
     chart_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Operator-set end of a cancelled Claude or Antigravity subscription (naive UTC).
+    subscription_ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

@@ -336,6 +336,29 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     expect(screen.queryByTestId("runway-schedule-under")).not.toBeInTheDocument();
   });
 
+  it("marks subscription ends and states that no reset comes before them", () => {
+    render(
+      <WeeklyCreditsPaceCard
+        subtitle="Codex · credits"
+        pace={{
+          ...RUNWAY_PACE,
+          runwayStatus: "runs_dry",
+          depletionEtaHours: 30,
+          nextReliefInHours: null,
+          nextReliefCredits: 0,
+          resetEvents: [],
+          subscriptionEnds: [{ at: new Date(Date.now() + 30 * 3_600_000).toISOString(), weeklyCredits: 50_400 }],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("No reset before the subscriptions end.")).toBeInTheDocument();
+    expect(screen.queryByTestId("runway-reset-tick")).not.toBeInTheDocument();
+    expect(screen.getByTestId("runway-subscription-end-tick").getAttribute("title")).toMatch(
+      /^Subscription ends at .+ · −50\.4K credits\/week$/,
+    );
+  });
+
   it("stretches the timeline horizon so reset events past 48h are not dropped", () => {
     render(
       <WeeklyCreditsPaceCard

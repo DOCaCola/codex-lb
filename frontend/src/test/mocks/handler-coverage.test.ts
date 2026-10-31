@@ -63,6 +63,10 @@ const EXPECTED_ENDPOINTS = [
 	"GET /api/account-notes",
 	"PUT /api/account-notes/accounts/:accountId",
 	"PUT /api/account-notes/model-sources/:sourceId",
+	// account subscription ends
+	"GET /api/account-subscriptions",
+	"PUT /api/account-subscriptions/accounts/:accountId",
+	"PUT /api/account-subscriptions/model-sources/:sourceId",
 	// oauth
 	"POST /api/oauth/start",
 	"GET /api/oauth/status",

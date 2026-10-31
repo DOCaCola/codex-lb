@@ -407,6 +407,7 @@ type MockState = {
   accountModels: Record<string, { allModels: boolean; selectedModels: string[]; reasoningRestrictions: Record<string, string[]> }>;
   accountColorPicks: Record<string, number | null>;
   accountNotes: Array<{ accountId: string | null; modelSourceId: string | null; note: string }>;
+  accountSubscriptionEnds: Array<{ accountId: string | null; modelSourceId: string | null; endsAt: string }>;
   accounts: AccountSummary[];
   requestLogs: RequestLogEntry[];
   conversations: ConversationEntry[];
@@ -504,6 +505,7 @@ function createInitialState(): MockState {
     accountModels: {},
     accountColorPicks: {},
     accountNotes: [],
+    accountSubscriptionEnds: [],
     accounts: createDefaultAccounts(),
     requestLogs: createDefaultRequestLogs(),
     conversations: createDefaultConversations(),
@@ -729,6 +731,18 @@ function setMockAccountNote(target: { accountId: string | null; modelSourceId: s
       (entry) => entry.accountId !== target.accountId || entry.modelSourceId !== target.modelSourceId,
     ),
     ...(trimmed ? [{ ...target, note: trimmed }] : []),
+  ];
+}
+
+function setMockSubscriptionEnd(
+  target: { accountId: string | null; modelSourceId: string | null },
+  endsAt: string | null,
+) {
+  state.accountSubscriptionEnds = [
+    ...state.accountSubscriptionEnds.filter(
+      (entry) => entry.accountId !== target.accountId || entry.modelSourceId !== target.modelSourceId,
+    ),
+    ...(endsAt !== null ? [{ ...target, endsAt: new Date(endsAt).toISOString() }] : []),
   ];
 }
 
@@ -1098,6 +1112,24 @@ export const handlers = [
     const body = (await request.json()) as { note: string | null };
     setMockAccountNote({ accountId: null, modelSourceId: String(params.sourceId) }, body.note);
     return HttpResponse.json({ notes: state.accountNotes });
+  }),
+
+  http.get("/api/account-subscriptions", () => HttpResponse.json({ ends: state.accountSubscriptionEnds })),
+
+  http.put("/api/account-subscriptions/accounts/:accountId", async ({ params, request }) => {
+    const accountId = String(params.accountId);
+    if (!findAccount(accountId)) {
+      return HttpResponse.json({ error: { code: "account_not_found", message: "Account not found" } }, { status: 404 });
+    }
+    const body = (await request.json()) as { endsAt: string | null };
+    setMockSubscriptionEnd({ accountId, modelSourceId: null }, body.endsAt);
+    return HttpResponse.json({ ends: state.accountSubscriptionEnds });
+  }),
+
+  http.put("/api/account-subscriptions/model-sources/:sourceId", async ({ params, request }) => {
+    const body = (await request.json()) as { endsAt: string | null };
+    setMockSubscriptionEnd({ accountId: null, modelSourceId: String(params.sourceId) }, body.endsAt);
+    return HttpResponse.json({ ends: state.accountSubscriptionEnds });
   }),
 
   http.get("/api/accounts/:accountId/models", ({ params }) => {

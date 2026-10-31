@@ -10,6 +10,7 @@ import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { CodexModelControls } from "./codex-model-controls";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
+import { AccountSubscriptionEndPanel } from "@/features/accounts/components/account-subscription-end-panel";
 import { ProviderAccountName } from "@/components/brand/provider-account-name";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
@@ -165,6 +166,7 @@ export function AccountDetail({
         </p>
       </div>
       <AccountNotePanel target={{ accountId: account.accountId }} readOnly={readOnly} />
+      <AccountSubscriptionEndPanel target={{ accountId: account.accountId }} readOnly={readOnly} />
 
       {onProxyBindingSave ? (
         <AccountProxyBinding

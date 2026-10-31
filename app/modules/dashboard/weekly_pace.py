@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from math import ceil, isfinite
+from math import ceil, inf, isfinite
 from typing import Literal, Protocol
 
 from app.core.usage import PLAN_CAPACITY_CREDITS_SECONDARY
@@ -17,6 +17,7 @@ from app.modules.dashboard.schemas import (
     WeeklyCreditPaceUnit,
     WeeklyCreditResetEvent,
     WeeklyCreditRunwayStatus,
+    WeeklyCreditSubscriptionEnd,
 )
 
 PRO_WEEKLY_CAPACITY_CREDITS = PLAN_CAPACITY_CREDITS_SECONDARY["pro"]
@@ -58,7 +59,11 @@ class PaceSample(Protocol):
 
 @dataclass(frozen=True)
 class PaceAccountInput:
-    """A fresh, eligible weekly window expressed in the pool's capacity unit."""
+    """A fresh, eligible weekly window expressed in the pool's capacity unit.
+
+    ``ends_at_ms`` is the operator-set subscription end, still in the future:
+    from then on the account holds no capacity. None means the subscription renews.
+    """
 
     account_id: str
     full_units: float
@@ -66,6 +71,7 @@ class PaceAccountInput:
     reset_at_ms: float
     window_ms: float
     history: Sequence[PaceSample]
+    ends_at_ms: float | None
 
 
 @dataclass
@@ -75,8 +81,13 @@ class _PaceAccount:
     remaining_credits: float
     reset_at_ms: float
     window_ms: float
+    ends_at_ms: float | None
     forecast_burn_rate_credits_per_hour: float | None
     history: Sequence[PaceSample]
+
+    @property
+    def resets_before_end(self) -> bool:
+        return self.ends_at_ms is None or self.reset_at_ms < self.ends_at_ms
 
 
 @dataclass
@@ -85,6 +96,21 @@ class _SimulationAccount:
     balance_credits: float
     reset_at_ms: float
     window_ms: float
+    ends_at_ms: float | None
+
+    @property
+    def expires_at_ms(self) -> float:
+        """When the current balance stops being usable: its reset, or the subscription end before it."""
+        return self.reset_at_ms if self.ends_at_ms is None else min(self.reset_at_ms, self.ends_at_ms)
+
+
+def subscription_ended(ends_at: datetime | None, now: datetime) -> bool:
+    """Whether an operator-set subscription end (naive UTC) has passed; such accounts are inactive."""
+    return ends_at is not None and ends_at <= now
+
+
+def subscription_end_ms(ends_at: datetime | None) -> float | None:
+    return naive_utc_to_epoch(ends_at) * 1000.0 if ends_at is not None else None
 
 
 def positive_used_percent_delta(samples: Sequence[PaceSample]) -> float:
@@ -135,7 +161,11 @@ def build_weekly_credit_pace(
             continue
 
         account = accounts_by_id.get(summary.account_id)
-        if account is None or account.status not in PACE_ELIGIBLE_ACCOUNT_STATUSES:
+        if (
+            account is None
+            or account.status not in PACE_ELIGIBLE_ACCOUNT_STATUSES
+            or subscription_ended(account.subscription_ends_at, now)
+        ):
             inactive_account_count += 1
             continue
 
@@ -154,6 +184,7 @@ def build_weekly_credit_pace(
                 reset_at_ms=reset_at_ms,
                 window_ms=window_ms,
                 history=rows,
+                ends_at_ms=subscription_end_ms(account.subscription_ends_at),
             )
         )
 
@@ -192,6 +223,9 @@ def build_weekly_pace(
     scales the add-capacity recommendation. History must be sorted by
     ``recorded_at`` so the forecast uses the recent slope instead of a
     full-window cumulative average.
+
+    A subscription end is a capacity cutoff: the account's schedule ends there,
+    resets at or after it bring nothing, and its balance lapses at the end.
     """
 
     now_ms = naive_utc_to_epoch(now) * 1000.0
@@ -212,10 +246,13 @@ def build_weekly_pace(
         actual_remaining_credits = _clamp(account_input.remaining_units, 0.0, full_credits)
         window_ms = account_input.window_ms
         effective_reset_at_ms = _advance_reset_at(account_input.reset_at_ms, window_ms, now_ms)
+        window_start_ms = effective_reset_at_ms - window_ms
+        ends_at_ms = account_input.ends_at_ms
+        schedule_end_ms = effective_reset_at_ms if ends_at_ms is None else min(effective_reset_at_ms, ends_at_ms)
         rows = account_input.history
         used_schedule_fraction = _used_schedule_fraction(
-            reset_at_ms=effective_reset_at_ms,
-            window_ms=window_ms,
+            start_ms=window_start_ms,
+            end_ms=schedule_end_ms,
             now_ms=now_ms,
             working_days=working_days,
         )
@@ -234,8 +271,8 @@ def build_weekly_pace(
         total_smoothed_remaining_credits += smoothed_remaining_credits
         total_expected_remaining_credits += expected_remaining_credits
         scheduled_burn_rate_credits_per_hour += full_credits * _working_schedule_share_per_hour(
-            reset_at_ms=effective_reset_at_ms,
-            window_ms=window_ms,
+            start_ms=window_start_ms,
+            end_ms=schedule_end_ms,
             working_days=working_days,
         )
         if account_rate is not None:
@@ -249,6 +286,7 @@ def build_weekly_pace(
                 remaining_credits=actual_remaining_credits,
                 reset_at_ms=effective_reset_at_ms,
                 window_ms=window_ms,
+                ends_at_ms=ends_at_ms,
                 forecast_burn_rate_credits_per_hour=account_rate,
                 history=rows,
             )
@@ -293,9 +331,7 @@ def build_weekly_pace(
     headroom_credits = total_actual_remaining_credits
     headroom_percent = 100.0 * headroom_credits / total_full_credits
     recent_burn_rate = _fleet_recent_burn_rate_credits_per_hour(pace_accounts, now)
-    depletion_eta_hours = (
-        headroom_credits / recent_burn_rate if recent_burn_rate is not None and recent_burn_rate > 0 else None
-    )
+    depletion_eta_hours = _depletion_eta_hours(pace_accounts, now_ms, recent_burn_rate)
     next_relief_in_hours, next_relief_credits = _next_relief(pace_accounts, now_ms)
     runway_status = _runway_status(
         depletion_eta_hours=depletion_eta_hours,
@@ -312,7 +348,10 @@ def build_weekly_pace(
             for account in pace_accounts
         )
         demand_quota_weeks = trailing_demand_credits / pro_account_units
-        fleet_capacity_quota_weeks = total_full_credits / pro_account_units
+        fleet_capacity_quota_weeks = (
+            sum(account.full_credits * _active_share_of_week(account, now_ms) for account in pace_accounts)
+            / pro_account_units
+        )
         demand_surplus_accounts = demand_quota_weeks - fleet_capacity_quota_weeks
         if demand_surplus_accounts > 0 and (runway_status == "runs_dry" or saturated_account_count > 0):
             add_pro_accounts = ceil(demand_surplus_accounts)
@@ -348,6 +387,7 @@ def build_weekly_pace(
         next_relief_in_hours=next_relief_in_hours,
         next_relief_credits=next_relief_credits,
         reset_events=_reset_events(pace_accounts, now_ms),
+        subscription_ends=_subscription_ends(pace_accounts, now_ms),
         runway_status=runway_status,
         saturated_account_count=saturated_account_count,
         add_pro_accounts=add_pro_accounts,
@@ -385,10 +425,51 @@ def _fleet_recent_burn_rate_credits_per_hour(
     return total_burn_credits / max(0.5, observed_span_hours)
 
 
-def _next_relief(accounts: list[_PaceAccount], now_ms: float) -> tuple[float, float]:
-    cohort = [account for account in accounts if _used_percent(account) >= RELIEF_COHORT_USED_PERCENT]
+def _depletion_eta_hours(
+    accounts: list[_PaceAccount],
+    now_ms: float,
+    burn_rate_credits_per_hour: float | None,
+) -> float | None:
+    """Hours until the pool is spent at the recent burn rate, before any reset relief.
+
+    Balances that end first are spent first, and whatever is left of an ending
+    account lapses at its end; without end dates this is headroom over burn.
+    """
+    if burn_rate_credits_per_hour is None or burn_rate_credits_per_hour <= 0:
+        return None
+    burn_rate_credits_per_ms = burn_rate_credits_per_hour / 3_600_000.0
+    balances = sorted(
+        (
+            _SimulationAccount(
+                full_credits=account.full_credits,
+                balance_credits=account.remaining_credits,
+                reset_at_ms=inf,
+                window_ms=account.window_ms,
+                ends_at_ms=account.ends_at_ms,
+            )
+            for account in accounts
+        ),
+        key=lambda account: account.expires_at_ms,
+    )
+    cursor_ms = now_ms
+    for ends_at_ms in [account.expires_at_ms for account in balances if account.ends_at_ms is not None]:
+        spend_credits = burn_rate_credits_per_ms * (ends_at_ms - cursor_ms)
+        if spend_credits >= _total_balance(balances):
+            break
+        _consume_balance(balances, spend_credits)
+        cursor_ms = ends_at_ms
+        balances.pop(0)
+    return (cursor_ms - now_ms + _total_balance(balances) / burn_rate_credits_per_ms) / 3_600_000.0
+
+
+def _next_relief(accounts: list[_PaceAccount], now_ms: float) -> tuple[float | None, float]:
+    """The soonest reset cluster that returns quota; none when every account ends before its reset."""
+    renewing = [account for account in accounts if account.resets_before_end]
+    if not renewing:
+        return None, 0.0
+    cohort = [account for account in renewing if _used_percent(account) >= RELIEF_COHORT_USED_PERCENT]
     if not cohort:
-        cohort = accounts
+        cohort = renewing
 
     soonest_reset_ms = min(account.reset_at_ms for account in cohort)
     cluster_end_ms = soonest_reset_ms + RELIEF_CLUSTER_WINDOW.total_seconds() * 1000.0
@@ -408,20 +489,44 @@ def _reset_events(accounts: list[_PaceAccount], now_ms: float) -> list[WeeklyCre
             credits_returned=account.full_credits * _used_percent(account) / 100.0,
         )
         for account in sorted(accounts, key=lambda item: item.reset_at_ms)
-        if account.reset_at_ms <= horizon_ms
+        if account.reset_at_ms <= horizon_ms and account.resets_before_end
     ]
+
+
+def _subscription_ends(accounts: list[_PaceAccount], now_ms: float) -> list[WeeklyCreditSubscriptionEnd]:
+    horizon_ms = now_ms + DEMAND_WINDOW.total_seconds() * 1000.0
+    return sorted(
+        (
+            WeeklyCreditSubscriptionEnd(
+                at=datetime.fromtimestamp(account.ends_at_ms / 1000.0, UTC),
+                weekly_credits=account.full_credits,
+            )
+            for account in accounts
+            if account.ends_at_ms is not None and account.ends_at_ms <= horizon_ms
+        ),
+        key=lambda event: event.at,
+    )
+
+
+def _active_share_of_week(account: _PaceAccount, now_ms: float) -> float:
+    """Share of the next seven days in which the account still holds capacity."""
+    if account.ends_at_ms is None:
+        return 1.0
+    return _clamp((account.ends_at_ms - now_ms) / (DEMAND_WINDOW.total_seconds() * 1000.0), 0.0, 1.0)
 
 
 def _runway_status(
     *,
     depletion_eta_hours: float | None,
-    next_relief_in_hours: float,
+    next_relief_in_hours: float | None,
     headroom_percent: float,
 ) -> WeeklyCreditRunwayStatus:
-    if depletion_eta_hours is not None and depletion_eta_hours < next_relief_in_hours:
+    if depletion_eta_hours is not None and (next_relief_in_hours is None or depletion_eta_hours < next_relief_in_hours):
         return "runs_dry"
     if (
-        depletion_eta_hours is not None and depletion_eta_hours - next_relief_in_hours < TIGHT_MARGIN_HOURS
+        depletion_eta_hours is not None
+        and next_relief_in_hours is not None
+        and depletion_eta_hours - next_relief_in_hours < TIGHT_MARGIN_HOURS
     ) or headroom_percent < TIGHT_HEADROOM_PERCENT:
         return "tight"
     return "safe"
@@ -537,6 +642,7 @@ def _project_weekly_pool(
             balance_credits=account.remaining_credits,
             reset_at_ms=account.reset_at_ms,
             window_ms=account.window_ms,
+            ends_at_ms=account.ends_at_ms,
         )
         for account in accounts
     ]
@@ -545,9 +651,15 @@ def _project_weekly_pool(
     minimum_remaining = total_remaining
 
     while cursor_ms < horizon_ms:
-        simulation_accounts.sort(key=lambda account: account.reset_at_ms)
-        next_reset = simulation_accounts[0]
-        next_event_at_ms = min(next_reset.reset_at_ms, horizon_ms)
+        if not simulation_accounts:
+            # Every subscription has ended: the remaining forecast demand goes unserved.
+            return _Projection(
+                projected_shortfall_credits=burn_rate_credits_per_ms * (horizon_ms - cursor_ms),
+                projected_depletion_hours=(cursor_ms - now_ms) / 3_600_000.0,
+                projected_minimum_remaining_credits=0.0,
+            )
+        next_event = min(simulation_accounts, key=lambda account: account.expires_at_ms)
+        next_event_at_ms = min(next_event.expires_at_ms, horizon_ms)
         interval_ms = max(0.0, next_event_at_ms - cursor_ms)
         interval_burn = burn_rate_credits_per_ms * interval_ms
         total_balance = _total_balance(simulation_accounts)
@@ -566,8 +678,12 @@ def _project_weekly_pool(
         if cursor_ms >= horizon_ms:
             break
 
-        next_reset.balance_credits = next_reset.full_credits
-        next_reset.reset_at_ms += next_reset.window_ms
+        if next_event.ends_at_ms is not None and next_event.ends_at_ms <= next_event.reset_at_ms:
+            # The subscription ends before this reset: its balance lapses and it never refills.
+            simulation_accounts.remove(next_event)
+        else:
+            next_event.balance_credits = next_event.full_credits
+            next_event.reset_at_ms += next_event.window_ms
         minimum_remaining = min(minimum_remaining, _total_balance(simulation_accounts))
 
     return _Projection(
@@ -578,8 +694,9 @@ def _project_weekly_pool(
 
 
 def _consume_balance(accounts: list[_SimulationAccount], amount_credits: float) -> None:
+    """Spend the balance that expires first, by reset or subscription end."""
     remaining_to_consume = amount_credits
-    for account in sorted(accounts, key=lambda item: item.reset_at_ms):
+    for account in sorted(accounts, key=lambda item: item.expires_at_ms):
         if remaining_to_consume <= 0:
             return
         consumed = min(account.balance_credits, remaining_to_consume)
@@ -600,39 +717,40 @@ def _advance_reset_at(reset_at_ms: float, window_ms: float, now_ms: float) -> fl
 
 def _used_schedule_fraction(
     *,
-    reset_at_ms: float,
-    window_ms: float,
+    start_ms: float,
+    end_ms: float,
     now_ms: float,
     working_days: set[int] | None,
 ) -> float:
-    window_start_ms = reset_at_ms - window_ms
-    elapsed_ms = _clamp(now_ms - window_start_ms, 0.0, window_ms)
+    """Share of the linear schedule from ``start_ms`` to ``end_ms`` (reset or subscription end) elapsed by now."""
+    span_ms = end_ms - start_ms
+    elapsed_ms = _clamp(now_ms - start_ms, 0.0, span_ms)
     if elapsed_ms <= 0:
         return 0.0
     if not working_days:
-        return elapsed_ms / window_ms
+        return elapsed_ms / span_ms
 
-    total_working_ms = _working_duration_ms(window_start_ms, reset_at_ms, working_days)
+    total_working_ms = _working_duration_ms(start_ms, end_ms, working_days)
     if total_working_ms <= 0:
-        return elapsed_ms / window_ms
+        return elapsed_ms / span_ms
 
-    used_working_ms = _working_duration_ms(window_start_ms, window_start_ms + elapsed_ms, working_days)
+    used_working_ms = _working_duration_ms(start_ms, start_ms + elapsed_ms, working_days)
     return _clamp(used_working_ms / total_working_ms, 0.0, 1.0)
 
 
 def _working_schedule_share_per_hour(
     *,
-    reset_at_ms: float,
-    window_ms: float,
+    start_ms: float,
+    end_ms: float,
     working_days: set[int] | None,
 ) -> float:
+    span_ms = end_ms - start_ms
     if not working_days:
-        return 3_600_000.0 / window_ms
+        return 3_600_000.0 / span_ms
 
-    window_start_ms = reset_at_ms - window_ms
-    total_working_ms = _working_duration_ms(window_start_ms, reset_at_ms, working_days)
+    total_working_ms = _working_duration_ms(start_ms, end_ms, working_days)
     if total_working_ms <= 0:
-        return 3_600_000.0 / window_ms
+        return 3_600_000.0 / span_ms
     return 3_600_000.0 / total_working_ms
 
 

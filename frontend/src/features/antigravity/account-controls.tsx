@@ -8,6 +8,7 @@ import { AccountRoutingPolicyControl } from "@/features/accounts/components/rout
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
 import { AccountColorPicker } from "@/features/accounts/components/account-color-picker";
 import { AccountNotePanel } from "@/features/accounts/components/account-note-panel";
+import { AccountSubscriptionEndPanel } from "@/features/accounts/components/account-subscription-end-panel";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { AccountInfoPanel } from "@/features/accounts/components/account-info-panel";
 import { CredentialImportDialog } from "@/features/accounts/components/credential-import-dialog";
@@ -128,6 +129,7 @@ export function AntigravityAccountControls({
           </p>
         ))}
       <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+      <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
       <section className="min-w-0 space-y-4 rounded-lg border bg-muted/30 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
         <AntigravityQuota account={account} detailed />
