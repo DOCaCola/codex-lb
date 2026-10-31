@@ -220,3 +220,65 @@ model whose catalog does not offer the priority tier SHALL fail before dispatch 
 #### Scenario: Fast Mode prohibited
 - **WHEN** Fast Mode is prohibited
 - **THEN** discovery lists no Fast entries
+
+### Requirement: Messages mid-conversation tool changes
+
+Message-level system content MAY carry `tool_addition` and `tool_removal` blocks alongside text. The translator
+SHALL apply them in message order to the request's tool catalog, which starts as the top-level declarations: an
+addition with a `tool_definition` declares the named tool or replaces its declaration; an addition with a
+`tool_reference` re-offers a tool declared earlier in the request; a removal with a `tool_reference` withdraws the
+named tool. Upstream SHALL receive the resulting catalog as top-level tools, in first-declaration order, translated
+like top-level declarations, with names longer than 64 characters aliased and restored in the output. Tool changes
+SHALL NOT produce input items; text in the same system message SHALL be translated as before.
+
+A reference to a tool not declared earlier in the request, a tool change in a system message whose `clear_at` is
+other than `never`, and a top-level tool name declared more than once SHALL fail before dispatch with
+`invalid_request_error`.
+
+#### Scenario: Inline MCP tool added late
+- **WHEN** a system message after earlier turns adds an inline definition for an MCP tool
+- **THEN** upstream receives the top-level tools followed by the added tool, and no input item for the change
+
+#### Scenario: Deferred tool removed and re-offered
+- **WHEN** a system message withdraws a top-level tool and a later one re-offers it by reference
+- **THEN** upstream receives the tool at its original position
+
+#### Scenario: Removed tool
+- **WHEN** a system message withdraws a top-level tool
+- **THEN** upstream does not receive that tool, while earlier calls to it remain in the history
+
+#### Scenario: Long inline tool name
+- **WHEN** an inline definition names a tool longer than 64 characters and the model calls it
+- **THEN** upstream receives the alias and the client receives the original name
+
+#### Scenario: Unknown reference
+- **WHEN** a tool change references a tool the request never declared
+- **THEN** it fails before dispatch with `invalid_request_error` naming the tool
+
+#### Scenario: Turn-scoped tool change
+- **WHEN** a system message with `clear_at: "next_user_message"` carries a tool addition
+- **THEN** it fails before dispatch with `invalid_request_error`
+
+### Requirement: Messages turn-scoped system messages
+
+A message-level system message with `clear_at: "next_user_message"` SHALL be translated only while no
+`role: "user"` message follows it in `messages`; once a later user message exists, including one carrying only tool
+results, the translator SHALL omit it from the input. System messages without `clear_at` or with
+`clear_at: "never"` SHALL be translated on every request. A `clear_at` value other than `"next_user_message"` or
+`"never"` SHALL fail before dispatch with `invalid_request_error`.
+
+#### Scenario: Current-turn reminder
+- **WHEN** a turn-scoped system message follows the last user message
+- **THEN** upstream receives it as a developer message
+
+#### Scenario: Expired reminder
+- **WHEN** a later user message, or a user message carrying only tool results, follows a turn-scoped system message
+- **THEN** upstream does not receive the turn-scoped message
+
+#### Scenario: Permanent system message
+- **WHEN** a system message has `clear_at: "never"` and later user messages follow it
+- **THEN** upstream receives it as a developer message
+
+#### Scenario: Unknown scope
+- **WHEN** a system message carries an unrecognised `clear_at` value
+- **THEN** it fails before dispatch with `invalid_request_error`

@@ -1682,10 +1682,11 @@ Translated Claude Responses SHALL declare the tools of `additional_tools` input 
 
 ### Requirement: Translated Claude progress updates
 Translated Responses requests to Claude Opus 5.5, Fable 5.1, Mythos 5.1, Sonnet 5 or Sonnet 5.5, including dated
-aliases, whose projected thinking is `adaptive` or `enabled` and whose caller chose no thinking display, SHALL send
-`thinking.display: "updates"`. An explicit caller display SHALL be sent unchanged. Other models, disabled thinking and
-native Messages MUST NOT receive the display from this rule. Any Claude request whose body carries
-`display: "updates"` SHALL negotiate `thinking-display-updates-2026-08-18`.
+aliases, whose projected thinking is `adaptive` or `enabled`, whose caller chose no thinking display and whose
+`reasoning.summary` is absent, `auto` or `none`, SHALL send `thinking.display: "updates"`. An explicit caller
+display SHALL be sent unchanged. Other models, disabled thinking and native Messages MUST NOT receive the display
+from this rule. Any Claude request whose body carries `display: "updates"` SHALL negotiate
+`thinking-display-updates-2026-08-18`.
 
 Under `updates`, a completed signed `thinking` block with non-empty text SHALL be delivered as a reasoning item with an
 empty summary whose authenticated opaque state holds the unchanged block marked as presented, followed by a separate
@@ -1707,8 +1708,12 @@ delivered, never their content.
 - **WHEN** a Responses request for Opus 5.5 asks for `summarized` reasoning display
 - **THEN** Claude receives `display: "summarized"` without the updates beta
 
+#### Scenario: Default Codex summary keeps progress updates
+- **WHEN** a Responses request for Opus 5.5 carries `reasoning.summary: "auto"`
+- **THEN** Claude receives `display: "updates"` with the updates beta
+
 #### Scenario: Model without progress updates
-- **WHEN** a translated request targets Haiku 5.5
+- **WHEN** a translated request targets Haiku 5.5 without a reasoning summary
 - **THEN** no thinking display or updates beta is added
 
 #### Scenario: Exact replay
@@ -1839,3 +1844,32 @@ multiplier have none and are not pooled.
 #### Scenario: Ultra five-hour capacity
 - **WHEN** an unverified Ultra account reports a five-hour window
 - **THEN** that window contributes 20 Pro units to the pooled five-hour figure
+
+### Requirement: Translated Claude reasoning summaries
+Translated Responses requests SHALL accept `reasoning.summary` values `auto`, `concise`, `detailed` and `none`, and
+MUST reject any other value before dispatch. When the caller chose no thinking display and the projected thinking is
+`adaptive`, the gateway SHALL send `thinking.display: "summarized"` for a `concise` or `detailed` summary on
+progress-update models, and for any summary other than `none` on other models.
+
+When a summary other than `none` is requested, the caller did not choose `omitted` and the projected display is not
+`updates`, each signed `thinking` block SHALL stream as a reasoning item whose summary carries the block's readable
+text: `response.reasoning_summary_part.added` when the block opens, `response.reasoning_summary_text.delta` per text
+delta, then `response.reasoning_summary_text.done` and `response.reasoning_summary_part.done` before the item's done
+event. The authenticated opaque state SHALL be unchanged. Chat Completions reasoning SHALL keep its existing visibility.
+
+#### Scenario: Detailed summary on Opus 5.5
+- **WHEN** a Responses request for Opus 5.5 carries `reasoning.summary: "detailed"`
+- **THEN** Claude receives `display: "summarized"` without the updates beta and the client receives the thinking
+  text as the reasoning item's summary
+
+#### Scenario: Default summary on an adaptive model without progress updates
+- **WHEN** a Responses request for Haiku 5.5 with adaptive thinking carries `reasoning.summary: "auto"`
+- **THEN** Claude receives `display: "summarized"` and the client receives the thinking text as a summary
+
+#### Scenario: Summaries disabled
+- **WHEN** a Responses request carries `reasoning.summary: "none"`
+- **THEN** no summarized display is requested and reasoning items keep an empty summary
+
+#### Scenario: Unknown summary value
+- **WHEN** a Responses request carries `reasoning.summary: "verbose"`
+- **THEN** the request is rejected before dispatch with param `reasoning.summary`
