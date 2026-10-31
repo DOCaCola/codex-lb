@@ -3,8 +3,7 @@
 Each account's seven-day subscription window counts as its plan's weekly weight
 in Pro units (Pro 1, Max 5, Ultra 10). Plans without a published multiplier are
 not pooled. Eligibility mirrors the Codex pace: disabled accounts are inactive and
-accounts past their subscription end are inactive, and windows without a fresh
-observation are stale.
+windows without a fresh observation are stale.
 """
 
 from __future__ import annotations
@@ -22,9 +21,8 @@ from app.modules.dashboard.schemas import WeeklyCreditPaceResponse
 from app.modules.dashboard.weekly_pace import (
     PaceAccountInput,
     build_weekly_pace,
+    pending_subscription_end_ms,
     positive_used_percent_delta,
-    subscription_end_ms,
-    subscription_ended,
 )
 
 SEVEN_DAY_WINDOW_MINUTES = 10_080
@@ -70,7 +68,7 @@ def build_claude_weekly_pace(
         window = next(window for window in quota_status(state, now=status_now).windows if window.name == "seven_day")
         if window.freshness == "unknown" or window.utilization is None or window.resets_at is None:
             continue
-        if not account.source.is_enabled or subscription_ended(account.source.subscription_ends_at, now):
+        if not account.source.is_enabled:
             inactive_account_count += 1
             continue
         if window.freshness == "stale":
@@ -86,7 +84,7 @@ def build_claude_weekly_pace(
                 reset_at_ms=window.resets_at.timestamp() * 1000.0,
                 window_ms=SEVEN_DAY_WINDOW_MINUTES * 60_000.0,
                 history=samples,
-                ends_at_ms=subscription_end_ms(account.source.subscription_ends_at),
+                ends_at_ms=pending_subscription_end_ms(account.source.subscription_ends_at, now),
             )
         )
         trailing_demand[account.source_id] = positive_used_percent_delta(samples)

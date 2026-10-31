@@ -174,7 +174,7 @@
   "accounts.detail.subscriptionEnd.clear": "Clear",
   "accounts.detail.subscriptionEnd.edit": "Edit subscription end",
   "accounts.detail.subscriptionEnd.empty": "Not set; the subscription is treated as renewing.",
-  "accounts.detail.subscriptionEnd.endedAt": "Ended {{time}}",
+  "accounts.detail.subscriptionEnd.passedAt": "Passed {{time}} · ignored in projections",
   "accounts.detail.subscriptionEnd.endsAt": "Ends {{time}}",
   "accounts.detail.subscriptionEnd.label": "Subscription end (local time)",
   "accounts.detail.subscriptionEnd.title": "Subscription end",

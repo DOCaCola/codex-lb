@@ -11,8 +11,9 @@ an OpenRouter or OpenAI-compatible account SHALL fail with
 `subscription_end_not_applicable`. The Codex, Claude and Antigravity account
 details SHALL show a Subscription end panel after the Note panel, stating the
 end in the dashboard's date format with the time remaining, or that it has
-ended; writers SHALL be able to set it in local time, change it or clear it.
-The end date SHALL NOT affect routing.
+passed and is ignored by projections; writers SHALL be able to set it in local
+time, change it or clear it. The end date SHALL only inform projections: it
+SHALL NOT change the account's status or affect routing, before or after it passes.
 
 #### Scenario: Set an end date
 - **WHEN** a writer sets 15 November 2026 18:00 local time on a Claude account
@@ -32,9 +33,9 @@ The end date SHALL NOT affect routing.
 
 ### Requirement: Quota projections honor subscription end dates
 The weekly pace for Codex, Claude and every Antigravity family SHALL treat an
-account's subscription end as a capacity cutoff:
+account's upcoming subscription end as a capacity cutoff. An end that has
+passed SHALL be ignored, so the account is projected as renewing:
 
-- An account whose end has passed SHALL count as inactive and SHALL NOT be pooled.
 - When the end comes before the account's next weekly reset, its expected
   remaining and scheduled burn SHALL follow a linear schedule from the window
   start to the end, so the plan spends the account by its end.
@@ -53,7 +54,7 @@ account's subscription end as a capacity cutoff:
 
 The Codex 5-hour and weekly depletion projections SHALL use the end as the
 window's horizon when it precedes the reset, measuring the safe line from the
-window start to the end, and SHALL skip accounts whose end has passed.
+window start to the end.
 
 #### Scenario: Ending account brings no relief
 - **GIVEN** a Codex account at 100% weekly usage whose subscription ends a day before its reset
@@ -65,9 +66,10 @@ window start to the end, and SHALL skip accounts whose end has passed.
 - **WHEN** the depletion ETA is computed at a burn rate that spends half of one account's remaining quota in 10 hours
 - **THEN** the ending account's balance is spent first and its unspent half is removed at the end, shortening the ETA compared with no end date
 
-#### Scenario: Ended account is inactive
-- **WHEN** an account's subscription end has passed
-- **THEN** the weekly pace excludes it and counts it as inactive
+#### Scenario: Passed end is ignored
+- **WHEN** an account's subscription end has passed and the account keeps serving requests
+- **THEN** the account's status and routing are unchanged
+- **AND** the weekly pace and depletion project it as a renewing account
 
 #### Scenario: No end dates
 - **WHEN** no account has an end date

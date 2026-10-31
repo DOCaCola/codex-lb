@@ -148,7 +148,7 @@
   "accounts.detail.subscriptionEnd.clear": "清除",
   "accounts.detail.subscriptionEnd.edit": "编辑订阅结束时间",
   "accounts.detail.subscriptionEnd.empty": "未设置；订阅视为自动续订。",
-  "accounts.detail.subscriptionEnd.endedAt": "已于 {{time}} 结束",
+  "accounts.detail.subscriptionEnd.passedAt": "已于 {{time}} 过期 · 预测中忽略",
   "accounts.detail.subscriptionEnd.endsAt": "{{time}} 结束",
   "accounts.detail.subscriptionEnd.label": "订阅结束时间（本地时间）",
   "accounts.detail.subscriptionEnd.title": "订阅结束",

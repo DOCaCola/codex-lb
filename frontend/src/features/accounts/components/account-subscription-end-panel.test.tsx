@@ -30,7 +30,7 @@ describe("AccountSubscriptionEndPanel", () => {
     );
   });
 
-  it("states that a past end has ended", async () => {
+  it("states that a passed end is ignored by projections", async () => {
     const user = userEvent.setup();
     renderWithProviders(<AccountSubscriptionEndPanel target={{ modelSourceId: "src_claude" }} readOnly={false} />);
 
@@ -38,7 +38,7 @@ describe("AccountSubscriptionEndPanel", () => {
     await user.type(screen.getByLabelText("Subscription end (local time)"), "2020-01-02T03:04");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText(/^Ended /)).toBeInTheDocument();
+    expect(await screen.findByText(/^Passed .+ · ignored in projections$/)).toBeInTheDocument();
   });
 
   it("hides the edit control from read-only users", async () => {

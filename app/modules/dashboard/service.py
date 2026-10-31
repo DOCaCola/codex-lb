@@ -34,7 +34,7 @@ from app.modules.dashboard.weekly_pace import (
     DEMAND_WINDOW,
     FLEET_BURN_WINDOW,
     build_weekly_credit_pace,
-    subscription_ended,
+    pending_subscription_end,
 )
 from app.modules.usage.builders import (
     align_bucket_window_start,
@@ -509,23 +509,20 @@ def _build_depletion_by_window(
     subscription_ends: dict[str, datetime | None],
     now,
 ) -> tuple[DepletionResponse | None, DepletionResponse | None]:
-    """Compute depletion independently per window, skipping accounts past their subscription end."""
+    """Compute depletion independently per window; a pending subscription end shortens the horizon."""
     active_cache_keys = {(account_id, "standard", "primary") for account_id in primary_history}
     active_cache_keys.update((account_id, "standard", "secondary") for account_id in secondary_history)
 
     def _aggregate(history: dict[str, list[UsageHistory]], window: str) -> DepletionResponse | None:
         metrics = []
         for account_id, rows in history.items():
-            ends_at = subscription_ends.get(account_id)
-            if subscription_ended(ends_at, now):
-                continue
             m = compute_depletion_for_account(
                 account_id=account_id,
                 limit_name="standard",
                 window=window,
                 history=rows,
                 now=now,
-                ends_at=ends_at,
+                ends_at=pending_subscription_end(subscription_ends.get(account_id), now),
             )
             metrics.append(m)
         agg = compute_aggregate_depletion(metrics)

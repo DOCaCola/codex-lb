@@ -148,7 +148,7 @@
   "accounts.detail.subscriptionEnd.clear": "지우기",
   "accounts.detail.subscriptionEnd.edit": "구독 종료 편집",
   "accounts.detail.subscriptionEnd.empty": "설정되지 않음. 구독이 갱신되는 것으로 간주합니다.",
-  "accounts.detail.subscriptionEnd.endedAt": "{{time}}에 종료됨",
+  "accounts.detail.subscriptionEnd.passedAt": "{{time}}에 지남 · 예측에서 무시됨",
   "accounts.detail.subscriptionEnd.endsAt": "{{time}}에 종료",
   "accounts.detail.subscriptionEnd.label": "구독 종료 (현지 시간)",
   "accounts.detail.subscriptionEnd.title": "구독 종료",

@@ -144,7 +144,7 @@ def test_add_capacity_counts_only_the_active_share_of_the_week() -> None:
     assert ending.add_pro_accounts == 1
 
 
-def test_codex_account_past_its_end_is_inactive() -> None:
+def test_passed_end_is_ignored_and_the_account_projects_as_renewing() -> None:
     summaries = [
         AccountSummary(
             account_id=account_id,
@@ -177,8 +177,10 @@ def test_codex_account_past_its_end_is_inactive() -> None:
     )
 
     assert pace is not None
-    assert pace.account_count == 1
-    assert pace.inactive_account_count == 1
+    assert pace.account_count == 2
+    assert pace.inactive_account_count == 0
+    assert pace.subscription_ends == []
+    assert len(pace.reset_events) == 2
 
 
 @dataclass(frozen=True)

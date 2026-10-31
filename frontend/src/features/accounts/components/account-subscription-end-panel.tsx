@@ -15,7 +15,7 @@ import {
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { formatDateTimeInline, formatRelative } from "@/utils/formatters";
 
-/** Operator-set end of a cancelled subscription; quota projections stop counting the account there. */
+/** Operator-set end of a cancelled subscription. It only informs quota projections and never acts on the account. */
 export function AccountSubscriptionEndPanel({
   target,
   readOnly,
@@ -114,7 +114,7 @@ export function AccountSubscriptionEndPanel({
         </div>
       ) : endsAt !== null && remainingMs !== null ? (
         <p className="text-xs tabular-nums">
-          {t(remainingMs > 0 ? "accounts.detail.subscriptionEnd.endsAt" : "accounts.detail.subscriptionEnd.endedAt", {
+          {t(remainingMs > 0 ? "accounts.detail.subscriptionEnd.endsAt" : "accounts.detail.subscriptionEnd.passedAt", {
             time: formatDateTimeInline(endsAt, dateDisplayFormat),
           })}
           {remainingMs > 0 ? <span className="ml-1.5 text-muted-foreground">{formatRelative(remainingMs)}</span> : null}

@@ -16,14 +16,17 @@ arrive, and the remaining quota that is lost at the end is counted as usable.
   and OpenAI-compatible accounts, which have no subscription window, reject it.
 - Each Codex, Claude and Antigravity account detail shows a Subscription end
   panel after the Note panel, with a date-time editor for writers.
-- The weekly pace treats an end date as a capacity cutoff: the account is
-  inactive once it has ended; before that, its linear schedule ends at the
-  end date, its later resets bring no relief, its remaining quota is lost at
-  the end in the runway and depletion forecasts, and it counts only for its
-  remaining share of the next seven days in the add-capacity estimate. The
-  pace response lists upcoming ends, and the runway timeline marks them.
+- The weekly pace treats an upcoming end date as a capacity cutoff: the
+  account's linear schedule ends at the end date, its later resets bring no
+  relief, its remaining quota is lost at the end in the runway and depletion
+  forecasts, and it counts only for its remaining share of the next seven
+  days in the add-capacity estimate. The pace response lists upcoming ends,
+  and the runway timeline marks them.
 - The Codex 5-hour and weekly depletion projections use the end as the
-  window's horizon when it comes before the reset, and skip ended accounts.
+  window's horizon when it comes before the reset.
+- The end date never acts on the account: it is not paused, disabled or
+  rerouted. Once the date has passed it no longer informs projections, and
+  the account is projected as renewing until the date is changed or cleared.
 
 ## Impact
 

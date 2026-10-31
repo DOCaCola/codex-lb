@@ -104,13 +104,18 @@ class _SimulationAccount:
         return self.reset_at_ms if self.ends_at_ms is None else min(self.reset_at_ms, self.ends_at_ms)
 
 
-def subscription_ended(ends_at: datetime | None, now: datetime) -> bool:
-    """Whether an operator-set subscription end (naive UTC) has passed; such accounts are inactive."""
-    return ends_at is not None and ends_at <= now
+def pending_subscription_end(ends_at: datetime | None, now: datetime) -> datetime | None:
+    """The operator-set subscription end (naive UTC) while it lies ahead.
+
+    The end date only informs projections and never changes the account; once it
+    has passed, the account is projected as renewing again.
+    """
+    return ends_at if ends_at is not None and ends_at > now else None
 
 
-def subscription_end_ms(ends_at: datetime | None) -> float | None:
-    return naive_utc_to_epoch(ends_at) * 1000.0 if ends_at is not None else None
+def pending_subscription_end_ms(ends_at: datetime | None, now: datetime) -> float | None:
+    pending = pending_subscription_end(ends_at, now)
+    return naive_utc_to_epoch(pending) * 1000.0 if pending is not None else None
 
 
 def positive_used_percent_delta(samples: Sequence[PaceSample]) -> float:
@@ -161,11 +166,7 @@ def build_weekly_credit_pace(
             continue
 
         account = accounts_by_id.get(summary.account_id)
-        if (
-            account is None
-            or account.status not in PACE_ELIGIBLE_ACCOUNT_STATUSES
-            or subscription_ended(account.subscription_ends_at, now)
-        ):
+        if account is None or account.status not in PACE_ELIGIBLE_ACCOUNT_STATUSES:
             inactive_account_count += 1
             continue
 
@@ -184,7 +185,7 @@ def build_weekly_credit_pace(
                 reset_at_ms=reset_at_ms,
                 window_ms=window_ms,
                 history=rows,
-                ends_at_ms=subscription_end_ms(account.subscription_ends_at),
+                ends_at_ms=pending_subscription_end_ms(account.subscription_ends_at, now),
             )
         )
 

@@ -5,8 +5,8 @@ has its own weekly window and spending one does not block the others, so their
 windows are never summed. A family's pool holds the accounts that report its
 weekly window, weighted by plan (Pro 1, Ultra 5x 5, Ultra 20x 20); plans
 without a published multiple are not pooled. Eligibility mirrors the Claude
-pace: disabled accounts and accounts past their subscription end are inactive,
-and readings from a failed or missed poll are stale.
+pace: disabled accounts are inactive and readings from a failed or missed poll
+are stale.
 """
 
 from __future__ import annotations
@@ -24,9 +24,8 @@ from app.modules.dashboard.schemas import AntigravityFamilyPace
 from app.modules.dashboard.weekly_pace import (
     PaceAccountInput,
     build_weekly_pace,
+    pending_subscription_end_ms,
     positive_used_percent_delta,
-    subscription_end_ms,
-    subscription_ended,
 )
 
 QUOTA_FAMILIES: tuple[QuotaFamily, ...] = get_args(QuotaFamily)
@@ -80,7 +79,7 @@ def build_antigravity_weekly_pace(
             )
             if weekly is None or weekly.resets_at is None:
                 continue
-            if not account.source.is_enabled or subscription_ended(account.source.subscription_ends_at, now):
+            if not account.source.is_enabled:
                 inactive_account_count += 1
                 continue
             if not quota_fresh(state, status_now):
@@ -96,7 +95,7 @@ def build_antigravity_weekly_pace(
                     reset_at_ms=weekly.resets_at.timestamp() * 1000.0,
                     window_ms=WEEKLY_WINDOW_MINUTES * 60_000.0,
                     history=samples,
-                    ends_at_ms=subscription_end_ms(account.source.subscription_ends_at),
+                    ends_at_ms=pending_subscription_end_ms(account.source.subscription_ends_at, now),
                 )
             )
             trailing_demand[account.source_id] = positive_used_percent_delta(samples)
