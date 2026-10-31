@@ -451,6 +451,7 @@ class ClaudeService:
         bootstrap: BootstrapResponse | None = None
         error: str | None = None
         retry_at: datetime | None = None
+        rate_limited = False
         try:
             async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
                 match endpoint:
@@ -467,6 +468,7 @@ class ClaudeService:
         except (ClaudeError, TimeoutError) as exc:
             error = str(exc) if isinstance(exc, ClaudeError) else f"Claude {endpoint} metadata timed out"
             retry_at = exc.retry_at if isinstance(exc, MetadataHTTPError) else datetime.now(UTC) + USAGE_INTERVAL
+            rate_limited = isinstance(exc, MetadataHTTPError) and exc.status == 429
         completed_at = datetime.now(UTC)
 
         def finish(state: AccountState) -> AccountState | None:
@@ -478,7 +480,7 @@ class ClaudeService:
                 or refresh.lease_until <= completed_at
             ):
                 return None
-            state.metadata_refresh[endpoint] = MetadataRefreshState(retry_at=retry_at)
+            state.metadata_refresh[endpoint] = MetadataRefreshState(retry_at=retry_at, rate_limited=rate_limited)
             if endpoint == "catalog":
                 state.catalog_requested_at = requested_at
                 state.catalog_error = error

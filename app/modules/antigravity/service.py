@@ -81,7 +81,8 @@ def _due(state: AccountState, endpoint: Endpoint, now: datetime, *, force: bool)
     metadata = state.metadata.get(endpoint)
     if metadata is None:
         return True
-    if metadata.retry_at is not None and metadata.retry_at > now:
+    # A forced check skips the backoff after our own failures, never a provider rate limit.
+    if metadata.retry_at is not None and metadata.retry_at > now and (metadata.rate_limited or not force):
         return False
     if force:
         return True
@@ -332,6 +333,7 @@ class AntigravityService:
                 break
             error: str | None = None
             retry_at: datetime | None = None
+            rate_limited = False
             completed_at = datetime.now(UTC)
             try:
                 async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
@@ -381,7 +383,8 @@ class AntigravityService:
             except MetadataHTTPError as exc:
                 failure = classify(exc.status, exc.body)
                 error = f"{endpoint}: {failure.message}"
-                retry_at = exc.retry_at if exc.status == 429 else completed_at + INTERVALS[endpoint]
+                rate_limited = exc.status == 429
+                retry_at = (exc.retry_at if rate_limited else None) or completed_at + INTERVALS[endpoint]
                 await record_failure(self.repository, source_id, generation, failure)
                 if failure.kind == "permission" and endpoint == "account":
                     await self.repository.update_account(
@@ -396,6 +399,7 @@ class AntigravityService:
                 else (state.metadata.get(endpoint) or MetadataState()).updated_at,
                 error=error,
                 retry_at=retry_at,
+                rate_limited=rate_limited,
             )
 
             def store_metadata(current: AccountState, endpoint: Endpoint = endpoint) -> AccountState:

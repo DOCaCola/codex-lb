@@ -4,9 +4,20 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.antigravity.quota import current_buckets, family_quota, parse_summary, plan_type, window_status
-from app.modules.antigravity.schemas import AccountState, QuotaBucket, Subscription, Tier
+from app.modules.antigravity.schemas import AccountState, MetadataState, QuotaBucket, Subscription, Tier
+from app.modules.antigravity.service import _due
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+
+
+def test_manual_check_skips_own_backoff_but_waits_for_a_rate_limit() -> None:
+    retry = NOW + timedelta(minutes=30)
+    state = AccountState(metadata={"account": MetadataState(error="failed", retry_at=retry)})
+    assert not _due(state, "account", NOW, force=False)
+    assert _due(state, "account", NOW, force=True)
+    state.metadata["account"] = MetadataState(error="rate limited", retry_at=retry, rate_limited=True)
+    assert not _due(state, "account", NOW, force=True)
+    assert _due(state, "account", retry, force=True)
 
 
 def _bucket(bucket_id: str, fraction: float, reset: str | None = None, **extra: object) -> dict[str, Any]:

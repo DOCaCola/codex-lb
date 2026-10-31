@@ -200,9 +200,13 @@ async def test_malformed_subscription_discovery_retains_last_observation(account
     assert result.state.subscription_updated_at == original.state.subscription_updated_at
     assert result.state.subscription_error == "Claude bootstrap returned invalid metadata"
     assert result.state.metadata_refresh["subscription"].retry_at > datetime.now(UTC)
+    assert not result.state.metadata_refresh["subscription"].rate_limited
     assert result.credential_status == "ready" and result.is_enabled
-    await poll(account)
+    await poll(account, force=False)
     fetch.assert_awaited_once()
+    # A manual check skips the backoff after a failure that was not a rate limit.
+    await poll(account)
+    assert fetch.await_count == 2
 
 
 @pytest.mark.parametrize("replace_generation", [False, True])

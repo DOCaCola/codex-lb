@@ -32,7 +32,7 @@ def test_retry_after(value, seconds):
     assert retry_deadline(value, NOW) == NOW + timedelta(seconds=seconds)
 
 
-def test_cadence_and_force_never_override_cooldown_or_lease():
+def test_force_skips_own_backoff_but_never_a_rate_limit_or_lease():
     state = AccountState(usage_updated_at=NOW, catalog_updated_at=NOW, subscription_updated_at=NOW)
     assert not refresh_due(state, "usage", NOW + timedelta(seconds=179), force=False)
     assert refresh_due(state, "usage", NOW + timedelta(seconds=180), force=False)
@@ -42,12 +42,15 @@ def test_cadence_and_force_never_override_cooldown_or_lease():
     assert refresh_due(state, "subscription", NOW + timedelta(hours=6), force=False)
     assert refresh_due(state, "usage", NOW, force=True)
     for refresh in [
-        MetadataRefreshState(retry_at=NOW + timedelta(seconds=90)),
+        MetadataRefreshState(retry_at=NOW + timedelta(seconds=90), rate_limited=True),
         MetadataRefreshState(operation_id="owner", lease_until=NOW + timedelta(seconds=90)),
     ]:
         state.metadata_refresh["usage"] = refresh
         assert not refresh_due(state, "usage", NOW, force=True)
         assert refresh_due(state, "usage", NOW + timedelta(seconds=90), force=True)
+    state.metadata_refresh["usage"] = MetadataRefreshState(retry_at=NOW + timedelta(seconds=90))
+    assert not refresh_due(state, "usage", NOW, force=False)
+    assert refresh_due(state, "usage", NOW, force=True)
 
 
 @pytest.mark.parametrize(

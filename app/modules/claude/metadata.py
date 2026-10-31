@@ -51,7 +51,8 @@ def refresh_due(state: AccountState, endpoint: MetadataEndpoint, now: datetime, 
     if refresh is not None:
         if refresh.lease_until is not None and refresh.lease_until > now:
             return False
-        if refresh.retry_at is not None:
+        # A forced check skips the backoff after our own failures, never a provider rate limit.
+        if refresh.retry_at is not None and (refresh.rate_limited or not force):
             return refresh.retry_at <= now
     updated = metadata_updated_at(state, endpoint)
     interval = {"catalog": CATALOG_INTERVAL, "usage": USAGE_INTERVAL, "subscription": SUBSCRIPTION_INTERVAL}[endpoint]

@@ -97,6 +97,8 @@ class MetadataState(BaseModel):
     updated_at: datetime | None = None
     error: str | None = None
     retry_at: datetime | None = None
+    # The retry time is Google's rate-limit deadline, which a manual check also waits for.
+    rate_limited: bool = False
 
 
 class VerificationNotice(BaseModel):

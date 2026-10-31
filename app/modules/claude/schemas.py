@@ -226,6 +226,8 @@ class MetadataRefreshState(BaseModel):
     operation_id: str | None = None
     lease_until: datetime | None = None
     retry_at: datetime | None = None
+    # The retry time is the provider's rate-limit deadline, which a manual check also waits for.
+    rate_limited: bool = False
 
 
 class AccountState(BaseModel):
