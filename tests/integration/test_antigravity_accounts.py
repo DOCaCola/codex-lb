@@ -148,7 +148,13 @@ HELLO: list[dict[str, Any]] = [
 ]
 
 
-def install_upstream(monkeypatch, *, rejections: int = 0, rounds: list[list[dict[str, Any]]] | None = None):
+def install_upstream(
+    monkeypatch,
+    *,
+    rejections: int = 0,
+    rejection: dict[str, Any] = QUOTA_EXHAUSTED,
+    rounds: list[list[dict[str, Any]]] | None = None,
+):
     """Fake streamGenerateContent; each accepted request answers with the next of rounds."""
     from app.modules.antigravity import transport
     from app.modules.model_sources.forwarding import ModelSourceForwardingError
@@ -161,7 +167,7 @@ def install_upstream(monkeypatch, *, rejections: int = 0, rounds: list[list[dict
         assert kwargs["skip_auto_headers"] is GO_SKIP_AUTO_HEADERS
         captured.append((source.id, payload, kwargs["prepared_headers"]))
         if len(captured) <= rejections:
-            raise ModelSourceForwardingError(status_code=429, payload=QUOTA_EXHAUSTED, upstream_status_code=429)
+            raise ModelSourceForwardingError(status_code=429, payload=rejection, upstream_status_code=429)
         lines = answers[min(len(captured) - rejections, len(answers)) - 1]
 
         async def chunks(_size):
@@ -217,6 +223,34 @@ async def test_quota_exhaustion_fails_over_to_the_next_account(async_client, poo
     assert [source_id for source_id, _, _ in captured] in ([pool[0], pool[1]], [pool[1], pool[0]])
     # The conversation keeps one cascade across accounts; only the project and token change.
     assert captured[0][1]["request"]["labels"]["cascade_id"] == captured[1][1]["request"]["labels"]["cascade_id"]
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "headers"),
+    [
+        ("/backend-api/codex/responses", {"input": "Hi", "stream": False}, {}),
+        (
+            "/v1/messages",
+            {"max_tokens": 50, "messages": [{"role": "user", "content": "Hi"}]},
+            {"anthropic-version": "2023-06-01"},
+        ),
+    ],
+    ids=["codex", "messages"],
+)
+async def test_refused_content_is_reported_final(async_client, pool, monkeypatch, path, body, headers):
+    from app.modules.antigravity import recovery
+
+    monkeypatch.setattr(recovery, "_jitter", lambda: 0.0)
+    bare = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Resource has been exhausted"}}
+    captured = install_upstream(monkeypatch, rejections=2, rejection=bare)
+
+    response = await async_client.post(path, json={"model": GEMINI, **body}, headers=headers)
+
+    assert response.status_code == 429, response.text
+    assert response.headers["x-should-retry"] == "false"
+    assert "retry-after" not in response.headers
+    # One same-account retry, never the pool.
+    assert [source_id for source_id, _, _ in captured] == [captured[0][0]] * 2
 
 
 @pytest.mark.parametrize(

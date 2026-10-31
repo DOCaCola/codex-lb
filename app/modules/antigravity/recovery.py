@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 MAX_SENDS = 4
 # Upstream 429 answers one request may absorb before reporting (OmniRoute #18140).
 MAX_UPSTREAM_429 = 2
+# Claude Code and the OpenAI and Anthropic SDKs do not resend a response carrying this header; Codex does not
+# resend a 429 without a retry delay. A refusal that follows the request content is reported this way, so no
+# client loop sends the refused content to Google again.
+_FINAL = {"x-should-retry": "false"}
 
 
 def _error(kind: str, code: str, message: str) -> dict[str, JsonValue]:
@@ -81,7 +85,11 @@ def client_error(failure: UpstreamFailure) -> tuple[int, dict[str, JsonValue]]:
 
 
 class AntigravityUpstreamError(ModelSourceForwardingError):
-    """A classified Cloud Code rejection; the payload is the client error, never Google's raw body."""
+    """A classified Cloud Code rejection; the payload is the client error, never Google's raw body.
+
+    `upstream_retry_after` is Google's own `Retry-After`; an unexplained 429 keeps it for the same-account retry
+    but reports itself as final.
+    """
 
     def __init__(
         self,
@@ -92,8 +100,12 @@ class AntigravityUpstreamError(ModelSourceForwardingError):
         upstream_headers: dict[str, str] | None = None,
     ) -> None:
         status, payload = client_error(failure)
+        self.upstream_retry_after = retry_after
         if retry_after is None and failure.retry_after is not None:
             retry_after = str(max(1, math.ceil(failure.retry_after.total_seconds())))
+        if failure.kind == "unexplained_429":
+            retry_after = None
+            upstream_headers = {**(upstream_headers or {}), **_FINAL}
         super().__init__(
             status_code=status,
             payload=cast(dict[str, JsonValue], _redact_json_value(payload, secret)),
@@ -203,7 +215,7 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
                 return None
             state.same_account_retried = True
             state.retry_source_id = source_id
-            hinted = error.retry_after
+            hinted = error.upstream_retry_after
             delay = max(float(hinted) if hinted is not None and hinted.isdecimal() else 0.0, _jitter())
         case "overloaded" | "transient":
             if state.overload_retried:

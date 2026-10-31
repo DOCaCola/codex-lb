@@ -69,6 +69,15 @@ async def test_unexplained_429_never_walks_the_pool(recorded: list[UpstreamFailu
     assert not recorded
 
 
+async def test_unexplained_429_waits_for_the_upstream_hint_and_reports_itself_final(
+    recorded: list[UpstreamFailure],
+) -> None:
+    error = AntigravityUpstreamError(UpstreamFailure("unexplained_429", 429, "m"), secret="token-1", retry_after="7")
+    assert error.retry_after is None
+    assert error.upstream_headers == {"x-should-retry": "false"}
+    assert await plan_retry(_state(), error) == 7.0
+
+
 async def test_upstream_429s_are_bounded(recorded: list[UpstreamFailure]) -> None:
     state = _state()
     for _ in range(2):
