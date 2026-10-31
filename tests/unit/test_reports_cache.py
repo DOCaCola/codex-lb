@@ -8,9 +8,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.modules.reports.cache import ReportCache, ReportCacheKey
+from app.modules.reports.filters import ReportFilters
 
 pytestmark = pytest.mark.unit
-KEY = ReportCacheKey(date(2026, 1, 1), date(2026, 1, 7), "UTC", (), (), "", "")
+KEY = ReportCacheKey(date(2026, 1, 1), date(2026, 1, 7), "UTC", ReportFilters())
 
 
 async def test_cache_coalesces_identical_loads_and_isolates_filter_keys():
@@ -18,8 +19,12 @@ async def test_cache_coalesces_identical_loads_and_isolates_filter_keys():
     compute = AsyncMock(return_value=42)
     assert await asyncio.gather(*(cache.get(KEY, compute) for _ in range(10))) == [42] * 10
     compute.assert_awaited_once()
-    await cache.get(replace(KEY, useragent="CLI"), compute)
+    await cache.get(replace(KEY, filters=ReportFilters.create(useragent_groups=["CLI"])), compute)
     assert compute.await_count == 2
+    # Selection order does not create a separate entry.
+    await cache.get(replace(KEY, filters=ReportFilters.create(models=["b", "a"])), compute)
+    await cache.get(replace(KEY, filters=ReportFilters.create(models=["a", "b", "a"])), compute)
+    assert compute.await_count == 3
 
 
 async def test_cache_expiry_and_capacity(monkeypatch):
@@ -32,7 +37,7 @@ async def test_cache_expiry_and_capacity(monkeypatch):
     await cache.get(KEY, compute)
     clock = 61
     await cache.get(KEY, compute)
-    await cache.get(replace(KEY, model="m"), compute)
+    await cache.get(replace(KEY, filters=ReportFilters.create(models=["m"])), compute)
     await cache.get(KEY, compute)
     assert compute.await_count == 4
 
@@ -71,10 +76,10 @@ async def test_cache_hits_bypass_slow_misses_while_distinct_computations_stay_bo
 
     async def next_request():
         queued.set()
-        return await cache.get(replace(KEY, model="next"), next_compute)
+        return await cache.get(replace(KEY, filters=ReportFilters.create(models=["next"])), next_compute)
 
     async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
-        slow_task = tasks.create_task(cache.get(replace(KEY, model="slow"), slow))
+        slow_task = tasks.create_task(cache.get(replace(KEY, filters=ReportFilters.create(models=["slow"])), slow))
         await entered.wait()
         next_task = tasks.create_task(next_request())
         await queued.wait()

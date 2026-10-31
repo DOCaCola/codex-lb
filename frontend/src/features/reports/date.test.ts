@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   daysAgoLocalISO,
-  formatReportBucketDate,
+  formatReportDay,
+  formatReportRange,
   getBrowserReportsTimeZone,
   localDateISO,
 } from "./date";
@@ -75,9 +76,17 @@ describe("reports date helpers", () => {
     expect(daysAgoLocalISO(1, localNoon)).toBe("2026-06-01");
   });
 
-  it("formats report bucket strings for the selected display format without a UTC shift", () => {
-    expect(formatReportBucketDate("2026-06-01", "default")).toBe("06/01/2026");
-    expect(formatReportBucketDate("2026-06-01", "iso8601")).toBe("2026-06-01");
+  it("formats report days for the selected display format without a timezone shift", () => {
+    expect(formatReportDay("2026-06-01", "default")).toBe("Mon, Jun 1");
+    expect(formatReportDay("2026-06-01", "default", "short")).toBe("Jun 1");
+    expect(formatReportDay("2026-06-01", "iso8601")).toBe("2026-06-01");
+    expect(formatReportDay("2026-06-01", "iso8601", "short")).toBe("06-01");
+  });
+
+  it("formats the report window and its comparison window", () => {
+    expect(formatReportRange("2026-10-25", "2026-10-31", "default")).toBe("Sun, Oct 25\u2009–\u2009Sat, Oct 31, 2026");
+    expect(formatReportRange("2026-10-18", "2026-10-24", "default", { withYear: false })).toBe("Oct 18\u2009–\u200924");
+    expect(formatReportRange("2026-10-25", "2026-10-31", "iso8601")).toBe("2026-10-25 – 2026-10-31");
   });
 
   it("returns the live browser timezone and refreshes the cached value", () => {

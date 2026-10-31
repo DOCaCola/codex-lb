@@ -1,83 +1,80 @@
 import { useQuery } from "@tanstack/react-query";
-import { getReports, getReportsOptions, getThreadIdentity } from "../api";
-import { isReportDateRangeValid } from "../date";
 
-type ReportsFilterState = {
-  startDate: string | undefined;
-  endDate: string | undefined;
-  accountId: string[];
-  apiKeyId?: string[];
-  model: string | undefined;
-  useragent?: string | undefined;
+import { getReports, getReportsOptions, getThreadIdentity, type ReportsParams } from "../api";
+import { isReportDateRangeValid } from "../date";
+import { splitAccountFilterKeys } from "../report-model";
+
+export type ReportsFilterState = {
+  startDate: string;
+  endDate: string;
+  /** Account filter keys from accountFilterKey. */
+  accounts: string[];
+  apiKeyIds: string[];
+  models: string[];
+  useragents: string[];
 };
 
-export function useReports(
-  filters: ReportsFilterState,
-  timeZone: string | undefined,
-) {
-  return useQuery({
-    enabled: isReportDateRangeValid(filters.startDate, filters.endDate),
-    queryKey: ["reports", filters, timeZone],
-    queryFn: () =>
-      getReports({
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-        accountId: filters.accountId.length > 0 ? filters.accountId : undefined,
-        apiKeyId:
-          filters.apiKeyId && filters.apiKeyId.length > 0
-            ? filters.apiKeyId
-            : undefined,
-        model: filters.model || undefined,
-        useragent: filters.useragent || undefined,
-        timezone: timeZone,
-      }),
-    staleTime: 5 * 60_000,
-    refetchInterval: false,
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
-}
+const sorted = (values: readonly string[]) => [...values].sort();
 
-export function useReportsOptions(filters: ReportsFilterState, timeZone: string | undefined) {
-  const scope = {
+/** Request scope shared by the report and its options; order-independent so reordering selections hits the cache. */
+function accountScope(filters: ReportsFilterState, timeZone: string | undefined): ReportsParams {
+  const { accountIds, modelSourceIds } = splitAccountFilterKeys(filters.accounts);
+  return {
     startDate: filters.startDate,
     endDate: filters.endDate,
-    accountId: [...filters.accountId].sort(),
-    apiKeyId: [...(filters.apiKeyId ?? [])].sort(),
     timezone: timeZone,
+    accountIds: sorted(accountIds),
+    modelSourceIds: sorted(modelSourceIds),
+    apiKeyIds: sorted(filters.apiKeyIds),
+  };
+}
+
+const REPORT_QUERY_OPTIONS = {
+  staleTime: 5 * 60_000,
+  refetchInterval: false,
+  refetchOnWindowFocus: false,
+  retry: false,
+} as const;
+
+export function useReports(filters: ReportsFilterState, timeZone: string | undefined) {
+  const params: ReportsParams = {
+    ...accountScope(filters, timeZone),
+    models: sorted(filters.models),
+    useragents: sorted(filters.useragents),
   };
   return useQuery({
-    queryKey: ["reports-options", scope],
+    ...REPORT_QUERY_OPTIONS,
     enabled: isReportDateRangeValid(filters.startDate, filters.endDate),
-    queryFn: () => getReportsOptions(scope),
-    staleTime: 5 * 60_000,
-    refetchInterval: false,
-    refetchOnWindowFocus: false,
-    retry: false,
+    queryKey: ["reports", params],
+    queryFn: () => getReports(params),
   });
 }
 
-// Raw request-log scans, so the query only runs while the card is visible and
-// its result is held far longer than the cost report's.
-const THREAD_IDENTITY_STALE_TIME_MS = 5 * 60_000;
+/** Filter choices; the model and user-agent selections do not narrow them. */
+export function useReportsOptions(filters: ReportsFilterState, timeZone: string | undefined) {
+  const params = accountScope(filters, timeZone);
+  return useQuery({
+    ...REPORT_QUERY_OPTIONS,
+    enabled: isReportDateRangeValid(filters.startDate, filters.endDate),
+    queryKey: ["reports-options", params],
+    queryFn: () => getReportsOptions(params),
+  });
+}
 
+/**
+ * Thread identity scans raw request logs over the whole pool, so it is scoped
+ * by the date range alone and only requested while its section is open.
+ */
 export function useThreadIdentity(
   filters: Pick<ReportsFilterState, "startDate" | "endDate">,
   timeZone: string | undefined,
   enabled: boolean,
 ) {
-  const scope = {
-    startDate: filters.startDate,
-    endDate: filters.endDate,
-    timezone: timeZone,
-  };
+  const params = { startDate: filters.startDate, endDate: filters.endDate, timezone: timeZone };
   return useQuery({
+    ...REPORT_QUERY_OPTIONS,
     enabled: enabled && isReportDateRangeValid(filters.startDate, filters.endDate),
-    queryKey: ["reports-thread-identity", scope],
-    queryFn: () => getThreadIdentity(scope),
-    staleTime: THREAD_IDENTITY_STALE_TIME_MS,
-    refetchInterval: false,
-    refetchOnWindowFocus: false,
-    retry: false,
+    queryKey: ["reports-thread-identity", params],
+    queryFn: () => getThreadIdentity(params),
   });
 }

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from time import monotonic
 
+from app.modules.reports.filters import ReportFilters
 from app.modules.reports.schemas import ReportsOptionsResponse, ReportsResponse, ThreadIdentityResponse
 
 
@@ -17,10 +18,7 @@ class ReportCacheKey:
     start: date
     end: date
     timezone: str
-    accounts: tuple[str, ...]
-    api_keys: tuple[str, ...]
-    model: str
-    useragent: str
+    filters: ReportFilters
 
 
 class ReportCache[K: Hashable, T]:

@@ -4,16 +4,22 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.utils.time import to_utc_naive, utcnow
+from app.modules.reports.filters import ReportFilters
 from app.modules.reports.repository import (
     MAX_DAILY_REPORT_DAYS,
     MAX_SPEED_REPORT_DAYS,
+    AccountIdentity,
     DailyReportRangeTooLargeError,
     ReportsRepository,
+    SplitMeasures,
 )
 from app.modules.reports.schemas import (
     AccountCostEntry,
+    DailyAccountSplit,
+    DailyModelSplit,
     DailyReportRow,
     ModelCostEntry,
+    ReportAccountOption,
     ReportComparison,
     ReportComparisonPrevious,
     ReportsOptionsResponse,
@@ -45,10 +51,7 @@ class ReportsService:
         start_date: date | None = None,
         end_date: date | None = None,
         report_timezone: str | None = None,
-        account_ids: list[str] | None = None,
-        model: str | None = None,
-        useragent_group: str | None = None,
-        api_key_ids: list[str] | None = None,
+        filters: ReportFilters = ReportFilters(),
     ) -> ReportsResponse:
         start_date, end_date, timezone_info = resolve_report_range(start_date, end_date, report_timezone)
         window_days = (end_date - start_date).days + 1
@@ -60,29 +63,10 @@ class ReportsService:
         previous_start_at = _local_midnight_to_utc_naive(previous_start_date, timezone_info)
         previous_end_at = _local_midnight_to_utc_naive(previous_end_date + timedelta(days=1), timezone_info)
 
-        summary = await self._repository.aggregate_summary(
-            start_at, end_at, account_ids, model, useragent_group, api_key_ids
-        )
-        previous_summary = await self._repository.aggregate_summary(
-            previous_start_at,
-            previous_end_at,
-            account_ids,
-            model,
-            useragent_group,
-            api_key_ids,
-        )
-        earliest_activity_at = await self._repository.earliest_report_activity_at(
-            account_ids, model, useragent_group, api_key_ids
-        )
-        daily_rows = await self._repository.aggregate_daily_rows(
-            start_date,
-            end_date,
-            timezone_info,
-            account_ids,
-            model,
-            useragent_group,
-            api_key_ids,
-        )
+        summary = await self._repository.aggregate_summary(start_at, end_at, filters)
+        previous_summary = await self._repository.aggregate_summary(previous_start_at, previous_end_at, filters)
+        earliest_activity_at = await self._repository.earliest_report_activity_at(filters)
+        daily_rows = await self._repository.aggregate_daily_rows(start_date, end_date, timezone_info, filters)
         daily = [
             DailyReportRow(
                 date=row.date,
@@ -106,23 +90,21 @@ class ReportsService:
             )
             for row in daily_rows
         ]
-        by_model = await self._repository.aggregate_by_model(
-            start_at, end_at, account_ids, model, useragent_group, api_key_ids
+        # The daily windows partition the report range, so the per-account and
+        # per-model totals are the sums of their daily splits.
+        daily_by_account = await self._repository.aggregate_daily_by_account(
+            start_date, end_date, timezone_info, filters
         )
-        by_account = await self._repository.aggregate_by_account(
-            start_at, end_at, account_ids, model, useragent_group, api_key_ids
-        )
-        by_useragent = await self._repository.aggregate_by_useragent(
-            start_at,
-            end_at,
-            account_ids,
-            model,
-            useragent_group,
-            api_key_ids,
-        )
+        daily_by_model = await self._repository.aggregate_daily_by_model(start_date, end_date, timezone_info, filters)
+        by_useragent = await self._repository.aggregate_by_useragent(start_at, end_at, filters)
 
-        model_total = sum(m.cost_usd for m in by_model)
-        useragent_total = sum(u.cost_usd for u in by_useragent)
+        account_totals: dict[AccountIdentity, SplitMeasures] = {}
+        for row in daily_by_account:
+            account_totals[row.account] = _add_measures(account_totals.get(row.account), row.measures)
+        model_totals: dict[str, SplitMeasures] = {}
+        for row in daily_by_model:
+            model_totals[row.model] = _add_measures(model_totals.get(row.model), row.measures)
+
         comparison = ReportComparison(
             can_compare=earliest_activity_at is not None and earliest_activity_at <= previous_start_at,
             previous=ReportComparisonPrevious(
@@ -155,53 +137,60 @@ class ReportsService:
                 total_cancelled=summary.total_cancelled,
                 active_accounts=summary.active_accounts,
                 total_conversations=summary.conversation_count,
-                avg_cost_per_day=round(summary.total_cost_usd / window_days, 4)
-                if not (summary.unpriced_requests or summary.unmetered_requests or summary.coverage_unknown)
-                else None,
+                avg_cost_per_day=round(summary.total_cost_usd / window_days, 4),
                 avg_requests_per_day=round(summary.total_requests / window_days, 2),
             ),
             comparison=comparison,
             daily=daily,
+            daily_by_account=[
+                DailyAccountSplit(
+                    date=row.date,
+                    account_id=row.account.account_id,
+                    model_source_id=row.account.model_source_id,
+                    provider=row.account.provider,
+                    name=row.account.name,
+                    **_split_fields(row.measures),
+                )
+                for row in daily_by_account
+            ],
+            daily_by_model=[
+                DailyModelSplit(date=row.date, model=row.model, **_split_fields(row.measures)) for row in daily_by_model
+            ],
             by_model=[
                 ModelCostEntry(
-                    model=m.model,
-                    cost_usd=round(m.cost_usd, 4),
-                    requests=m.request_count,
-                    percentage=round((m.cost_usd / model_total * 100), 1)
-                    if model_total > 0
-                    and not (summary.unpriced_requests or summary.unmetered_requests or summary.coverage_unknown)
-                    else None,
-                    priced_requests=m.priced_requests,
-                    unpriced_requests=m.unpriced_requests,
-                    unmetered_requests=m.unmetered_requests,
-                    coverage_unknown=m.coverage_unknown,
+                    model=model,
+                    cost_usd=round(total.cost_usd, 4),
+                    requests=total.requests,
+                    priced_requests=total.priced_requests,
+                    unpriced_requests=total.unpriced_requests,
+                    unmetered_requests=total.unmetered_requests,
+                    coverage_unknown=total.coverage_unknown,
                 )
-                for m in by_model
+                for model, total in sorted(model_totals.items(), key=lambda item: (-item[1].cost_usd, item[0]))
             ],
             by_account=[
                 AccountCostEntry(
-                    account_id=a.account_id,
-                    model_source_id=a.model_source_id,
-                    provider=a.provider,
-                    name=a.name,
-                    cost_usd=round(a.cost_usd, 4),
-                    requests=a.request_count,
-                    priced_requests=a.priced_requests,
-                    unpriced_requests=a.unpriced_requests,
-                    unmetered_requests=a.unmetered_requests,
-                    coverage_unknown=a.coverage_unknown,
+                    account_id=account.account_id,
+                    model_source_id=account.model_source_id,
+                    provider=account.provider,
+                    name=account.name,
+                    cost_usd=round(total.cost_usd, 4),
+                    requests=total.requests,
+                    priced_requests=total.priced_requests,
+                    unpriced_requests=total.unpriced_requests,
+                    unmetered_requests=total.unmetered_requests,
+                    coverage_unknown=total.coverage_unknown,
                 )
-                for a in by_account
+                for account, total in sorted(
+                    account_totals.items(),
+                    key=lambda item: (-item[1].cost_usd, item[0].account_id or "", item[0].model_source_id or ""),
+                )
             ],
             by_useragent=[
                 UserAgentCostEntry(
                     useragent=u.useragent_group,
                     cost_usd=round(u.cost_usd, 4),
                     requests=u.request_count,
-                    percentage=round((u.cost_usd / useragent_total * 100), 1)
-                    if useragent_total > 0
-                    and not (summary.unpriced_requests or summary.unmetered_requests or summary.coverage_unknown)
-                    else None,
                     priced_requests=u.priced_requests,
                     unpriced_requests=u.unpriced_requests,
                     unmetered_requests=u.unmetered_requests,
@@ -253,17 +242,26 @@ class ReportsService:
         start_date: date | None = None,
         end_date: date | None = None,
         report_timezone: str | None = None,
-        account_ids: list[str] | None = None,
-        api_key_ids: list[str] | None = None,
+        filters: ReportFilters = ReportFilters(),
     ) -> ReportsOptionsResponse:
         start_date, end_date, timezone_info = resolve_report_range(start_date, end_date, report_timezone)
-        models, useragents = await self._repository.list_filter_options(
-            _local_midnight_to_utc_naive(start_date, timezone_info),
-            _local_midnight_to_utc_naive(end_date + timedelta(days=1), timezone_info),
-            account_ids,
-            api_key_ids,
+        start_at = _local_midnight_to_utc_naive(start_date, timezone_info)
+        end_at = _local_midnight_to_utc_naive(end_date + timedelta(days=1), timezone_info)
+        models, useragents = await self._repository.list_filter_options(start_at, end_at, filters)
+        accounts = await self._repository.list_account_options(start_at, end_at, filters)
+        return ReportsOptionsResponse(
+            models=models,
+            useragents=useragents,
+            accounts=[
+                ReportAccountOption(
+                    account_id=account.account_id,
+                    model_source_id=account.model_source_id,
+                    provider=account.provider,
+                    name=account.name,
+                )
+                for account in accounts
+            ],
         )
-        return ReportsOptionsResponse(models=models, useragents=useragents)
 
 
 def resolve_report_range(
@@ -319,3 +317,40 @@ def _thread_identity_facet(
         cache_sample_input_tokens=row.cache_input_tokens,
         thread_grouping_approximate=approximate,
     )
+
+
+def _add_measures(total: SplitMeasures | None, value: SplitMeasures) -> SplitMeasures:
+    if total is None:
+        return value
+    reasoning = (
+        None
+        if total.reasoning_tokens is None and value.reasoning_tokens is None
+        else (total.reasoning_tokens or 0) + (value.reasoning_tokens or 0)
+    )
+    return SplitMeasures(
+        requests=total.requests + value.requests,
+        input_tokens=total.input_tokens + value.input_tokens,
+        cached_input_tokens=total.cached_input_tokens + value.cached_input_tokens,
+        output_tokens=total.output_tokens + value.output_tokens,
+        reasoning_tokens=reasoning,
+        cost_usd=total.cost_usd + value.cost_usd,
+        priced_requests=total.priced_requests + value.priced_requests,
+        unpriced_requests=total.unpriced_requests + value.unpriced_requests,
+        unmetered_requests=total.unmetered_requests + value.unmetered_requests,
+        coverage_unknown=total.coverage_unknown or value.coverage_unknown,
+    )
+
+
+def _split_fields(measures: SplitMeasures) -> dict:
+    return {
+        "requests": measures.requests,
+        "input_tokens": measures.input_tokens,
+        "cached_input_tokens": measures.cached_input_tokens,
+        "output_tokens": measures.output_tokens,
+        "reasoning_tokens": measures.reasoning_tokens,
+        "cost_usd": round(measures.cost_usd, 4),
+        "priced_requests": measures.priced_requests,
+        "unpriced_requests": measures.unpriced_requests,
+        "unmetered_requests": measures.unmetered_requests,
+        "coverage_unknown": measures.coverage_unknown,
+    }

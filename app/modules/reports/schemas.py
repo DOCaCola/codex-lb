@@ -33,7 +33,6 @@ class ModelCostEntry(DashboardModel):
     model: str
     cost_usd: float
     requests: int = 0
-    percentage: float | None = 0.0
     priced_requests: int = 0
     unpriced_requests: int = 0
     unmetered_requests: int = 0
@@ -57,11 +56,35 @@ class UserAgentCostEntry(DashboardModel):
     useragent: str
     cost_usd: float = 0.0
     requests: int = 0
-    percentage: float | None = 0.0
     priced_requests: int = 0
     unpriced_requests: int = 0
     unmetered_requests: int = 0
     coverage_unknown: bool = False
+
+
+class DailySplitMeasures(DashboardModel):
+    date: str
+    requests: int
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int | None
+    cost_usd: float
+    priced_requests: int = 0
+    unpriced_requests: int = 0
+    unmetered_requests: int = 0
+    coverage_unknown: bool = False
+
+
+class DailyAccountSplit(DailySplitMeasures):
+    account_id: str | None
+    model_source_id: str | None = None
+    provider: AccountProvider | None = None
+    name: str | None = None
+
+
+class DailyModelSplit(DailySplitMeasures):
+    model: str
 
 
 class ReportSummary(DashboardModel):
@@ -76,7 +99,8 @@ class ReportSummary(DashboardModel):
     total_cancelled: int = 0
     active_accounts: int
     total_conversations: int = 0
-    avg_cost_per_day: float | None = 0.0
+    # Known-cost subtotal per calendar day; coverage fields mark it incomplete.
+    avg_cost_per_day: float = 0.0
     avg_requests_per_day: float = 0.0
     priced_requests: int = 0
     unpriced_requests: int = 0
@@ -99,9 +123,17 @@ class ReportComparison(DashboardModel):
     previous: ReportComparisonPrevious
 
 
+class ReportAccountOption(DashboardModel):
+    account_id: str | None
+    model_source_id: str | None = None
+    provider: AccountProvider | None = None
+    name: str | None = None
+
+
 class ReportsOptionsResponse(DashboardModel):
     models: list[str]
     useragents: list[str]
+    accounts: list[ReportAccountOption] = Field(default_factory=list)
 
 
 class ReportsResponse(DashboardModel):
@@ -111,6 +143,8 @@ class ReportsResponse(DashboardModel):
     summary: ReportSummary
     comparison: ReportComparison
     daily: list[DailyReportRow] = Field(default_factory=list)
+    daily_by_account: list[DailyAccountSplit] = Field(default_factory=list)
+    daily_by_model: list[DailyModelSplit] = Field(default_factory=list)
     by_model: list[ModelCostEntry] = Field(default_factory=list)
     by_account: list[AccountCostEntry] = Field(default_factory=list)
     by_useragent: list[UserAgentCostEntry] = Field(default_factory=list)

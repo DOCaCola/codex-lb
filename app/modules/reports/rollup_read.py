@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
 from app.db.models import AccountUsageRollupState, RequestLog, RequestReportHourlyRollup
-from app.modules.accounts.usage_time_rollup import DIMENSION_SENTINEL, conversation_id_expr
+from app.modules.accounts.usage_time_rollup import DIMENSION_SENTINEL, conversation_id_expr, to_dimension
 from app.modules.accounts.usage_time_rollup_read import ceil_to_grid, epoch_seconds, floor_to_grid
-from app.modules.reports.filters import MISSING_USERAGENT_GROUP, _normal_traffic_clause
+from app.modules.reports.filters import ReportFilters, _normal_traffic_clause
 from app.modules.reports.rollup import MEASURES, raw_measures
+
+DIMENSIONS = ("account_id", "model_source_id", "api_key_id", "model", "useragent_group", "conversation_id")
 
 
 def _decode(column):
@@ -26,18 +28,18 @@ def _decode(column):
 def report_source(
     session: AsyncSession,
     windows: list[tuple[str, datetime, datetime]],
-    account_ids: list[str] | None = None,
-    model: str | None = None,
-    useragent_group: str | None = None,
-    api_key_ids: list[str] | None = None,
+    filters: ReportFilters,
     *,
-    catalog: bool = False,
+    catalog: tuple[str, ...] | None = None,
 ) -> Subquery:
     """UTC hours retain all report filter/distinct dimensions.
 
     Each day has a folded middle and two possible raw edges. Dynamic tail
     bounds are in the index range condition, so PostgreSQL need not scan all
     historical logs and discard them after checking the watermark.
+
+    A catalog returns only the named dimensions, distinct per raw branch and
+    without measures.
     """
     values = [
         select(
@@ -62,27 +64,18 @@ def report_source(
         else cast(func.strftime("%s", watermark), BigInteger)
     )
     r = RequestReportHourlyRollup
-    folded_dimensions = [
-        _decode(r.account_id).label("account_id"),
-        _decode(r.model_source_id).label("model_source_id"),
-        _decode(r.api_key_id).label("api_key_id"),
-        r.model,
-        _decode(r.useragent_group).label("useragent_group"),
-        _decode(r.conversation_id).label("conversation_id"),
-    ]
-    raw_dimensions = [
-        RequestLog.account_id,
-        RequestLog.model_source_id,
-        RequestLog.api_key_id,
-        RequestLog.model,
-        RequestLog.useragent_group,
-        conversation_id_expr().label("conversation_id"),
-    ]
+    folded_dimensions = {
+        name: r.model if name == "model" else _decode(getattr(r, name)).label(name) for name in DIMENSIONS
+    }
+    raw_dimensions = {
+        **{name: getattr(RequestLog, name) for name in DIMENSIONS[:-1]},
+        "conversation_id": conversation_id_expr().label("conversation_id"),
+    }
     # Catalog never calculates measures or groups by conversations.
     folded_columns = (
-        folded_dimensions[3:5]
+        [folded_dimensions[name] for name in catalog]
         if catalog
-        else [w.c.report_date, *folded_dimensions, r.first_requested_at, *(getattr(r, n) for n in MEASURES)]
+        else [w.c.report_date, *folded_dimensions.values(), r.first_requested_at, *(getattr(r, n) for n in MEASURES)]
     )
     folded = (
         select(*folded_columns)
@@ -92,59 +85,42 @@ def report_source(
         )
     )
     raw_columns = (
-        raw_dimensions[3:5]
+        [raw_dimensions[name] for name in catalog]
         if catalog
         else [
             w.c.report_date,
-            *raw_dimensions,
+            *raw_dimensions.values(),
             func.min(RequestLog.requested_at).label("first_requested_at"),
             *raw_measures(),
         ]
     )
     high = case((watermark < w.c.hi_at, watermark), else_=w.c.hi_at)
     tail_start = case((high <= w.c.lo_at, w.c.start_at), else_=high)
+    # Filters are applied inside each branch: on stored values for the folded
+    # middle, so catalogs can drop the filtered dimensions from their result.
+    folded = folded.where(
+        *filters.conditions(
+            account_id=r.account_id,
+            model_source_id=r.model_source_id,
+            api_key_id=r.api_key_id,
+            model=r.model,
+            useragent_group=r.useragent_group,
+            encode=to_dimension,
+        )
+    )
+    raw_filters = filters.request_log_conditions()
 
     def raw(start, end, extra=()):
         stmt = (
             select(*raw_columns)
             .select_from(w)
             .join(RequestLog, (RequestLog.requested_at >= start) & (RequestLog.requested_at < end))
-            .where(_normal_traffic_clause(), *extra)
+            .where(_normal_traffic_clause(), *raw_filters, *extra)
         )
-        return stmt.distinct() if catalog else stmt.group_by(w.c.report_date, *raw_dimensions)
+        return stmt.distinct() if catalog else stmt.group_by(w.c.report_date, *raw_dimensions.values())
 
     # A leading edge exists only when there is a folded middle.
     branches = [folded, raw(tail_start, w.c.end_at)]
     if any(start != ceil_to_grid(start, 3600) for _, start, _ in windows):
         branches.append(raw(w.c.start_at, w.c.lo_at, (high > w.c.lo_at,)))
-    source = union_all(*branches).subquery("report_history")
-    conditions = []
-    if account_ids and not catalog:
-        conditions.append(source.c.account_id.in_(account_ids))
-    if api_key_ids and not catalog:
-        conditions.append(source.c.api_key_id.in_(api_key_ids))
-    if model:
-        conditions.append(source.c.model == model)
-    if useragent_group:
-        conditions.append(
-            source.c.useragent_group.is_(None)
-            if useragent_group == MISSING_USERAGENT_GROUP
-            else source.c.useragent_group == useragent_group
-        )
-    # Scoped catalogs need their account/API-key predicates pushed into each
-    # branch, since those dimensions intentionally aren't in the result.
-    if catalog:
-        from app.modules.accounts.usage_time_rollup import to_dimension
-
-        folded_filters = []
-        raw_filters = []
-        for selected, rc, lc in (
-            (account_ids, r.account_id, RequestLog.account_id),
-            (api_key_ids, r.api_key_id, RequestLog.api_key_id),
-        ):
-            if selected:
-                folded_filters.append(rc.in_([to_dimension(value) for value in selected]))
-                raw_filters.append(lc.in_(selected))
-        branches = [branches[0].where(*folded_filters), *(branch.where(*raw_filters) for branch in branches[1:])]
-        return union_all(*branches).subquery("report_catalog")
-    return select(source).where(*conditions).subquery("filtered_report_history") if conditions else source
+    return union_all(*branches).subquery("report_catalog" if catalog else "report_history")

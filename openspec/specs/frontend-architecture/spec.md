@@ -725,61 +725,50 @@ The dashboard request-log `View Details` dialog MUST render a `Cost` section und
 
 ### Requirement: Reports page renders English user-facing labels
 
-The dashboard SHALL render `/reports` with the following exact page-owned user-facing labels for the current reports surface:
+The dashboard SHALL render `/reports` with the following exact page-owned user-facing labels for the current reports
+surface:
 
-- `Cost Report`
-- `Usage history by date range`
 - `Loading...`
-- `Total Cost`
-- `Requests`
-- `Cost by Day`
-- `Tokens by Day`
-- `Distribution by Model`
-- `Distribution by UserAgent`
-- `Daily Breakdown`
-- `Day`
-- `Input Tokens`
-- `Output Tokens`
 - `Cost`
+- `Tokens`
+- `Requests`
+- `Active conversations`
+- `Errors`
+- `Daily trend`
+- `Breakdown`
+- `Latency & throughput`
+- `Daily breakdown`
+- `Routing diagnostics`
+- `Day`
+- `Input`
+- `Output`
 - `Accounts`
 - `Total`
 - `Failed to load report data:`
-- `Failed to load model and user-agent options:`
-- `Failed to load account options:`
+- `Failed to load filter options:`
 - `Some report data could not be loaded. Try reloading.`
 - `Retry`
 
-Backend-provided strings, account values, model values, and raw server error payload text SHALL remain out of scope for this wording change unless `/reports` renders page-owned labels around them.
+Backend-provided strings, account values, model values, and raw server error payload text SHALL remain out of scope
+for this wording change unless `/reports` renders page-owned labels around them.
 
 #### Scenario: Reports page shows English labels
 
 - **WHEN** an authenticated operator opens `/reports`
-- **THEN** the page title is `Cost Report`
-- **AND** the subtitle is `Usage history by date range`
-- **AND** the summary cards include `Total Cost` and `Requests`
-- **AND** the chart and table section titles include `Cost by Day`, `Tokens by Day`, `Distribution by Model`, `Distribution by UserAgent`, and `Daily Breakdown`
-- **AND** the daily table headings include `Day`, `Input Tokens`, `Output Tokens`, `Cost`, and `Accounts`
+- **THEN** the page renders no `Cost Report` title
+- **AND** the summary cards include `Cost`, `Tokens`, `Requests`, `Active conversations` and `Errors`
+- **AND** the section titles include `Daily trend`, `Breakdown`, `Latency & throughput`, `Daily breakdown` and
+  `Routing diagnostics`
+- **AND** the daily table headings include `Day`, `Input`, `Output`, `Cost` and `Accounts`
 
 #### Scenario: Reports page state labels are English
 
 - **WHEN** `/reports` renders a loading, empty, or error state
 - **THEN** the loading label is `Loading...`
-- **AND** page-owned error wrappers use `Failed to load report data:`, `Failed to load model and user-agent options:`, and `Failed to load account options:` when those failures render
+- **AND** page-owned error wrappers use `Failed to load report data:` and `Failed to load filter options:` when those
+  failures render
 - **AND** the retry warning is `Some report data could not be loaded. Try reloading.`
 - **AND** the retry button label is `Retry`
-
-### Requirement: Reports distribution donuts show compact active-metric totals
-
-The `/reports` page SHALL render both `Distribution by Model` and `Distribution by UserAgent` cards with a donut-center total that uses the page-owned label `Total` above the current metric value.
-When a donut card is in `cost` mode, its center total and legend values SHALL display compact USD values with up to two fractional digits and `K`, `M`, or `B` suffixes when applicable.
-When a donut card is in `req` mode, its center total and legend values SHALL display compact request values with up to two fractional digits and `K`, `M`, or `B` suffixes when applicable.
-
-#### Scenario: Reports distribution donut totals switch with the selected metric
-
-- **WHEN** `/reports` renders model or user-agent distribution data
-- **THEN** each distribution donut shows `Total` in the center above the total value
-- **AND** `cost` mode uses compact USD totals such as `$1.43K`
-- **AND** `req` mode uses compact request totals such as `1.5B`
 
 ### Requirement: Reports page loads report data from the reports endpoint
 
@@ -797,12 +786,19 @@ The `/reports` page SHALL load and refetch report data from `GET /api/reports`.
 
 ### Requirement: Reports page exposes visible filter controls
 
-The `/reports` page SHALL expose visible filter controls for `7d`, `30d`, and `90d` quick presets, start date, end date, account, and model. When an authenticated operator clicks one of the quick presets, the page SHALL visibly highlight that preset. When the operator manually edits the start date or end date afterward, the page SHALL clear the quick-preset highlight until another quick preset is clicked. The start and end date inputs SHALL disallow selecting dates later than the browser's current local calendar date.
+The `/reports` page SHALL expose visible filter controls for `7d`, `30d` and `90d` quick presets, a `Custom` range
+with start and end dates, and multi-select `Accounts`, `API keys`, `Models` and `User agents` filters. When an
+authenticated operator clicks one of the quick presets, the page SHALL visibly highlight that preset. When the
+operator edits the start date or end date of the custom range, the page SHALL highlight `Custom` until another quick
+preset is clicked. The start and end date inputs SHALL disallow selecting dates later than the browser's current local
+calendar date. Account options SHALL come from `GET /api/reports/options` and include Codex accounts and provider
+accounts; a selected Codex account SHALL be sent as `account_id` and a selected provider account as `model_source_id`.
 
 #### Scenario: Reports page shows report filter controls
 
 - **WHEN** an authenticated operator opens `/reports`
-- **THEN** the page exposes visible filter controls for `7d`, `30d`, and `90d` quick presets, start date, end date, account, and model
+- **THEN** the page exposes the `7d`, `30d`, `90d` and `Custom` presets and the `Accounts`, `API keys`, `Models`
+  and `User agents` filters
 
 #### Scenario: Quick preset highlight follows the selected preset
 
@@ -812,106 +808,61 @@ The `/reports` page SHALL expose visible filter controls for `7d`, `30d`, and `9
 
 #### Scenario: Quick preset highlight clears after manual date edits
 
-- **WHEN** an authenticated operator clicks a quick preset on `/reports`
-- **AND** then manually edits the start date or end date
-- **THEN** the page clears the quick-preset highlight
+- **WHEN** an authenticated operator edits the start date or end date of the custom range
+- **THEN** the page highlights `Custom`
 - **AND** the page keeps the edited date range values
 
 #### Scenario: Report date inputs disallow future dates
 
-- **WHEN** an authenticated operator opens `/reports`
-- **THEN** the start date and end date inputs prevent selecting a date later than the browser's current local calendar date
+- **WHEN** an authenticated operator shows the custom range on `/reports`
+- **THEN** the start date and end date inputs prevent selecting a date later than the browser's current local calendar
+  date
 
-### Requirement: Reports exposes a persisted line-chart visibility filter
+#### Scenario: Provider account selection
 
-The `/reports` page MUST expose a visible multi-select immediately before the
-date controls. Its options MUST use the localized existing chart-header keys
-`reports.charts.costByDay`, `reports.charts.tokensByDay`,
-`reports.charts.timeToFirstToken`, `reports.charts.tokensPerSecond`, and
-`reports.charts.queueWait`. The multi-select filter label MUST use the
-`reports.filters.charts` key, and that key MUST be provided in each of
-`en.json`, `ko.json`, and `zh-CN.json`. All five options MUST be selected by
-default.
-Selected line-chart cards MUST render, deselected line-chart cards MUST NOT
-render, and an empty selection MUST be valid. Summary, donut, and table
-sections MUST remain visible regardless of line-chart selection.
-
-#### Scenario: Reports selects all line charts by default
-
-- **WHEN** the `/reports` page loads without a saved visibility preference
-- **THEN** the multi-select has all five chart options selected
-- **AND** all five line-chart cards render
-- **AND** the summary, donut, and table sections remain visible
-
-#### Scenario: Reports renders a partial selection
-
-- **GIVEN** the operator selects only Cost by Day and Queue Wait
-- **WHEN** the Reports page renders
-- **THEN** only those two line-chart cards render
-- **AND** the other three line-chart cards do not render
-- **AND** the summary, donut, and table sections remain visible
-
-#### Scenario: Reports permits an empty selection
-
-- **GIVEN** the operator deselects all five chart options
-- **WHEN** the Reports page renders
-- **THEN** no line-chart cards render
-- **AND** the summary, donut, and table sections remain visible
-
-#### Scenario: Reports provides the chart filter label in every required locale
-
-- **WHEN** the frontend locale resources are checked
-- **THEN** `en.json` provides a `reports.filters.charts` label
-- **AND** `ko.json` provides a `reports.filters.charts` label
-- **AND** `zh-CN.json` provides a `reports.filters.charts` label
+- **WHEN** the operator selects a Codex account and a Claude account
+- **THEN** the report request contains `account_id` for the Codex account and `model_source_id` for the Claude account
 
 ### Requirement: Reports safely persists visibility
 
-Reports MUST store the selected chart IDs as a JSON array under the exact
-localStorage key `codex-lb-reports-visible-charts`. The only known chart IDs
-MUST be the following five, in this canonical order: `costByDay`,
-`tokensByDay`, `timeToFirstToken`, `tokensPerSecond`, `queueWait`. This
-canonical order MUST be used for normalization, persistence, and rendering.
-Missing storage MUST default to all five known chart IDs. A valid array MUST
-be filtered to known IDs, deduplicated, and normalized to canonical chart
-order; an empty array MUST remain empty. Malformed JSON, non-array values,
-arrays containing any non-string values, and localStorage access failures MUST
-default to all five known chart IDs. Storage failures MUST NOT disable
-current-session in-memory visibility changes.
+Reports MUST store the visible section IDs as a JSON array under the exact localStorage key
+`codex-lb-reports-visible-sections`. The only known section IDs MUST be the following five, in this canonical order:
+`trend`, `breakdown`, `perf`, `table`, `diagnostics`. This canonical order MUST be used for normalization,
+persistence, and rendering. Missing storage MUST default to all five known section IDs. A valid array MUST be filtered
+to known IDs, deduplicated, and normalized to canonical order; an empty array MUST remain empty. Malformed JSON,
+non-array values, arrays containing any non-string values, and localStorage access failures MUST default to all five
+known section IDs. Storage failures MUST NOT disable current-session in-memory visibility changes.
 
 #### Scenario: Reports restores a persisted subset
 
-- **GIVEN** localStorage contains a valid JSON array with the IDs for Tokens by
-  Day and Queue Wait
+- **GIVEN** localStorage contains a valid JSON array with the IDs `trend` and `table`
 - **WHEN** the `/reports` page initializes
-- **THEN** those two chart options are selected
-- **AND** their line-chart cards render
-- **AND** the other three line-chart cards do not render
+- **THEN** the daily trend and daily breakdown sections render
+- **AND** the other three sections do not render
 
 #### Scenario: Reports ignores unknown IDs and normalizes persisted values
 
-- **GIVEN** localStorage contains a valid JSON array with known IDs in a
-  non-canonical order, duplicate known IDs, and unknown IDs
+- **GIVEN** localStorage contains a valid JSON array with known IDs in a non-canonical order, duplicate known IDs, and
+  unknown IDs
 - **WHEN** the `/reports` page initializes
 - **THEN** unknown IDs are ignored
 - **AND** duplicate IDs occur only once
-- **AND** the selected IDs are normalized to canonical chart order
+- **AND** the selected IDs are normalized to canonical order
 
 ### Requirement: Visibility does not narrow data fetching
 
-Changing chart visibility MUST NOT change Reports filter values, the TanStack
-Query key, request parameters, response schema, or response parsing. Reports
-MUST continue requesting the complete `GET /api/reports` payload and MUST NOT
-send a chart-specific API parameter.
+Changing section visibility MUST NOT change Reports filter values, the report TanStack Query key, request parameters,
+response schema, or response parsing. Reports MUST continue requesting the complete `GET /api/reports` payload and MUST
+NOT send a section-specific API parameter. Hiding the `diagnostics` section MUST stop the thread-identity request,
+which belongs to that section only.
 
 #### Scenario: Visibility changes leave the report query unchanged
 
 - **GIVEN** Reports has loaded the complete `GET /api/reports` payload
-- **WHEN** the operator changes the selected chart visibility
+- **WHEN** the operator changes the visible sections
 - **THEN** the Reports filter values remain unchanged
-- **AND** the TanStack Query key and request parameters remain unchanged
-- **AND** the complete report payload remains requested and parsed using the
-  existing response schema
+- **AND** the report TanStack Query key and request parameters remain unchanged
+- **AND** the complete report payload remains requested and parsed using the existing response schema
 
 ### Requirement: Reports page preserves reports query parameter names
 
@@ -1127,35 +1078,15 @@ The system MUST preserve rows with `account_id IS NULL` and return them as a sep
 
 ### Requirement: Reports API is accessible through the dashboard route map
 
-The dashboard surface SHALL expose a reports page at route `/reports` and route to data loaded from `GET /api/reports` with `startDate`, `endDate`, `accountId`, and `model` filters.
+The dashboard surface SHALL expose a reports page at route `/reports` and route to data loaded from `GET /api/reports`
+with date-range, account, provider-account, API-key, model and user-agent filters.
 
 #### Scenario: Dashboard reports page uses `/api/reports`
 - **WHEN** an authenticated operator opens `/reports`
 - **THEN** the page loads the aggregated reports payload from `GET /api/reports`
-- **AND** allows filtering by date range, model, and account
-- **AND** uses the returned payload to render summary cards, daily charts, and model and user-agent distribution donuts
-
-### Requirement: Reports distribution donuts show active-metric totals
-
-The `/reports` page SHALL render both `Distribution by Model` and `Distribution by UserAgent` cards.
-Each card SHALL show `Total` above the donut center value.
-When the distribution metric toggle is `cost`, the center value and legend values SHALL show compact USD formatting with up to two decimal places and `K`, `M`, or `B` suffixes when applicable.
-When the distribution metric toggle is `req`, the center value and legend values SHALL show compact request formatting with up to two decimal places and `K`, `M`, or `B` suffixes when applicable.
-Each distribution legend SHALL keep at most four rows visible before vertical scrolling, and any overflow scrollbar SHALL remain visually hidden while preserving scroll interaction.
-Hovering a donut slice SHALL highlight the matching legend row, and hovering a legend row SHALL highlight the matching donut slice.
-
-#### Scenario: Distribution donuts follow the active metric
-- **WHEN** report data includes model and user-agent distribution rows
-- **THEN** `/reports` renders both `Distribution by Model` and `Distribution by UserAgent`
-- **AND** each donut center shows `Total` on one line and the active metric total on the next line
-- **AND** switching a donut card from `cost` to `req` updates that card's center and legend values from compact USD totals to compact request totals
-
-#### Scenario: Distribution donuts sync hover state with a scrollable legend
-- **WHEN** report data includes more than four model or user-agent distribution rows
-- **THEN** each distribution legend shows four visible rows before vertical scrolling the remainder
-- **AND** the scrollbar stays visually hidden while scrolling still works
-- **AND** hovering any donut slice highlights the matching legend row
-- **AND** hovering any legend row highlights the matching donut slice
+- **AND** allows filtering by date range, account, API key, model and user agent
+- **AND** uses the returned payload to render summary cards, the daily trend, breakdown lists, latency charts and the
+  daily breakdown
 
 ### Requirement: Dashboard accounts section shows account availability summary
 
@@ -1429,121 +1360,118 @@ The list layout SHALL use the same dashboard overview account collection as the 
 
 ### Requirement: Reports page exposes a visible user-agent filter
 
-The dashboard SHALL render `/reports` with a visible `UserAgent` filter beside the existing `Model` filter. The `UserAgent` filter SHALL be single-select, SHALL use normalized `request_logs.useragent_group` values for its choices, and SHALL filter the reports payload by sending `useragent_group` on `GET /api/reports` requests.
+The dashboard SHALL render `/reports` with a visible multi-select `User agents` filter beside the `Models` filter. Its
+choices SHALL use normalized `request_logs.useragent_group` values, and each selected value SHALL be sent as a repeated
+`useragent_group` parameter on `GET /api/reports` requests.
 
 #### Scenario: Reports page shows the user-agent filter
 - **WHEN** an authenticated operator opens `/reports`
-- **THEN** the page exposes a visible `UserAgent` filter beside `Model`
+- **THEN** the page exposes a visible `User agents` filter beside `Models`
 
 #### Scenario: Reports page requests filtered data by normalized user-agent group
-- **WHEN** an authenticated operator selects a `UserAgent` value on `/reports`
-- **THEN** the page refetches `GET /api/reports` with `useragent_group` set to the selected normalized `request_logs.useragent_group` value
+- **WHEN** an authenticated operator selects two `User agents` values on `/reports`
+- **THEN** the page refetches `GET /api/reports` with one `useragent_group` parameter per selected value
 
 #### Scenario: Reports page reuses the relaxed reports query for user-agent filter choices
 - **WHEN** `/reports` loads or refreshes filter choices
-- **THEN** the page obtains `Model` and `UserAgent` options from `GET /api/reports/options` scoped by dates, timezone, accounts and API keys
+- **THEN** the page obtains `Models` and `User agents` options from `GET /api/reports/options` scoped by dates,
+  timezone, accounts and API keys
 - **AND** the options query does not change when only model or User-Agent selection changes
 
 #### Scenario: Reports page shows one shared relaxed-catalog error for report filter choices
 - **WHEN** the `GET /api/reports/options` query fails
-- **THEN** the page shows one page-owned error describing the combined `Model` and `UserAgent` option loading failure
-- **AND** the page does not show separate duplicate relaxed-catalog errors for `Model` and `UserAgent`
-
-### Requirement: Reports page renders a user-agent distribution card
-
-The dashboard SHALL render `/reports` with a `Distribution by UserAgent` card placed below `Distribution by Model`, using aggregated `request_logs.useragent_group` values from `GET /api/reports`.
-
-#### Scenario: Reports page shows user-agent distribution data
-- **WHEN** an authenticated operator opens `/reports`
-- **THEN** the page renders `Distribution by UserAgent` below `Distribution by Model`
-
-### Requirement: Reports distribution cards toggle between cost and requests
-
-The dashboard SHALL render both `/reports` distribution cards with an upper-right `cost` / `req` toggle that defaults to `cost` and changes the donut slices, percentages, and legend values to match the selected metric. The `Distribution by Model` and `Distribution by UserAgent` donuts SHALL NOT render hover tooltips.
-
-#### Scenario: Distribution cards default to cost mode
-- **WHEN** an authenticated operator opens `/reports`
-- **THEN** both distribution cards render in `cost` mode by default
-
-#### Scenario: Distribution cards can switch to request mode
-- **WHEN** an authenticated operator activates `req` on either distribution card
-- **THEN** that card renders request-count slices, request-count values, and request-based percentages
+- **THEN** the page shows one page-owned `Failed to load filter options:` error
 
 ### Requirement: Reports user-agent distribution preserves unknown buckets without collisions
 
-`GET /api/reports` SHALL aggregate request-log rows whose normalized `request_logs.useragent_group` is `null` into a `byUseragent` bucket labeled `Missing User-Agent`. Real normalized `request_logs.useragent_group = "Unknown"` rows SHALL remain in a separate `Unknown` bucket. When `/reports` or `GET /api/reports` is filtered with `useragent_group=Missing User-Agent`, the system SHALL match those same null-backed rows, while `useragent_group=Unknown` SHALL match only real `"Unknown"` rows. The `/reports` `Distribution by UserAgent` card SHALL render the `Missing User-Agent` bucket with a fixed gray legend marker and slice color instead of a rotated palette color.
+`GET /api/reports` SHALL aggregate request-log rows whose normalized `request_logs.useragent_group` is `null` into a
+`byUseragent` bucket labeled `Missing User-Agent`. Real normalized `request_logs.useragent_group = "Unknown"` rows
+SHALL remain in a separate `Unknown` bucket. When `/reports` or `GET /api/reports` is filtered with
+`useragent_group=Missing User-Agent`, the system SHALL match those same null-backed rows, while
+`useragent_group=Unknown` SHALL match only real `"Unknown"` rows. The `/reports` `User agents` breakdown SHALL render
+the `Missing User-Agent` row with a fixed gray marker and bar instead of a rotated palette color.
 
 #### Scenario: Reports payload includes missing and real Unknown user-agent traffic
 
-- **WHEN** `GET /api/reports` aggregates request logs that include one or more rows with `request_logs.useragent_group = null`
+- **WHEN** `GET /api/reports` aggregates request logs that include one or more rows with
+  `request_logs.useragent_group = null`
 - **AND** one or more rows with normalized `request_logs.useragent_group = "Unknown"`
 - **THEN** the response `byUseragent` array includes an entry with `useragent: "Missing User-Agent"`
 - **AND** that entry aggregates only the null-backed rows' request counts and costs
-- **AND** the response separately includes an entry with `useragent: "Unknown"` for the real normalized `"Unknown"` rows
+- **AND** the response separately includes an entry with `useragent: "Unknown"` for the real normalized `"Unknown"`
+  rows
 
 #### Scenario: Reports filters distinguish missing and real Unknown user-agent traffic
 
 - **WHEN** `/reports` or `GET /api/reports` requests `useragent_group=Missing User-Agent`
 - **THEN** the returned report aggregates include only rows whose normalized `request_logs.useragent_group` is `null`
 - **WHEN** `/reports` or `GET /api/reports` requests `useragent_group=Unknown`
-- **THEN** the returned report aggregates include only rows whose normalized `request_logs.useragent_group` is the real string `"Unknown"`
+- **THEN** the returned report aggregates include only rows whose normalized `request_logs.useragent_group` is the real
+  string `"Unknown"`
 
 #### Scenario: Reports page renders the missing user-agent bucket with fixed gray styling
 
-- **WHEN** `/reports` renders `Distribution by UserAgent` data that includes `useragent: "Missing User-Agent"`
-- **THEN** the `Missing User-Agent` legend dot uses a fixed gray color
-- **AND** the matching donut slice uses that same fixed gray color
+- **WHEN** the `User agents` breakdown renders data that includes `useragent: "Missing User-Agent"`
+- **THEN** the `Missing User-Agent` marker and bar use a fixed gray color
 
 ### Requirement: Reports daily charts fill missing selected days with zero-value rows
 
-The dashboard SHALL render `/reports` `Cost by Day` and `Tokens by Day` charts from a continuous daily series covering every selected day from the current `startDate` through `endDate`. When `GET /api/reports` omits a selected date, the page SHALL insert a zero-value daily row for that date before rendering both charts.
+The dashboard SHALL render the `/reports` daily trend from a continuous daily series covering every selected day from
+the current `startDate` through `endDate`. When `GET /api/reports` omits a selected date, the page SHALL insert a
+zero-value daily row for that date before rendering the trend.
 
 #### Scenario: Missing API dates render as zero-value chart points
 
-- **WHEN** an authenticated operator views `/reports` for a selected date range and the `daily` response omits one or more selected dates
-- **THEN** the `Cost by Day` chart includes a point for every selected day from `startDate` through `endDate`
-- **AND** each omitted date renders with `costUsd = 0`
-- **AND** the `Tokens by Day` chart includes a point for every selected day from `startDate` through `endDate`
-- **AND** each omitted date renders with `inputTokens = 0`, `outputTokens = 0`, `cachedInputTokens = 0`, `requests = 0`, `activeAccounts = 0`, and `errorCount = 0`
+- **WHEN** an authenticated operator views `/reports` for a selected date range and the `daily` response omits one or
+  more selected dates
+- **THEN** the daily trend includes a bar slot for every selected day from `startDate` through `endDate`
+- **AND** each omitted date renders with zero cost, tokens and requests
 
 ### Requirement: Daily Breakdown supports explicit visible-column sorting
 
-The dashboard SHALL render `/reports` `Daily Breakdown` with sortable visible columns for `Day`, `Reqs`, `Input Tokens`, `Output Tokens`, `Cost`, and `Accounts`. The default sort SHALL be `Day` descending.
+The dashboard SHALL render the `/reports` `Daily breakdown` with sortable columns for `Day`, `Requests`,
+`Conversations`, `Input`, `Output`, `Reasoning`, `Cost`, `Errors`, `Cancelled`, `Accounts`, `TTFT` and `TPS`. The
+default sort SHALL be `Day` descending. A totals row SHALL follow the day rows and SHALL NOT take part in sorting.
 
 #### Scenario: Daily Breakdown defaults to newest day first
 
 - **WHEN** an authenticated operator opens `/reports`
-- **THEN** the `Daily Breakdown` rows are ordered by `Day` descending by default
+- **THEN** the `Daily breakdown` rows are ordered by `Day` descending by default
 
 #### Scenario: Daily Breakdown toggles sorting for a visible column
 
-- **WHEN** an authenticated operator activates any `Daily Breakdown` visible-column header
+- **WHEN** an authenticated operator activates any `Daily breakdown` column header
 - **THEN** the table sorts by that column
 - **AND** activating the same header again toggles the sort direction between ascending and descending
+- **AND** the totals row stays last
 
 ### Requirement: Reports Tokens summary subtitle shows cached totals
 
-The dashboard SHALL render the `/reports` `Tokens` summary-card subtitle as `Input <value> · Cache <value> · Output <value>` using the current report summary totals for input, cached input, and output tokens.
+The dashboard SHALL render the `/reports` `Tokens` summary-card detail line as the cached share of input tokens
+followed by the output-token total, and SHALL show input, cached input, output and reported reasoning totals in the
+card's tooltip.
 
 #### Scenario: Tokens subtitle includes cached total
 
 - **WHEN** an authenticated operator opens `/reports`
-- **THEN** the `Tokens` summary card subtitle includes formatted `Input`, `Cache`, and `Output` token totals in that order
+- **THEN** the `Tokens` summary card shows the cached input share and the output total
+- **AND** its tooltip lists input, cached, output and reasoning totals
 
 ### Requirement: Daily Breakdown shows cached input tokens inline
 
-The dashboard SHALL render `/reports` `Daily Breakdown` `Input Tokens` cells as the input-token total followed by the cached input-token total in parentheses using muted secondary text.
+The dashboard SHALL render `/reports` `Daily breakdown` `Input` cells as the input-token total followed by the cached
+share of that day's input in muted secondary text.
 
 #### Scenario: Input Tokens cell shows cached input token count
 
-- **WHEN** a `Daily Breakdown` row has non-zero `inputTokens` and `cachedInputTokens`
-- **THEN** the `Input Tokens` cell renders `<formatted inputTokens> (<formatted cachedInputTokens>)`
+- **WHEN** a `Daily breakdown` row has 1,000 input tokens of which 900 are cached
+- **THEN** the `Input` cell renders the formatted input total followed by `90% cached`
 
 #### Scenario: Input Tokens cell shows zero cached tokens explicitly
 
-- **WHEN** a `Daily Breakdown` row has `cachedInputTokens = 0`
-- **THEN** the `Input Tokens` cell renders the primary input-token value followed by `(0)`
-- **AND** if `inputTokens = 0` the full rendered value is `0 (0)`
+- **WHEN** a `Daily breakdown` row has input tokens and `cachedInputTokens = 0`
+- **THEN** the `Input` cell renders the formatted input total followed by `0% cached`
+- **AND** if `inputTokens = 0` the cell renders `0` without a cached share
 
 ### Requirement: Daily Breakdown CSV export stays chronological
 
@@ -1991,13 +1919,21 @@ The `/reports` page SHALL detect the browser's current IANA timezone, cache the 
 
 ### Requirement: Reports summary cards show previous-window deltas conservatively
 
-`GET /api/reports` SHALL expose a `comparison` block for the `Total Cost`, `Tokens`, and `Requests` summary cards that includes `canCompare` plus the previous-window totals for cost, tokens, and requests. The current window and previous window SHALL use equal calendar-window lengths derived from the selected report date range. The endpoint SHALL set `canCompare` to `true` only when eligible report history fully covers the immediately preceding window. When `canCompare` is `false`, the `/reports` summary cards SHALL hide the previous-window percentage indicators. Even when `canCompare` is `true`, an individual summary card SHALL hide its own percentage indicator when that card's previous-window total is zero.
+`GET /api/reports` SHALL expose a `comparison` block for the `Cost`, `Tokens`, and `Requests` summary cards that
+includes `canCompare` plus the previous-window totals for cost, tokens, and requests. The current window and previous
+window SHALL use equal calendar-window lengths derived from the selected report date range. The endpoint SHALL set
+`canCompare` to `true` only when eligible report history fully covers the immediately preceding window. When
+`canCompare` is `false`, the `/reports` summary cards SHALL hide the previous-window percentage indicators. Even when
+`canCompare` is `true`, an individual summary card SHALL hide its own percentage indicator when that card's
+previous-window total is zero. Indicators SHALL use a neutral muted color with a direction arrow; an increase or
+decrease SHALL NOT be colored as good or bad.
 
 #### Scenario: Reports summary cards show previous-window increase
 
 - **WHEN** `GET /api/reports` returns current summary totals plus `comparison.canCompare: true`
-- **AND** a previous-window total for `Total Cost`, `Tokens`, or `Requests` is lower than the current total for that same card
-- **THEN** the matching summary card renders a visible percentage-change increase indicator
+- **AND** a previous-window total for `Cost`, `Tokens`, or `Requests` is lower than the current total for that same
+  card
+- **THEN** the matching summary card renders a neutral upward percentage-change indicator
 
 #### Scenario: Incomplete previous window suppresses comparison
 
@@ -2008,41 +1944,10 @@ The `/reports` page SHALL detect the browser's current IANA timezone, cache the 
 #### Scenario: Zero previous total suppresses the matching card indicator
 
 - **WHEN** `GET /api/reports` returns `comparison.canCompare: true`
-- **AND** the previous-window total for one of `Total Cost`, `Tokens`, or `Requests` is `0`
+- **AND** the previous-window total for one of `Cost`, `Tokens`, or `Requests` is `0`
 - **THEN** that summary card does not render a previous-window percentage indicator
-- **AND** the other summary cards may still render percentage indicators when their own previous-window totals are greater than `0`
-
-### Requirement: Reports daily breakdown renders a continuous calendar window
-
-The `/reports` daily breakdown table SHALL render one row per calendar day in the selected date range. Each row SHALL display its date as an ISO `yyyy-mm-dd` calendar date string. If the reports API omits one or more days inside that range, the table SHALL synthesize zero-valued rows for those days using the same row styling as API-backed rows. The table SHALL keep the header visible while only the data rows scroll, with a default visible body height of seven row heights.
-
-#### Scenario: Daily breakdown fills missing days with zero-valued rows
-
-- **WHEN** the selected reports window spans `2026-06-05` through `2026-06-12`
-- **AND** the reports API returns daily rows for every day except `2026-06-06`
-- **THEN** the daily breakdown renders a row for `2026-06-06`
-- **AND** that row shows zero requests, zero input tokens, zero output tokens, zero cost, and zero accounts
-- **AND** that row uses the same row styling as neighboring rows
-
-#### Scenario: Daily breakdown header stays visible while rows scroll
-
-- **WHEN** the daily breakdown contains more than seven rows
-- **THEN** the table header remains visible
-- **AND** only the table body scrolls vertically through the remaining rows
-
-#### Scenario: Daily breakdown preserves ISO bucket dates
-
-- **WHEN** the reports API returns a daily bucket row with `date` set to `2026-06-01`
-- **THEN** the daily breakdown table renders that row label as `2026-06-01`
-
-### Requirement: Reports daily charts use symmetric horizontal padding
-
-The `/reports` `Cost by Day` and `Tokens by Day` charts SHALL use equal left and right horizontal plot padding within their chart cards.
-
-#### Scenario: Daily charts render with balanced left and right inset
-
-- **WHEN** an authenticated operator opens `/reports`
-- **THEN** the `Cost by Day` and `Tokens by Day` charts render with equal left and right horizontal padding around the plotted area
+- **AND** the other summary cards may still render percentage indicators when their own previous-window totals are
+  greater than `0`
 
 ### Requirement: API keys settings expose quota privacy toggle
 The Settings page SHALL include a toggle in the API Keys section that controls `hide_upstream_quota_from_api_keys`.
@@ -2516,39 +2421,6 @@ After applying defaults for any omitted date bound, the Reports service MUST rej
 - **THEN** the endpoint accepts the request and reports data for that day
 - **WHEN** an authenticated operator requests an inclusive range of exactly 730 calendar days
 - **THEN** the endpoint accepts the request under the existing range limit
-
-### Requirement: Reports date controls prevent, explain, and recover from inverted ranges
-
-The `/reports` start-date input MUST use the earlier of the browser-local current day and a present end date as its native `max`, and the end-date input MUST use a present start date as its native `min` while retaining the browser-local current day as its `max`. If both values are present and the start date is later than the end date, both controls MUST expose `aria-invalid`, both MUST reference the same localized inline corrective message through an accessible description, and neither the filtered Reports query nor the relaxed Reports filter-catalog query MAY send a request. Correcting either bound so the range is ordered MUST clear the invalid state and resume each distinct Reports query with the corrected bounds.
-
-#### Scenario: Reciprocal native bounds prevent routine inverted selection
-
-- **GIVEN** `/reports` has a selected start date and end date
-- **THEN** the start-date control's `max` is the earlier of the end date and the browser-local current day
-- **AND** the end-date control's `min` is the start date
-- **AND** the end-date control's `max` remains the browser-local current day
-
-#### Scenario: Bypassed inverted input is accessible and sends no Reports request
-
-- **WHEN** typed, restored, or programmatically supplied Reports dates have a start date later than the end date
-- **THEN** both date controls expose `aria-invalid`
-- **AND** both controls reference one visible localized message that tells the operator to place the start date on or before the end date
-- **AND** no `GET /api/reports` request is sent for either Reports query
-
-#### Scenario: Retry while inverted only retries Accounts
-
-- **GIVEN** `/reports` has an inverted date range and loading account options failed
-- **WHEN** the operator activates the page-level Retry action
-- **THEN** the Accounts query sends a retry request
-- **AND** neither Reports query sends a request
-
-#### Scenario: Correcting either invalid bound resumes Reports queries
-
-- **GIVEN** `/reports` has an inverted date range and both Reports queries are disabled
-- **WHEN** the operator corrects either date bound so the start date is on or before the end date
-- **THEN** both controls clear the invalid state and accessible description
-- **AND** the corrective message is removed
-- **AND** each distinct Reports query sends one request using the corrected ordered bounds
 
 ### Requirement: Dashboard overview and request-log listing fail independently
 
@@ -3476,22 +3348,21 @@ navigates to `/accounts` when the overview has no accounts.
 
 ### Requirement: Reports line charts show no-data when daily rows are absent
 
-When a Reports line chart receives an empty daily-row array, it SHALL render
-a no-data empty state and SHALL NOT render a continuous zero-filled series
-for the selected date range. When the daily-row array has at least one row,
-the chart MAY still fill missing days with zeros.
+When the Reports daily trend or a latency chart receives an empty daily-row array, it SHALL render a no-data empty
+state and SHALL NOT render a continuous zero-filled series for the selected date range. When the daily-row array has
+at least one row, the trend MAY still fill missing days with zeros.
 
 #### Scenario: Empty daily payload hides the zero-line chart
 
 - **GIVEN** `GET /api/reports` returns no daily rows
-- **WHEN** a visible Reports line chart renders
-- **THEN** the chart card shows a no-data empty state
-- **AND** it does not render an area or line series of zero values
+- **WHEN** the daily trend or a latency chart renders
+- **THEN** it shows a no-data empty state
+- **AND** it does not render bars or lines of zero values
 
 #### Scenario: Partial daily payload still fills missing days
 
-- **GIVEN** a Reports line chart receives daily rows for some days in the selected range
-- **WHEN** the chart renders
+- **GIVEN** the daily trend receives daily rows for some days in the selected range
+- **WHEN** the trend renders
 - **THEN** missing days in that range are still filled with zero values
 
 ### Requirement: Sticky-threads copy distinguishes soft routing from hard continuation affinity
@@ -3686,21 +3557,23 @@ The dashboard request-log API and UI MUST preserve and render the upstream-provi
 
 ### Requirement: Reports full-value USD displays use grouped currency formatting
 
-The dashboard SHALL render non-compact USD Cost values on `/reports` through the shared currency formatter so values at or above one thousand include locale-appropriate grouping separators and exactly two fractional digits. This requirement applies to the Total Cost summary value, its average-cost-per-day subtitle, Daily Breakdown Cost cells, and Cost by Day axis and tooltip values.
+The dashboard SHALL render non-compact USD Cost values on `/reports` through the shared currency formatter so values at
+or above one thousand include locale-appropriate grouping separators and exactly two fractional digits. This
+requirement applies to the Cost summary value, its average-per-day detail, Daily breakdown Cost cells, breakdown row
+values, and daily trend tooltip values. Trend axis ticks MAY use compact notation.
 
 #### Scenario: Summary and daily Cost values exceed one thousand USD
 
 - **WHEN** an authenticated operator views `/reports` data whose full-value Cost amount is `1400`
-- **THEN** the Total Cost summary value renders `$1,400.00`
-- **AND** the average-cost-per-day subtitle, when its amount is `1400`, renders `$1,400.00`
-- **AND** a Daily Breakdown Cost cell whose amount is `1400` renders `$1,400.00`
-- **AND** a Cost by Day axis tick whose amount is `1400` renders `$1,400.00`
-- **AND** a Cost by Day tooltip whose amount is `1400` renders `$1,400.00`
+- **THEN** the Cost summary value renders `$1,400.00`
+- **AND** a Daily breakdown Cost cell whose amount is `1400` renders `$1,400.00`
+- **AND** a breakdown row whose cost is `1400` renders `$1,400.00`
+- **AND** a daily trend tooltip whose amount is `1400` renders `$1,400.00`
 
 #### Scenario: Intentionally compact Cost visualization remains compact
 
-- **WHEN** an authenticated operator views a constrained Reports distribution visualization whose Cost label uses compact notation
-- **THEN** that visualization may continue to render a compact label such as `$1.4K`
+- **WHEN** the daily trend renders a Cost axis tick of `1400`
+- **THEN** the tick may render a compact label such as `$1.4K`
 - **AND** the full-value Cost displays remain grouped currency values
 
 ### Requirement: Routing settings expose inherited capacity overrides
@@ -4709,3 +4582,164 @@ and `costCoverage`; the page MUST NOT render a separate conversation summary.
 - **WHEN** the request-log page renders
 - **THEN** the toolbar summary reads `12 requests · $1.23`
 - **AND** no separate conversation summary is rendered
+
+### Requirement: Reports toolbar
+
+The `/reports` page MUST start with one toolbar card and MUST NOT render a page title or subtitle. The first row MUST
+contain the `7d`, `30d`, `90d` and `Custom` range presets, the selected range as a readable label, the comparison
+window, the time the report was generated and a refresh action. Start and end date inputs MUST be shown while
+`Custom` is active. The second row MUST contain multi-select `Accounts`, `API keys`, `Models` and `User agents`
+filters, a `Reset` action shown while any filter is active, and a `Sections` menu.
+
+#### Scenario: Toolbar replaces title and filter card
+- **WHEN** an authenticated operator opens `/reports`
+- **THEN** the page shows the toolbar card without a page title
+- **AND** the default `7d` preset is highlighted and its range and comparison window are shown
+
+#### Scenario: Custom range shows date inputs
+- **WHEN** the operator activates `Custom`
+- **THEN** start and end date inputs are shown with the current range
+
+#### Scenario: Refresh refetches the report
+- **WHEN** the operator activates refresh
+- **THEN** the report and options queries refetch and the generation time updates
+
+### Requirement: Reports daily trend
+
+The `/reports` page MUST render one `Daily trend` card with metric tabs `Cost`, `Input tokens`, `Output tokens` and
+`Requests`, and split tabs `Total`, `Account` and `Model` defaulting to `Account`. Values MUST be drawn as stacked
+daily bars for every day of the selected range. The `Account` and `Model` splits MUST show the five largest series by
+the selected metric and sum the remainder as `Other`; account series MUST use the account chart colours and provider
+logos in the legend. The `Total` split MUST divide input tokens into uncached and cached input and output tokens into
+visible output and reported reasoning. The tooltip MUST show full values.
+
+#### Scenario: Cost split by account
+- **GIVEN** a report with cost on six accounts
+- **WHEN** the trend shows `Cost` split by `Account`
+- **THEN** each day stacks the five largest accounts and `Other`
+- **AND** each day's stack sums to that day's known cost
+
+#### Scenario: Input tokens total split
+- **WHEN** the trend shows `Input tokens` with the `Total` split
+- **THEN** each bar stacks uncached input and cached input
+
+#### Scenario: Empty report
+- **GIVEN** the report has no daily rows
+- **THEN** the trend shows a no-data state instead of zero bars
+
+### Requirement: Reports breakdown lists
+
+The `/reports` page MUST render `Accounts`, `Models` and `User agents` breakdown cards as bar lists that show every
+row without an inner scroll area, with a shared `Cost` / `Requests` switch defaulting to `Cost`. Each row MUST show its
+value and share; shares MUST be computed from the known subtotals of the listed rows, and the cost view MUST show an
+incomplete-coverage marker when the report coverage is incomplete. Account rows MUST show the provider logo in the
+account chart colour. Activating a row MUST toggle that row in the matching filter.
+
+#### Scenario: Every model is visible
+- **GIVEN** a report with nine models
+- **WHEN** the breakdown renders
+- **THEN** all nine model rows are visible without scrolling inside the card
+
+#### Scenario: Row toggles a filter
+- **WHEN** the operator activates the row of a model
+- **THEN** that model is added to the `Models` filter and the report refetches
+- **AND** activating it again removes it from the filter
+
+### Requirement: Reports latency and throughput charts
+
+The `/reports` page MUST render TTFT, TPS and queue-wait medians as three compact charts with straight segments through
+the real daily points and the median of the window as the headline. A value that exceeds four times the median of the
+other days MUST be drawn at the top edge with its value label instead of setting the scale.
+
+#### Scenario: Outlier does not set the scale
+- **GIVEN** daily TPS medians around 80 and one day at 2,941
+- **WHEN** the TPS chart renders
+- **THEN** the scale follows the other days and the outlier is drawn at the top edge labelled `2,941`
+
+### Requirement: Reports routing diagnostics are collapsible
+
+Thread identity and cache locality MUST be shown in a `Routing diagnostics` card that is collapsed by default. Its
+header MUST show accounts per conversation, the switch rate and the cache hit rate once loaded. The thread-identity
+request MUST be sent only while the card is open and its section is visible.
+
+#### Scenario: Diagnostics load on demand
+- **WHEN** `/reports` opens
+- **THEN** no thread-identity request is sent
+- **WHEN** the operator expands `Routing diagnostics`
+- **THEN** the thread-identity request is sent and the tiles and disclosure note render
+
+### Requirement: Reports sections menu
+
+The `Sections` menu MUST let the operator show or hide the `trend`, `breakdown`, `perf`, `table` and `diagnostics`
+sections. The toolbar and summary cards MUST always be visible.
+
+#### Scenario: Hiding a section
+- **WHEN** the operator unchecks `Latency & throughput` in the `Sections` menu
+- **THEN** the latency and throughput charts are not rendered and the other sections remain
+
+### Requirement: Reports daily breakdown shows the full calendar window
+
+The `/reports` daily breakdown table SHALL render one row per calendar day in the selected date range without an inner
+scroll area. Day labels SHALL follow the dashboard date display preference: the localized short weekday, day and month
+by default, and the ISO `yyyy-mm-dd` date when the ISO preference is selected. If the reports API omits one or more
+days inside that range, the table SHALL synthesize zero-valued rows for those days using the same row styling as
+API-backed rows.
+
+#### Scenario: Daily breakdown fills missing days with zero-valued rows
+
+- **WHEN** the selected reports window spans `2026-06-05` through `2026-06-12`
+- **AND** the reports API returns daily rows for every day except `2026-06-06`
+- **THEN** the daily breakdown renders a row for `2026-06-06`
+- **AND** that row shows zero requests, zero input tokens, zero output tokens, zero cost, and zero accounts
+- **AND** that row uses the same row styling as neighboring rows
+
+#### Scenario: Daily breakdown shows every day
+
+- **WHEN** the daily breakdown contains thirty rows
+- **THEN** every row is rendered in the page flow without scrolling inside the table
+
+#### Scenario: Daily breakdown follows the ISO preference
+
+- **GIVEN** the ISO date display preference is selected
+- **WHEN** the reports API returns a daily bucket row with `date` set to `2026-06-01`
+- **THEN** the daily breakdown table renders that row label as `2026-06-01`
+
+### Requirement: Reports custom range prevents, explains, and recovers from inverted dates
+
+The `/reports` start-date input MUST use the earlier of the browser-local current day and a present end date as its
+native `max`, and the end-date input MUST use a present start date as its native `min` while retaining the
+browser-local current day as its `max`. If both values are present and the start date is later than the end date, both
+controls MUST expose `aria-invalid`, both MUST reference the same localized inline corrective message through an
+accessible description, and neither the filtered Reports query nor the Reports filter-options query MAY send a request.
+Correcting either bound so the range is ordered MUST clear the invalid state and resume each distinct Reports query
+with the corrected bounds.
+
+#### Scenario: Reciprocal native bounds prevent routine inverted selection
+
+- **GIVEN** `/reports` has a selected start date and end date
+- **THEN** the start-date control's `max` is the earlier of the end date and the browser-local current day
+- **AND** the end-date control's `min` is the start date
+- **AND** the end-date control's `max` remains the browser-local current day
+
+#### Scenario: Bypassed inverted input is accessible and sends no Reports request
+
+- **WHEN** typed, restored, or programmatically supplied Reports dates have a start date later than the end date
+- **THEN** both date controls expose `aria-invalid`
+- **AND** both controls reference one visible localized message that tells the operator to place the start date on or
+  before the end date
+- **AND** no `GET /api/reports` or `GET /api/reports/options` request is sent
+
+#### Scenario: Retry while inverted only retries API keys
+
+- **GIVEN** `/reports` has an inverted date range and loading API-key options failed
+- **WHEN** the operator activates the page-level Retry action
+- **THEN** the API-key options query sends a retry request
+- **AND** neither Reports query sends a request
+
+#### Scenario: Correcting either invalid bound resumes Reports queries
+
+- **GIVEN** `/reports` has an inverted date range and both Reports queries are disabled
+- **WHEN** the operator corrects either date bound so the start date is on or before the end date
+- **THEN** both controls clear the invalid state and accessible description
+- **AND** the corrective message is removed
+- **AND** each distinct Reports query sends one request using the corrected ordered bounds

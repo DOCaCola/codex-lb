@@ -7,7 +7,7 @@ function t(key: string, options?: Record<string, unknown>): string {
   return i18n.t(key, options);
 }
 
-function getIntlLocale(): string {
+export function getIntlLocale(): string {
   const language = (i18n.resolvedLanguage ?? i18n.language ?? "en").toLowerCase();
   if (language.startsWith("ko")) {
     return "ko-KR";

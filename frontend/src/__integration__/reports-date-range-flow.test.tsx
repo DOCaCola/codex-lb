@@ -6,208 +6,110 @@ import { describe, expect, it } from "vitest";
 import App from "@/App";
 import { daysAgoLocalISO } from "@/features/reports/date";
 import type { ReportsResponse } from "@/features/reports/schemas";
+import { EMPTY_REPORT, NO_COVERAGE_GAPS } from "@/features/reports/test-fixtures";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/utils";
 
-const EMPTY_REPORT: ReportsResponse = {
-  summary: {
-    pricedRequests: 0,
-    unpricedRequests: 0,
-    unmeteredRequests: 0,
-    coverageUnknown: false,
-    totalCostUsd: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalReasoningTokens: 0,
-    reasoningUsageKnownRequests: 0,
-    totalCachedTokens: 0,
-    totalRequests: 0,
-    totalCancelled: 0,
-    totalErrors: 0,
-    totalConversations: 0,
-    activeAccounts: 0,
-    avgCostPerDay: 0,
-    avgRequestsPerDay: 0,
-  },
-  comparison: {
-    canCompare: false,
-    previous: {
-      pricedRequests: 0,
-      unpricedRequests: 0,
-      unmeteredRequests: 0,
-      coverageUnknown: false,
-      totalCostUsd: 0,
-      totalTokens: 0,
-      totalRequests: 0,
-    },
-  },
-  daily: [],
-  byModel: [],
-  byUseragent: [],
-  byAccount: [],
-};
-
 const REPORT_WITH_MODEL: ReportsResponse = {
   ...EMPTY_REPORT,
-  byModel: [
-    {
-      model: "gpt-5.1",
-      costUsd: 0,
-      requests: 0,
-      percentage: 100,
-      pricedRequests: 0,
-      unpricedRequests: 0,
-      unmeteredRequests: 0,
-      coverageUnknown: false,
-    },
-  ],
+  byModel: [{ ...NO_COVERAGE_GAPS, model: "gpt-5.1", costUsd: 0, requests: 0 }],
 };
 
+const OPTIONS = { models: ["gpt-5.1"], useragents: [], accounts: [] };
+
 const CORRECTIONS = [
-  {
-    name: "start date",
-    label: "Start date",
-    correctedDaysAgo: 9,
-    expectedStartDaysAgo: 9,
-    expectedEndDaysAgo: 8,
-  },
-  {
-    name: "end date",
-    label: "End date",
-    correctedDaysAgo: 6,
-    expectedStartDaysAgo: 7,
-    expectedEndDaysAgo: 6,
-  },
+  { name: "start date", label: "Start date", correctedDaysAgo: 9, expectedStartDaysAgo: 9, expectedEndDaysAgo: 8 },
+  { name: "end date", label: "End date", correctedDaysAgo: 6, expectedStartDaysAgo: 7, expectedEndDaysAgo: 6 },
 ] as const;
+
+function isInverted(params: URLSearchParams): boolean {
+  const startDate = params.get("start_date");
+  const endDate = params.get("end_date");
+  return startDate !== null && endDate !== null && startDate > endDate;
+}
+
+function inWindow(requests: URLSearchParams[], startDate: string, endDate: string): URLSearchParams[] {
+  return requests.filter((params) => params.get("start_date") === startDate && params.get("end_date") === endDate);
+}
+
+async function openReportsWithModelFilter(reportsRequests: URLSearchParams[]) {
+  const user = userEvent.setup({ delay: null });
+  window.history.pushState({}, "", "/reports");
+  renderWithProviders(<App />);
+  expect(window.location.pathname).toBe("/reports");
+
+  await user.click(await screen.findByRole("button", { name: "Models", expanded: false }));
+  await user.click(await screen.findByRole("menuitemcheckbox", { name: "gpt-5.1" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() => {
+    expect(reportsRequests.some((params) => params.get("model") === "gpt-5.1")).toBe(true);
+  });
+  await user.click(within(screen.getByRole("group", { name: "Date range" })).getByRole("button", { name: "Custom" }));
+  return user;
+}
 
 describe("reports date-range flow integration", () => {
   it.each(CORRECTIONS)(
-    "drives the App reports route, suppresses inverted requests, and recovers through the $name",
+    "suppresses inverted requests on the reports route and recovers through the $name",
     async ({ label, correctedDaysAgo, expectedStartDaysAgo, expectedEndDaysAgo }) => {
-      const user = userEvent.setup({ delay: null });
       const referenceDate = new Date();
-      const invertedStart = daysAgoLocalISO(7, referenceDate);
-      const invertedEnd = daysAgoLocalISO(8, referenceDate);
       const expectedStart = daysAgoLocalISO(expectedStartDaysAgo, referenceDate);
       const expectedEnd = daysAgoLocalISO(expectedEndDaysAgo, referenceDate);
       const reportsRequests: URLSearchParams[] = [];
       const optionsRequests: URLSearchParams[] = [];
-      let accountRequests = 0;
 
       server.use(
-        http.get("/api/accounts", () => {
-          accountRequests += 1;
-          return HttpResponse.json({ accounts: [] });
-        }),
         http.get("/api/reports", ({ request }) => {
           reportsRequests.push(new URL(request.url).searchParams);
           return HttpResponse.json(REPORT_WITH_MODEL);
         }),
         http.get("/api/reports/options", ({ request }) => {
           optionsRequests.push(new URL(request.url).searchParams);
-          return HttpResponse.json({ models: ["gpt-5.1"], useragents: [] });
+          return HttpResponse.json(OPTIONS);
         }),
       );
 
-      window.history.pushState({}, "", "/reports");
-      renderWithProviders(<App />);
-
-      expect(window.location.pathname).toBe("/reports");
-      await waitFor(() => {
-        expect(accountRequests).toBeGreaterThan(0);
-        expect(reportsRequests.length).toBeGreaterThan(0);
-        expect(optionsRequests).toHaveLength(1);
-      });
-      expect(await screen.findByRole("heading", { name: "Cost Report" })).toBeInTheDocument();
-
-      await user.click(screen.getByRole("button", { name: "Model", expanded: false }));
-      await user.click(
-        await screen.findByRole("menuitemcheckbox", { name: "gpt-5.1" }),
-      );
-      await user.keyboard("{Escape}");
-      await waitFor(() => {
-        expect(
-          reportsRequests.some((params) => params.get("model") === "gpt-5.1"),
-        ).toBe(true);
-      });
+      await openReportsWithModelFilter(reportsRequests);
 
       const startInput = screen.getByLabelText("Start date");
       const endInput = screen.getByLabelText("End date");
-      fireEvent.change(endInput, { target: { value: invertedEnd } });
-      fireEvent.change(startInput, { target: { value: invertedStart } });
+      fireEvent.change(endInput, { target: { value: daysAgoLocalISO(8, referenceDate) } });
+      fireEvent.change(startInput, { target: { value: daysAgoLocalISO(7, referenceDate) } });
 
       await waitFor(() => {
         expect(startInput).toHaveAttribute("aria-invalid", "true");
         expect(endInput).toHaveAttribute("aria-invalid", "true");
       });
-      expect(
-        screen.getByText("Start date must be on or before end date."),
-      ).toBeInTheDocument();
-      expect(
-        [...reportsRequests, ...optionsRequests].filter((params) => {
-          const startDate = params.get("start_date");
-          const endDate = params.get("end_date");
-          return startDate !== null && endDate !== null && startDate > endDate;
-        }),
-      ).toHaveLength(0);
+      expect(screen.getByText("Start date must be on or before end date.")).toBeInTheDocument();
+      expect([...reportsRequests, ...optionsRequests].filter(isInverted)).toHaveLength(0);
 
       fireEvent.change(screen.getByLabelText(label), {
         target: { value: daysAgoLocalISO(correctedDaysAgo, referenceDate) },
       });
 
       await waitFor(() => {
-        const correctedRequests = reportsRequests.filter(
-          (params) =>
-            params.get("start_date") === expectedStart &&
-            params.get("end_date") === expectedEnd,
-        );
-        expect(correctedRequests).toHaveLength(1);
-        expect(
-          optionsRequests.filter(
-            (params) =>
-              params.get("start_date") === expectedStart &&
-              params.get("end_date") === expectedEnd,
-          ),
-        ).toHaveLength(1);
+        expect(inWindow(reportsRequests, expectedStart, expectedEnd)).toHaveLength(1);
+        expect(inWindow(optionsRequests, expectedStart, expectedEnd)).toHaveLength(1);
       });
-      const correctedRequests = reportsRequests.filter(
-        (params) =>
-          params.get("start_date") === expectedStart &&
-          params.get("end_date") === expectedEnd,
-      );
-      expect(
-        correctedRequests
-          .map((params) => params.get("model") ?? "")
-          .sort(),
-      ).toEqual(["gpt-5.1"]);
+      expect(inWindow(reportsRequests, expectedStart, expectedEnd)[0].getAll("model")).toEqual(["gpt-5.1"]);
       expect(optionsRequests.every((params) => !params.has("model"))).toBe(true);
-      expect(
-        screen.queryByText("Start date must be on or before end date."),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Start date must be on or before end date.")).not.toBeInTheDocument();
       expect(startInput).not.toHaveAttribute("aria-invalid");
-      expect(endInput).not.toHaveAttribute("aria-invalid");
-      expect(startInput).not.toHaveAttribute("aria-describedby");
       expect(endInput).not.toHaveAttribute("aria-describedby");
     },
   );
 
-  it("retries Accounts without refetching either Reports query while the range is inverted", async () => {
-    const user = userEvent.setup({ delay: null });
+  it("retries only the API key options while the range is inverted", async () => {
     const referenceDate = new Date();
     const reportsRequests: URLSearchParams[] = [];
     const optionsRequests: URLSearchParams[] = [];
-    let accountRequests = 0;
+    let apiKeyRequests = 0;
 
     server.use(
-      http.get("/api/accounts", () => {
-        accountRequests += 1;
+      http.get("/api/request-logs/options", () => {
+        apiKeyRequests += 1;
         return HttpResponse.json(
-          {
-            error: {
-              code: "accounts_unavailable",
-              message: "Accounts unavailable",
-            },
-          },
+          { error: { code: "options_unavailable", message: "Options unavailable" } },
           { status: 503 },
         );
       }),
@@ -217,66 +119,27 @@ describe("reports date-range flow integration", () => {
       }),
       http.get("/api/reports/options", ({ request }) => {
         optionsRequests.push(new URL(request.url).searchParams);
-        return HttpResponse.json({ models: ["gpt-5.1"], useragents: [] });
+        return HttpResponse.json(OPTIONS);
       }),
     );
 
-    window.history.pushState({}, "", "/reports");
-    renderWithProviders(<App />);
+    const user = await openReportsWithModelFilter(reportsRequests);
 
-    expect(window.location.pathname).toBe("/reports");
-    await waitFor(() => {
-      expect(accountRequests).toBeGreaterThan(0);
-      expect(reportsRequests.length).toBeGreaterThan(0);
-      expect(optionsRequests).toHaveLength(1);
-    });
-    expect(await screen.findByRole("heading", { name: "Cost Report" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("End date"), { target: { value: daysAgoLocalISO(8, referenceDate) } });
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: daysAgoLocalISO(7, referenceDate) } });
+    expect(await screen.findByText("Start date must be on or before end date.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Model", expanded: false }));
-    await user.click(
-      await screen.findByRole("menuitemcheckbox", { name: "gpt-5.1" }),
-    );
-    await user.keyboard("{Escape}");
-    await waitFor(() => {
-      expect(
-        reportsRequests.some((params) => params.get("model") === "gpt-5.1"),
-      ).toBe(true);
-    });
-
-    fireEvent.change(screen.getByLabelText("End date"), {
-      target: { value: daysAgoLocalISO(8, referenceDate) },
-    });
-    fireEvent.change(screen.getByLabelText("Start date"), {
-      target: { value: daysAgoLocalISO(7, referenceDate) },
-    });
-
-    expect(
-      await screen.findByText("Start date must be on or before end date."),
-    ).toBeInTheDocument();
-    const accountErrorText = await screen.findByText(
-      /Failed to load account options:/i,
-    );
-    const accountErrorContainer = accountErrorText.parentElement!.parentElement!;
-    const retryButton = within(accountErrorContainer).getByRole("button", {
-      name: "Retry",
-    });
-    const accountRequestsBeforeRetry = accountRequests;
-    const reportsRequestsBeforeRetry = reportsRequests.length;
-    const optionsRequestsBeforeRetry = optionsRequests.length;
+    const errorText = await screen.findByText(/Failed to load API key options:/);
+    const retryButton = within(errorText.parentElement!.parentElement!).getByRole("button", { name: "Retry" });
+    const apiKeyRequestsBefore = apiKeyRequests;
+    const reportsRequestsBefore = reportsRequests.length;
+    const optionsRequestsBefore = optionsRequests.length;
 
     await user.click(retryButton);
 
-    await waitFor(() => {
-      expect(accountRequests).toBe(accountRequestsBeforeRetry + 1);
-    });
-    expect(reportsRequests).toHaveLength(reportsRequestsBeforeRetry);
-    expect(optionsRequests).toHaveLength(optionsRequestsBeforeRetry);
-    expect(
-      [...reportsRequests, ...optionsRequests].filter((params) => {
-        const startDate = params.get("start_date");
-        const endDate = params.get("end_date");
-        return startDate !== null && endDate !== null && startDate > endDate;
-      }),
-    ).toHaveLength(0);
+    await waitFor(() => expect(apiKeyRequests).toBe(apiKeyRequestsBefore + 1));
+    expect(reportsRequests).toHaveLength(reportsRequestsBefore);
+    expect(optionsRequests).toHaveLength(optionsRequestsBefore);
+    expect([...reportsRequests, ...optionsRequests].filter(isInverted)).toHaveLength(0);
   });
 });

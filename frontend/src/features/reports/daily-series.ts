@@ -1,28 +1,34 @@
 import type { DailyReportRow } from "./schemas";
 
+/** Every calendar day from startDate through endDate; empty for an invalid or inverted range. */
+export function calendarDays(startDate: string, endDate: string): string[] {
+  if (!isISODate(startDate) || !isISODate(endDate) || startDate > endDate) {
+    return [];
+  }
+  const days: string[] = [];
+  for (let current = startDate; current <= endDate; current = shiftISODate(current, 1)) {
+    days.push(current);
+  }
+  return days;
+}
+
+export function shiftISODate(date: string, days: number): string {
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
+
 export function buildContinuousDailyRows(
   startDate: string,
   endDate: string,
   rows: DailyReportRow[],
 ): DailyReportRow[] {
-  if (!isISODate(startDate) || !isISODate(endDate) || startDate > endDate) {
+  const days = calendarDays(startDate, endDate);
+  if (days.length === 0) {
     return rows;
   }
-
   const rowsByDate = new Map(rows.map((row) => [row.date, row]));
-  const continuousRows: DailyReportRow[] = [];
-
-  for (let current = startDate; current <= endDate; current = nextISODate(current)) {
-    continuousRows.push(rowsByDate.get(current) ?? createZeroRow(current));
-  }
-
-  return continuousRows;
-}
-
-function nextISODate(date: string): string {
-  const nextDate = new Date(`${date}T00:00:00Z`);
-  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-  return nextDate.toISOString().slice(0, 10);
+  return days.map((day) => rowsByDate.get(day) ?? createZeroRow(day));
 }
 
 function isISODate(value: string): boolean {

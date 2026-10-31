@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.crypto import TokenEncryptor
 from app.db.models import Account, AccountStatus, Base, RequestLog
+from app.modules.reports.filters import ReportFilters
 from app.modules.reports.repository import (
     DailyReportRangeTooLargeError,
     ReportsRepository,
@@ -105,8 +106,8 @@ async def test_native_tps_ends_at_upstream_terminal_not_log_write(async_session,
 
 class ReportAggregateFilters(TypedDict, total=False):
     account_ids: list[str]
-    model: str
-    useragent_group: str
+    models: list[str]
+    useragent_groups: list[str]
 
 
 @pytest.fixture
@@ -386,17 +387,17 @@ async def test_report_conversation_aggregates_are_distinct_nonblank_filtered_and
     summary = await repo.aggregate_summary(
         datetime(2026, 6, 1),
         datetime(2026, 6, 3),
-        account_ids=["acc_reports_conversations"],
-        model="gpt-5.1",
-        useragent_group="opencode",
+        ReportFilters.create(
+            account_ids=["acc_reports_conversations"], models=["gpt-5.1"], useragent_groups=["opencode"]
+        ),
     )
     daily_rows = await repo.aggregate_daily_rows(
         date(2026, 6, 1),
         date(2026, 6, 2),
         timezone.utc,
-        account_ids=["acc_reports_conversations"],
-        model="gpt-5.1",
-        useragent_group="opencode",
+        ReportFilters.create(
+            account_ids=["acc_reports_conversations"], models=["gpt-5.1"], useragent_groups=["opencode"]
+        ),
     )
 
     assert summary.conversation_count == 2
@@ -485,7 +486,7 @@ async def test_report_conversation_aggregates_exclude_tab_and_newline_only_ids(
                 {"model": "gpt-selected", "conversation_id": "conv-selected-model"},
                 {"model": "gpt-other", "conversation_id": "conv-other-model"},
             ],
-            {"model": "gpt-selected"},
+            {"models": ["gpt-selected"]},
             datetime(2026, 6, 1),
             datetime(2026, 6, 2),
             1,
@@ -496,7 +497,7 @@ async def test_report_conversation_aggregates_exclude_tab_and_newline_only_ids(
                 {"useragent_group": "opencode", "conversation_id": "conv-selected-useragent"},
                 {"useragent_group": "CodexCLI", "conversation_id": "conv-other-useragent"},
             ],
-            {"useragent_group": "opencode"},
+            {"useragent_groups": ["opencode"]},
             datetime(2026, 6, 1),
             datetime(2026, 6, 2),
             1,
@@ -556,9 +557,7 @@ async def test_report_conversation_aggregate_rules_are_independently_counted(
     summary = await ReportsRepository(async_session).aggregate_summary(
         start_at,
         end_at,
-        account_ids=filters.get("account_ids"),
-        model=filters.get("model"),
-        useragent_group=filters.get("useragent_group"),
+        ReportFilters.create(**filters),
     )
 
     assert summary.conversation_count == expected
@@ -750,9 +749,9 @@ async def test_aggregate_daily_rows_speed_medians_preserve_filters_and_timezone_
         date(2026, 6, 1),
         date(2026, 6, 1),
         ZoneInfo("America/Los_Angeles"),
-        account_ids=["acc_reports_speed_filter"],
-        model="gpt-5.1",
-        useragent_group="opencode",
+        ReportFilters.create(
+            account_ids=["acc_reports_speed_filter"], models=["gpt-5.1"], useragent_groups=["opencode"]
+        ),
     )
 
     assert [(row.date, row.requests, row.median_ttft_ms, row.median_tps) for row in rows] == [
@@ -785,7 +784,7 @@ async def test_daily_speed_medians_stmt_returns_only_one_row_per_populated_day_a
     )
     await async_session.commit()
 
-    result = await async_session.execute(_daily_speed_medians_stmt(day_ranges, None, None, None))
+    result = await async_session.execute(_daily_speed_medians_stmt(day_ranges, ReportFilters()))
     rows = result.all()
 
     assert [(row.report_date, row.median_ttft_ms, row.median_tps) for row in rows] == [
@@ -798,9 +797,7 @@ async def test_daily_speed_medians_stmt_returns_only_one_row_per_populated_day_a
 def test_daily_speed_medians_stmt_compiles_to_portable_window_sql() -> None:
     statement = _daily_speed_medians_stmt(
         [("2026-06-01", datetime(2026, 6, 1), datetime(2026, 6, 2))],
-        None,
-        None,
-        None,
+        ReportFilters(),
     )
 
     for dialect in (sqlite_dialect(), postgresql_dialect()):
@@ -913,38 +910,31 @@ async def test_report_filters_apply_to_all_aggregates_including_earliest_activit
     )
     await async_session.commit()
 
+    opencode = ReportFilters.create(useragent_groups=["opencode"])
     summary = await repo.aggregate_summary(
         datetime(2026, 6, 1, 0, 0),
         datetime(2026, 6, 2, 0, 0),
-        useragent_group="opencode",
+        opencode,
     )
     daily_rows = await repo.aggregate_daily_rows(
         date(2026, 6, 1),
         date(2026, 6, 1),
         timezone.utc,
-        useragent_group="opencode",
+        opencode,
     )
-    by_model = await repo.aggregate_by_model(
-        datetime(2026, 6, 1, 0, 0),
-        datetime(2026, 6, 2, 0, 0),
-        useragent_group="opencode",
-    )
-    by_account = await repo.aggregate_by_account(
-        datetime(2026, 6, 1, 0, 0),
-        datetime(2026, 6, 2, 0, 0),
-        useragent_group="opencode",
-    )
-    earliest_activity_at = await repo.earliest_report_activity_at(useragent_group="opencode")
+    by_model = await repo.aggregate_daily_by_model(date(2026, 6, 1), date(2026, 6, 1), timezone.utc, opencode)
+    by_account = await repo.aggregate_daily_by_account(date(2026, 6, 1), date(2026, 6, 1), timezone.utc, opencode)
+    earliest_activity_at = await repo.earliest_report_activity_at(opencode)
 
     assert summary.total_requests == 1
     assert summary.total_cost_usd == 0.25
     assert len(daily_rows) == 1
     assert daily_rows[0].requests == 1
     assert by_model[0].model == "gpt-5.1"
-    assert by_model[0].cost_usd == 0.25
-    assert by_model[0].request_count == 1
-    assert by_account[0].account_id == "acc_reports_filters"
-    assert by_account[0].request_count == 1
+    assert by_model[0].measures.cost_usd == 0.25
+    assert by_model[0].measures.requests == 1
+    assert by_account[0].account.account_id == "acc_reports_filters"
+    assert by_account[0].measures.requests == 1
     assert earliest_activity_at == matched_at
 
 

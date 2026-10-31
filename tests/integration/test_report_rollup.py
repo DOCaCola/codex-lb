@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.usage_rollup import lock_fold_state
 from app.modules.accounts.usage_time_rollup import DIMENSION_SENTINEL, merge_time_rollups_into
+from app.modules.reports.filters import ReportFilters
 from app.modules.reports.repository import ReportsRepository
 from app.modules.reports.rollup import fold_next_report_slice, run_report_fold_pass
 from app.modules.reports.service import ReportsService
@@ -57,13 +58,12 @@ async def _fold(target: datetime) -> None:
             pass
 
 
-async def _snapshot(tz: str = "UTC", **filters):
+async def _snapshot(tz: str = "UTC", **selection):
+    filters = ReportFilters.create(**selection)
     async with SessionLocal() as session:
         service = ReportsService(ReportsRepository(session))
-        report = await service.get_reports(date(2026, 3, 1), date(2026, 3, 21), tz, **filters)
-        options = await service.get_options(
-            date(2026, 3, 1), date(2026, 3, 21), tz, filters.get("account_ids"), filters.get("api_key_ids")
-        )
+        report = await service.get_reports(date(2026, 3, 1), date(2026, 3, 21), tz, filters)
+        options = await service.get_options(date(2026, 3, 1), date(2026, 3, 21), tz, filters)
         return report.model_dump(exclude={"generated_at"}), options.model_dump()
 
 
@@ -73,9 +73,11 @@ async def test_report_fold_preserves_filters_timezone_and_live_tail(db_setup, tz
     scopes = [
         {},
         {"account_ids": ["report-a"]},
-        {"api_key_ids": ["key"], "model": "m1"},
-        {"useragent_group": "Missing User-Agent"},
-        {"useragent_group": "\x1fclient"},
+        {"account_ids": ["report-b"], "model_source_ids": ["report-src"]},
+        {"api_key_ids": ["key"], "models": ["m1"]},
+        {"models": ["m1", "m2"], "useragent_groups": ["Missing User-Agent", "CLI"]},
+        {"useragent_groups": ["Missing User-Agent"]},
+        {"useragent_groups": ["\x1fclient"]},
     ]
     expected = [await _snapshot(tz, **scope) for scope in scopes]
     await _fold(BASE + timedelta(days=8))

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ReportsResponseSchema } from "./schemas";
+import { ReportsOptionsResponseSchema, ReportsResponseSchema } from "./schemas";
 
 function validReportsPayload() {
   return {
@@ -13,13 +13,44 @@ function validReportsPayload() {
     },
     comparison: { canCompare: true, previous: { totalCostUsd: 10, totalTokens: 400, totalRequests: 20 } },
     daily: [{ date: "2026-06-05", requests: 4, conversations: 3, inputTokens: 100, outputTokens: 50, reasoningTokens: 35, cachedInputTokens: 0, costUsd: 1, activeAccounts: 2, cancelledCount: 2, errorCount: 1 }],
-    byModel: [{ model: "gpt-5.1", costUsd: 12.5, requests: 4, percentage: 100 }],
-    byUseragent: [{ useragent: "claude-code", costUsd: 12.5, requests: 4, percentage: 100 }],
+    dailyByAccount: [],
+    dailyByModel: [],
+    byModel: [{ model: "gpt-5.1", costUsd: 12.5, requests: 4 }],
+    byUseragent: [{ useragent: "claude-code", costUsd: 12.5, requests: 4 }],
     byAccount: [],
   };
 }
 
 describe("ReportsResponseSchema", () => {
+  it("parses daily account and model splits", () => {
+    const split = {
+      date: "2026-06-05",
+      requests: 4,
+      inputTokens: 100,
+      cachedInputTokens: 90,
+      outputTokens: 50,
+      reasoningTokens: null,
+      costUsd: 1,
+    };
+    const parsed = ReportsResponseSchema.parse({
+      ...validReportsPayload(),
+      dailyByAccount: [
+        { ...split, accountId: null, modelSourceId: "src-claude", provider: "claude", name: "DOCa Claude" },
+      ],
+      dailyByModel: [{ ...split, model: "gpt-5.1" }],
+    });
+
+    expect(parsed.dailyByAccount[0]).toMatchObject({ modelSourceId: "src-claude", provider: "claude", unpricedRequests: 0 });
+    expect(parsed.dailyByModel[0]).toMatchObject({ model: "gpt-5.1", reasoningTokens: null });
+  });
+
+  it("rejects payloads without daily splits", () => {
+    const payload: Record<string, unknown> = validReportsPayload();
+    Reflect.deleteProperty(payload, "dailyByAccount");
+
+    expect(() => ReportsResponseSchema.parse(payload)).toThrow(/dailyByAccount/);
+  });
+
   it("preserves conversation, cancellation, and reasoning totals from the reports payload", () => {
     const parsed = ReportsResponseSchema.parse({
       summary: {
@@ -31,8 +62,10 @@ describe("ReportsResponseSchema", () => {
       },
       comparison: { canCompare: true, previous: { totalCostUsd: 10, totalTokens: 400, totalRequests: 20 } },
       daily: [{ date: "2026-06-05", requests: 4, conversations: 3, inputTokens: 100, outputTokens: 50, reasoningTokens: 35, cachedInputTokens: 0, costUsd: 1, activeAccounts: 2, errorCount: 1, cancelledCount: 2 }],
-      byModel: [{ model: "gpt-5.1", costUsd: 12.5, requests: 4, percentage: 100 }],
-      byUseragent: [{ useragent: "claude-code", costUsd: 12.5, requests: 4, percentage: 100 }],
+      dailyByAccount: [],
+      dailyByModel: [],
+      byModel: [{ model: "gpt-5.1", costUsd: 12.5, requests: 4 }],
+      byUseragent: [{ useragent: "claude-code", costUsd: 12.5, requests: 4 }],
       byAccount: [],
     });
     expect(parsed.summary.totalRequests).toBe(4);
@@ -98,8 +131,10 @@ describe("ReportsResponseSchema", () => {
         },
         comparison: { canCompare: true, previous: { totalCostUsd: 10, totalTokens: 400, totalRequests: 20 } },
         daily: [{ date: "2026-06-05", requests: 10, conversations: 0, inputTokens: 100, outputTokens: 50, reasoningTokens: 35, cachedInputTokens: 0, costUsd: 1, activeAccounts: 2, cancelledCount: 0, errorCount: 0 }],
-        byModel: [{ model: "gpt-5.1", costUsd: 12.5, requests: 25, percentage: 100 }],
-        byUseragent: [{ useragent: "claude-code", costUsd: 12.5, requests: 25, percentage: 100 }],
+        dailyByAccount: [],
+        dailyByModel: [],
+        byModel: [{ model: "gpt-5.1", costUsd: 12.5, requests: 25 }],
+        byUseragent: [{ useragent: "claude-code", costUsd: 12.5, requests: 25 }],
         byAccount: [],
       }),
     ).toThrow(/totalConversations/i);
@@ -132,12 +167,13 @@ describe("ReportsResponseSchema", () => {
         },
       },
       daily: [],
+      dailyByAccount: [],
+      dailyByModel: [],
       byModel: [
         {
           model: "gpt-5.1",
           costUsd: 12.5,
           requests: 25,
-          percentage: 100,
         },
       ],
       byUseragent: [
@@ -145,7 +181,6 @@ describe("ReportsResponseSchema", () => {
           useragent: "claude-code",
           costUsd: 12.5,
           requests: 25,
-          percentage: 100,
         },
       ],
       byAccount: [],
@@ -178,6 +213,8 @@ describe("ReportsResponseSchema", () => {
           avgRequestsPerDay: 8.33,
         },
         daily: [],
+        dailyByAccount: [],
+        dailyByModel: [],
         byModel: [],
         byUseragent: [],
         byAccount: [],
@@ -207,6 +244,8 @@ describe("ReportsResponseSchema", () => {
           canCompare: false,
         },
         daily: [],
+        dailyByAccount: [],
+        dailyByModel: [],
         byModel: [],
         byUseragent: [],
         byAccount: [],
@@ -241,11 +280,12 @@ describe("ReportsResponseSchema", () => {
           },
         },
         daily: [],
+        dailyByAccount: [],
+        dailyByModel: [],
         byModel: [
           {
             model: "gpt-5.1",
             costUsd: 12.5,
-            percentage: 100,
           },
         ],
         byUseragent: [],
@@ -281,16 +321,32 @@ describe("ReportsResponseSchema", () => {
           },
         },
         daily: [],
+        dailyByAccount: [],
+        dailyByModel: [],
         byModel: [
           {
             model: "gpt-5.1",
             costUsd: 12.5,
             requests: 25,
-            percentage: 100,
           },
         ],
         byAccount: [],
       }),
     ).toThrow(/byUseragent/i);
+  });
+});
+
+describe("ReportsOptionsResponseSchema", () => {
+  it("parses Codex and provider account options", () => {
+    const parsed = ReportsOptionsResponseSchema.parse({
+      models: ["gpt-5.1"],
+      useragents: ["Codex Desktop"],
+      accounts: [
+        { accountId: "acc-1", modelSourceId: null, provider: "codex", name: "Alpha" },
+        { accountId: null, modelSourceId: "src-1", provider: "claude", name: "Claude" },
+      ],
+    });
+
+    expect(parsed.accounts.map((account) => account.provider)).toEqual(["codex", "claude"]);
   });
 });

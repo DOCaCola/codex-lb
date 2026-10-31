@@ -1,120 +1,64 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { AlertMessage } from "@/components/alert-message";
 import { Button } from "@/components/ui/button";
-import { listAccounts } from "@/features/accounts/api";
 import { getRequestLogOptions } from "@/features/dashboard/api";
-import {
-  useReports,
-  useReportsOptions,
-  useThreadIdentity,
-} from "@/features/reports/hooks/use-reports";
-import { useReportChartVisibility } from "@/features/reports/hooks/use-report-chart-visibility";
+import { useReports, useReportsOptions, useThreadIdentity, type ReportsFilterState } from "@/features/reports/hooks/use-reports";
+import { useReportSections } from "@/features/reports/hooks/use-report-sections";
 import { getErrorMessageOrNull } from "@/utils/errors";
-import { ReportsFilters, type ReportsFiltersState } from "./reports-filters";
-import { ReportsSummaryCards } from "./reports-summary-cards";
-import type { CostPerDayChartProps } from "./cost-per-day-chart";
-import type { TokensPerDayChartProps } from "./tokens-per-day-chart";
-import type { TimeToFirstTokenChartProps } from "./time-to-first-token-chart";
-import type { TokensPerSecondChartProps } from "./tokens-per-second-chart";
-import type { QueueWaitChartProps } from "./queue-wait-chart";
-import type { ModelDistributionDonutProps } from "./model-distribution-donut";
-import type { UseragentDistributionDonutProps } from "./useragent-distribution-donut";
-import { DailyDetailTable } from "./daily-detail-table";
-import { ThreadIdentityCard } from "./thread-identity-card";
-import {
-  daysAgoLocalISO,
-  getBrowserReportsTimeZone,
-  isReportDateRangeValid,
-  localDateISO,
-} from "../date";
 
-const CostPerDayChart = lazy(() =>
-  import("./cost-per-day-chart").then((module) => ({
-    default: (props: CostPerDayChartProps) => <module.CostPerDayChart {...props} />,
-  })),
-);
-const TokensPerDayChart = lazy(() =>
-  import("./tokens-per-day-chart").then((module) => ({
-    default: (props: TokensPerDayChartProps) => <module.TokensPerDayChart {...props} />,
-  })),
-);
-const TimeToFirstTokenChart = lazy(() =>
-  import("./time-to-first-token-chart").then((module) => ({
-    default: (props: TimeToFirstTokenChartProps) => <module.TimeToFirstTokenChart {...props} />,
-  })),
-);
-const TokensPerSecondChart = lazy(() =>
-  import("./tokens-per-second-chart").then((module) => ({
-    default: (props: TokensPerSecondChartProps) => <module.TokensPerSecondChart {...props} />,
-  })),
-);
-const QueueWaitChart = lazy(() =>
-  import("./queue-wait-chart").then((module) => ({
-    default: (props: QueueWaitChartProps) => <module.QueueWaitChart {...props} />,
-  })),
-);
-const ModelDistributionDonut = lazy(() =>
-  import("./model-distribution-donut").then((module) => ({
-    default: (props: ModelDistributionDonutProps) => <module.ModelDistributionDonut {...props} />,
-  })),
-);
-const UseragentDistributionDonut = lazy(() =>
-  import("./useragent-distribution-donut").then((module) => ({
-    default: (props: UseragentDistributionDonutProps) => (
-      <module.UseragentDistributionDonut {...props} />
-    ),
-  })),
-);
+import { daysAgoLocalISO, getBrowserReportsTimeZone, isReportDateRangeValid, localDateISO } from "../date";
+import { PRESET_DAYS, type RangePreset } from "../report-range";
+import { useReportSeriesStyles } from "../report-series-styles";
+import { BreakdownSection, type BreakdownFilterKind } from "./breakdown-section";
+import { DailyDetailTable } from "./daily-detail-table";
+import { DailyTrendCard } from "./daily-trend-card";
+import { PerformanceCard } from "./performance-card";
+import { ReportsSummaryCards } from "./reports-summary-cards";
+import { ReportsToolbar } from "./reports-toolbar";
+import { RoutingDiagnosticsCard } from "./routing-diagnostics-card";
+import { SeriesMarker } from "./series-marker";
 
 const REPORTS_TIMEZONE_REFRESH_INTERVAL_MS = 60_000;
-const DEFAULT_PRESET_DAYS = 7;
+const DEFAULT_PRESET = "7d" satisfies RangePreset;
 
-const createDefaultFilters = (): ReportsFiltersState => ({
-  startDate: daysAgoLocalISO(6),
-  endDate: localDateISO(),
-  accountId: [],
-  apiKeyId: [],
-  model: "",
-  useragent: "",
-});
+function presetRange(days: number): Pick<ReportsFilterState, "startDate" | "endDate"> {
+  return { startDate: daysAgoLocalISO(days - 1), endDate: localDateISO() };
+}
 
 export type ReportsPageProps = {
-  initialFilters?: Partial<ReportsFiltersState>;
+  initialFilters?: Partial<ReportsFilterState>;
 };
 
 export function ReportsPage({ initialFilters }: ReportsPageProps = {}) {
   const { t } = useTranslation();
-  const [filters, setFilters] = useState<ReportsFiltersState>(() => ({
-    ...createDefaultFilters(),
+  const [filters, setFilters] = useState<ReportsFilterState>(() => ({
+    ...presetRange(PRESET_DAYS[DEFAULT_PRESET]),
+    accounts: [],
+    apiKeyIds: [],
+    models: [],
+    useragents: [],
     ...initialFilters,
   }));
-  const [selectedPresetDays, setSelectedPresetDays] = useState<number | null>(
-    DEFAULT_PRESET_DAYS,
+  const [preset, setPreset] = useState<RangePreset>(() =>
+    initialFilters?.startDate || initialFilters?.endDate ? "custom" : DEFAULT_PRESET,
   );
-  const [reportsTimeZone, setReportsTimeZone] = useState<string | undefined>(() =>
-    getBrowserReportsTimeZone(),
-  );
-  const { visibleChartIds, setVisibleChartIds } = useReportChartVisibility();
+  const [reportsTimeZone, setReportsTimeZone] = useState<string | undefined>(() => getBrowserReportsTimeZone());
+  const { visibleSectionIds, setSectionVisible } = useReportSections();
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   useEffect(() => {
     const refreshReportsTimeZone = () => {
-      setReportsTimeZone((currentTimeZone) => {
-        const nextTimeZone = getBrowserReportsTimeZone();
-        return currentTimeZone === nextTimeZone ? currentTimeZone : nextTimeZone;
+      setReportsTimeZone((current) => {
+        const next = getBrowserReportsTimeZone();
+        return current === next ? current : next;
       });
     };
-
-    const intervalId = window.setInterval(
-      refreshReportsTimeZone,
-      REPORTS_TIMEZONE_REFRESH_INTERVAL_MS,
-    );
-
+    const intervalId = window.setInterval(refreshReportsTimeZone, REPORTS_TIMEZONE_REFRESH_INTERVAL_MS);
     window.addEventListener("focus", refreshReportsTimeZone);
     document.addEventListener("visibilitychange", refreshReportsTimeZone);
-
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshReportsTimeZone);
@@ -122,311 +66,177 @@ export function ReportsPage({ initialFilters }: ReportsPageProps = {}) {
     };
   }, []);
 
+  const isVisible = (id: (typeof visibleSectionIds)[number]) => visibleSectionIds.includes(id);
+  const diagnosticsActive = diagnosticsOpen && isVisible("diagnostics");
   const reportsQuery = useReports(filters, reportsTimeZone);
-  // Raw-log scan: only issued while the operator keeps the card visible.
-  const threadIdentityQuery = useThreadIdentity(
-    filters,
-    reportsTimeZone,
-    visibleChartIds.includes("threadIdentity"),
-  );
-  const filterCatalogQuery = useReportsOptions(filters, reportsTimeZone);
-  const {
-    data: accountsData,
-    error: accountsError,
-    refetch: refetchAccounts,
-  } = useQuery({
-    queryKey: ["accounts", "reports-filter"],
-    queryFn: listAccounts,
-  });
-  const {
-    data: apiKeysOptionsData,
-    error: apiKeysError,
-    refetch: refetchApiKeys,
-  } = useQuery({
+  const optionsQuery = useReportsOptions(filters, reportsTimeZone);
+  const threadIdentityQuery = useThreadIdentity(filters, reportsTimeZone, diagnosticsActive);
+  const apiKeysQuery = useQuery({
     queryKey: ["request-log-options", "reports-filter"],
     queryFn: () => getRequestLogOptions(),
   });
+  const report = reportsQuery.data;
+  const styles = useReportSeriesStyles(report);
 
   const accountOptions = useMemo(
     () =>
-      (accountsData?.accounts ?? []).map((account) => ({
-        value: account.accountId,
-        label:
-          account.alias ||
-          account.displayName ||
-          account.email ||
-          account.accountId,
-        isEmail: !account.alias,
-      })),
-    [accountsData],
+      (optionsQuery.data?.accounts ?? []).flatMap((identity) => {
+        const series = styles.account(identity);
+        return series.filterKey
+          ? [{ value: series.filterKey, label: series.label, isEmail: true, icon: <SeriesMarker style={series} /> }]
+          : [];
+      }),
+    [optionsQuery.data, styles],
   );
-
   const apiKeyOptions = useMemo(
     () =>
-      (apiKeysOptionsData?.apiKeys ?? []).map((key) => ({
+      (apiKeysQuery.data?.apiKeys ?? []).map((key) => ({
         value: key.id,
         label: key.keyPrefix ? `${key.name} · ${key.keyPrefix}` : key.name,
       })),
-    [apiKeysOptionsData],
+    [apiKeysQuery.data],
   );
-
   const modelOptions = useMemo(
-    () =>
-      (filterCatalogQuery.data?.models ?? []).map((model) => ({
-        value: model,
-        label: model,
-      })),
-    [filterCatalogQuery.data],
+    () => (optionsQuery.data?.models ?? []).map((model) => ({ value: model, label: model })),
+    [optionsQuery.data],
   );
-
   const useragentOptions = useMemo(
-    () =>
-      (filterCatalogQuery.data?.useragents ?? []).map((useragent) => ({
-        value: useragent,
-        label: useragent,
-      })),
-    [filterCatalogQuery.data],
+    () => (optionsQuery.data?.useragents ?? []).map((useragent) => ({ value: useragent, label: useragent })),
+    [optionsQuery.data],
   );
 
-  const mainReportsError = getErrorMessageOrNull(reportsQuery.error);
-  const sharedOptionsError = getErrorMessageOrNull(filterCatalogQuery.error);
-  const accountOptionsError = getErrorMessageOrNull(accountsError);
-  const apiKeyOptionsError = getErrorMessageOrNull(apiKeysError);
-  const threadIdentityError = getErrorMessageOrNull(threadIdentityQuery.error);
-
-  const hasAnyError = Boolean(
-    mainReportsError || sharedOptionsError || accountOptionsError || apiKeyOptionsError,
-  );
+  const rangeValid = isReportDateRangeValid(filters.startDate, filters.endDate);
+  const reportError = getErrorMessageOrNull(reportsQuery.error);
+  const optionsError = getErrorMessageOrNull(optionsQuery.error);
+  const apiKeysError = getErrorMessageOrNull(apiKeysQuery.error);
 
   const handleRetry = async () => {
-    if (!isReportDateRangeValid(filters.startDate, filters.endDate)) {
-      await Promise.allSettled([refetchAccounts(), refetchApiKeys()]);
+    if (!rangeValid) {
+      await apiKeysQuery.refetch();
       return;
     }
-
     await Promise.allSettled([
       reportsQuery.refetch(),
-      filterCatalogQuery.refetch(),
-      refetchAccounts(),
-      refetchApiKeys(),
-      ...(visibleChartIds.includes("threadIdentity") ? [threadIdentityQuery.refetch()] : []),
+      optionsQuery.refetch(),
+      apiKeysQuery.refetch(),
+      ...(diagnosticsActive ? [threadIdentityQuery.refetch()] : []),
     ]);
   };
 
-  const handlePresetSelect = (days: number) => {
-    setSelectedPresetDays(days);
-    setFilters((current) => ({
-      ...current,
-      startDate: daysAgoLocalISO(days - 1),
-      endDate: localDateISO(),
-    }));
+  const handleRefresh = () => {
+    void Promise.allSettled([
+      reportsQuery.refetch(),
+      optionsQuery.refetch(),
+      ...(diagnosticsActive ? [threadIdentityQuery.refetch()] : []),
+    ]);
   };
 
-  const handleFiltersChange = (nextFilters: ReportsFiltersState) => {
-    if (
-      nextFilters.startDate !== filters.startDate ||
-      nextFilters.endDate !== filters.endDate
-    ) {
-      setSelectedPresetDays(null);
+  const handlePresetChange = (next: RangePreset) => {
+    setPreset(next);
+    if (next !== "custom") {
+      setFilters((current) => ({ ...current, ...presetRange(PRESET_DAYS[next]) }));
     }
-    setFilters(nextFilters);
   };
+
+  const handleFiltersChange = (next: ReportsFilterState) => {
+    if (next.startDate !== filters.startDate || next.endDate !== filters.endDate) {
+      setPreset("custom");
+    }
+    setFilters(next);
+  };
+
+  const handleBreakdownToggle = (kind: BreakdownFilterKind, value: string) => {
+    setFilters((current) => {
+      const field = kind === "accounts" ? "accounts" : kind === "models" ? "models" : "useragents";
+      const values = current[field];
+      return {
+        ...current,
+        [field]: values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value],
+      };
+    });
+  };
+
+  const retryButton = (
+    <Button type="button" variant="outline" size="sm" onClick={() => void handleRetry()}>
+      {t("common.actions.retry")}
+    </Button>
+  );
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] flex-1 space-y-6 px-4 py-8 sm:px-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {t("reports.page.title")}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {t("reports.page.subtitle")}
-        </p>
-      </div>
-
-      <ReportsFilters
+    <div className="flex flex-col gap-4" data-testid="reports-page">
+      <ReportsToolbar
         filters={filters}
-        selectedPresetDays={selectedPresetDays}
+        preset={preset}
         accountOptions={accountOptions}
         apiKeyOptions={apiKeyOptions}
         modelOptions={modelOptions}
         useragentOptions={useragentOptions}
-        visibleChartIds={visibleChartIds}
-        onPresetSelect={handlePresetSelect}
+        showComparison={report?.comparison.canCompare ?? false}
+        generatedAt={report?.generatedAt}
+        refreshing={reportsQuery.isFetching || optionsQuery.isFetching}
+        visibleSectionIds={visibleSectionIds}
+        onPresetChange={handlePresetChange}
         onFiltersChange={handleFiltersChange}
-        onVisibleChartIdsChange={setVisibleChartIds}
+        onRefresh={handleRefresh}
+        onSectionVisibleChange={setSectionVisible}
       />
 
-      {mainReportsError ? (
-        <AlertMessage variant="error">
-          {t("reports.errors.data", { error: mainReportsError })}
-        </AlertMessage>
-      ) : null}
-      {sharedOptionsError ? (
+      {reportError ? <AlertMessage variant="error">{t("reports.errors.data", { error: reportError })}</AlertMessage> : null}
+      {optionsError ? (
         <div className="flex items-center justify-between gap-2">
           <AlertMessage variant="error" className="flex-1">
-            {t("reports.errors.options", { error: sharedOptionsError })}
+            {t("reports.errors.options", { error: optionsError })}
           </AlertMessage>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void handleRetry();
-            }}
-          >
-            {t("common.actions.retry")}
-          </Button>
+          {retryButton}
         </div>
       ) : null}
-      {accountOptionsError ? (
+      {apiKeysError ? (
         <div className="flex items-center justify-between gap-2">
           <AlertMessage variant="error" className="flex-1">
-            {t("reports.errors.accounts", { error: accountOptionsError })}
+            {t("reports.errors.apiKeys", { error: apiKeysError })}
           </AlertMessage>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void handleRetry();
-            }}
-          >
-            {t("common.actions.retry")}
-          </Button>
-        </div>
-      ) : null}
-      {apiKeyOptionsError ? (
-        <div className="flex items-center justify-between gap-2">
-          <AlertMessage variant="error" className="flex-1">
-            {t("reports.errors.apiKeys", { error: apiKeyOptionsError })}
-          </AlertMessage>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void handleRetry();
-            }}
-          >
-            {t("common.actions.retry")}
-          </Button>
+          {retryButton}
         </div>
       ) : null}
 
-      <div className="flex items-center justify-end gap-3">
-        {reportsQuery.data?.generatedAt ? (
-          <span className="text-xs text-muted-foreground">{t("reports.asOf", { time: new Date(reportsQuery.data.generatedAt).toLocaleString() })}</span>
-        ) : null}
-        <Button variant="outline" size="sm"
-          disabled={reportsQuery.isFetching || filterCatalogQuery.isFetching || !isReportDateRangeValid(filters.startDate, filters.endDate)}
-          onClick={() => { void handleRetry(); }}>
-          {t("reports.refresh")}
-        </Button>
-      </div>
-      {reportsQuery.data?.speedMetricsAvailable === false ? (
-        <p className="text-sm text-muted-foreground">{t("reports.speedUnavailable", { days: reportsQuery.data.speedMetricsMaxDays ?? 7 })}</p>
-      ) : null}
       {reportsQuery.isLoading ? (
-        <div className="flex items-center justify-center py-20 text-sm text-muted-foreground">
-          {t("common.loading")}
-        </div>
-      ) : reportsQuery.data ? (
+        <div className="flex items-center justify-center py-20 text-sm text-muted-foreground">{t("common.loading")}</div>
+      ) : report ? (
         <>
-          <ReportsSummaryCards
-            summary={reportsQuery.data.summary}
-            comparison={reportsQuery.data.comparison}
-          />
-          {visibleChartIds.length > 0 ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {visibleChartIds.includes("costByDay") ? (
-                <Suspense fallback={<div className="h-[270px] rounded-xl border bg-card" />}>
-                  <CostPerDayChart
-                    startDate={filters.startDate}
-                    endDate={filters.endDate}
-                    data={reportsQuery.data.daily}
-                  />
-                </Suspense>
-              ) : null}
-              {visibleChartIds.includes("tokensByDay") ? (
-                <Suspense fallback={<div className="h-[270px] rounded-xl border bg-card" />}>
-                  <TokensPerDayChart
-                    startDate={filters.startDate}
-                    endDate={filters.endDate}
-                    data={reportsQuery.data.daily}
-                  />
-                </Suspense>
-              ) : null}
-              {reportsQuery.data.speedMetricsAvailable !== false && visibleChartIds.includes("timeToFirstToken") ? (
-                <Suspense fallback={<div className="h-[270px] rounded-xl border bg-card" />}>
-                  <TimeToFirstTokenChart
-                    startDate={filters.startDate}
-                    endDate={filters.endDate}
-                    data={reportsQuery.data.daily}
-                  />
-                </Suspense>
-              ) : null}
-              {reportsQuery.data.speedMetricsAvailable !== false && visibleChartIds.includes("tokensPerSecond") ? (
-                <Suspense fallback={<div className="h-[270px] rounded-xl border bg-card" />}>
-                  <TokensPerSecondChart
-                    startDate={filters.startDate}
-                    endDate={filters.endDate}
-                    data={reportsQuery.data.daily}
-                  />
-                </Suspense>
-              ) : null}
-              {reportsQuery.data.speedMetricsAvailable !== false && visibleChartIds.includes("queueWait") ? (
-                <Suspense fallback={<div className="h-[270px] rounded-xl border bg-card" />}>
-                  <QueueWaitChart
-                    startDate={filters.startDate}
-                    endDate={filters.endDate}
-                    data={reportsQuery.data.daily}
-                  />
-                </Suspense>
-              ) : null}
-            </div>
+          <ReportsSummaryCards summary={report.summary} comparison={report.comparison} />
+          {isVisible("trend") ? (
+            <DailyTrendCard report={report} startDate={filters.startDate} endDate={filters.endDate} styles={styles} />
           ) : null}
-          {visibleChartIds.includes("threadIdentity") ? (
-            threadIdentityError ? (
-              <AlertMessage variant="error">
-                {t("reports.errors.threadIdentity", { error: threadIdentityError })}
-              </AlertMessage>
-            ) : threadIdentityQuery.data ? (
-              <ThreadIdentityCard data={threadIdentityQuery.data} />
-            ) : null
+          {isVisible("breakdown") ? (
+            <BreakdownSection
+              report={report}
+              styles={styles}
+              selected={{ accounts: filters.accounts, models: filters.models, useragents: filters.useragents }}
+              onToggle={handleBreakdownToggle}
+            />
           ) : null}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <div className="space-y-4 lg:col-span-1">
-              <Suspense fallback={<div className="h-[220px] rounded-xl border bg-card" />}>
-                <ModelDistributionDonut data={reportsQuery.data.byModel} />
-              </Suspense>
-              <Suspense fallback={<div className="h-[220px] rounded-xl border bg-card" />}>
-                <UseragentDistributionDonut data={reportsQuery.data.byUseragent} />
-              </Suspense>
-            </div>
-            <div className="lg:col-span-2">
-              <DailyDetailTable
-                startDate={filters.startDate}
-                endDate={filters.endDate}
-                data={reportsQuery.data.daily}
-              />
-            </div>
-          </div>
+          {isVisible("perf") ? <PerformanceCard report={report} styles={styles} /> : null}
+          {isVisible("table") ? (
+            <DailyDetailTable
+              startDate={filters.startDate}
+              endDate={filters.endDate}
+              data={report.daily}
+              summary={report.summary}
+            />
+          ) : null}
+          {isVisible("diagnostics") ? (
+            <RoutingDiagnosticsCard
+              open={diagnosticsOpen}
+              onOpenChange={setDiagnosticsOpen}
+              data={threadIdentityQuery.data}
+              error={getErrorMessageOrNull(threadIdentityQuery.error)}
+            />
+          ) : null}
         </>
-      ) : hasAnyError ? (
+      ) : reportError || optionsError || apiKeysError ? (
         <div className="space-y-3 rounded-xl border bg-card p-4">
-          <AlertMessage variant="warning">
-            {t("reports.errors.partial")}
-          </AlertMessage>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void handleRetry();
-            }}
-          >
-            {t("common.actions.retry")}
-          </Button>
+          <AlertMessage variant="warning">{t("reports.errors.partial")}</AlertMessage>
+          {retryButton}
         </div>
       ) : null}
     </div>

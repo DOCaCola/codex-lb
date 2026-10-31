@@ -1,5 +1,5 @@
 import { ChevronDown, X } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,8 @@ export type MultiSelectOption = {
   label: string;
   /** When true the label text gets CSS-blurred in privacy mode. */
   isEmail?: boolean;
+  /** Shown before the label, e.g. a provider logo. */
+  icon?: ReactNode;
 };
 
 type RenderedOption = MultiSelectOption & {
@@ -98,6 +100,7 @@ export function MultiSelectFilter({ label, values, options, onChange }: MultiSel
               onSelect={(e) => e.preventDefault()}
             >
               <span className="flex min-w-0 flex-1 items-center gap-2">
+                {option.icon}
                 <span className={blurred && option.isEmail ? "truncate privacy-blur" : "truncate"}>{option.label}</span>
                 {option.isStale ? (
                   <Badge variant="secondary" className="text-[10px]">

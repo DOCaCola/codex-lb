@@ -539,7 +539,7 @@ async def test_reports_api_includes_preserved_deleted_account_history(async_clie
             "medianQueueMs": 0.0,
         }
     ]
-    assert payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.42, "requests": 1, "percentage": 100.0}]
+    assert payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.42, "requests": 1}]
     assert payload["byAccount"] == [
         {
             "accountId": None,
@@ -1420,7 +1420,7 @@ async def test_reports_api_excludes_warmup_logs(async_client, db_setup):
     assert payload["summary"]["totalRequests"] == 1
     assert payload["summary"]["totalInputTokens"] == 6
     assert payload["summary"]["totalCostUsd"] == 0.4
-    assert payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.4, "requests": 1, "percentage": 100.0}]
+    assert payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.4, "requests": 1}]
     assert payload["byAccount"] == [
         {
             "accountId": "acc_reports_warmup",
@@ -1505,7 +1505,7 @@ async def test_reports_api_applies_account_and_model_filters(async_client, db_se
             "requests": 1,
         }
     ]
-    assert payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.8, "requests": 1, "percentage": 100.0}]
+    assert payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.8, "requests": 1}]
 
 
 async def test_reports_api_includes_unpriced_models_in_model_breakdown(async_client, db_setup):
@@ -1549,8 +1549,8 @@ async def test_reports_api_includes_unpriced_models_in_model_breakdown(async_cli
     payload = _legacy_report(response.json())
     assert payload["summary"]["totalRequests"] == 2
     assert payload["byModel"] == [
-        {"model": "gpt-priced", "costUsd": 0.8, "requests": 1, "percentage": None},
-        {"model": "gpt-unpriced", "costUsd": 0.0, "requests": 1, "percentage": None},
+        {"model": "gpt-priced", "costUsd": 0.8, "requests": 1},
+        {"model": "gpt-unpriced", "costUsd": 0.0, "requests": 1},
     ]
     assert response.json()["summary"]["pricedRequests"] == 1
     assert response.json()["summary"]["unpricedRequests"] == 1
@@ -1693,10 +1693,10 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
 
     payload = _legacy_report(response.json())
     assert payload["byUseragent"] == [
-        {"useragent": "opencode", "costUsd": 0.8, "requests": 1, "percentage": 33.3},
-        {"useragent": "CodexCLI", "costUsd": 0.7, "requests": 1, "percentage": 29.2},
-        {"useragent": "Missing User-Agent", "costUsd": 0.5, "requests": 1, "percentage": 20.8},
-        {"useragent": "Unknown", "costUsd": 0.4, "requests": 1, "percentage": 16.7},
+        {"useragent": "opencode", "costUsd": 0.8, "requests": 1},
+        {"useragent": "CodexCLI", "costUsd": 0.7, "requests": 1},
+        {"useragent": "Missing User-Agent", "costUsd": 0.5, "requests": 1},
+        {"useragent": "Unknown", "costUsd": 0.4, "requests": 1},
     ]
 
     filtered_response = await async_client.get(
@@ -1712,10 +1712,8 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     filtered_payload = _legacy_report(filtered_response.json())
     assert filtered_payload["summary"]["totalRequests"] == 1
     assert filtered_payload["summary"]["totalCostUsd"] == 0.8
-    assert filtered_payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.8, "requests": 1, "percentage": 100.0}]
-    assert filtered_payload["byUseragent"] == [
-        {"useragent": "opencode", "costUsd": 0.8, "requests": 1, "percentage": 100.0}
-    ]
+    assert filtered_payload["byModel"] == [{"model": "gpt-5.1", "costUsd": 0.8, "requests": 1}]
+    assert filtered_payload["byUseragent"] == [{"useragent": "opencode", "costUsd": 0.8, "requests": 1}]
 
     unknown_filtered_response = await async_client.get(
         "/api/reports",
@@ -1730,12 +1728,8 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     unknown_filtered_payload = _legacy_report(unknown_filtered_response.json())
     assert unknown_filtered_payload["summary"]["totalRequests"] == 1
     assert unknown_filtered_payload["summary"]["totalCostUsd"] == 0.4
-    assert unknown_filtered_payload["byModel"] == [
-        {"model": "gpt-5.0", "costUsd": 0.4, "requests": 1, "percentage": 100.0}
-    ]
-    assert unknown_filtered_payload["byUseragent"] == [
-        {"useragent": "Unknown", "costUsd": 0.4, "requests": 1, "percentage": 100.0}
-    ]
+    assert unknown_filtered_payload["byModel"] == [{"model": "gpt-5.0", "costUsd": 0.4, "requests": 1}]
+    assert unknown_filtered_payload["byUseragent"] == [{"useragent": "Unknown", "costUsd": 0.4, "requests": 1}]
 
     missing_useragent_filtered_response = await async_client.get(
         "/api/reports",
@@ -1750,11 +1744,9 @@ async def test_reports_api_supports_useragent_group_filter_and_breakdown(async_c
     missing_useragent_filtered_payload = _legacy_report(missing_useragent_filtered_response.json())
     assert missing_useragent_filtered_payload["summary"]["totalRequests"] == 1
     assert missing_useragent_filtered_payload["summary"]["totalCostUsd"] == 0.5
-    assert missing_useragent_filtered_payload["byModel"] == [
-        {"model": "gpt-5.4", "costUsd": 0.5, "requests": 1, "percentage": 100.0}
-    ]
+    assert missing_useragent_filtered_payload["byModel"] == [{"model": "gpt-5.4", "costUsd": 0.5, "requests": 1}]
     assert missing_useragent_filtered_payload["byUseragent"] == [
-        {"useragent": "Missing User-Agent", "costUsd": 0.5, "requests": 1, "percentage": 100.0}
+        {"useragent": "Missing User-Agent", "costUsd": 0.5, "requests": 1}
     ]
 
 
@@ -1938,3 +1930,116 @@ async def test_reports_api_filters_by_api_key_id(async_client, db_setup):
     payload3 = response3.json()
     assert payload3["summary"]["totalRequests"] == 0
     assert payload3["summary"]["totalCostUsd"] == 0.0
+
+
+async def _seed_provider_mix() -> None:
+    day = datetime(2026, 6, 1, 10, 0, 0)
+    async with SessionLocal() as session:
+        session.add(_make_account("acc_mix", "mix@example.com"))
+        session.add(ModelSource(id="src_mix", name="Mix Claude", kind="claude", base_url="https://claude.invalid"))
+        await session.flush()
+        rows = [
+            ("acc_mix", None, "gpt-a", "CLI", day, 0.4),
+            ("acc_mix", None, "gpt-b", None, day, 0.3),
+            ("acc_mix", None, "gpt-c", "SDK", day + timedelta(days=1), 0.2),
+            (None, "src_mix", "claude-x", "CLI", day + timedelta(days=1), 0.5),
+            (None, None, "gpt-a", "CLI", day, 0.1),
+        ]
+        session.add_all(
+            [
+                RequestLog(
+                    request_id=f"mix-{index}",
+                    account_id=account_id,
+                    model_source_id=source_id,
+                    model=model,
+                    useragent_group=group,
+                    requested_at=requested_at,
+                    status="success",
+                    input_tokens=10,
+                    cached_input_tokens=4,
+                    output_tokens=3,
+                    reasoning_tokens=1,
+                    cost_usd=cost,
+                )
+                for index, (account_id, source_id, model, group, requested_at, cost) in enumerate(rows)
+            ]
+        )
+        await session.commit()
+
+
+async def test_reports_accept_repeated_model_and_useragent_filters(async_client, db_setup):
+    await _seed_provider_mix()
+    response = await async_client.get(
+        "/api/reports",
+        params=[
+            ("start_date", "2026-06-01"),
+            ("end_date", "2026-06-02"),
+            ("model", "gpt-a"),
+            ("model", "gpt-b"),
+            ("model", "claude-x"),
+            ("useragent_group", "Missing User-Agent"),
+            ("useragent_group", "CLI"),
+        ],
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert sorted((entry["model"], entry["requests"]) for entry in payload["byModel"]) == [
+        ("claude-x", 1),
+        ("gpt-a", 2),
+        ("gpt-b", 1),
+    ]
+    assert payload["summary"]["totalRequests"] == 4
+
+
+async def test_reports_select_codex_and_provider_accounts_together(async_client, db_setup):
+    await _seed_provider_mix()
+    response = await async_client.get(
+        "/api/reports",
+        params={"start_date": "2026-06-01", "end_date": "2026-06-02", "model_source_id": "src_mix"},
+    )
+    assert response.status_code == 200
+    assert [(entry["modelSourceId"], entry["requests"]) for entry in response.json()["byAccount"]] == [("src_mix", 1)]
+
+    response = await async_client.get(
+        "/api/reports",
+        params={
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-02",
+            "account_id": "acc_mix",
+            "model_source_id": "src_mix",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["totalRequests"] == 4
+
+
+async def test_reports_daily_splits_sum_to_daily_totals(async_client, db_setup):
+    await _seed_provider_mix()
+    response = await async_client.get("/api/reports", params={"start_date": "2026-06-01", "end_date": "2026-06-02"})
+    assert response.status_code == 200
+    payload = response.json()
+    measures = ("requests", "inputTokens", "cachedInputTokens", "outputTokens", "reasoningTokens", "costUsd")
+    for split in ("dailyByAccount", "dailyByModel"):
+        for day in payload["daily"]:
+            entries = [entry for entry in payload[split] if entry["date"] == day["date"]]
+            for measure in measures:
+                assert sum(entry[measure] for entry in entries) == pytest.approx(day[measure]), (split, measure)
+    by_account = {(entry["accountId"], entry["modelSourceId"]): entry for entry in payload["dailyByAccount"]}
+    assert by_account[(None, "src_mix")]["name"] == "Mix Claude"
+    assert by_account[(None, "src_mix")]["provider"] == "claude"
+    assert by_account[(None, "src_mix")]["date"] == "2026-06-02"
+
+
+async def test_report_account_options_ignore_the_account_selection(async_client, db_setup):
+    await _seed_provider_mix()
+    response = await async_client.get(
+        "/api/reports/options",
+        params={"start_date": "2026-06-01", "end_date": "2026-06-02", "account_id": "acc_mix"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accounts"] == [
+        {"accountId": None, "modelSourceId": "src_mix", "provider": "claude", "name": "Mix Claude"},
+        {"accountId": "acc_mix", "modelSourceId": None, "provider": "codex", "name": "mix@example.com"},
+    ]
+    assert payload["models"] == ["gpt-a", "gpt-b", "gpt-c"]

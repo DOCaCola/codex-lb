@@ -43,6 +43,7 @@ from app.modules.accounts.usage_time_rollup import (
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.quota_planner.logic import _bin_demand_units
 from app.modules.quota_planner.repository import QuotaPlannerRepository
+from app.modules.reports.filters import ReportFilters
 from app.modules.reports.repository import ReportsRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 
@@ -310,10 +311,21 @@ async def _snapshot(*, lead_since: datetime = SINCE_UNALIGNED) -> dict:
             "conv_buckets_raw_degrade": await logs.aggregate_conversations_by_bucket(lead_since, 5400),
             "reports_summary": await reports.aggregate_summary(SINCE_ALIGNED, UNTIL_UNALIGNED),
             "reports_summary_filtered": await reports.aggregate_summary(
-                SINCE_ALIGNED, UNTIL_UNALIGNED, account_ids=["acc_par_a"]
+                SINCE_ALIGNED, UNTIL_UNALIGNED, ReportFilters.create(account_ids=["acc_par_a"])
+            ),
+            "reports_summary_multi": await reports.aggregate_summary(
+                SINCE_ALIGNED,
+                UNTIL_UNALIGNED,
+                ReportFilters.create(models=list(_MODELS), useragent_groups=["Missing User-Agent"]),
             ),
             "reports_daily_utc": await reports.aggregate_daily_rows(
                 BASE.date(), (BASE + timedelta(days=9)).date(), timezone.utc
+            ),
+            "reports_split_by_account": await reports.aggregate_daily_by_account(
+                BASE.date(), (BASE + timedelta(days=9)).date(), timezone.utc
+            ),
+            "reports_split_by_model": await reports.aggregate_daily_by_model(
+                BASE.date(), (BASE + timedelta(days=9)).date(), timezone.utc, ReportFilters.create(models=[_MODELS[1]])
             ),
             # A half-hour-offset local day: per-day windows are NOT
             # hour-aligned, so every day carries partial raw edges around the
@@ -460,6 +472,13 @@ def _assert_snapshots_equal(actual: dict, expected: dict, *, skip_keys: tuple[st
                 assert [getattr(row, field) for row in actual_value] == pytest.approx(
                     [getattr(row, field) for row in expected_value], rel=1e-9, abs=1e-9
                 ), (key, field)
+        elif key.startswith("reports_split"):
+            assert [replace(row, measures=replace(row.measures, cost_usd=0.0)) for row in actual_value] == [
+                replace(row, measures=replace(row.measures, cost_usd=0.0)) for row in expected_value
+            ], key
+            assert [row.measures.cost_usd for row in actual_value] == pytest.approx(
+                [row.measures.cost_usd for row in expected_value], rel=1e-9, abs=1e-9
+            ), key
         elif key.startswith("trends"):
             assert [(row.bucket_epoch, row.total_tokens) for row in actual_value] == [
                 (row.bucket_epoch, row.total_tokens) for row in expected_value

@@ -32,7 +32,6 @@ const ModelCostEntrySchema = z.object({
   model: z.string(),
   costUsd: z.number(),
   requests: z.number(),
-  percentage: z.number().nullable(),
 });
 
 const UseragentCostEntrySchema = z.object({
@@ -40,17 +39,41 @@ const UseragentCostEntrySchema = z.object({
   useragent: z.string(),
   costUsd: z.number(),
   requests: z.number(),
-  percentage: z.number().nullable(),
 });
 
-const AccountCostEntrySchema = z.object({
-  ...CostCoverageFields,
+const AccountIdentityFields = {
   accountId: z.string().nullable(),
   modelSourceId: z.string().nullable(),
   provider: z.enum(ACCOUNT_PROVIDERS).nullable(),
   name: z.string().nullable(),
+};
+
+const AccountCostEntrySchema = z.object({
+  ...CostCoverageFields,
+  ...AccountIdentityFields,
   costUsd: z.number(),
   requests: z.number(),
+});
+
+const DailySplitMeasuresFields = {
+  ...CostCoverageFields,
+  date: z.string(),
+  requests: z.number(),
+  inputTokens: z.number(),
+  cachedInputTokens: z.number(),
+  outputTokens: z.number(),
+  reasoningTokens: z.number().nullable(),
+  costUsd: z.number(),
+};
+
+const DailyAccountSplitSchema = z.object({
+  ...DailySplitMeasuresFields,
+  ...AccountIdentityFields,
+});
+
+const DailyModelSplitSchema = z.object({
+  ...DailySplitMeasuresFields,
+  model: z.string(),
 });
 
 const ReportSummarySchema = z.object({
@@ -66,7 +89,7 @@ const ReportSummarySchema = z.object({
   totalErrors: z.number(),
   totalConversations: z.number(),
   activeAccounts: z.number(),
-  avgCostPerDay: z.number().nullable(),
+  avgCostPerDay: z.number(),
   avgRequestsPerDay: z.number(),
 });
 
@@ -82,9 +105,12 @@ const ReportComparisonSchema = z.object({
   previous: ReportComparisonPreviousSchema,
 });
 
+const ReportAccountOptionSchema = z.object(AccountIdentityFields);
+
 export const ReportsOptionsResponseSchema = z.object({
   models: z.array(z.string()),
   useragents: z.array(z.string()),
+  accounts: z.array(ReportAccountOptionSchema),
 });
 
 export const ReportsResponseSchema = z.object({
@@ -94,6 +120,8 @@ export const ReportsResponseSchema = z.object({
   summary: ReportSummarySchema,
   comparison: ReportComparisonSchema,
   daily: z.array(DailyReportRowSchema),
+  dailyByAccount: z.array(DailyAccountSplitSchema),
+  dailyByModel: z.array(DailyModelSplitSchema),
   byModel: z.array(ModelCostEntrySchema),
   byUseragent: z.array(UseragentCostEntrySchema),
   byAccount: z.array(AccountCostEntrySchema),
@@ -128,9 +156,12 @@ export const ThreadIdentityResponseSchema = z.object({
 });
 
 export type DailyReportRow = z.input<typeof DailyReportRowSchema>;
+export type DailyAccountSplit = z.input<typeof DailyAccountSplitSchema>;
+export type DailyModelSplit = z.input<typeof DailyModelSplitSchema>;
 export type ModelCostEntry = z.input<typeof ModelCostEntrySchema>;
 export type UseragentCostEntry = z.input<typeof UseragentCostEntrySchema>;
 export type AccountCostEntry = z.input<typeof AccountCostEntrySchema>;
+export type ReportAccountOption = z.infer<typeof ReportAccountOptionSchema>;
 export type ReportSummary = z.input<typeof ReportSummarySchema>;
 export type ReportComparison = z.input<typeof ReportComparisonSchema>;
 export type ReportsResponse = z.infer<typeof ReportsResponseSchema>;
