@@ -608,9 +608,9 @@ test("the API key create dialog stays inside supported viewports", async ({ page
     { size: { width: 1440, height: 900 }, columns: 2 },
   ] as const;
 
-  await page.goto("/apis", { waitUntil: "networkidle" });
+  await page.goto("/keys", { waitUntil: "networkidle" });
 
-  await expect(page.getByRole("heading", { name: "APIs", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "API Keys", exact: true })).toBeVisible();
   const openDialogButton = page.getByRole("button", { name: "Create API Key" });
   const dialog = page.getByRole("dialog", { name: "Create API key" });
   const title = dialog.getByRole("heading", { name: "Create API key" });

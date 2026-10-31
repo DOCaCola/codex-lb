@@ -16,15 +16,15 @@ function getDialogFooterClose(dialog: HTMLElement): HTMLElement {
 
 describe("apis page integration", () => {
 	beforeEach(() => {
-		window.history.pushState({}, "", "/apis");
+		window.history.pushState({}, "", "/keys");
 	});
 
 	it("loads the APIs page, selects by query param, and filters keys by search", async () => {
-		window.history.pushState({}, "", "/apis?selected=key_2");
+		window.history.pushState({}, "", "/keys?selected=key_2");
 		const user = userEvent.setup();
 		renderWithProviders(<App />);
 
-		expect(await screen.findByRole("heading", { name: "APIs" })).toBeInTheDocument();
+		expect(await screen.findByRole("heading", { name: "API Keys" })).toBeInTheDocument();
 		expect(await screen.findByText("Overview")).toBeInTheDocument();
 		expect(await screen.findByRole("heading", { name: "Read only key" })).toBeInTheDocument();
 
@@ -147,7 +147,7 @@ describe("apis page integration", () => {
 
 		renderWithProviders(<App />);
 
-		expect(await screen.findByRole("heading", { name: "APIs" })).toBeInTheDocument();
+		expect(await screen.findByRole("heading", { name: "API Keys" })).toBeInTheDocument();
 		expect(await screen.findByText("No API keys yet")).toBeInTheDocument();
 		expect(screen.getByText("Select an API key")).toBeInTheDocument();
 	});

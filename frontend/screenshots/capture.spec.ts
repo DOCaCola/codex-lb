@@ -738,7 +738,7 @@ test("API comparison trends across metrics and modes on desktop and mobile", asy
   await applyTheme(page, "light");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(BASE_URL);
-  await page.getByRole("link", { name: "APIs", exact: true }).click();
+  await page.getByRole("link", { name: "API Keys", exact: true }).click();
   const panel = page.getByTestId("api-keys-comparison-trend");
   await expect(panel.getByRole("heading", { name: "Usage Trend by API Key (7d)" })).toBeVisible();
   await expect(panel.locator(".recharts-area-curve")).toHaveCount(6);
@@ -802,7 +802,7 @@ test("API lifetime cost bars and compact labels on desktop and mobile", async ({
   await applyTheme(page, "light");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(BASE_URL);
-  await page.getByRole("link", { name: "APIs", exact: true }).click();
+  await page.getByRole("link", { name: "API Keys", exact: true }).click();
   const panel = page.getByTestId("api-keys-overview-cost-panel");
   await expect(panel.getByText("$44,248.05 · 75%", { exact: true })).toBeVisible();
   await expect(panel.getByText("$14,749.35 · 25%", { exact: true })).toBeVisible();

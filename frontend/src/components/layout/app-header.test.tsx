@@ -133,7 +133,7 @@ describe("AppHeader", () => {
     expect(await screen.findByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Reports/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Providers/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /APIs/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /API Keys/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Settings/i })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Automations" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Advanced" })).not.toBeInTheDocument();
@@ -313,7 +313,7 @@ describe("AppHeader", () => {
 
       renderHeader();
 
-      for (const name of [/Dashboard/i, /Reports/i, /Providers/i, /APIs/i, /Settings/i]) {
+      for (const name of [/Dashboard/i, /Reports/i, /Providers/i, /API Keys/i, /Settings/i]) {
         expect(screen.getByRole("link", { name })).toBeInTheDocument();
       }
     });

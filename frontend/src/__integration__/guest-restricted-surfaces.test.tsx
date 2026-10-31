@@ -108,14 +108,14 @@ describe("guest restricted surfaces integration", () => {
     useAuthStore.setState({ role: "admin", permissions: ADMIN_PERMISSIONS, canWrite: true, initialized: false });
   });
 
-  it("shows the administrator-only notice on /apis without requesting API keys", async () => {
+  it("shows the administrator-only notice on /keys without requesting API keys", async () => {
     useGuestSession();
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/apis");
+    window.history.pushState({}, "", "/keys");
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("heading", { name: "APIs" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "API Keys" })).toBeInTheDocument();
     expect(await screen.findByText("API keys are managed by administrators")).toBeInTheDocument();
     expect(screen.getByText("Sign in as an administrator to view and manage API keys.")).toBeInTheDocument();
     // Header badge query proves the page settled its network work.
@@ -145,7 +145,7 @@ describe("guest restricted surfaces integration", () => {
     await waitFor(() => expect(paths).toContain("/api/firewall/ips"));
 
     expect(screen.queryByRole("button", { name: "Create key" })).not.toBeInTheDocument();
-    expect(screen.queryByText("API Keys")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("main")).queryByText("API Keys")).not.toBeInTheDocument();
     expect(screen.queryByText("Sticky sessions")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(restrictedRequests(paths)).toEqual([]);
@@ -235,7 +235,7 @@ describe("guest restricted surfaces integration", () => {
 
   it("keeps the API key page for writers (regression)", async () => {
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/apis");
+    window.history.pushState({}, "", "/keys");
 
     renderWithProviders(<App />);
 

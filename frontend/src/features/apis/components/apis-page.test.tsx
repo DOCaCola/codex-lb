@@ -158,7 +158,7 @@ describe("ApisPage", () => {
 
 		renderApisPage();
 
-		expect(screen.getByRole("heading", { name: "APIs" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "API Keys" })).toBeInTheDocument();
 		expect(screen.getByRole("status")).toHaveTextContent("API keys are managed by administrators");
 		expect(screen.getByRole("status")).toHaveTextContent(
 			"Sign in as an administrator to view and manage API keys.",

@@ -104,6 +104,15 @@ describe("route recovery flow integration", () => {
     expect(screen.queryByTestId("route-not-found")).not.toBeInTheDocument();
   });
 
+  it("treats the retired /apis address as an unknown route", async () => {
+    window.history.pushState({}, "", "/apis");
+
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId("route-not-found")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/apis");
+  });
+
   it("contains a rejected lazy route and exposes keyboard recovery", async () => {
     const user = userEvent.setup({ delay: null });
     window.history.pushState({}, "", "/providers");

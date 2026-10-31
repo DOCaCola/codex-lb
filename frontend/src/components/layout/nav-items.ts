@@ -11,7 +11,7 @@ export const CORE_NAV_ITEMS = [
   { to: "/logs", labelKey: "nav.logs", requires: "dashboard:read" },
   { to: "/reports", labelKey: "nav.reports", requires: "dashboard:read" },
   { to: "/providers", labelKey: "nav.providers", requires: "accounts:read" },
-  { to: "/apis", labelKey: "nav.apis", requires: "dashboard:read" },
+  { to: "/keys", labelKey: "nav.apis", requires: "dashboard:read" },
   { to: "/settings", labelKey: "nav.settings", requires: "dashboard:read" },
 ] as const satisfies readonly NavItem[];
 
