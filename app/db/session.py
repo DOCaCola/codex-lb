@@ -140,7 +140,12 @@ def _postgres_async_connect_args(url: str) -> dict[str, object] | None:
     # mis-evaluated. Forcing UTC keeps stored timestamps correct regardless of
     # the container time zone.
     connect_args: dict[str, object] = {
-        "server_settings": {"timezone": "UTC"},
+        # JIT is disabled because the planner badly overestimates rows for the
+        # report and rollup range joins, so JIT compilation (≈1 s per query)
+        # dwarfs execution that takes tens of milliseconds. The application's
+        # queries are short OLTP and index-bounded report reads that gain
+        # nothing from JIT.
+        "server_settings": {"timezone": "UTC", "jit": "off"},
         # Bound every statement so a query stalled on a half-dead connection
         # cannot hold application locks forever (issue #1971). asyncpg cancels
         # the statement server-side and raises, surfacing the stall as an

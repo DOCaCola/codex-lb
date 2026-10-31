@@ -459,109 +459,39 @@ def _daily_speed_medians_stmt(
     filters: ReportFilters,
 ):
     day_ranges_cte = _day_ranges_cte(day_ranges)
-    traffic_join = day_ranges_cte.join(
-        RequestLog,
-        and_(
-            RequestLog.requested_at >= day_ranges_cte.c.day_start,
-            RequestLog.requested_at < day_ranges_cte.c.day_end,
-            _normal_traffic_clause(),
-            *filters.request_log_conditions(),
-        ),
-    )
-    tps = request_tps_expr()
-    ttft_values_cte = (
+    # Constant outer bounds let PostgreSQL range-scan the requested_at index;
+    # the per-day join below only assigns each sampled row to its report day.
+    range_start = day_ranges[0][1]
+    range_end = day_ranges[-1][2]
+    # One samples CTE serves all three metrics. Because it is referenced more
+    # than once, PostgreSQL materializes it and reads request_logs a single time.
+    samples_cte = (
         select(
             day_ranges_cte.c.report_date,
             RequestLog.latency_first_token_ms.label("ttft_ms"),
-        )
-        .select_from(traffic_join)
-        .where(RequestLog.latency_first_token_ms.is_not(None))
-        .cte("daily_ttft_values")
-    )
-    tps_values_cte = (
-        select(
-            day_ranges_cte.c.report_date,
-            tps.label("tps"),
-        )
-        .select_from(traffic_join)
-        .where(tps.is_not(None))
-        .cte("daily_tps_values")
-    )
-    queue_values_cte = (
-        select(
-            day_ranges_cte.c.report_date,
+            request_tps_expr().label("tps"),
             RequestLog.latency_queue_ms.label("queue_ms"),
         )
-        .select_from(traffic_join)
-        .where(RequestLog.latency_queue_ms.is_not(None))
-        .cte("daily_queue_values")
-    )
-    ttft_count = func.count().over(partition_by=ttft_values_cte.c.report_date)
-    ttft_ranked_cte = select(
-        ttft_values_cte.c.report_date,
-        ttft_values_cte.c.ttft_ms,
-        ttft_count.label("sample_count"),
-        func.row_number()
-        .over(partition_by=ttft_values_cte.c.report_date, order_by=ttft_values_cte.c.ttft_ms)
-        .label("ttft_rank"),
-    ).cte("daily_ttft_ranks")
-    tps_count = func.count().over(partition_by=tps_values_cte.c.report_date)
-    tps_ranked_cte = select(
-        tps_values_cte.c.report_date,
-        tps_values_cte.c.tps,
-        tps_count.label("sample_count"),
-        func.row_number()
-        .over(partition_by=tps_values_cte.c.report_date, order_by=tps_values_cte.c.tps)
-        .label("tps_rank"),
-    ).cte("daily_tps_ranks")
-    queue_count = func.count().over(partition_by=queue_values_cte.c.report_date)
-    queue_ranked_cte = select(
-        queue_values_cte.c.report_date,
-        queue_values_cte.c.queue_ms,
-        queue_count.label("sample_count"),
-        func.row_number()
-        .over(partition_by=queue_values_cte.c.report_date, order_by=queue_values_cte.c.queue_ms)
-        .label("queue_rank"),
-    ).cte("daily_queue_ranks")
-
-    # A median contains the one center row for odd samples and both center rows
-    # for even samples. Multiplication avoids dialect-specific integer division.
-    ttft_is_middle = and_(
-        ttft_ranked_cte.c.ttft_rank * 2 >= ttft_ranked_cte.c.sample_count,
-        ttft_ranked_cte.c.ttft_rank * 2 <= ttft_ranked_cte.c.sample_count + 2,
-    )
-    tps_is_middle = and_(
-        tps_ranked_cte.c.tps_rank * 2 >= tps_ranked_cte.c.sample_count,
-        tps_ranked_cte.c.tps_rank * 2 <= tps_ranked_cte.c.sample_count + 2,
-    )
-    queue_is_middle = and_(
-        queue_ranked_cte.c.queue_rank * 2 >= queue_ranked_cte.c.sample_count,
-        queue_ranked_cte.c.queue_rank * 2 <= queue_ranked_cte.c.sample_count + 2,
-    )
-    ttft_medians_cte = (
-        select(
-            ttft_ranked_cte.c.report_date,
-            func.avg(case((ttft_is_middle, ttft_ranked_cte.c.ttft_ms), else_=None)).label("median_ttft_ms"),
+        .select_from(
+            day_ranges_cte.join(
+                RequestLog,
+                and_(
+                    RequestLog.requested_at >= day_ranges_cte.c.day_start,
+                    RequestLog.requested_at < day_ranges_cte.c.day_end,
+                ),
+            )
         )
-        .group_by(ttft_ranked_cte.c.report_date)
-        .cte("daily_ttft_medians")
-    )
-    tps_medians_cte = (
-        select(
-            tps_ranked_cte.c.report_date,
-            func.avg(case((tps_is_middle, tps_ranked_cte.c.tps), else_=None)).label("median_tps"),
+        .where(
+            RequestLog.requested_at >= range_start,
+            RequestLog.requested_at < range_end,
+            _normal_traffic_clause(),
+            *filters.request_log_conditions(),
         )
-        .group_by(tps_ranked_cte.c.report_date)
-        .cte("daily_tps_medians")
+        .cte("daily_speed_samples")
     )
-    queue_medians_cte = (
-        select(
-            queue_ranked_cte.c.report_date,
-            func.avg(case((queue_is_middle, queue_ranked_cte.c.queue_ms), else_=None)).label("median_queue_ms"),
-        )
-        .group_by(queue_ranked_cte.c.report_date)
-        .cte("daily_queue_medians")
-    )
+    ttft_medians_cte = _daily_median_cte(samples_cte, "ttft_ms", "median_ttft_ms")
+    tps_medians_cte = _daily_median_cte(samples_cte, "tps", "median_tps")
+    queue_medians_cte = _daily_median_cte(samples_cte, "queue_ms", "median_queue_ms")
     return (
         select(
             day_ranges_cte.c.report_date,
@@ -584,6 +514,34 @@ def _daily_speed_medians_stmt(
             )
         )
         .order_by(day_ranges_cte.c.report_date)
+    )
+
+
+def _daily_median_cte(samples_cte, metric: str, label: str):
+    value = samples_cte.c[metric]
+    ranked_cte = (
+        select(
+            samples_cte.c.report_date,
+            value.label("value"),
+            func.count().over(partition_by=samples_cte.c.report_date).label("sample_count"),
+            func.row_number().over(partition_by=samples_cte.c.report_date, order_by=value).label("value_rank"),
+        )
+        .where(value.is_not(None))
+        .cte(f"daily_{metric}_ranks")
+    )
+    # A median contains the one center row for odd samples and both center rows
+    # for even samples. Multiplication avoids dialect-specific integer division.
+    is_middle = and_(
+        ranked_cte.c.value_rank * 2 >= ranked_cte.c.sample_count,
+        ranked_cte.c.value_rank * 2 <= ranked_cte.c.sample_count + 2,
+    )
+    return (
+        select(
+            ranked_cte.c.report_date,
+            func.avg(case((is_middle, ranked_cte.c.value), else_=None)).label(label),
+        )
+        .group_by(ranked_cte.c.report_date)
+        .cte(f"daily_{metric}_medians")
     )
 
 

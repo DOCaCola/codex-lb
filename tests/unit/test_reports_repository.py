@@ -805,9 +805,25 @@ def test_daily_speed_medians_stmt_compiles_to_portable_window_sql() -> None:
 
         assert "row_number() over" in sql
         assert "count(*) over" in sql
-        assert "group by daily_ttft_ranks.report_date" in sql
+        assert "group by daily_ttft_ms_ranks.report_date" in sql
         assert "group by daily_tps_ranks.report_date" in sql
         assert "percentile_cont" not in sql
+
+
+def test_daily_speed_medians_stmt_reads_request_logs_once_within_constant_range_bounds() -> None:
+    statement = _daily_speed_medians_stmt(
+        [
+            ("2026-06-01", datetime(2026, 6, 1), datetime(2026, 6, 2)),
+            ("2026-06-02", datetime(2026, 6, 2), datetime(2026, 6, 3)),
+        ],
+        ReportFilters(),
+    )
+
+    sql = str(statement.compile(dialect=postgresql_dialect(), compile_kwargs={"literal_binds": True})).lower()
+
+    assert sql.count("from report_days join request_logs") == 1
+    assert "request_logs.requested_at >= '2026-06-01 00:00:00'" in sql
+    assert "request_logs.requested_at < '2026-06-03 00:00:00'" in sql
 
 
 @pytest.mark.asyncio
