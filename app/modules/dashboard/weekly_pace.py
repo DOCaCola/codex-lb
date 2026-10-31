@@ -29,6 +29,9 @@ RELIEF_CLUSTER_WINDOW = timedelta(hours=1)
 SATURATED_USED_PERCENT = 99.5
 TIGHT_MARGIN_HOURS = 24.0
 TIGHT_HEADROOM_PERCENT = 12.0
+# Quota left unspent when subscriptions end, as a share of the pool, that turns
+# the verdict to "lapses" so the operator can still spend it.
+LAPSE_NOTICE_PERCENT = 5.0
 MIN_FRESHNESS_SECONDS = 300.0
 FRESHNESS_MISSED_REFRESH_CYCLES = 3.0
 PACE_ELIGIBLE_ACCOUNT_STATUSES = frozenset(
@@ -90,6 +93,13 @@ class _PaceAccount:
         return self.ends_at_ms is None or self.reset_at_ms < self.ends_at_ms
 
 
+@dataclass(frozen=True)
+class _Lapse:
+    credits: float
+    in_hours: float | None
+    use_up_rate_credits_per_hour: float
+
+
 @dataclass
 class _SimulationAccount:
     full_credits: float
@@ -116,13 +126,6 @@ def pending_subscription_end(ends_at: datetime | None, now: datetime) -> datetim
 def pending_subscription_end_ms(ends_at: datetime | None, now: datetime) -> float | None:
     pending = pending_subscription_end(ends_at, now)
     return naive_utc_to_epoch(pending) * 1000.0 if pending is not None else None
-
-
-def positive_used_percent_delta(samples: Sequence[PaceSample]) -> float:
-    """Usage added across consecutive observations; resets read as no demand rather than negative demand."""
-    return sum(
-        max(0.0, current.used_percent - previous.used_percent) for previous, current in zip(samples, samples[1:])
-    )
 
 
 @dataclass
@@ -334,10 +337,12 @@ def build_weekly_pace(
     recent_burn_rate = _fleet_recent_burn_rate_credits_per_hour(pace_accounts, now)
     depletion_eta_hours = _depletion_eta_hours(pace_accounts, now_ms, recent_burn_rate)
     next_relief_in_hours, next_relief_credits = _next_relief(pace_accounts, now_ms)
+    lapse = _subscription_lapse(pace_accounts, now_ms, recent_burn_rate)
     runway_status = _runway_status(
         depletion_eta_hours=depletion_eta_hours,
         next_relief_in_hours=next_relief_in_hours,
         headroom_percent=headroom_percent,
+        lapse_percent=100.0 * lapse.credits / total_full_credits if lapse is not None else None,
     )
     saturated_account_count = sum(_used_percent(account) >= SATURATED_USED_PERCENT for account in pace_accounts)
     add_pro_accounts = None
@@ -387,6 +392,9 @@ def build_weekly_pace(
         depletion_eta_hours=depletion_eta_hours,
         next_relief_in_hours=next_relief_in_hours,
         next_relief_credits=next_relief_credits,
+        lapsing_credits=lapse.credits if lapse is not None else None,
+        lapse_in_hours=lapse.in_hours if lapse is not None else None,
+        use_up_rate_credits_per_hour=lapse.use_up_rate_credits_per_hour if lapse is not None else None,
         reset_events=_reset_events(pace_accounts, now_ms),
         subscription_ends=_subscription_ends(pace_accounts, now_ms),
         runway_status=runway_status,
@@ -433,8 +441,10 @@ def _depletion_eta_hours(
 ) -> float | None:
     """Hours until the pool is spent at the recent burn rate, before any reset relief.
 
-    Balances that end first are spent first, and whatever is left of an ending
-    account lapses at its end; without end dates this is headroom over burn.
+    Balances that end first are spent first, and whatever is left of an account
+    ending in its current window lapses at its end; without end dates this is
+    headroom over burn. A pool whose capacity all ends unspent never runs dry:
+    the unspent quota lapses instead (see ``_subscription_lapse``).
     """
     if burn_rate_credits_per_hour is None or burn_rate_credits_per_hour <= 0:
         return None
@@ -446,7 +456,8 @@ def _depletion_eta_hours(
                 balance_credits=account.remaining_credits,
                 reset_at_ms=inf,
                 window_ms=account.window_ms,
-                ends_at_ms=account.ends_at_ms,
+                # An account that resets before its end brings relief first.
+                ends_at_ms=None if account.resets_before_end else account.ends_at_ms,
             )
             for account in accounts
         ),
@@ -460,7 +471,70 @@ def _depletion_eta_hours(
         _consume_balance(balances, spend_credits)
         cursor_ms = ends_at_ms
         balances.pop(0)
+    if not balances:
+        return None
     return (cursor_ms - now_ms + _total_balance(balances) / burn_rate_credits_per_ms) / 3_600_000.0
+
+
+def _subscription_lapse(
+    accounts: list[_PaceAccount],
+    now_ms: float,
+    burn_rate_credits_per_hour: float | None,
+) -> _Lapse | None:
+    """Quota that the recent burn leaves unspent when subscriptions end in their current window.
+
+    The simulation spends the balance that expires first and refills renewing
+    accounts at their resets, until the last such end. ``in_hours`` is the first end
+    that leaves quota behind. The use-up rate is the steady spend on the ending
+    accounts alone that leaves nothing behind at any of their ends.
+    """
+    ending = sorted(
+        (account.ends_at_ms, account.remaining_credits)
+        for account in accounts
+        if account.ends_at_ms is not None and not account.resets_before_end
+    )
+    if not ending or burn_rate_credits_per_hour is None:
+        return None
+    burn_rate_credits_per_ms = max(0.0, burn_rate_credits_per_hour) / 3_600_000.0
+    simulation = [
+        _SimulationAccount(
+            full_credits=account.full_credits,
+            balance_credits=account.remaining_credits,
+            reset_at_ms=account.reset_at_ms,
+            window_ms=account.window_ms,
+            ends_at_ms=account.ends_at_ms,
+        )
+        for account in accounts
+    ]
+    last_end_ms = ending[-1][0]
+    cursor_ms = now_ms
+    lapsed_credits = 0.0
+    first_lapse_ms: float | None = None
+    while simulation:
+        event = min(simulation, key=lambda account: account.expires_at_ms)
+        if event.expires_at_ms > last_end_ms:
+            break
+        _consume_balance(simulation, burn_rate_credits_per_ms * (event.expires_at_ms - cursor_ms))
+        cursor_ms = event.expires_at_ms
+        if event.ends_at_ms is not None and event.ends_at_ms <= event.reset_at_ms:
+            if event.balance_credits > 0 and first_lapse_ms is None:
+                first_lapse_ms = cursor_ms
+            lapsed_credits += event.balance_credits
+            simulation.remove(event)
+        else:
+            event.balance_credits = event.full_credits
+            event.reset_at_ms += event.window_ms
+
+    use_up_rate = 0.0
+    ending_balance = 0.0
+    for ends_at_ms, remaining_credits in ending:
+        ending_balance += remaining_credits
+        use_up_rate = max(use_up_rate, ending_balance / ((ends_at_ms - now_ms) / 3_600_000.0))
+    return _Lapse(
+        credits=lapsed_credits,
+        in_hours=(first_lapse_ms - now_ms) / 3_600_000.0 if first_lapse_ms is not None else None,
+        use_up_rate_credits_per_hour=use_up_rate,
+    )
 
 
 def _next_relief(accounts: list[_PaceAccount], now_ms: float) -> tuple[float | None, float]:
@@ -521,6 +595,7 @@ def _runway_status(
     depletion_eta_hours: float | None,
     next_relief_in_hours: float | None,
     headroom_percent: float,
+    lapse_percent: float | None,
 ) -> WeeklyCreditRunwayStatus:
     if depletion_eta_hours is not None and (next_relief_in_hours is None or depletion_eta_hours < next_relief_in_hours):
         return "runs_dry"
@@ -528,7 +603,12 @@ def _runway_status(
         depletion_eta_hours is not None
         and next_relief_in_hours is not None
         and depletion_eta_hours - next_relief_in_hours < TIGHT_MARGIN_HOURS
-    ) or headroom_percent < TIGHT_HEADROOM_PERCENT:
+    ):
+        return "tight"
+    # Quota that will lapse is spare, not scarce: it outranks low headroom.
+    if lapse_percent is not None and lapse_percent >= LAPSE_NOTICE_PERCENT:
+        return "lapses"
+    if headroom_percent < TIGHT_HEADROOM_PERCENT:
         return "tight"
     return "safe"
 
@@ -783,6 +863,8 @@ def _legacy_status(runway_status: WeeklyCreditRunwayStatus) -> WeeklyCreditPaceS
         return "danger"
     if runway_status == "tight":
         return "ahead"
+    if runway_status == "lapses":
+        return "behind"
     return "on_track"
 
 

@@ -90,6 +90,9 @@ def test_ending_balance_is_spent_first_and_lapses_at_the_end() -> None:
     assert ending.depletion_eta_hours == pytest.approx(7.0)
     assert ending.next_relief_in_hours == pytest.approx(100.0)
     assert ending.runway_status == "runs_dry"
+    assert ending.lapsing_credits == pytest.approx(0.3)
+    assert ending.lapse_in_hours == pytest.approx(2.0)
+    assert ending.use_up_rate_credits_per_hour == pytest.approx(0.25)
 
 
 def test_reset_after_the_end_is_not_relief() -> None:
@@ -115,15 +118,65 @@ def test_schedule_spends_the_account_by_its_end() -> None:
     assert ending.scheduled_burn_rate_credits_per_hour == pytest.approx(1.0 / (5.25 * 24))
 
 
-def test_pool_that_ends_before_any_reset_has_no_relief_and_runs_dry() -> None:
+def test_pool_that_ends_unspent_lapses_instead_of_running_dry() -> None:
     # 0.02 units/hour leaves 0.26 of the 0.5 unspent when the account ends in 12 hours.
     pace = _pace(_input("a", used_percent=50.0, reset_in_hours=24.0, ends_in_hours=12.0, hourly_delta=2.0))
 
     assert pace.next_relief_in_hours is None
     assert pace.reset_events == []
-    assert pace.depletion_eta_hours == pytest.approx(12.0)
-    assert pace.projected_depletion_hours == pytest.approx(12.0)
+    assert pace.depletion_eta_hours is None
+    assert pace.lapsing_credits == pytest.approx(0.26)
+    assert pace.lapse_in_hours == pytest.approx(12.0)
+    # Spending the 0.5 left by the end needs 0.5 / 12 units an hour.
+    assert pace.use_up_rate_credits_per_hour == pytest.approx(0.5 / 12.0)
+    assert pace.runway_status == "lapses"
+    assert pace.status == "behind"
+
+
+def test_pool_spent_before_its_end_runs_dry() -> None:
+    # 0.1 units/hour spends the 0.5 left in 5 hours, before the end in 12 hours.
+    pace = _pace(_input("a", used_percent=50.0, reset_in_hours=24.0, ends_in_hours=12.0, hourly_delta=10.0))
+
+    assert pace.depletion_eta_hours == pytest.approx(5.0)
+    assert pace.lapsing_credits == pytest.approx(0.0)
+    assert pace.lapse_in_hours is None
     assert pace.runway_status == "runs_dry"
+
+
+def test_small_lapse_stays_below_the_notice() -> None:
+    # 0.04 units/hour leaves 0.02 of 1 unit (2%) when the account ends in 12 hours.
+    pace = _pace(_input("a", used_percent=50.0, reset_in_hours=24.0, ends_in_hours=12.0, hourly_delta=4.0))
+
+    assert pace.lapsing_credits == pytest.approx(0.02)
+    assert pace.runway_status == "safe"
+
+
+def test_lapse_outranks_low_headroom() -> None:
+    # 8% left lapses unspent without burn; that is spare quota, not a shortage.
+    pace = _pace(_input("a", used_percent=92.0, reset_in_hours=24.0, ends_in_hours=12.0, hourly_delta=0.0))
+
+    assert pace.lapsing_credits == pytest.approx(0.08)
+    assert pace.runway_status == "lapses"
+
+
+def test_end_after_the_next_reset_is_not_a_lapse() -> None:
+    pace = _pace(_input("a", used_percent=50.0, reset_in_hours=24.0, ends_in_hours=48.0, hourly_delta=2.0))
+
+    assert pace.lapsing_credits is None
+    assert pace.use_up_rate_credits_per_hour is None
+    assert pace.runway_status != "lapses"
+
+
+def test_lapse_spends_the_ending_balance_before_refilled_quota() -> None:
+    # renewing refills at 2 hours; burn then goes to the ending account, which expires first.
+    pace = _pace(
+        _input("renewing", used_percent=100.0, reset_in_hours=2.0),
+        _input("ending", used_percent=50.0, reset_in_hours=100.0, ends_in_hours=10.0, hourly_delta=10.0),
+    )
+
+    assert pace.lapsing_credits == pytest.approx(0.0)
+    assert pace.lapse_in_hours is None
+    assert pace.runway_status != "lapses"
 
 
 def test_add_capacity_counts_only_the_active_share_of_the_week() -> None:

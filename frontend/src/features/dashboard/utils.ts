@@ -210,7 +210,7 @@ export function buildAntigravityQuotaBars(
   return { families, planUnweighted, quotaUnknown };
 }
 
-const RUNWAY_RANK: Record<WeeklyCreditRunwayStatus, number> = { runs_dry: 0, tight: 1, safe: 2 };
+const RUNWAY_RANK: Record<WeeklyCreditRunwayStatus, number> = { runs_dry: 0, tight: 1, lapses: 2, safe: 3 };
 
 /** The family that runs out first: worst runway verdict, then earliest depletion, then least headroom. */
 export function tightestAntigravityPace(paces: AntigravityFamilyPace[]): AntigravityFamilyPace | null {

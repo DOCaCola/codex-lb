@@ -119,24 +119,28 @@ function formatDurationHours(hours: number, t: ReturnType<typeof useTranslation>
 const VERDICT_LABEL_KEYS: Record<WeeklyCreditRunwayStatus, string> = {
   safe: "dashboard.weeklyPace.verdict.safe",
   tight: "dashboard.weeklyPace.verdict.tight",
+  lapses: "dashboard.weeklyPace.verdict.lapses",
   runs_dry: "dashboard.weeklyPace.verdict.runsDry",
 };
 
 const VERDICT_BADGE_CLASSES: Record<WeeklyCreditRunwayStatus, string> = {
   safe: "border-border bg-muted/40 text-muted-foreground",
   tight: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  lapses: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   runs_dry: "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300",
 };
 
 const VERDICT_FILL_CLASSES: Record<WeeklyCreditRunwayStatus, string> = {
   safe: "bg-primary/50",
   tight: "bg-amber-500/60",
+  lapses: "bg-sky-500/60",
   runs_dry: "bg-red-500/60",
 };
 
 const VERDICT_MARKER_CLASSES: Record<WeeklyCreditRunwayStatus, string> = {
   safe: "bg-primary",
   tight: "bg-amber-500",
+  lapses: "bg-sky-500",
   runs_dry: "bg-red-500",
 };
 
@@ -308,7 +312,9 @@ function PaceBreakdown({ rows }: { rows: PaceBreakdownRow[] }) {
               <span className="text-right tabular-nums text-muted-foreground">
                 {etaHours != null && Number.isFinite(etaHours)
                   ? t("dashboard.weeklyPace.runsOutIn", { duration: formatDurationHours(etaHours, t) })
-                  : t("dashboard.weeklyPace.breakdownSteady")}
+                  : status === "lapses" && row.pace.lapseInHours != null
+                    ? t("dashboard.weeklyPace.breakdownLapses", { duration: formatDurationHours(row.pace.lapseInHours, t) })
+                    : t("dashboard.weeklyPace.breakdownSteady")}
               </span>
             </Fragment>
           );
@@ -344,6 +350,11 @@ function RunwayWeeklyCreditsPaceCard({
   const saturated =
     pace.saturatedAccountCount != null && pace.accountCount > 0 && pace.saturatedAccountCount === pace.accountCount;
   const runsDry = runwayStatus === "runs_dry";
+  // Quota the recent burn leaves unspent when subscriptions end; null unless the verdict is "lapses".
+  const lapse =
+    runwayStatus === "lapses" && pace.lapsingCredits != null && pace.lapseInHours != null
+      ? { credits: pace.lapsingCredits, inHours: pace.lapseInHours, useUpRate: pace.useUpRateCreditsPerHour ?? null }
+      : null;
 
   // The depletion/reset tooltips are read-only timestamps, so they follow the
   // dashboard's date-display and 12/24-hour preferences via the shared
@@ -392,7 +403,14 @@ function RunwayWeeklyCreditsPaceCard({
             </p>
           </div>
           <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-            {etaHours != null ? (
+            {lapse != null ? (
+              <span className="font-medium text-sky-700 dark:text-sky-300" data-testid="weekly-lapse">
+                {t("dashboard.weeklyPace.lapsesIn", {
+                  amount: formatUnitAmount(lapse.credits, unit, t),
+                  duration: formatDurationHours(lapse.inHours, t),
+                })}
+              </span>
+            ) : etaHours != null ? (
               <span
                 title={etaAtLabel ?? undefined}
                 className={cn(runsDry && "font-medium text-red-600 dark:text-red-400")}
@@ -420,6 +438,10 @@ function RunwayWeeklyCreditsPaceCard({
                 eta: formatDurationHours(etaHours, t),
                 relief: formatDurationHours(reliefHours, t),
               })}
+            </p>
+          ) : lapse?.useUpRate != null ? (
+            <p className="tabular-nums text-muted-foreground">
+              {t("dashboard.weeklyPace.useUpRate", { amount: formatUnitAmount(lapse.useUpRate, unit, t) })}
             </p>
           ) : reliefHours != null ? (
             <p className="tabular-nums text-muted-foreground">

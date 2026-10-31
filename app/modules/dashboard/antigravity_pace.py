@@ -25,7 +25,6 @@ from app.modules.dashboard.weekly_pace import (
     PaceAccountInput,
     build_weekly_pace,
     pending_subscription_end_ms,
-    positive_used_percent_delta,
 )
 
 QUOTA_FAMILIES: tuple[QuotaFamily, ...] = get_args(QuotaFamily)
@@ -61,7 +60,6 @@ def build_antigravity_weekly_pace(
     paces: list[AntigravityFamilyPace] = []
     for family in QUOTA_FAMILIES:
         inputs: list[PaceAccountInput] = []
-        trailing_demand: dict[str, float] = {}
         stale_account_count = 0
         inactive_account_count = 0
         for account in accounts:
@@ -86,7 +84,6 @@ def build_antigravity_weekly_pace(
                 stale_account_count += 1
                 continue
 
-            samples = [_sample(row) for row in weekly_history.get((account.source_id, family), ())]
             inputs.append(
                 PaceAccountInput(
                     account_id=account.source_id,
@@ -94,11 +91,10 @@ def build_antigravity_weekly_pace(
                     remaining_units=weight * weekly.remaining_fraction,
                     reset_at_ms=weekly.resets_at.timestamp() * 1000.0,
                     window_ms=WEEKLY_WINDOW_MINUTES * 60_000.0,
-                    history=samples,
+                    history=[_sample(row) for row in weekly_history.get((account.source_id, family), ())],
                     ends_at_ms=pending_subscription_end_ms(account.source.subscription_ends_at, now),
                 )
             )
-            trailing_demand[account.source_id] = positive_used_percent_delta(samples)
 
         pace = build_weekly_pace(
             accounts=inputs,
@@ -107,7 +103,8 @@ def build_antigravity_weekly_pace(
             pro_account_units=PRO_ACCOUNT_UNITS,
             stale_account_count=stale_account_count,
             inactive_account_count=inactive_account_count,
-            trailing_demand_used_percent_by_account=trailing_demand,
+            # No add-capacity estimate: history mixes plans an account held over the week.
+            trailing_demand_used_percent_by_account=None,
             working_days=working_days,
             smoothing_window_minutes=smoothing_window_minutes,
         )

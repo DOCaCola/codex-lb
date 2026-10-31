@@ -359,6 +359,36 @@ describe("WeeklyCreditsPaceCard runway layout", () => {
     );
   });
 
+  it("states the quota left unspent at the end and the rate that uses it up", () => {
+    render(
+      <WeeklyCreditsPaceCard
+        subtitle="Claude · Pro units"
+        pace={{
+          ...RUNWAY_PACE,
+          unit: "pro_units",
+          runwayStatus: "lapses",
+          headroomPercent: 100,
+          headroomCredits: 5,
+          burnRateRecentCreditsPerHour: 0.05,
+          depletionEtaHours: null,
+          nextReliefInHours: null,
+          nextReliefCredits: 0,
+          resetEvents: [],
+          lapsingCredits: 4.25,
+          lapseInHours: 15,
+          useUpRateCreditsPerHour: 0.33,
+          subscriptionEnds: [{ at: new Date(Date.now() + 15 * 3_600_000).toISOString(), weeklyCredits: 5 }],
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("weekly-runway-verdict")).toHaveTextContent("Unused at end");
+    expect(screen.getByTestId("weekly-lapse")).toHaveTextContent(/unused when it ends in ~15h/);
+    expect(screen.getByText(/to spend it before the end/)).toBeInTheDocument();
+    expect(screen.queryByText(/runs out in/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("runway-eta-marker")).not.toBeInTheDocument();
+  });
+
   it("stretches the timeline horizon so reset events past 48h are not dropped", () => {
     render(
       <WeeklyCreditsPaceCard

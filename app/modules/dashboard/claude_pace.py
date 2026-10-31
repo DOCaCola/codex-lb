@@ -22,7 +22,6 @@ from app.modules.dashboard.weekly_pace import (
     PaceAccountInput,
     build_weekly_pace,
     pending_subscription_end_ms,
-    positive_used_percent_delta,
 )
 
 SEVEN_DAY_WINDOW_MINUTES = 10_080
@@ -48,13 +47,12 @@ def build_claude_weekly_pace(
 ) -> WeeklyCreditPaceResponse | None:
     """Pace over enabled, plan-weighted accounts with a fresh seven-day window.
 
-    ``seven_day_history`` holds one provenance stream per account, ordered by
-    observation time, covering exactly the trailing-demand window; ``now`` is
-    naive UTC like the history timestamps.
+    ``seven_day_history`` holds one provenance stream per account over the
+    trailing week, ordered by observation time; ``now`` is naive UTC like the
+    history timestamps.
     """
 
     inputs: list[PaceAccountInput] = []
-    trailing_demand: dict[str, float] = {}
     stale_account_count = 0
     inactive_account_count = 0
     status_now = now.replace(tzinfo=UTC)
@@ -75,7 +73,6 @@ def build_claude_weekly_pace(
             stale_account_count += 1
             continue
 
-        samples = [_sample(row) for row in seven_day_history.get(account.source_id, ())]
         inputs.append(
             PaceAccountInput(
                 account_id=account.source_id,
@@ -83,11 +80,10 @@ def build_claude_weekly_pace(
                 remaining_units=weight * (1.0 - window.utilization / 100.0),
                 reset_at_ms=window.resets_at.timestamp() * 1000.0,
                 window_ms=SEVEN_DAY_WINDOW_MINUTES * 60_000.0,
-                history=samples,
+                history=[_sample(row) for row in seven_day_history.get(account.source_id, ())],
                 ends_at_ms=pending_subscription_end_ms(account.source.subscription_ends_at, now),
             )
         )
-        trailing_demand[account.source_id] = positive_used_percent_delta(samples)
 
     return build_weekly_pace(
         accounts=inputs,
@@ -96,7 +92,8 @@ def build_claude_weekly_pace(
         pro_account_units=PRO_ACCOUNT_UNITS,
         stale_account_count=stale_account_count,
         inactive_account_count=inactive_account_count,
-        trailing_demand_used_percent_by_account=trailing_demand,
+        # No add-capacity estimate: history mixes plans an account held over the week.
+        trailing_demand_used_percent_by_account=None,
         working_days=working_days,
         smoothing_window_minutes=smoothing_window_minutes,
     )

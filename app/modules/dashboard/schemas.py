@@ -74,7 +74,8 @@ class DepletionResponse(DashboardModel):
 
 WeeklyCreditPaceStatus = Literal["behind", "on_track", "ahead", "danger"]
 WeeklyCreditPaceConfidence = Literal["high", "medium", "low"]
-WeeklyCreditRunwayStatus = Literal["safe", "tight", "runs_dry"]
+# "lapses": subscriptions end with quota the recent burn leaves unspent.
+WeeklyCreditRunwayStatus = Literal["safe", "tight", "lapses", "runs_dry"]
 # Capacity unit of every *_credits pace field: Codex quota credits, or Claude
 # Pro units (plan-weighted subscription windows; Pro 1, Max 5x 5, Max 20x 20).
 WeeklyCreditPaceUnit = Literal["credits", "pro_units"]
@@ -136,6 +137,13 @@ class WeeklyCreditPaceResponse(DashboardModel):
     # None when every pooled account's subscription ends before its next reset.
     next_relief_in_hours: float | None = None
     next_relief_credits: float
+    # Set when an account's subscription ends in its current window: quota the
+    # recent burn leaves unspent at those ends, hours until the first such end
+    # (None when nothing lapses), and the spend on the ending accounts that uses
+    # them up. None without ending accounts or a measured burn.
+    lapsing_credits: float | None = None
+    lapse_in_hours: float | None = None
+    use_up_rate_credits_per_hour: float | None = None
     reset_events: list[WeeklyCreditResetEvent] = Field(default_factory=list)
     subscription_ends: list[WeeklyCreditSubscriptionEnd] = Field(default_factory=list)
     runway_status: WeeklyCreditRunwayStatus

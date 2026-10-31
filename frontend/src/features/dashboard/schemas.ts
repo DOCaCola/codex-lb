@@ -141,7 +141,7 @@ const WeeklyCreditApiKeyAttributionSchema = z.object({
 });
 
 const WeeklyCreditPaceStatusSchema = z.enum(["behind", "on_track", "ahead", "danger"]);
-const WeeklyCreditRunwayStatusSchema = z.enum(["safe", "tight", "runs_dry"]);
+const WeeklyCreditRunwayStatusSchema = z.enum(["safe", "tight", "lapses", "runs_dry"]);
 const WeeklyCreditPaceUnitSchema = z.enum(["credits", "pro_units"]);
 
 const WeeklyCreditPaceSchema = z.object({
@@ -175,6 +175,9 @@ const WeeklyCreditPaceSchema = z.object({
   depletionEtaHours: z.number().nullable().optional(),
   nextReliefInHours: z.number().nullable().optional(),
   nextReliefCredits: z.number().nullable().optional(),
+  lapsingCredits: z.number().nullable().optional(),
+  lapseInHours: z.number().nullable().optional(),
+  useUpRateCreditsPerHour: z.number().nullable().optional(),
   resetEvents: z.array(WeeklyCreditResetEventSchema).optional(),
   subscriptionEnds: z.array(WeeklyCreditSubscriptionEndSchema).optional(),
   runwayStatus: WeeklyCreditRunwayStatusSchema.optional(),
