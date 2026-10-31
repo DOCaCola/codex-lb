@@ -482,38 +482,6 @@ For Codex the primary donut title MUST read `5-Hour Credits` and the secondary `
 - **AND** the center renders `7,331` in the remaining element and `7,560` in the capacity element
 - **AND** a divider separates the two values
 
-### Requirement: API sidebar shows pooled credit bars
-
-The APIs page left sidebar SHALL render pooled credit bars on each API key list item. Each bar SHALL display a label, percentage, and colored progress bar using the same `MiniQuotaBar` component as the Accounts sidebar.
-
-Labels SHALL be "Pooled 5h" for the primary window and "Pooled Weekly" for the secondary window. No reset countdown text SHALL be shown.
-
-When `pooledCapacityCreditsPrimary > 0` and `pooledRemainingPercentPrimary` is not null, the "Pooled 5h" bar SHALL be visible. Otherwise it SHALL be hidden. The "Pooled Weekly" bar SHALL be visible when `pooledRemainingPercentSecondary` is not null.
-
-When both bars are visible, they SHALL be laid out in a 2-column grid. When only one bar is visible, it SHALL use a 1-column layout.
-
-When API key limit rules exist, the sidebar SHALL also render the legacy limit progress bar below the pooled bars with an "API Limit" label and percentage value so it remains clearly distinct from the pooled-account bars.
-
-#### Scenario: Both pooled bars visible
-
-- **WHEN** an API key has both primary and secondary pooled credit data
-- **THEN** the sidebar item shows "Pooled 5h" and "Pooled Weekly" bars in a 2-column grid
-
-#### Scenario: Primary bar hidden for free-tier accounts
-
-- **WHEN** an API key's pooled primary capacity is 0
-- **THEN** only the "Pooled Weekly" bar is shown in a 1-column layout
-
-#### Scenario: No credit data hides bars
-
-- **WHEN** an API key has no pooled credit data
-- **THEN** no credit bars are rendered on that list item
-
-#### Scenario: API limit bar is labeled distinctly
-
-- **WHEN** an API key has configured limit rules
-- **THEN** the sidebar renders the legacy limit bar with an "API Limit" label below the pooled bars
-
 ### Requirement: Footer version update indicator
 
 The dashboard footer SHALL show the running application version and SHALL display a compact update-available icon next to that version only when the runtime version API confirms a newer stable GitHub release exists.
@@ -627,62 +595,6 @@ The dashboard accounts API SHALL expose an operator-controlled, human-readable `
 - **THEN** the account detail panel provides an `Account alias` control that can save a non-empty alias through `PUT /api/accounts/{account_id}/alias`
 - **AND** clearing the control stores `alias: null` and restores the email fallback
 - **AND** account search matches the stored alias or alias-backed display name so operators can filter duplicate-email accounts by their chosen label
-
-### Requirement: APIs tab shows a 7-day account-cost donut for selected API keys
-
-When the selected API key's 7-day usage payload contains one or more `accountCosts[]` items, the APIs tab detail panel SHALL render the account-cost donut section and usage-trend section inside a single shared card. On large screens, the split layout SHALL use a 25:75 width ratio with the donut on the left, the trend on the right, and a vertical separator between them.
-
-The donut section SHALL include a title and subtitle, SHALL show the 7-day total cost in the donut center, SHALL not render a separate `Total $...` summary in the section header, and SHALL render the legend below the donut.
-
-#### Scenario: Donut renders inside the shared usage card
-- **WHEN** a selected API key has 7-day account-cost data and trend data
-- **THEN** the detail panel renders the account-cost donut section to the left of the trend section inside one shared card
-- **AND** the large-screen layout uses a 25:75 split with a vertical separator between the sections
-
-#### Scenario: Donut is omitted when no account-cost buckets exist
-- **WHEN** the selected API key's `usage-7d.accountCosts[]` array is empty
-- **THEN** the APIs tab does not render the account-cost donut card
-
-### Requirement: APIs tab account-cost donut uses existing account labels and privacy rules
-
-The donut legend SHALL use the account label derived from the existing payload fields: `Deleted Account` for `isDeleted: true`, otherwise the account `email` when present, otherwise `Unknown Account`. Non-deleted account labels MUST respect the hide-account-info privacy setting used elsewhere in the dashboard.
-
-The legend SHALL show each visible bucket's 7-day cost, SHALL coordinate hover highlighting with the matching pie slice, and SHALL use the same vertically scrollable five-row viewport pattern as the dashboard donuts when more rows exist than fit without scrolling.
-
-#### Scenario: Deleted account label is explicit
-- **WHEN** an `accountCosts[]` item has `isDeleted: true`
-- **THEN** the legend label is `Deleted Account`
-
-#### Scenario: Privacy hiding applies to non-deleted account labels
-- **WHEN** the hide-account-info setting is enabled
-- **AND** a visible donut legend row represents a non-deleted account label
-- **THEN** the label text is privacy-blurred
-
-#### Scenario: Legend scroll viewport matches dashboard donuts
-- **WHEN** more than five account-cost buckets are present
-- **THEN** the donut legend keeps all rows available
-- **AND** the visible legend viewport shows five rows before scrolling
-
-### Requirement: APIs tab account-cost donut follows the dashboard donut visual system
-
-The account-cost donut SHALL use the same sizing, palette generation, reduced-motion behavior, hover-linked legend highlighting, and gray consumed/deleted color treatment as the dashboard donut visual system.
-
-#### Scenario: Deleted-account slice uses the consumed gray color
-- **WHEN** the donut renders a deleted-account bucket
-- **THEN** that bucket uses the same gray color family used by the dashboard donut's consumed or used segment
-
-### Requirement: APIs tab usage trend control layout is compact in the split view
-
-The APIs tab usage trend card SHALL keep its heading and subtitle, SHALL align the accumulated toggle and Tokens/Cost legend to the right side of the heading block on larger screens, and SHALL reduce the chart right margin to fit the split layout.
-
-#### Scenario: Usage trend controls align with the heading row
-- **WHEN** the usage trend card renders
-- **THEN** the Tokens/Cost legend appears to the right of the heading block on larger screens
-- **AND** the accumulated toggle remains in the same right-side controls group
-
-#### Scenario: Usage trend uses compact right margin
-- **WHEN** the usage trend chart renders in the split APIs-tab layout
-- **THEN** the chart right margin is reduced from the previous wider layout to a compact right margin
 
 ### Requirement: Dashboard account summaries sorted by primary capacity
 
@@ -1081,17 +993,21 @@ and the account rail SHALL use the same order.
 
 ### Requirement: API key overview SHALL show lifetime usage aggregates
 
-The dashboard API key overview SHALL present usage totals using the API key list
-`usageSummary` values as lifetime aggregates (all non-warmup request-log history),
-unless the backend contract is changed to provide a bounded window explicitly.
+The API Keys page SHALL present the API key list `usageSummary` values as lifetime aggregates (all non-warmup
+request-log history), unless the backend contract is changed to provide a bounded window explicitly. The header
+summary SHALL show the lifetime cost of all keys, each table row SHALL show its key's lifetime cost, share of the
+lifetime cost of all keys and request count, and a key's Overview tab SHALL show its lifetime requests, tokens and
+cost with that share.
 
 #### Scenario: Overview usage labels reflect lifetime scope
 
-- **WHEN** the API key overview renders `usageSummary` values for request count,
-  token count, and cost
-- **THEN** the section labels SHALL read as lifetime usage (for example:
-  "Lifetime Requests", "Lifetime Cost", "Lifetime Cost by API Key", "Lifetime Tokens
-  by API Key"), and SHALL NOT be labeled as 7-day totals.
+- **WHEN** the page renders `usageSummary` values for request count, token count, and cost
+- **THEN** those values are labeled as lifetime usage, not as 7-day totals
+
+#### Scenario: Lifetime share of all keys
+
+- **WHEN** two keys have lifetime costs of $30 and $10
+- **THEN** their rows show shares of 75% and 25%
 
 ### Requirement: Dashboard request-log details expose user-agent metadata
 The dashboard request-log API response MUST expose the persisted request-log `useragent` and `useragentGroup` values when present. The Request Details dialog MUST render the full `useragent` value in a `User Agent` field below the `Transport`, `Time`, and `Error Code` row, and MUST render `—` when no full user-agent value is stored.
@@ -2009,10 +1925,11 @@ listed once with the subscription entry taking precedence.
 
 ### Requirement: Dashboard API-key forms assign model sources
 
-The API-key create and edit dialogs SHALL allow operators to assign zero or
-more model sources separately from account assignments. Selecting no model
-sources SHALL mean all eligible sources are allowed subject to model allowlists
-and route compatibility.
+The API-key create dialog and a key's Settings tab SHALL allow operators to assign zero or more model sources
+separately from account assignments. Selecting no model sources SHALL mean all eligible sources are allowed subject to
+model allowlists and route compatibility. When a source-scoped key's assigned sources were all deleted, the Settings
+tab SHALL explain the missing restriction and SHALL send an empty source list only when the operator explicitly
+removes the restriction.
 
 #### Scenario: Create key scoped to a model source
 
@@ -2023,8 +1940,14 @@ and route compatibility.
 #### Scenario: Edit key clears source scope
 
 - **WHEN** an API key has assigned source ids
-- **AND** an operator clears the source selection
+- **AND** an operator clears the source selection in the key's Settings tab and saves
 - **THEN** the dashboard sends `assignedSourceIds=[]`
+
+#### Scenario: Deleted sources keep the key denied
+
+- **WHEN** a source-scoped key has no remaining assigned sources
+- **AND** the operator saves its Settings tab without removing the restriction
+- **THEN** the dashboard does not send `assignedSourceIds`
 
 ### Requirement: Account detail exposes a reset-credits redeem action
 
@@ -2167,26 +2090,6 @@ Every "Reset" button SHALL display a small countdown label of the soonest-expiri
 - **WHEN** a Reset button renders for a credit whose `expires_at` is 30 seconds away
 - **THEN** the countdown label reads `now`
 - **AND** the label uses the destructive/red color
-
-### Requirement: API key edit dialog
-
-The API key edit dialog SHALL allow operators to update restrictions and
-lifecycle settings without accidental dismissal from nested menu interactions.
-Clicking outside the dialog SHALL still dismiss the dialog when no nested
-dashboard menu surface is involved.
-
-#### Scenario: Nested select interactions do not dismiss the edit dialog
-
-- **WHEN** an operator opens the API key edit dialog
-- **AND** chooses an item from a select, model selector, account selector,
-  popover, or calendar surface rendered outside the dialog content
-- **THEN** the edit dialog remains open with the selected value preserved
-
-#### Scenario: Outside click still dismisses the edit dialog
-
-- **WHEN** an operator clicks outside the API key edit dialog and outside any
-  nested dashboard menu surface
-- **THEN** the edit dialog closes
 
 ### Requirement: Reports API SHALL reject oversized daily ranges
 
@@ -3294,7 +3197,7 @@ Failed refreshes MUST retain the last successful query data.
 
 ### Requirement: First-run empty lists describe setup, not filter mismatch
 
-Accounts, APIs, and dashboard request-log empty states SHALL distinguish a
+Providers, API Keys, and dashboard request-log empty states SHALL distinguish a
 first-run empty source list from a filtered-empty result. When the source
 list has no items and no narrowing filter is applied, the empty copy SHALL
 describe setup (no accounts yet, no API keys yet, no requests yet) and SHALL
@@ -3304,14 +3207,14 @@ empty, the empty copy SHALL describe a filter mismatch.
 
 #### Scenario: Accounts first-run empty copy
 
-- **GIVEN** the Accounts page has no accounts
+- **GIVEN** the Providers page has no accounts
 - **WHEN** the account list renders
 - **THEN** the empty title describes that there are no accounts yet
 - **AND** the empty description does not tell the operator to adjust filters
 
 #### Scenario: Accounts filtered empty copy
 
-- **GIVEN** the Accounts page has at least one account
+- **GIVEN** the Providers page has at least one account
 - **AND** the current search or status filter matches none of them
 - **WHEN** the account list renders
 - **THEN** the empty title describes that no accounts match
@@ -3319,10 +3222,17 @@ empty, the empty copy SHALL describe a filter mismatch.
 
 #### Scenario: APIs first-run empty copy
 
-- **GIVEN** the APIs page has no API keys
-- **WHEN** the API key list renders
+- **GIVEN** the API Keys page has no API keys
+- **WHEN** the API key table renders
 - **THEN** the empty title describes that there are no API keys yet
 - **AND** the empty description does not tell the operator to adjust filters
+
+#### Scenario: API keys filtered empty copy
+
+- **GIVEN** the API Keys page has at least one key
+- **AND** the current search or filter matches none of them
+- **WHEN** the API key table renders
+- **THEN** the empty title describes that no API keys match
 
 #### Scenario: Request logs first-run empty copy
 
@@ -3691,7 +3601,7 @@ The dashboard API key create dialog MUST constrain its outer shell to the visibl
 
 #### Scenario: Compact viewport keeps primary controls visible
 
-- **WHEN** an operator opens Create API Key from `/apis` at a 320x568 viewport
+- **WHEN** an operator opens Create API Key from `/keys` at a 320x568 viewport
 - **THEN** the dialog title, Close control, and Create action are fully inside the viewport
 - **AND** the dialog shell does not extend above or below the viewport
 
@@ -4171,7 +4081,7 @@ the open section's entry is visible.
 ### Requirement: Header renders only core destinations
 
 The application header SHALL render exactly the core destinations — Dashboard,
-Logs, Reports, Accounts, APIs, and Settings — as top-level navigation items, in
+Logs, Reports, Providers, API Keys, and Settings — as top-level navigation items, in
 that order, on desktop and in the mobile navigation menu. The header SHALL NOT
 render an Advanced menu or any other secondary destination group. A new
 destination SHALL be placed as a Settings section or inside an existing page
@@ -4180,12 +4090,12 @@ unless a spec explicitly designates it as core.
 #### Scenario: Header shows only core destinations
 
 - **WHEN** a user views the header navigation
-- **THEN** Dashboard, Logs, Reports, Accounts, APIs, and Settings render as top-level links
+- **THEN** Dashboard, Logs, Reports, Providers, API Keys, and Settings render as top-level links
 - **AND** no Advanced menu trigger renders
 
 #### Scenario: Retired routes are not found
 
-- **WHEN** a user opens `/automations` or `/firewall`
+- **WHEN** a user opens `/automations`, `/firewall`, or `/apis`
 - **THEN** the not-found surface renders
 
 #### Scenario: Settings stays active on its sections
@@ -4765,3 +4675,122 @@ logs. When the report cannot be loaded the card SHALL say that activity is unava
 - **WHEN** an account had two failed requests in the last seven days
 - **THEN** the card's errors total shows 2
 - **AND** activating it opens Logs filtered to that account
+
+### Requirement: API Keys page address and title
+
+The page that manages downstream API keys SHALL be served at `/keys` and SHALL be titled "API Keys" in its heading
+and header navigation item. The application SHALL NOT route or redirect `/apis`.
+
+#### Scenario: API Keys page opens at its address
+
+- **WHEN** a user opens `/keys`
+- **THEN** the API Keys page renders with the heading "API Keys"
+- **AND** the API Keys navigation item renders in the active state
+
+#### Scenario: The former address is not redirected
+
+- **WHEN** a user opens `/apis`
+- **THEN** the not-found surface renders and the address stays `/apis`
+
+### Requirement: API Keys table
+
+`/keys` SHALL show a header with the page title, the number of keys, the number of active keys, the 7-day cost and
+the lifetime cost of all keys, and a Create key action for operators who may write. Below it SHALL follow the API-key
+comparison chart and one table of all keys. Each row SHALL show the key's name, prefix and scope (models, accounts and
+a non-foreground traffic class), its status, its first two limit meters with "+N more" for further rules, its last 7
+days (a sparkline, cost and tokens from the comparison trends), its lifetime cost, share and requests, its last use,
+and a menu with Open, Open in Logs, Copy prefix and, for operators who may write, Regenerate and Disable or Enable.
+Activating a row SHALL open `/keys/:keyId`. The table SHALL offer search by name or prefix, an All / Active / Needs
+attention / Disabled & expired filter with counts, and sorting by last used, 7-day cost, lifetime cost, name or expiry.
+
+A key's status SHALL be Disabled when it is inactive, Expired when its expiry has passed, Limit reached when any limit
+rule's current value has reached its maximum, Expiring when it expires within 14 days, and Active otherwise. Needs
+attention SHALL contain Limit reached and Expiring keys; Active SHALL contain Active and Expiring keys.
+
+#### Scenario: Limit reached
+
+- **WHEN** an active key has a weekly cost rule at 150 of 150
+- **THEN** its row shows Limit reached
+- **AND** the Needs attention filter includes it
+
+#### Scenario: Open a key
+
+- **WHEN** an operator activates a key's row
+- **THEN** the page navigates to `/keys/<keyId>`
+
+#### Scenario: Read-only sessions
+
+- **WHEN** a session that may read but not write keys opens `/keys`
+- **THEN** the Create key action and the row menu's Regenerate and Disable entries are absent
+
+### Requirement: API key page
+
+`/keys/:keyId` SHALL show the key in the frame of a provider account page: a sticky, collapsible rail of all keys with
+search and arrow-key navigation, a breadcrumb that becomes a key switcher on narrow screens, a header with the key's
+name, status, prefix, creation, last use and expiry, the actions Open in Logs, Regenerate and Disable or Enable, and a
+⋯ menu with Copy prefix, Copy key ID and Delete. A banner SHALL explain a Limit reached, Expiring, Disabled or Expired
+key with a matching action. Overview and Settings tabs SHALL be addressed by `/keys/:keyId` and
+`/keys/:keyId/settings`, and the rail and switcher SHALL keep the open tab. An unknown ID SHALL show "API key not
+found" with a link to all keys. Read-only sessions SHALL see no write actions and no Settings tab.
+
+#### Scenario: Switch keys on the Settings tab
+
+- **WHEN** an operator on `/keys/a/settings` selects key `b` in the rail
+- **THEN** the page shows `/keys/b/settings`
+
+#### Scenario: Unknown key
+
+- **WHEN** a user opens `/keys/missing`
+- **THEN** the page shows "API key not found"
+
+### Requirement: API key Overview tab
+
+The Overview tab SHALL show a Last 7 days card with the key's requests, tokens with cached tokens, estimated cost and
+last use, and one chart that shows cost and tokens together with a Per hour / Cumulative control. Beside it SHALL
+follow cards for cost by account over the last 7 days as bars with provider logos and account colours, the key's limits
+with current value, maximum, percentage and reset time, the pooled 5h and weekly capacity remaining when available,
+the access rules in force, and lifetime usage. Edit links on the Limits and Access cards SHALL open the Settings tab
+for operators who may write. Deleted accounts SHALL be labeled "Deleted Account", unattributed usage "Unknown Account",
+and account names SHALL follow the privacy setting.
+
+#### Scenario: Cost and tokens in one chart
+
+- **WHEN** a key has hourly usage in the last 7 days
+- **THEN** its Overview chart shows cost and tokens together
+- **AND** Cumulative shows both as running totals
+
+### Requirement: API key Settings tab
+
+The Settings tab SHALL hold every field of the former edit dialog as full-width cards: General (name, expiry, traffic
+class), Models and reasoning (allowed models, apply to Codex /model, enforced model, allowed efforts, enforced effort,
+enforced service tier), Routing (assigned accounts, assigned model sources, HTTP client routing), Limits (rule editor,
+each rule's current usage and a Reset usage action that confirms before sending `resetUsage`), and Client usage display
+(usage sections), followed by a card with Regenerate, Disable or Enable, and Delete. One save bar SHALL show the
+number of unsaved changes with Discard and Save changes, and SHALL send only the changed fields. Settings › Access SHALL
+open a key's Settings tab to edit it.
+
+An account-scoped key whose assigned accounts were all deleted stays scoped and can use no account. The Settings tab
+SHALL explain this and SHALL send an empty account list only when the operator explicitly removes the restriction;
+saving unrelated changes SHALL NOT broaden the key to every account.
+
+#### Scenario: Save one change
+
+- **WHEN** an operator renames a key and saves
+- **THEN** the save bar disappears and the key shows the new name
+
+#### Scenario: Deleted accounts keep the key denied
+
+- **WHEN** an account-scoped key has no remaining assigned accounts
+- **AND** the operator renames it and saves without removing the restriction
+- **THEN** the dashboard does not send `assignedAccountIds`
+
+#### Scenario: Explicitly remove a dead account scope
+
+- **WHEN** an account-scoped key has no remaining assigned accounts
+- **AND** the operator checks "Remove account restriction" and saves
+- **THEN** the dashboard sends `assignedAccountIds=[]`
+
+#### Scenario: Discard
+
+- **WHEN** an operator changes a field and selects Discard
+- **THEN** every field shows its saved value again
