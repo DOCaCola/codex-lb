@@ -16,8 +16,7 @@ export function AntigravityVersionControls({ readOnly }: { readOnly: boolean }) 
   const status = query.data;
   const busy = readOnly || save.isPending || !status;
   return (
-    <section className="space-y-2">
-      <h3 className="text-[13px] font-medium">Antigravity CLI identity · all Antigravity accounts</h3>
+    <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
         Checks the CLI update manifest at startup and every 24 hours. A build is advertised only after its
         archive verified and its version and build changelist were read from it. Pin a verified build to hold
@@ -85,6 +84,6 @@ export function AntigravityVersionControls({ readOnly }: { readOnly: boolean }) 
             {message}
           </p>
         ))}
-    </section>
+    </div>
   );
 }

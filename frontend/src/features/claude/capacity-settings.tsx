@@ -29,7 +29,7 @@ export function ClaudeCapacitySettings({
             min={1}
             step={1}
             placeholder="Unlimited"
-            className="h-8 w-24 text-right text-xs tabular-nums"
+            className="h-8 w-28 text-right text-xs tabular-nums"
             value={text}
             disabled={readOnly || busy}
             onChange={(event) => setText(event.target.value)}

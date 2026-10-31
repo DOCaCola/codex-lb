@@ -28,8 +28,7 @@ export function ClaudeVersionControls({ readOnly }: { readOnly: boolean }) {
     onSuccess: () => client.invalidateQueries({ queryKey: ["claude-version"] }),
   });
   return (
-    <section className="space-y-2">
-      <h3 className="text-[13px] font-medium">Claude Code version · all Claude accounts</h3>
+    <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
         Checks stable releases at startup and every 24 hours. Pin an exact
         version to hold or roll back the advertised version. This does not
@@ -82,6 +81,6 @@ export function ClaudeVersionControls({ readOnly }: { readOnly: boolean }) {
             {message}
           </p>
         ))}
-    </section>
+    </div>
   );
 }

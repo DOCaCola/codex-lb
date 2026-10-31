@@ -86,6 +86,7 @@ export function ModelSourceAccountDetail({
   return (
     <ProviderDetail
       key={source.id}
+      accountId={source.id}
       data-testid="model-source-account-detail"
       provider="openai_compatible"
       color={color}
@@ -132,20 +133,14 @@ export function ModelSourceAccountDetail({
             </div>
           </DetailCard>
           <AccountActivityCard activityKey={summary.activityKey} logsAccountId={summary.logsAccountId} color={color} />
-          <DetailCard title={"Models · " + t("modelSources.fields.pricing")}>
-            <div aria-label="Provider models">
-              {source.models.length > 0 ? (
-                <ul className="divide-y">
-                  {source.models.map((model) => <ModelRow key={model.id} model={model} />)}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground">No models configured.</p>
-              )}
-            </div>
-          </DetailCard>
         </>
       }
       side={
+        <DetailCard title={t("providers.detail.details")}>
+          <AccountNotePanel target={{ modelSourceId: source.id }} readOnly={readOnly} />
+        </DetailCard>
+      }
+      settings={
         <>
           <DetailCard title={t("providers.detail.connection")} action={editButton}>
             <DetailRows
@@ -157,8 +152,16 @@ export function ModelSourceAccountDetail({
               ]}
             />
           </DetailCard>
-          <DetailCard title={t("providers.detail.details")}>
-            <AccountNotePanel target={{ modelSourceId: source.id }} readOnly={readOnly} />
+          <DetailCard title={"Models · " + t("modelSources.fields.pricing")}>
+            <div aria-label="Provider models">
+              {source.models.length > 0 ? (
+                <ul className="divide-y">
+                  {source.models.map((model) => <ModelRow key={model.id} model={model} />)}
+                </ul>
+              ) : (
+                <p className="text-xs text-muted-foreground">No models configured.</p>
+              )}
+            </div>
           </DetailCard>
         </>
       }

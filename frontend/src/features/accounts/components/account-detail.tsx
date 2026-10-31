@@ -224,6 +224,7 @@ export function AccountDetail({
   return (
     <ProviderDetail
       key={account.accountId}
+      accountId={account.accountId}
       data-testid="codex-account-detail"
       provider="codex"
       color={color}
@@ -299,6 +300,25 @@ export function AccountDetail({
       }
       side={
         <>
+          <DetailCard title={t("accounts.tokenInfo.title")} action={recovery ? null : reauthButton}>
+            <DetailRows
+              rows={[
+                { label: t("accounts.tokenInfo.access"), value: formatAccessTokenLabel(account.auth) },
+                { label: t("accounts.tokenInfo.refresh"), value: formatRefreshTokenLabel(account.auth) },
+                { label: t("accounts.tokenInfo.idToken"), value: formatIdTokenLabel(account.auth) },
+              ]}
+            />
+          </DetailCard>
+          <DetailCard title={t("providers.detail.details")}>
+            <DetailParts>
+              <AccountNotePanel target={{ accountId: account.accountId }} readOnly={readOnly} />
+              <AccountSubscriptionEndPanel target={{ accountId: account.accountId }} readOnly={readOnly} />
+            </DetailParts>
+          </DetailCard>
+        </>
+      }
+      settings={
+        <>
           <DetailCard title={t("providers.detail.routing")}>
             <CodexModelControls key={account.accountId} accountId={account.accountId} name={summary.name} disabled={disabled}>
               {({ mode, action }) => (
@@ -361,35 +381,20 @@ export function AccountDetail({
                   <SettingRow label={t("providers.detail.models")} control={action}>
                     {mode}
                   </SettingRow>
-                  {onProxyBindingSave ? (
-                    <AccountProxyBinding
-                      account={account}
-                      admin={upstreamProxyAdmin}
-                      busy={busy}
-                      readOnly={readOnly}
-                      onSave={onProxyBindingSave}
-                      onTestEndpoint={onProxyEndpointTest}
-                    />
-                  ) : null}
                 </DetailParts>
               )}
             </CodexModelControls>
           </DetailCard>
-          <DetailCard title={t("accounts.tokenInfo.title")} action={recovery ? null : reauthButton}>
-            <DetailRows
-              rows={[
-                { label: t("accounts.tokenInfo.access"), value: formatAccessTokenLabel(account.auth) },
-                { label: t("accounts.tokenInfo.refresh"), value: formatRefreshTokenLabel(account.auth) },
-                { label: t("accounts.tokenInfo.idToken"), value: formatIdTokenLabel(account.auth) },
-              ]}
+          {onProxyBindingSave ? (
+            <AccountProxyBinding
+              account={account}
+              admin={upstreamProxyAdmin}
+              busy={busy}
+              readOnly={readOnly}
+              onSave={onProxyBindingSave}
+              onTestEndpoint={onProxyEndpointTest}
             />
-          </DetailCard>
-          <DetailCard title={t("providers.detail.details")}>
-            <DetailParts>
-              <AccountNotePanel target={{ accountId: account.accountId }} readOnly={readOnly} />
-              <AccountSubscriptionEndPanel target={{ accountId: account.accountId }} readOnly={readOnly} />
-            </DetailParts>
-          </DetailCard>
+          ) : null}
         </>
       }
     />

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AccountColorHexes } from "@/features/accounts/account-colors";
 import { LimitBar } from "@/features/accounts/components/providers-list";
+import { useDetailTab, type DetailTab } from "@/features/accounts/hooks/use-detail-tab";
 import {
   PROVIDER_LABELS,
   accountHref,
@@ -50,11 +51,13 @@ function RailEntry({
   color,
   selected,
   collapsed,
+  tab,
 }: {
   summary: ProviderSummary;
   color: string | undefined;
   selected: boolean;
   collapsed: boolean;
+  tab: DetailTab;
 }) {
   const { t } = useTranslation();
   const blurred = usePrivacyStore((s) => s.blurred);
@@ -62,21 +65,17 @@ function RailEntry({
   const stateText = summary.notice?.text ?? t("common.status." + summary.status, { defaultValue: summary.status });
   return (
     <Link
-      to={accountHref(summary.id)}
+      to={accountHref(summary.id, tab)}
       data-rail-id={summary.id}
       aria-current={selected ? "page" : undefined}
       title={collapsed ? summary.name : undefined}
       className={cn(
-        "relative flex items-start gap-2.5 border-b py-2.5 pr-3 pl-4 outline-none last:border-b-0 hover:bg-accent focus-visible:bg-accent",
+        "relative flex items-start gap-2.5 border-b py-2.5 pr-3 pl-4 outline-none last:border-b-0 hover:bg-muted/50 focus-visible:bg-muted/50",
         collapsed && "justify-center px-0",
-        selected && "bg-[color-mix(in_oklch,var(--rail-accent)_10%,var(--card))] hover:bg-[color-mix(in_oklch,var(--rail-accent)_14%,var(--card))]",
+        selected && "bg-primary/8 ring-1 ring-primary/25 ring-inset hover:bg-primary/8 focus-visible:bg-primary/8",
       )}
-      style={{ ["--rail-accent" as string]: accent }}
     >
-      <span
-        aria-hidden="true"
-        className={cn("absolute left-0 w-[3px] rounded-r-[3px] bg-[var(--rail-accent)]", selected ? "inset-y-0 w-1 rounded-none" : "inset-y-2.5")}
-      />
+      <span aria-hidden="true" className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-[3px]" style={{ backgroundColor: accent }} />
       <span className={cn("relative mt-0.5 flex shrink-0", summary.status === "paused" && "opacity-55")}>
         <ProviderLogo provider={summary.kind} color={color} size="md" />
         <span aria-hidden="true" className={cn("absolute -right-1 -bottom-1 size-2 rounded-full border-[1.5px] border-card", DOT[summary.tone])} />
@@ -129,6 +128,7 @@ export function ProviderRail({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const tab = useDetailTab();
   const listRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const visible = useMemo(() => filterGroups(groups, "all", collapsed ? "" : search), [groups, search, collapsed]);
@@ -139,7 +139,7 @@ export function ProviderRail({
     const index = order.indexOf(selectedId);
     const next = order[Math.min(order.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))];
     if (!next || next === selectedId) return;
-    navigate(accountHref(next));
+    navigate(accountHref(next, tab));
     requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>("[data-rail-id=\"" + CSS.escape(next) + "\"]")?.focus());
   };
   return (
@@ -208,6 +208,7 @@ export function ProviderRail({
                   color={summaryColor(summary, colors)}
                   selected={summary.id === selectedId}
                   collapsed={collapsed}
+                  tab={tab}
                 />
               ))}
             </div>

@@ -141,6 +141,7 @@ export default function App() {
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/providers" element={<ProvidersPage />} />
               <Route path="/providers/:accountId" element={<ProvidersPage />} />
+              <Route path="/providers/:accountId/settings" element={<ProvidersPage />} />
               <Route path="/apis" element={<ApisPage />} />
               <Route path="/settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to={DEFAULT_SETTINGS_SECTION} replace />} />

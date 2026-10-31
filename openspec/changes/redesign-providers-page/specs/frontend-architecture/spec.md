@@ -24,12 +24,16 @@ Logs and Copy ID.
 
 The detail page SHALL show a header with the account name, plan, status, identity subline, primary actions and a menu
 with Copy ID, Open in Logs and the provider's export and delete actions; a banner when the account is paused, limited
-or needs re-authentication; and the provider's cards in a main and a side column using one shared frame for every
-provider. On desktop widths a sticky, collapsible rail SHALL list all accounts grouped by provider with bold names,
-equal-height entries, a search field, an "All providers" link and arrow-key navigation; its collapsed state SHALL
-persist locally. On narrow widths the breadcrumb SHALL offer an account switcher instead. An unknown account ID SHALL
-show an "Account not found" state with a link back to the list. The page SHALL also let operators view and update
-whether an account is authorized for upstream cybersecurity work.
+or needs re-authentication; and an Overview and a Settings tab, using one shared frame for every provider. The
+Overview tab SHALL show usage and activity in a main column and status and details in a side column. The Settings tab
+SHALL show the account's options (routing, models, capacity, proxy binding, client version identity, connection) in
+stacked full-width cards. The Settings tab SHALL be addressed by `/providers/:accountId/settings`. On desktop widths a
+sticky, collapsible rail SHALL list all accounts grouped by provider with bold names, equal-height entries, a search
+field, an "All providers" link and arrow-key navigation; its collapsed state SHALL persist locally. The selected rail
+entry SHALL use the shared selection style, not the account's chart colour. Switching accounts through the rail or the
+narrow-width switcher SHALL keep the open tab. On narrow widths the breadcrumb SHALL offer an account switcher
+instead. An unknown account ID SHALL show an "Account not found" state with a link back to the list. The page SHALL
+also let operators view and update whether an account is authorized for upstream cybersecurity work.
 
 The layout SHALL fit mobile, tablet, and desktop dashboard widths without horizontal page overflow caused by fixed-width
 account controls.
@@ -71,6 +75,17 @@ Account status displays SHALL distinguish `reauth_required` accounts from `deact
 - **WHEN** an operator activates a Claude account row in the providers table
 - **THEN** the browser navigates to `/providers/<account id>`
 - **AND** the Claude detail page renders beside the rail with that account highlighted
+
+#### Scenario: Settings tab has its own address
+
+- **WHEN** an operator selects the Settings tab of an account page
+- **THEN** the browser navigates to `/providers/<account id>/settings`
+- **AND** the account's routing and model controls render in full-width cards instead of the usage cards
+
+#### Scenario: Rail keeps the open tab
+
+- **WHEN** the Settings tab of one account is open and the operator selects another account in the rail
+- **THEN** the browser navigates to `/providers/<other account id>/settings`
 
 #### Scenario: Add account remains outside account list scrolling
 

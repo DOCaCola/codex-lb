@@ -100,6 +100,7 @@ describe("Unified provider accounts", () => {
     expect(screen.getByTitle(/API key tier reported/)).toHaveTextContent(
       "Paid",
     );
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(
       screen.getByRole("button", { name: "Image models (0)" }),
     );

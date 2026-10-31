@@ -1,8 +1,10 @@
-import { MoreHorizontal } from "lucide-react";
+import { LayoutDashboard, MoreHorizontal, SlidersHorizontal } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { ProviderLogo } from "@/components/brand/provider-account-name";
+import { ChartToggle } from "@/components/chart-toggle";
 import { PlanBadge } from "@/components/plan-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +15,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { ProviderKind } from "@/features/accounts/provider-summary";
+import { useDetailTab, type DetailTab } from "@/features/accounts/hooks/use-detail-tab";
+import { accountHref, type ProviderKind } from "@/features/accounts/provider-summary";
 import { cn } from "@/lib/utils";
 import type { DashboardAccountStatus } from "@/utils/account-status";
 
@@ -142,6 +145,8 @@ export function SettingRow({
 }
 
 export type ProviderDetailProps = {
+  /** Account the page shows; the Overview and Settings tabs link to it. */
+  accountId: string;
   provider: ProviderKind;
   color?: string;
   /** Name heading with rename and colour controls. */
@@ -159,13 +164,17 @@ export type ProviderDetailProps = {
   banner?: ReactNode;
   /** Errors of the last action and of provider monitoring. */
   alerts?: ReactNode;
+  /** Overview tab: usage and activity in the wide column, status and details beside them. */
   main: ReactNode;
   side: ReactNode;
+  /** Settings tab: one full-width card per group of account options. */
+  settings: ReactNode;
   "data-testid"?: string;
 };
 
-/** Account page shared by every provider: header with actions, then usage on the left and settings on the right. */
+/** Account page shared by every provider: header with actions, then an Overview and a Settings tab. */
 export function ProviderDetail({
+  accountId,
   provider,
   color,
   name,
@@ -181,12 +190,15 @@ export function ProviderDetail({
   alerts,
   main,
   side,
+  settings,
   "data-testid": testId,
 }: ProviderDetailProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const tab = useDetailTab();
   const parts = subline.filter((part) => part !== null && part !== undefined && part !== false && part !== "");
   return (
-    <div data-testid={testId} className="animate-fade-in-up flex min-w-0 flex-col gap-4">
+    <div data-testid={testId} data-tab={tab} className="animate-fade-in-up flex min-w-0 flex-col gap-4">
       <div className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2">
         <span className="mt-0.5 flex">
           <ProviderLogo provider={provider} color={color} size="lg" />
@@ -217,10 +229,35 @@ export function ProviderDetail({
       </div>
       {banner}
       {alerts}
-      <div className="grid min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(19rem,1fr)]">
-        <div className="flex min-w-0 flex-col gap-4">{main}</div>
-        <div className="flex min-w-0 flex-col gap-4">{side}</div>
+      <div>
+        <ChartToggle<DetailTab>
+          label={t("providers.detail.tabs.label")}
+          value={tab}
+          onChange={(next) => navigate(accountHref(accountId, next))}
+          options={[
+            {
+              value: "overview",
+              label: t("providers.detail.tabs.overview"),
+              icon: <LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />,
+            },
+            {
+              value: "settings",
+              label: t("providers.detail.tabs.settings"),
+              icon: <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />,
+            },
+          ]}
+        />
       </div>
+      {tab === "overview" ? (
+        <div className="grid min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(19rem,1fr)]">
+          <div className="flex min-w-0 flex-col gap-4">{main}</div>
+          <div className="flex min-w-0 flex-col gap-4">{side}</div>
+        </div>
+      ) : (
+        <div data-testid="provider-settings" className="flex min-w-0 flex-col gap-4">
+          {settings}
+        </div>
+      )}
     </div>
   );
 }

@@ -561,6 +561,10 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
       }
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`${label}-detail-${width}.png`), fullPage: true, animations: "disabled" });
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/providers/${id}/settings$`));
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`${label}-settings-${width}.png`), fullPage: true, animations: "disabled" });
       await page.getByRole("button", { name: label === "codex" ? "Models (All)" : "Models (1)", exact: true }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expect(page.getByRole("switch", { name: /All models/ })).toBeChecked({ checked: expectedAll });
@@ -568,7 +572,7 @@ test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) =>
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
     }
   }
-  await page.goto(`${BASE_URL}/providers/${native.accountId}`);
+  await page.goto(`${BASE_URL}/providers/${native.accountId}/settings`);
   await page.getByRole("button", { name: "Models (All)", exact: true }).click();
   await page.getByRole("switch", { name: /All models/ }).click();
   await page.getByRole("button", { name: "Save 1 model", exact: true }).click();
@@ -649,7 +653,6 @@ test("Claude automatic models and shared account presentation", async ({ page },
   await detail.getByRole("button", { name: "Check limits", exact: true }).click();
   await expect(detail.getByText("Ultra", { exact: true })).toBeVisible();
   await expect(page.getByTestId("provider-rail").getByText("Ultra", { exact: true })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Routing policy" })).toBeVisible();
   await expect(page.getByRole("switch", { name: /All models/ })).toHaveCount(0);
   await expect(page.locator('[aria-label="Claude quota history"] .recharts-surface')).toBeVisible();
   await expect(page.getByText("Weekly plan", { exact: true })).toBeVisible();
@@ -661,6 +664,10 @@ test("Claude automatic models and shared account presentation", async ({ page },
     expect(await curve.getAttribute("d")).not.toContain("NaN");
   }
   await page.screenshot({ path: testInfo.outputPath("claude-detail-desktop.png"), fullPage: true, animations: "disabled" });
+  await detail.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Routing policy" })).toBeVisible();
+  await expect(detail.getByRole("region", { name: "Claude Code version" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("claude-settings-desktop.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("claude-detail-mobile.png"), fullPage: true, animations: "disabled" });
@@ -1225,10 +1232,14 @@ for (const width of [1440, 390]) {
     await page.route("**/api/claude-accounts/version", route => fulfill(route, { effectiveVersion: "2.1.282", discoveredVersion: "2.1.282", pinnedVersion: null, lastCheckedAt: null, lastChangedAt: null, error: null }));
     await page.goto(`${BASE_URL}/providers/src_claude_demo`);
     await expect(page.getByRole("heading", { name: "Research Claude", exact: true })).toBeVisible();
-    await expect(page.getByRole("spinbutton", { name: "Maximum concurrent requests" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     await page.screenshot({ animations: "disabled", fullPage: true, path: test.info().outputPath(`claude-accounts-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByRole("spinbutton", { name: "Maximum concurrent requests" })).toBeVisible();
+    await page.screenshot({ animations: "disabled", fullPage: true, path: test.info().outputPath(`claude-account-settings-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
     await page.getByRole("button", { name: "Re-authenticate", exact: true }).click();
     await page.getByRole("menuitem", { name: "Sign in again", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
@@ -1293,6 +1304,7 @@ for (const width of [1440, 390]) {
       await page.getByTestId("openrouter-account-detail").scrollIntoViewIfNeeded();
       await page.screenshot({animations: "disabled", path: path.join(SCREENSHOT_DIR, `openrouter-account-detail-${width}.png`)});
     }
+    await page.getByRole("button", {name: "Settings", exact: true}).click();
     await page.getByRole("button", {name: "Models (1)", exact: true}).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByLabel("Display name for vendor/coder")).toBeVisible();
@@ -1331,7 +1343,7 @@ for (const width of [1440, 390]) {
       ]}]},
     }];
     await page.route("**/api/openrouter-accounts", route => fulfill(route, {accounts: [account]}));
-    await page.goto(`${BASE_URL}/providers/${account.id}`);
+    await page.goto(`${BASE_URL}/providers/${account.id}/settings`);
     await expect(page.getByRole("button", {name: "Models (0)", exact: true})).toBeVisible();
     await page.getByRole("button", {name: "Image models (1)", exact: true}).click();
     const dialog = page.getByRole("dialog");

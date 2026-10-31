@@ -14,6 +14,9 @@
       OpenRouter and OpenAI-compatible accounts.
 - [x] 2.6 Last 7 days activity card from the reports API.
 - [x] 2.7 Remove the old list, list-item, info-panel and action components; en, ko and zh-CN strings.
+- [x] 2.8 Overview and Settings tabs on every account page, addressed by `/providers/:accountId/settings`; the rail
+      and the mobile switcher keep the open tab.
+- [x] 2.9 Rail selection uses the shared selection style instead of the account colour.
 
 ## 3. Verification
 

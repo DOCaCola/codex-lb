@@ -57,6 +57,7 @@ describe("OpenAI-compatible provider accounts", () => {
       />,
     );
 
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("http://localhost:8000/v1")).toBeInTheDocument();
     expect(screen.getByText("Chat Completions")).toBeInTheDocument();
     expect(screen.getByText("30 s")).toBeInTheDocument();
@@ -85,6 +86,7 @@ describe("OpenAI-compatible provider accounts", () => {
       />,
     );
 
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     for (const name of ["Pause", "Edit"]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }

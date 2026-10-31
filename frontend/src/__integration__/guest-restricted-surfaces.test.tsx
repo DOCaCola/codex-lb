@@ -284,11 +284,12 @@ describe("guest restricted surfaces integration", () => {
     expect(screen.queryByText("Primary pool")).not.toBeInTheDocument();
     settingsRender.unmount();
 
-    window.history.pushState({}, "", "/providers/acc_primary");
+    window.history.pushState({}, "", "/providers/acc_primary/settings");
     const accountsRender = renderWithProviders(<App />);
     accountsRender.queryClient.setQueryData(["settings", "upstream-proxy"], cached);
 
     expect(await screen.findByRole("heading", { name: "p***@example.com" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(paths).toContain("/api/accounts/acc_primary/usage-reset-credits"));
     expect(accountsRender.queryClient.getQueryData(["settings", "upstream-proxy"])).toEqual(cached);
     expect(screen.queryByText("Proxy binding")).not.toBeInTheDocument();

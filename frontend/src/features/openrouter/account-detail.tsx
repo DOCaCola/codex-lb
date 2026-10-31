@@ -83,6 +83,7 @@ export function OpenRouterAccountDetail({
   return (
     <ProviderDetail
       key={account.id}
+      accountId={account.id}
       data-testid="openrouter-account-detail"
       provider="openrouter"
       color={color}
@@ -157,6 +158,23 @@ export function OpenRouterAccountDetail({
       }
       side={
         <>
+          <DetailCard title={t("providers.detail.apiKeys")} action={apiKeysButton}>
+            <DetailRows
+              rows={[
+                { label: "Management key", value: account.hasManagementKey ? "Configured" : "Not configured" },
+                { label: "Usage updated", value: updated(state.key_updated_at) },
+                { label: "Credits updated", value: updated(state.credits_updated_at) },
+                { label: "Catalog updated", value: updated(state.catalog_updated_at) },
+              ]}
+            />
+          </DetailCard>
+          <DetailCard title={t("providers.detail.details")}>
+            <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+          </DetailCard>
+        </>
+      }
+      settings={
+        <>
           <DetailCard title={t("providers.detail.routing")}>
             <DetailParts>
               <AccountRoutingPolicyControl policy={account.routingPolicy} disabled={disabled} onChange={onRoutingPolicy} />
@@ -179,19 +197,6 @@ export function OpenRouterAccountDetail({
                 }
               />
             </DetailParts>
-          </DetailCard>
-          <DetailCard title={t("providers.detail.apiKeys")} action={apiKeysButton}>
-            <DetailRows
-              rows={[
-                { label: "Management key", value: account.hasManagementKey ? "Configured" : "Not configured" },
-                { label: "Usage updated", value: updated(state.key_updated_at) },
-                { label: "Credits updated", value: updated(state.credits_updated_at) },
-                { label: "Catalog updated", value: updated(state.catalog_updated_at) },
-              ]}
-            />
-          </DetailCard>
-          <DetailCard title={t("providers.detail.details")}>
-            <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
           </DetailCard>
         </>
       }

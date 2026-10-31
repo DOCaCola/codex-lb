@@ -21,6 +21,7 @@ async function renderPage(path = "/providers") {
         <Routes>
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/providers/:accountId" element={<ProvidersPage />} />
+          <Route path="/providers/:accountId/settings" element={<ProvidersPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -223,8 +224,10 @@ describe("ProvidersPage", () => {
     openRouterMocks.accounts = [createOpenRouterAccount()];
     mockAccountsQuery([]);
     await renderPage("/providers/src_research");
-    for (const name of ["API keys", "Rename account", "Refresh balance", "Models (0)", "Pause"])
+    for (const name of ["API keys", "Rename account", "Refresh balance", "Pause"])
       expect(screen.getByRole("button", { name })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Models (0)" })).toBeDisabled();
     expect(screen.queryByRole("switch", { name: /All models/ })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "More actions" }));
@@ -267,8 +270,9 @@ describe("ProvidersPage", () => {
     });
     mockAccountsQuery([account({ accountId: "acc_primary" })]);
 
-    await renderPage("/providers/acc_primary");
+    await renderPage("/providers/acc_primary/settings");
     expect(screen.getByRole("heading", { name: "Default" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeDisabled();
     expect(screen.queryByText("Proxy binding")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Account proxy pool" })).not.toBeInTheDocument();
     expect(screen.queryByText("Primary pool")).not.toBeInTheDocument();
@@ -282,8 +286,8 @@ describe("ProvidersPage", () => {
     });
     mockAccountsQuery([account({ accountId: "acc_primary" })]);
 
-    await renderPage("/providers/acc_primary");
-    expect(screen.getByText("Proxy binding")).toBeInTheDocument();
+    await renderPage("/providers/acc_primary/settings");
+    expect(screen.getByRole("region", { name: "Proxy binding" })).toBeInTheDocument();
   });
 
   it("enables the upstream-proxy admin query and toggles OAuth help for writers", async () => {

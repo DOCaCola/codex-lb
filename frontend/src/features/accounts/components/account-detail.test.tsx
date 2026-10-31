@@ -29,13 +29,37 @@ function renderDetail(account: AccountSummary, props: Partial<AccountDetailProps
   return handlers;
 }
 
+async function openSettings() {
+  await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+}
+
 afterEach(() => useAuthStore.setState({ permissions: ADMIN_PERMISSIONS }));
 
 describe("AccountDetail", () => {
+  it("keeps usage on the Overview tab and account options on the Settings tab", async () => {
+    renderDetail(createAccountSummary());
+
+    expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Usage" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Token Status" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Routing policy" })).not.toBeInTheDocument();
+
+    await openSettings();
+    expect(window.location.pathname).toMatch(/\/settings$/);
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Usage" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(window.location.pathname).not.toMatch(/\/settings$/);
+    expect(screen.getByRole("region", { name: "Usage" })).toBeInTheDocument();
+  });
+
   it("lets operators change account routing policy", async () => {
     const user = userEvent.setup();
     const account = createAccountSummary({ routingPolicy: "normal" });
     const { onRoutingPolicyChange } = renderDetail(account);
+    await openSettings();
 
     expect(screen.getByRole("combobox", { name: "Routing policy" })).toHaveTextContent("Normal");
     await user.click(screen.getByRole("combobox", { name: "Routing policy" }));
@@ -47,6 +71,7 @@ describe("AccountDetail", () => {
     const user = userEvent.setup();
     const account = createAccountSummary({ creditPolicy: "spend" });
     const { onCreditPolicyChange } = renderDetail(account);
+    await openSettings();
 
     expect(screen.getByRole("combobox", { name: "Credits" })).toHaveTextContent("Spend credits");
     await user.click(screen.getByRole("combobox", { name: "Credits" }));
@@ -71,6 +96,7 @@ describe("AccountDetail", () => {
       },
     });
     const { onLimitWarmupChange } = renderDetail(account);
+    await openSettings();
 
     const toggle = screen.getByRole("switch", { name: "Window warm-up for Warm Account" });
     expect(toggle).toHaveAccessibleDescription(expect.stringContaining("Succeeded | 5h | Gpt-5.1-codex-mini"));
@@ -82,8 +108,9 @@ describe("AccountDetail", () => {
     [false, true],
     [true, false],
     [undefined, false],
-  ])("with global warm-up %s shows the disabled-globally hint: %s", (globallyEnabled, hinted) => {
+  ])("with global warm-up %s shows the disabled-globally hint: %s", async (globallyEnabled, hinted) => {
     renderDetail(createAccountSummary({ limitWarmupEnabled: true }), { limitWarmupGloballyEnabled: globallyEnabled });
+    await openSettings();
     expect(screen.queryByText(/Disabled globally/) !== null).toBe(hinted);
     if (hinted) expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
@@ -99,11 +126,13 @@ describe("AccountDetail", () => {
       resetCredits: { availableCount: 1 },
     });
 
+    for (const name of ["Edit alias", "Reset usage", "Pause", "Force probe", "Re-authenticate"])
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    await openSettings();
     const toggle = screen.getByRole("switch", { name: "Window warm-up for Personal" });
     expect(toggle).toHaveAccessibleDescription("No attempts");
     expect(toggle).toBeDisabled();
-    for (const name of ["Edit alias", "Reset usage", "Pause", "Force probe", "Re-authenticate", "Save binding"])
-      expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save binding" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Routing policy" })).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Enable account proxy binding" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Account proxy pool" })).toBeDisabled();
@@ -114,6 +143,7 @@ describe("AccountDetail", () => {
   it("asks a re-auth required account to sign in again without offering resume", async () => {
     const account = createAccountSummary({ status: "reauth_required" });
     const { onReauth } = renderDetail(account);
+    await openSettings();
 
     expect(screen.getByText("Routing skips this account until it is re-authenticated.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();

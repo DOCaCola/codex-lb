@@ -17,6 +17,7 @@ import { ImportDialog } from "@/features/accounts/components/import-dialog";
 import { ProviderRail } from "@/features/accounts/components/provider-rail";
 import { ProvidersList } from "@/features/accounts/components/providers-list";
 import { useRailCollapsed } from "@/features/accounts/hooks/use-rail-collapsed";
+import { useDetailTab } from "@/features/accounts/hooks/use-detail-tab";
 import { accountHref } from "@/features/accounts/provider-summary";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { AuthExportDialog } from "@/features/accounts/components/auth-export-dialog";
@@ -63,6 +64,7 @@ export function ProvidersPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { accountId: selectedId = null } = useParams();
+  const detailTab = useDetailTab();
   const [accountSortMode, setAccountSortMode] = useState<AccountSortMode>(
     DEFAULT_ACCOUNT_SORT_MODE,
   );
@@ -167,6 +169,7 @@ export function ProvidersPage() {
     openRouterQuery.isLoading ||
     modelSourcesQuery.isLoading;
   const openAccount = (id: string) => navigate(accountHref(id));
+  const switchAccount = (id: string) => navigate(accountHref(id, detailTab));
 
   const mutationBusy =
     importMutation.isPending ||
@@ -273,7 +276,7 @@ export function ProvidersPage() {
                               <span>{PROVIDER_LABELS[selectedSummary.kind]}</span>
                               <span aria-hidden="true" className="hidden lg:inline">/</span>
                               <span className="hidden truncate text-foreground lg:inline">{selectedSummary.name}</span>
-                              <Select value={selectedSummary.id} onValueChange={openAccount}>
+                              <Select value={selectedSummary.id} onValueChange={switchAccount}>
                                 <SelectTrigger size="sm" className="h-7 max-w-56 min-w-0 text-xs lg:hidden" aria-label={t("providers.rail.switch")}>
                                   <SelectValue />
                                 </SelectTrigger>

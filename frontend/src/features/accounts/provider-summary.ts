@@ -4,6 +4,7 @@ import { isEmailLabel } from "@/components/blur-email";
 import type { AccountProvider } from "@/components/brand/account-provider";
 import type { AccountColorHexes, AccountColorTarget } from "@/features/accounts/account-colors";
 import { type AccountSubscriptionEnd, findSubscriptionEnd } from "@/features/accounts/account-subscriptions";
+import type { DetailTab } from "@/features/accounts/hooks/use-detail-tab";
 import type { AccountRoutingPolicy, AccountSummary } from "@/features/accounts/schemas";
 import { sortAccountsForDisplay, type AccountSortMode } from "@/features/accounts/sorting";
 import type { AntigravityAccount, AntigravityWindow } from "@/features/antigravity/api";
@@ -560,8 +561,9 @@ export function summaryColor(summary: ProviderSummary, colors: AccountColorHexes
   return summary.kind === "codex" ? colors.accounts.get(summary.id) : colors.modelSources.get(summary.id);
 }
 
-export function accountHref(id: string): string {
-  return "/providers/" + encodeURIComponent(id);
+export function accountHref(id: string, tab: DetailTab = "overview"): string {
+  const href = "/providers/" + encodeURIComponent(id);
+  return tab === "settings" ? href + "/settings" : href;
 }
 
 const NOTICE_TEXT: Record<SummaryTone, string> = {

@@ -31,6 +31,7 @@ function renderRail(path: string) {
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/providers/:accountId" element={<Rail />} />
+        <Route path="/providers/:accountId/settings" element={<Rail />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -54,6 +55,22 @@ describe("ProviderRail", () => {
     expect(screen.getByRole("link", { name: /Claude A/ })).toHaveAttribute("aria-current", "page");
     await userEvent.keyboard("{ArrowUp}");
     expect(screen.getByRole("link", { name: /primary@example.com/ })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("keeps the open tab when switching accounts", async () => {
+    renderRail("/providers/claude-a/settings");
+    const rail = screen.getByRole("navigation", { name: "Accounts" });
+    expect(within(rail).getByRole("link", { name: /Claude A/ })).toHaveAttribute("aria-current", "page");
+    expect(within(rail).getByRole("link", { name: /Claude B/ })).toHaveAttribute("href", "/providers/claude-b/settings");
+    within(rail).getByRole("link", { name: /Claude A/ }).focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("link", { name: /Claude B/ })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /Claude A/ })).toHaveAttribute("href", "/providers/claude-a/settings");
+  });
+
+  it("links to the overview from an account overview", () => {
+    renderRail("/providers/claude-a");
+    expect(screen.getByRole("link", { name: /Claude B/ })).toHaveAttribute("href", "/providers/claude-b");
   });
 
   it("finds accounts by name", async () => {

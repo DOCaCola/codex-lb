@@ -221,6 +221,7 @@ function ClaudeDetail({
   const errors = [error, account.state.catalog_error, account.state.usage_error, account.state.subscription_error].filter(Boolean);
   return (
     <ProviderDetail
+      accountId={account.id}
       data-testid="claude-account-detail"
       provider="claude"
       color={color}
@@ -310,6 +311,26 @@ function ClaudeDetail({
       }
       side={
         <>
+          <DetailCard title={t("providers.detail.signIn")} action={summary.status === "reauth" ? null : reauthenticate}>
+            <DetailRows
+              rows={[
+                { label: "Status", value: formatSlug(account.credentialStatus) },
+                { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
+                { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
+                { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
+              ]}
+            />
+          </DetailCard>
+          <DetailCard title={t("providers.detail.details")}>
+            <DetailParts>
+              <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+              <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
+            </DetailParts>
+          </DetailCard>
+        </>
+      }
+      settings={
+        <>
           <DetailCard title={t("providers.detail.routing")}>
             <DetailParts>
               <AccountRoutingPolicyControl
@@ -332,24 +353,10 @@ function ClaudeDetail({
                 readOnly={readOnly}
                 onSave={(maxConcurrency) => api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })}
               />
-              <ClaudeVersionControls readOnly={readOnly} />
             </DetailParts>
           </DetailCard>
-          <DetailCard title={t("providers.detail.signIn")} action={summary.status === "reauth" ? null : reauthenticate}>
-            <DetailRows
-              rows={[
-                { label: "Status", value: formatSlug(account.credentialStatus) },
-                { label: "Access token expires", value: formatDateTimeInline(account.expiresAt, dateFormat) },
-                { label: "Catalog updated", value: formatDateTimeInline(account.state.catalog_updated_at, dateFormat) },
-                { label: "Usage updated", value: formatDateTimeInline(account.state.usage_updated_at, dateFormat) },
-              ]}
-            />
-          </DetailCard>
-          <DetailCard title={t("providers.detail.details")}>
-            <DetailParts>
-              <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-              <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
-            </DetailParts>
+          <DetailCard title={t("providers.detail.claudeVersion")} hint={t("providers.detail.allClaudeAccounts")}>
+            <ClaudeVersionControls readOnly={readOnly} />
           </DetailCard>
         </>
       }

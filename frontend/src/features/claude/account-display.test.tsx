@@ -359,6 +359,7 @@ describe("Claude shared account surfaces", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(changes).toEqual([{ isEnabled: false }]);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(
       screen.getByRole("combobox", { name: "Routing policy" }),
     );
@@ -379,11 +380,12 @@ describe("Claude shared account surfaces", () => {
     ).toBeDisabled();
     for (const name of [
       "Pause",
-      "Re-authenticate",
       "Check limits",
       "Models (0)",
     ])
       expect(screen.getByRole("button", { name })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(screen.getByRole("button", { name: "Re-authenticate" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "More actions" }));
     expect(await screen.findByRole("menuitem", { name: "Delete account" })).toHaveAttribute("aria-disabled", "true");
   });

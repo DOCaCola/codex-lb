@@ -219,6 +219,7 @@ function AntigravityDetail({
   const errors = [error, metadata?.account?.error, metadata?.catalog?.error, metadata?.quota?.error].filter(Boolean);
   return (
     <ProviderDetail
+      accountId={account.id}
       data-testid="antigravity-account-detail"
       provider="antigravity"
       color={color}
@@ -314,31 +315,6 @@ function AntigravityDetail({
       }
       side={
         <>
-          <DetailCard title={t("providers.detail.routing")}>
-            <DetailParts>
-              <AccountRoutingPolicyControl
-                policy={account.routingPolicy}
-                disabled={disabled}
-                onChange={(routingPolicy) => void update({ routingPolicy })}
-              />
-              <SettingRow
-                label={t("providers.detail.models")}
-                control={
-                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={disabled} onClick={onModels}>
-                    <Layers className="h-3.5 w-3.5" />
-                    Models ({account.state.all_models ? "All" : account.state.selections.length})
-                  </Button>
-                }
-              />
-              <ClaudeCapacitySettings
-                key={account.id + ":" + account.maxConcurrency}
-                value={account.maxConcurrency}
-                readOnly={readOnly}
-                onSave={(maxConcurrency) => api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })}
-              />
-              <AntigravityVersionControls readOnly={readOnly} />
-            </DetailParts>
-          </DetailCard>
           <DetailCard title={t("providers.detail.signIn")} action={summary.status === "reauth" ? null : reauthenticate}>
             <DetailRows
               rows={[
@@ -363,6 +339,37 @@ function AntigravityDetail({
               <AccountNotePanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
               <AccountSubscriptionEndPanel target={{ modelSourceId: account.id }} readOnly={readOnly} />
             </DetailParts>
+          </DetailCard>
+        </>
+      }
+      settings={
+        <>
+          <DetailCard title={t("providers.detail.routing")}>
+            <DetailParts>
+              <AccountRoutingPolicyControl
+                policy={account.routingPolicy}
+                disabled={disabled}
+                onChange={(routingPolicy) => void update({ routingPolicy })}
+              />
+              <SettingRow
+                label={t("providers.detail.models")}
+                control={
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={disabled} onClick={onModels}>
+                    <Layers className="h-3.5 w-3.5" />
+                    Models ({account.state.all_models ? "All" : account.state.selections.length})
+                  </Button>
+                }
+              />
+              <ClaudeCapacitySettings
+                key={account.id + ":" + account.maxConcurrency}
+                value={account.maxConcurrency}
+                readOnly={readOnly}
+                onSave={(maxConcurrency) => api.update.mutateAsync({ id: account.id, body: { maxConcurrency } })}
+              />
+            </DetailParts>
+          </DetailCard>
+          <DetailCard title={t("providers.detail.antigravityIdentity")} hint={t("providers.detail.allAntigravityAccounts")}>
+            <AntigravityVersionControls readOnly={readOnly} />
           </DetailCard>
         </>
       }

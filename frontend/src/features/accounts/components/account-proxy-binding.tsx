@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, Loader2, Network, XCircle } from "lucide-react";
+import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { DetailCard } from "@/features/accounts/components/provider-detail";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import type {
   AccountProxyBindingRequest,
@@ -79,20 +80,11 @@ export function AccountProxyBinding({
   };
 
   return (
-    <section className="min-w-0">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div className="flex min-w-0 items-start gap-2">
-          <Network className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <div className="min-w-0">
-            <h3 className="text-[13px] font-medium">{t("accounts.proxyBinding.title")}</h3>
-            <p className="text-xs text-muted-foreground">
-              {t("accounts.proxyBinding.description")}
-            </p>
-          </div>
-        </div>
+    <DetailCard
+      title={t("accounts.proxyBinding.title")}
+      action={
         <Switch
           aria-label={t("accounts.proxyBinding.enableAria")}
-          className="shrink-0"
           checked={active}
           disabled={busy || readOnly || !binding}
           onCheckedChange={(checked) => {
@@ -101,7 +93,9 @@ export function AccountProxyBinding({
             void onSave(account.accountId, { poolId, isActive: checked });
           }}
         />
-      </div>
+      }
+    >
+      <p className="text-xs text-muted-foreground">{t("accounts.proxyBinding.description")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Select
           value={currentPoolId}
@@ -111,7 +105,7 @@ export function AccountProxyBinding({
           }}
           disabled={busy || readOnly || admin.pools.length === 0}
         >
-          <SelectTrigger className="h-8 w-full min-w-0 text-xs" aria-label={t("accounts.proxyBinding.poolAria")}>
+          <SelectTrigger className="h-8 min-w-0 flex-[1_1_16rem] text-xs" aria-label={t("accounts.proxyBinding.poolAria")}>
             <SelectValue placeholder={t("accounts.proxyBinding.poolPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
@@ -124,7 +118,7 @@ export function AccountProxyBinding({
           type="button"
           size="sm"
           variant="outline"
-          className="h-8 flex-1 text-xs"
+          className="h-8 text-xs"
           disabled={busy || readOnly || !currentPoolId}
           onClick={() => void onSave(account.accountId, { poolId: currentPoolId, isActive: true })}
         >
@@ -135,7 +129,7 @@ export function AccountProxyBinding({
             type="button"
             size="sm"
             variant="outline"
-            className="h-8 flex-1 text-xs"
+            className="h-8 text-xs"
             disabled={busy || readOnly || !selectedPoolEndpointId || testingEndpointId !== null}
             onClick={() => void testSelectedPool()}
           >
@@ -179,6 +173,6 @@ export function AccountProxyBinding({
           </span>
         </div>
       ) : null}
-    </section>
+    </DetailCard>
   );
 }
