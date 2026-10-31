@@ -2,8 +2,7 @@ import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import { NO_ACCOUNT_COLORS } from "@/features/accounts/account-colors";
-import { buildProviderGroups, type ProviderSources } from "@/features/accounts/provider-summary";
-import { DEFAULT_ACCOUNT_SORT_MODE } from "@/features/accounts/sorting";
+import { summarizeSources, type ProviderSources } from "@/features/accounts/provider-summary";
 import { providerSources, summaryContext } from "@/features/accounts/test-utils";
 import {
   DashboardAccountCards,
@@ -13,7 +12,7 @@ import {
 } from "@/features/dashboard/components/dashboard-accounts";
 
 export function dashboardSummaries(sources: Partial<ProviderSources>) {
-  return buildProviderGroups(providerSources(sources), DEFAULT_ACCOUNT_SORT_MODE, summaryContext()).flatMap((group) => group.summaries);
+  return summarizeSources(providerSources(sources), summaryContext());
 }
 
 /** Renders the dashboard account cards or list for the given accounts in a router. */

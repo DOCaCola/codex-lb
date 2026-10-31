@@ -12,8 +12,7 @@ import { useAccountMutations } from "@/features/accounts/hooks/use-accounts";
 import { useProviderActivity } from "@/features/accounts/hooks/use-provider-activity";
 import { useSummaryContext } from "@/features/accounts/hooks/use-summary-context";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
-import { buildProviderGroups, type ProviderSummary } from "@/features/accounts/provider-summary";
-import { DEFAULT_ACCOUNT_SORT_MODE } from "@/features/accounts/sorting";
+import { summarizeSources, type ProviderSummary } from "@/features/accounts/provider-summary";
 import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-credit-confirm-dialog";
 import { listApiKeys } from "@/features/api-keys/api";
 import { useKeyColors } from "@/features/apis/key-summary";
@@ -143,11 +142,10 @@ export function DashboardPage() {
 
   const summaries = useMemo(
     () =>
-      buildProviderGroups(
+      summarizeSources(
         { accounts: codexAccounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources: [] },
-        DEFAULT_ACCOUNT_SORT_MODE,
         { ...summaryContext, quotaDisplay: "both" },
-      ).flatMap((group) => group.summaries),
+      ),
     [codexAccounts, claudeAccounts, antigravityAccounts, openRouterAccounts, summaryContext],
   );
   const summariesById = useMemo(

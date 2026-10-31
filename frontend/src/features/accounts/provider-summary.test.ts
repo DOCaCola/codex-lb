@@ -5,6 +5,7 @@ import {
   filterGroups,
   linearPacePercent,
   summarizeEntry,
+  summarizeSources,
   type ProviderSummary,
 } from "@/features/accounts/provider-summary";
 import { providerSources, summaryContext } from "@/features/accounts/test-utils";
@@ -44,6 +45,20 @@ describe("provider summaries", () => {
       summaryContext({ now: NOW }),
     );
     expect(groups[0].summaries.map((summary) => summary.name)).toEqual(["Zulu", "Alpha"]);
+  });
+
+  it("keeps each provider's source order when summarising without a sort", () => {
+    const summaries = summarizeSources(
+      providerSources({
+        claudeAccounts: [createClaudeAccount({ id: "z", name: "Zulu" }), createClaudeAccount({ id: "a", name: "Alpha" })],
+        accounts: [
+          createAccountSummary({ accountId: "pro", displayName: "Pro", availableResetCredits: 0 }),
+          createAccountSummary({ accountId: "plus", displayName: "Plus", availableResetCredits: 3 }),
+        ],
+      }),
+      summaryContext({ now: NOW }),
+    );
+    expect(summaries.map((summary) => summary.id)).toEqual(["pro", "plus", "z", "a"]);
   });
 
   it("shows the weekly and 5-hour Codex windows by the quota preference", () => {

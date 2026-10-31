@@ -522,6 +522,19 @@ export function summarizeEntry(entry: ProviderEntry, context: SummaryContext): P
   }
 }
 
+/** Every account as a summary in provider display order, keeping each provider's source order. */
+export function summarizeSources(sources: ProviderSources, context: SummaryContext): ProviderSummary[] {
+  const now = context.now ?? Date.now();
+  const groups: Record<ProviderKind, ProviderSummary[]> = {
+    codex: sources.accounts.map((account) => codexSummary(account, context, now)),
+    claude: sources.claudeAccounts.map((account) => claudeSummary(account, context, now)),
+    antigravity: sources.antigravityAccounts.map((account) => antigravitySummary(account, context, now)),
+    openrouter: sources.openRouterAccounts.map((account) => openRouterSummary(account, context)),
+    openai_compatible: sources.modelSources.map((source) => modelSourceSummary(source, context)),
+  };
+  return PROVIDER_ORDER.flatMap((kind) => groups[kind]);
+}
+
 /** Every account as a summary, grouped by provider in display order and sorted within each group. */
 export function buildProviderGroups(sources: ProviderSources, sortMode: AccountSortMode, context: SummaryContext): ProviderGroup[] {
   const now = context.now ?? Date.now();
