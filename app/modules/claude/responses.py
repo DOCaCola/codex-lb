@@ -14,6 +14,7 @@ from typing import cast
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
+from app.core.openai.memory_citation import MemoryCitationEscaper, escape_memory_citation_mentions
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_helper, custom_tool_input
 from app.modules.claude.credentials import ClaudeError
@@ -152,6 +153,8 @@ class ResponsesProjection:
     # final_answer messages when forking a thread, so the message's done event waits until the
     # next block or the stop reason shows whether more work follows (opencodex d2cc3f65e).
     text_parts: dict[int, tuple[int, int]] = field(default_factory=dict)
+    # Memory-citation escaping of each open text block, by content index.
+    text_escapers: dict[int, MemoryCitationEscaper] = field(default_factory=dict)
     open_message: int | None = None
     search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
     block_types: Counter[str] = field(default_factory=Counter)
@@ -342,6 +345,7 @@ class ResponsesProjection:
 
     def _present_update(self, index: int, slot: int, text: str) -> list[dict[str, JsonValue]]:
         """Deliver a progress update as its own commentary message right after its signed carrier."""
+        text = escape_memory_citation_mentions(text)
         copy_slot = slot + 1
         self.shift += 1
         self.progress_update_count += 1
@@ -465,6 +469,10 @@ class ResponsesProjection:
                 raise ClaudeError("Invalid Claude content_block_start")
             self.block_types[str(block.get("type"))] += 1
             self.blocks[index] = deepcopy(block)
+            if block.get("type") == "text":
+                # A whole (non-streamed) block arrives with its text; streamed ones start empty.
+                escaper = self.text_escapers[index] = MemoryCitationEscaper()
+                self.blocks[index]["text"] = escaper.push(str(block.get("text", "")))
             part: JsonValue = {"type": "output_text", "text": "", "annotations": []}
             if block.get("type") == "text" and self.open_message is not None:
                 message = self.outputs[self.open_message]
@@ -571,8 +579,11 @@ class ResponsesProjection:
             valid_type = "text" if field_name == "text" else "thinking"
             if block.get("type") != valid_type:
                 raise ClaudeError("Claude delta does not match its content block")
-            block[field_name] = str(block.get(field_name, "")) + str(delta[field_name])
             if field_name == "text":
+                text = self.text_escapers[index].push(str(delta[field_name]))
+                block["text"] = str(block.get("text", "")) + text
+                if not text:
+                    return []
                 message_index, part_index = self.text_parts[index]
                 return [
                     self.event(
@@ -580,9 +591,10 @@ class ResponsesProjection:
                         item_id=self.outputs[message_index]["id"],
                         output_index=message_index,
                         content_index=part_index,
-                        delta=delta[field_name],
+                        delta=text,
                     )
                 ]
+            block[field_name] = str(block.get(field_name, "")) + str(delta[field_name])
             if field_name == "thinking" and self.show_summary:
                 return [
                     self.event(
@@ -612,12 +624,26 @@ class ResponsesProjection:
             self.blocks.pop(index)
             message_index, part_index = self.text_parts.pop(index)
             message = self.outputs[message_index]
+            events: list[dict[str, JsonValue]] = []
+            tail = self.text_escapers.pop(index).flush()
+            if tail:
+                block["text"] = str(block.get("text", "")) + tail
+                events.append(
+                    self.event(
+                        "response.output_text.delta",
+                        item_id=message["id"],
+                        output_index=message_index,
+                        content_index=part_index,
+                        delta=tail,
+                    )
+                )
             part = {"type": "output_text", "text": block.get("text", ""), "annotations": url_citations(block)}
             content = message["content"]
             assert isinstance(content, list)
             content[part_index] = part
             self.open_message = message_index
             return [
+                *events,
                 self.event(
                     "response.output_text.done",
                     item_id=message["id"],

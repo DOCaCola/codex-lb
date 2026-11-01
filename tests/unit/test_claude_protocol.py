@@ -8,6 +8,7 @@ from pydantic import JsonValue
 
 from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.memory_citation import OPEN
 from app.modules.claude.capabilities import ReasoningSpec, reasoning_spec
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
@@ -928,6 +929,30 @@ def test_consecutive_text_blocks_form_one_message_with_one_part_each():
     assert isinstance(output, list) and len(output) == 1
     assert [part["text"] for part in output[0]["content"]] == ["First", "Second"]  # type: ignore[index]
     assert output[0]["phase"] == "final_answer"  # type: ignore[index]
+
+
+def test_a_quoted_memory_citation_tag_cannot_hide_the_rest_of_the_answer():
+    adapter = ResponsesProjection(scope(), ClaudeToolNames(), codec())
+    pieces = ["Put the `<oai-mem", "-citation>` block last", ". The rest stays."]
+    block = ({"type": "text", "text": ""}, [{"type": "text_delta", "text": piece} for piece in pieces])
+    events = _stream(adapter, [block], "end_turn")
+    streamed = "".join(event["delta"] for event in events if event["type"] == "response.output_text.delta")
+    final = at(events[-1], "response", "output", 0, "content", 0, "text")
+    assert isinstance(final, str)
+    assert streamed == final
+    assert OPEN not in final
+    assert final.replace("\u2060", "") == "".join(pieces)
+
+
+def test_a_whole_claude_message_escapes_a_quoted_memory_citation_tag():
+    text = f"Quote {OPEN} here, then continue."
+    response = ResponsesProjection(scope(), ClaudeToolNames(), codec()).complete(
+        {"id": "m", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn", "usage": {}}
+    )
+    final = at(response, "output", 0, "content", 0, "text")
+    assert isinstance(final, str)
+    assert OPEN not in final
+    assert final.replace("\u2060", "") == text
 
 
 def test_upstream_error_closes_finished_text_without_a_phase_first():

@@ -7,6 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.core.crypto import TokenEncryptor
+from app.core.openai.memory_citation import OPEN
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.opaque import AntigravityOpaqueState, ThoughtScope
 from app.modules.antigravity.responses import EmptyCompletion, GeminiProjection, Usage
@@ -160,3 +161,19 @@ def test_interrupt_closes_the_open_message_without_phase() -> None:
     [*_, done] = projection.interrupt()
     assert done["type"] == "response.output_item.done"
     assert "phase" not in cast(dict[str, Any], done["item"])
+
+
+def test_a_quoted_memory_citation_tag_cannot_hide_the_rest_of_the_answer() -> None:
+    projection = _projection()
+    pieces = ["Put the `<oai-mem-cit", "ation>` block last", ". The rest stays."]
+    events = _run(
+        projection,
+        _line({"text": pieces[0]}),
+        _line({"text": pieces[1]}),
+        _line({"text": pieces[2]}, finish="STOP"),
+    )
+    streamed = "".join(event["delta"] for event in events if event["type"] == "response.output_text.delta")
+    final = events[-1]["response"]["output"][0]["content"][0]["text"]
+    assert streamed == final
+    assert OPEN not in final
+    assert final.replace("\u2060", "") == "".join(pieces)

@@ -23,6 +23,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
+from app.core.openai.memory_citation import MemoryCitationEscaper
 from app.core.utils.request_id import get_request_id
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.opaque import AntigravityOpaqueState, ThoughtScope
@@ -91,6 +92,8 @@ class GeminiProjection:
     # The open reasoning item (output index, accumulated thought) or assistant message.
     thought: tuple[int, str] | None = None
     message: tuple[int, str] | None = None
+    # Memory-citation escaping of the open message's text.
+    message_escaper: MemoryCitationEscaper = field(default_factory=MemoryCitationEscaper)
     signature: str | None = None
     signature_sealed: bool = False
     calls: int = 0
@@ -250,6 +253,7 @@ class GeminiProjection:
                 }
                 self.outputs[slot] = message
                 self.message = (slot, "")
+                self.message_escaper = MemoryCitationEscaper()
                 events.append(self.event("response.output_item.added", output_index=slot, item=deepcopy(message)))
                 events.append(
                     self.event(
@@ -261,9 +265,12 @@ class GeminiProjection:
                     )
                 )
             slot, previous = self.message
+            text = self.message_escaper.push(text)
             self.message = (slot, previous + text)
             self.text_seen = True
             self.round_output = True
+            if not text:
+                return events
             events.append(
                 self.event(
                     "response.output_text.delta",
@@ -330,12 +337,22 @@ class GeminiProjection:
         slot, text = self.message
         self.message = None
         message = self.outputs[slot]
+        events: list[dict[str, JsonValue]] = []
+        tail = self.message_escaper.flush()
+        if tail:
+            text += tail
+            events.append(
+                self.event(
+                    "response.output_text.delta", item_id=message["id"], output_index=slot, content_index=0, delta=tail
+                )
+            )
         part: dict[str, JsonValue] = {"type": "output_text", "text": text, "annotations": []}
         message["content"] = [deepcopy(part)]
         message["status"] = "completed"
         if phase is not None:
             message["phase"] = phase
         return [
+            *events,
             self.event(
                 "response.output_text.done", item_id=message["id"], output_index=slot, content_index=0, text=text
             ),
