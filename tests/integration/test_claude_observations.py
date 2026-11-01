@@ -95,6 +95,41 @@ async def test_generation_ordering_and_history_throttle(pool):
     assert state.header_usage["five_hour"].window.utilization == 80
 
 
+async def test_model_scoped_window_and_overage_flag_persist_in_request_order(pool):
+    source_id = pool[0]
+    generation, _ = await snapshot(source_id)
+    now = datetime.now(UTC)
+    await record_headers(
+        source_id,
+        generation,
+        {
+            "anthropic-ratelimit-unified-7d_oi-utilization": ".42",
+            "anthropic-ratelimit-unified-overage-in-use": "true",
+        },
+        requested_at=now,
+    )
+    await record_headers(
+        source_id,
+        generation,
+        {"anthropic-ratelimit-unified-overage-in-use": "false"},
+        requested_at=now - timedelta(seconds=1),
+    )
+    _, state = await snapshot(source_id)
+    assert state.header_usage["seven_day_overage_included"].window.utilization == 42
+    assert state.header_overage is not None and state.header_overage.in_use
+    fable = next(
+        window for window in quota_status(state, now=now).windows if window.name == "seven_day_overage_included"
+    )
+    assert fable.utilization == 42 and fable.provenance == "inference_header"
+    async with SessionLocal() as session:
+        samples = await session.scalars(
+            select(ClaudeQuotaHistory.used_percent).where(
+                ClaudeQuotaHistory.source_id == source_id, ClaudeQuotaHistory.window == "seven_day_overage_included"
+            )
+        )
+        assert list(samples) == [42]
+
+
 async def test_delayed_poll_preserves_headers_and_concurrent_settings(pool):
     source_id = pool[0]
     generation, _ = await snapshot(source_id)

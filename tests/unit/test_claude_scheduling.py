@@ -22,7 +22,7 @@ def account(identifier, *, used=20, hours=24, stale=False, family=None):
             if family is not None
             else None,
         ),
-        usage_updated_at=NOW - timedelta(minutes=10 if stale else 1),
+        usage_updated_at=NOW - timedelta(minutes=31 if stale else 1),
     )
     return ClaudeAccount(source_id=identifier, state_json=state.model_dump_json(), routing_policy="normal")
 

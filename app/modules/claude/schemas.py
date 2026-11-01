@@ -203,6 +203,24 @@ class ExtraUsage(BaseModel):
     is_enabled: bool
 
 
+class LimitModel(BaseModel):
+    display_name: str | None = None
+
+
+class LimitScope(BaseModel):
+    model: LimitModel | None = None
+
+
+class UsageLimit(BaseModel):
+    """One entry of the usage response's `limits` list; only scoped weekly entries are interpreted."""
+
+    model_config = ConfigDict(extra="allow")
+    kind: str
+    percent: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    resets_at: datetime | None = None
+    scope: LimitScope | None = None
+
+
 class UsageSnapshot(BaseModel):
     # Preserve newer provider windows for display without guessing model ownership.
     model_config = ConfigDict(extra="allow")
@@ -210,7 +228,21 @@ class UsageSnapshot(BaseModel):
     seven_day: QuotaWindow | None = None
     seven_day_opus: QuotaWindow | None = None
     seven_day_sonnet: QuotaWindow | None = None
+    # Anthropic's name for the model-scoped weekly window (header `7d_oi`), reported for Fable.
+    seven_day_overage_included: QuotaWindow | None = None
+    limits: list[UsageLimit] = Field(default_factory=list)
     extra_usage: ExtraUsage | None = None
+
+    @model_validator(mode="after")
+    def fable_weekly(self) -> UsageSnapshot:
+        if self.seven_day_overage_included is not None:
+            return self
+        for limit in self.limits:
+            model = limit.scope.model if limit.scope is not None else None
+            if limit.kind == "weekly_scoped" and limit.percent is not None and model and model.display_name == "Fable":
+                self.seven_day_overage_included = QuotaWindow(utilization=limit.percent, resets_at=limit.resets_at)
+                break
+        return self
 
 
 class HeaderQuotaObservation(BaseModel):
@@ -219,6 +251,14 @@ class HeaderQuotaObservation(BaseModel):
     observed_at: datetime
 
 
+class HeaderOverageObservation(BaseModel):
+    """Whether a reply reported extra usage as being billed (`overage-in-use`)."""
+
+    in_use: bool
+    requested_at: datetime
+
+
+HeaderWindow = Literal["five_hour", "seven_day", "seven_day_overage_included"]
 MetadataEndpoint = Literal["catalog", "usage", "subscription"]
 
 
@@ -226,8 +266,9 @@ class MetadataRefreshState(BaseModel):
     operation_id: str | None = None
     lease_until: datetime | None = None
     retry_at: datetime | None = None
-    # The retry time is the provider's rate-limit deadline, which a manual check also waits for.
-    rate_limited: bool = False
+    # The credential generation whose request the provider rate limited. Its retry time binds
+    # manual checks too; a refreshed token is not bound (the limit is per access token).
+    rate_limited_generation: int | None = None
 
 
 class AccountState(BaseModel):
@@ -249,14 +290,15 @@ class AccountState(BaseModel):
     usage_error: str | None = None
     usage_requested_at: datetime | None = None
     usage_check_started_at: datetime | None = None
-    header_usage: dict[Literal["five_hour", "seven_day"], HeaderQuotaObservation] = Field(default_factory=dict)
+    header_usage: dict[HeaderWindow, HeaderQuotaObservation] = Field(default_factory=dict)
+    header_overage: HeaderOverageObservation | None = None
     reset_barriers: dict[str, datetime] = Field(default_factory=dict)
     # Anthropic refused OAuth for the organization (lapsed subscription). Routing excludes the
     # account until a usage or subscription refresh started afterwards succeeds, or a reconnect.
     oauth_refused_at: datetime | None = None
 
 
-WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]
+WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_overage_included"]
 QuotaProvenance = Literal["usage_api", "inference_header"]
 
 

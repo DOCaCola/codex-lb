@@ -59,6 +59,7 @@ async def read_trends(session: AsyncSession, source_id: str, *, quota: bool) -> 
             "seven_day": "Weekly",
             "seven_day_opus": "Weekly Opus",
             "seven_day_sonnet": "Weekly Sonnet",
+            "seven_day_overage_included": "Weekly Fable",
         }
         values: dict[str, dict[int, float]] = {}
         for window, hour, used in rows:

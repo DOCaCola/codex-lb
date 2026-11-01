@@ -186,14 +186,21 @@ are returned without hidden paid fallback or repeated account hopping.
 
 ## Metadata refresh and rate limits
 
-Usage is polled every three minutes and the model catalog every six hours.
+Reply headers are the main quota source: every Claude reply updates the 5-hour,
+weekly and Weekly Fable windows and reports whether extra usage is being billed.
+The usage endpoint is read only when an account has had no reply and no usage
+read for 15 minutes, and at least hourly for data only it reports (extra-usage
+settings, Opus/Sonnet windows). Readings stay fresh for 30 minutes. The model
+catalog refreshes every six hours.
 Refresh can update successful cached readings sooner, but cannot bypass a running
 refresh or an upstream-error cooldown. Concurrent refreshes share stored results.
 
 A metadata 429 does not mean inference is unavailable. The account detail identifies
 the failing endpoint, HTTP status and retry deadline. The gateway honors
-`Retry-After`, or waits three minutes when no valid hint is present, across workers
-and restarts. Last good readings retain their original timestamps and show as stale;
+`Retry-After`, or waits five minutes when no valid hint is present, across workers
+and restarts. The wait applies to the access token that was refused; after a token
+refresh the endpoint follows its normal schedule again.
+Last good readings retain their original timestamps and show as stale;
 fresh inference headers can still update their own quota windows. Catalog and usage
 cooldowns are independent. No account pause or reactive token refresh is triggered.
 

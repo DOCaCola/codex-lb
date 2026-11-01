@@ -31,13 +31,13 @@ from app.modules.claude.identity import ReconnectIdentityMismatch, authenticated
 from app.modules.claude.metadata import (
     CLAIM_LEASE,
     FETCH_TIMEOUT_SECONDS,
-    USAGE_INTERVAL,
+    RETRY_DEFAULT,
     MetadataHTTPError,
     metadata_updated_at,
     refresh_due,
 )
 from app.modules.claude.model_selection import effective_selections
-from app.modules.claude.quota import quota_status
+from app.modules.claude.quota import extra_usage_enabled, quota_status
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
@@ -401,7 +401,10 @@ class ClaudeService:
         endpoints: list[MetadataEndpoint] = ["catalog", "usage"] if catalog else ["usage"]
         endpoints.append("subscription")
         refresh_started_at = datetime.now(UTC)
-        if not any(refresh_due(state, endpoint, refresh_started_at, force=force) for endpoint in endpoints):
+        if not any(
+            refresh_due(state, endpoint, refresh_started_at, force=force, generation=row.generation)
+            for endpoint in endpoints
+        ):
             return self._response(row)
         snapshot = await self.auth.snapshot(source_id)
         identity = await ClaudeVersionService(self.repository.session).snapshot()
@@ -435,7 +438,7 @@ class ClaudeService:
             updated = metadata_updated_at(state, endpoint)
             if updated is not None and updated >= refresh_started_at:
                 return None
-            if not refresh_due(state, endpoint, requested_at, force=force):
+            if not refresh_due(state, endpoint, requested_at, force=force, generation=generation):
                 return None
             state.metadata_refresh[endpoint] = MetadataRefreshState(
                 operation_id=operation_id,
@@ -468,7 +471,7 @@ class ClaudeService:
                 result = await self._verified_subscription(source_id, bootstrap)
         except (ClaudeError, TimeoutError) as exc:
             error = str(exc) if isinstance(exc, ClaudeError) else f"Claude {endpoint} metadata timed out"
-            retry_at = exc.retry_at if isinstance(exc, MetadataHTTPError) else datetime.now(UTC) + USAGE_INTERVAL
+            retry_at = exc.retry_at if isinstance(exc, MetadataHTTPError) else datetime.now(UTC) + RETRY_DEFAULT
             rate_limited = isinstance(exc, MetadataHTTPError) and exc.status == 429
         completed_at = datetime.now(UTC)
 
@@ -481,7 +484,9 @@ class ClaudeService:
                 or refresh.lease_until <= completed_at
             ):
                 return None
-            state.metadata_refresh[endpoint] = MetadataRefreshState(retry_at=retry_at, rate_limited=rate_limited)
+            state.metadata_refresh[endpoint] = MetadataRefreshState(
+                retry_at=retry_at, rate_limited_generation=generation if rate_limited else None
+            )
             if endpoint == "catalog":
                 state.catalog_requested_at = requested_at
                 state.catalog_error = error
@@ -596,9 +601,7 @@ class ClaudeService:
             is_enabled=row.source.is_enabled,
             credential_status=status,
             expires_at=row.expires_at.replace(tzinfo=UTC),
-            extra_usage_enabled=state.usage is not None
-            and state.usage.extra_usage is not None
-            and state.usage.extra_usage.is_enabled,
+            extra_usage_enabled=extra_usage_enabled(state),
             state=state,
             quota=quota_status(state, now=datetime.now(UTC)),
         )

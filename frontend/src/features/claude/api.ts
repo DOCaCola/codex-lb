@@ -59,6 +59,7 @@ export const ClaudeAccountSchema = z.object({
           "seven_day",
           "seven_day_opus",
           "seven_day_sonnet",
+          "seven_day_overage_included",
         ]),
         utilization: z.number().nullable(),
         resetsAt: z.string().nullable(),

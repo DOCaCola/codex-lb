@@ -2,9 +2,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.modules.claude.observations import parse_headers
-from app.modules.claude.quota import quota_status
-from app.modules.claude.schemas import AccountState, QuotaWindow, UsageSnapshot
+from app.modules.claude.observations import parse_headers, parse_overage
+from app.modules.claude.quota import extra_usage_enabled, model_quota, quota_status
+from app.modules.claude.schemas import AccountState, ExtraUsage, QuotaWindow, UsageSnapshot
 
 NOW = datetime(2026, 9, 28, 12, tzinfo=UTC)
 
@@ -90,3 +90,58 @@ def test_invalid_reset_does_not_discard_usage_or_invent_deadline(reset):
     )
     assert result["seven_day"].window.utilization == 104
     assert result["seven_day"].window.resets_at is None
+
+
+def test_model_scoped_header_feeds_fable_window_and_blocks_only_fable():
+    headers = {
+        "anthropic-ratelimit-unified-5h-utilization": ".1",
+        "anthropic-ratelimit-unified-7d_oi-utilization": "1",
+        "anthropic-ratelimit-unified-7d_oi-reset": str((NOW + timedelta(days=2)).timestamp()),
+    }
+    state = AccountState(
+        usage=UsageSnapshot(),
+        usage_requested_at=NOW - timedelta(minutes=1),
+        usage_updated_at=NOW - timedelta(minutes=1),
+        header_usage=parse_headers(headers, requested_at=NOW, observed_at=NOW),
+    )
+    windows = quota_status(state, now=NOW).windows
+    fable = next(window for window in windows if window.name == "seven_day_overage_included")
+    assert fable.utilization == 100 and fable.provenance == "inference_header" and fable.exhausted
+    assert model_quota("anthropic/claude-fable-5-1", windows).blocking_windows == ["seven_day_overage_included"]
+    assert not model_quota("anthropic/claude-opus-5-5", windows).blocked
+
+
+def test_fable_window_absent_until_reported():
+    state = AccountState(usage=UsageSnapshot(), usage_updated_at=NOW)
+    assert "seven_day_overage_included" not in {window.name for window in quota_status(state, now=NOW).windows}
+    assert "seven_day_overage_included" not in {window.name for window in quota_status(AccountState(), now=NOW).windows}
+
+
+def test_evidence_stays_fresh_for_two_idle_reads():
+    state = AccountState(usage=UsageSnapshot(five_hour=QuotaWindow(utilization=10)), usage_updated_at=NOW)
+    assert quota_status(state, now=NOW + timedelta(minutes=29)).windows[0].freshness == "fresh"
+    assert quota_status(state, now=NOW + timedelta(minutes=30)).windows[0].freshness == "stale"
+
+
+@pytest.mark.parametrize(
+    "raw,in_use", [("true", True), (" TRUE ", True), ("false", False), ("yes", None), (None, None)]
+)
+def test_overage_in_use_header(raw, in_use):
+    headers = {} if raw is None else {"Anthropic-Ratelimit-Unified-Overage-In-Use": raw}
+    observation = parse_overage(headers, requested_at=NOW)
+    assert (observation.in_use if observation else None) == in_use
+
+
+def test_extra_usage_badge_from_newer_billing_reply_never_cleared_by_not_in_use():
+    state = AccountState(usage=UsageSnapshot(extra_usage=ExtraUsage(is_enabled=False)), usage_requested_at=NOW)
+    state.header_overage = parse_overage({"anthropic-ratelimit-unified-overage-in-use": "true"}, requested_at=NOW)
+    assert not extra_usage_enabled(state)
+    state.header_overage = parse_overage(
+        {"anthropic-ratelimit-unified-overage-in-use": "true"}, requested_at=NOW + timedelta(seconds=1)
+    )
+    assert extra_usage_enabled(state)
+    state.usage = UsageSnapshot(extra_usage=ExtraUsage(is_enabled=True))
+    state.header_overage = parse_overage(
+        {"anthropic-ratelimit-unified-overage-in-use": "false"}, requested_at=NOW + timedelta(seconds=2)
+    )
+    assert extra_usage_enabled(state)

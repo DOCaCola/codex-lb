@@ -92,7 +92,8 @@ Accounts appear in shared dashboard cards/table, account selection, and Add acco
 Controls include pause/resume, refresh, reconnect, selected models, context/output
 caps and the global advertised-version pin. Privacy blur and read-only permissions
 apply. Missing quota windows show unknown; stale data is labeled, not reset to zero.
-Enabled accounts trigger leader-owned quota refresh every three minutes, catalog refresh
+Enabled accounts read quota from reply headers and call the usage endpoint only when idle
+for 15 minutes or hourly for endpoint-only data, refresh the catalog
 every six hours, and stable version discovery at startup when stale/every 24 hours.
 Pinning selects a verified build (CLI, SDK and runtime versions together), not the profile revision.
 
@@ -463,8 +464,9 @@ remain unchanged.
 
 Usage and model catalog requests have separate persisted claims/cooldowns in
 account state. The leader ticks every minute, but successful usage is cached for
-three minutes and catalog for six hours. Manual refresh bypasses successful-cache
-cadence only. Concurrent callers reuse retained state; a caller does not repeat
+a cadence driven by header evidence (see Header-first quota below) and catalog for
+six hours. Manual refresh bypasses successful-cache cadence only. Concurrent
+callers reuse retained state; a caller does not repeat
 an endpoint another worker completed since that caller began.
 
 A logical fetch is bounded to 60 seconds with a 90-second durable lease.
@@ -474,8 +476,8 @@ state. Cancellation or process loss leaves a lease that expires, not an unsafe
 authentication retry. Settings and newer inference observations merge independently.
 
 HTTP failures identify the endpoint/status and next retry deadline. Retry-After
-seconds and HTTP dates are honored; absent or malformed hints use three minutes.
-Other metadata failures also cool down for three minutes. On expiry a failed
+seconds and HTTP dates are honored; absent or malformed hints use five minutes.
+Other metadata failures also cool down for five minutes. On expiry a failed
 endpoint becomes due even if its last successful reading is within normal cadence.
 For example, usage HTTP 429 with Retry-After: 600 leaves the last readings/timestamps intact,
 marks poll data stale and blocks both manual and scheduled usage calls for ten
@@ -1028,3 +1030,36 @@ The earlier Claude token count exceeded the client-advertised Astra context
 threshold. That explains the downshift trigger, but is not a hard-capacity proof:
 the live registry reported context_window=272000 and max_context_window=872000, and
 the successful Astra request counted substantially fewer tokens.
+
+## Header-first quota (2026-11-01)
+
+After a Max → Free → Pro change, `/api/oauth/usage` answered 429 with
+Retry-After 3600 repeatedly while inference kept working; we had polled it every
+three minutes for days without errors. Public reports (anthropics/claude-code
+#30930, #31021, #31637, #38248) describe the same persistent 429 and attribute the
+limit to the access token rather than the account.
+
+Source inspection of Claude Code 2.1.285 (built 2026-09-29): quota state comes
+from `anthropic-ratelimit-unified-*` reply headers (5h, 7d, 7d_oi, overage, status,
+claim, slow mode) plus a one-token "quota" probe at startup and while waiting out a
+limit. The usage endpoint is read only on demand (/usage, extra-usage dialogs,
+limit walls), answered from a header snapshot under 60 seconds old, and a 429/403
+is remembered per bearer for Retry-After (default five minutes, cap one hour).
+Its User-Agent there is `claude-cli/<version> (external, cli)`, the same as ours;
+third-party tools that switched to `claude-code/<version>` (seat-monitor #69,
+automanager-llama.cpp #15, Claude-Code-Usage-Monitor #202) imitate older builds,
+so we did not adopt it.
+
+References (clones inspected 2026-11-01): CLIProxyAPI never calls the endpoint;
+opencodex and sub2api call it on demand (10- and 3-minute caches); agent-lb polls
+every 60 seconds but skips accounts whose header-fed usage is fresh; OmniRoute
+refreshes cached accounts every five minutes and keeps a per-token 429 cooldown of
+3-30 minutes. We follow agent-lb's header-first shape with a slower idle cadence
+(15 minutes) because the endpoint limit is unpublished, and Claude Code's per-token
+429 memory via the credential generation.
+
+`7d_oi` is Anthropic's `seven_day_overage_included` (the name its reset-grant API
+uses). opencodex confirms it against recorded Fable responses; the usage
+endpoint reports the same window as a `weekly_scoped` limit scoped to Fable. Only
+`overage-in-use` is interpreted from the extra-usage headers, as in agent-lb and
+OmniRoute; no reference derives "enabled" from them.

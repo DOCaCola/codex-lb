@@ -76,7 +76,7 @@ def test_known_scoped_window_remains_visible_when_unusable(condition):
 
 def test_stale_exhaustion_remains_blocked_until_reset_without_invented_zero():
     observed = state(seven_day=QuotaWindow(utilization=100, resets_at=NOW + timedelta(hours=2)))
-    status = quota_status(observed, now=NOW + timedelta(minutes=6))
+    status = quota_status(observed, now=NOW + timedelta(minutes=31))
     assert status.windows[1].freshness == "stale"
     assert all(model.blocked for model in status.models)
     status = quota_status(observed, now=NOW + timedelta(hours=2))

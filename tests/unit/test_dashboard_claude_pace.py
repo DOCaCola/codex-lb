@@ -76,7 +76,7 @@ def test_claude_pace_reports_disabled_as_inactive_and_old_observations_as_stale(
         [
             _account("fresh", "default_claude_pro", 10),
             _account("paused", "default_claude_max_5x", 10, enabled=False),
-            _account("stale", "default_claude_max_5x", 10, observed_ago=timedelta(minutes=10)),
+            _account("stale", "default_claude_max_5x", 10, observed_ago=timedelta(minutes=31)),
             # A deadline in the past means the window already reset; its old reading is not evidence.
             _account("expired", "default_claude_max_5x", 90, reset=NOW - timedelta(minutes=5)),
         ]

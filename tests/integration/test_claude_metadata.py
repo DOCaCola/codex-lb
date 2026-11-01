@@ -12,6 +12,7 @@ from app.modules.claude import service as service_module
 from app.modules.claude.auth import ClaudeAuth
 from app.modules.claude.client import ClaudeClient
 from app.modules.claude.metadata import MetadataHTTPError
+from app.modules.claude.observations import record_headers
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import CatalogModel, QuotaWindow, UsageSnapshot
 from app.modules.claude.service import ClaudeService
@@ -136,6 +137,64 @@ async def test_scheduled_cache_does_not_refresh_auth_or_metadata(account, monkey
     monkeypatch.setattr(ClaudeAuth, "snapshot", AsyncMock(side_effect=AssertionError("not due")))
     await poll(account, force=False)
     assert cast(AsyncMock, ClaudeClient.usage).await_count == cast(AsyncMock, ClaudeClient.catalog).await_count == 1
+
+
+async def test_reply_headers_keep_busy_account_off_the_usage_endpoint(account, monkeypatch):
+    await poll(account)
+    usage = cast(AsyncMock, ClaudeClient.usage)
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, account)
+        assert row is not None
+        generation = row.generation
+
+    def age(minutes):
+        def apply(state):
+            state.usage_updated_at = datetime.now(UTC) - timedelta(minutes=minutes)
+            return state
+
+        return apply
+
+    await mutate(account, age(20))
+    await record_headers(
+        account, generation, {"anthropic-ratelimit-unified-5h-utilization": ".3"}, requested_at=datetime.now(UTC)
+    )
+    await poll(account, force=False)
+    assert usage.await_count == 1
+    # Hourly the endpoint-only data is refreshed regardless.
+    await mutate(account, age(61))
+    await poll(account, force=False)
+    assert usage.await_count == 2
+
+
+async def test_usage_rate_limit_binds_only_the_receiving_credential(account, monkeypatch):
+    failure = AsyncMock(side_effect=MetadataHTTPError("/api/oauth/usage", 429, "3600"))
+    monkeypatch.setattr(ClaudeClient, "usage", failure)
+    await poll(account, catalog=False)
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, account)
+        assert row is not None
+        generation = row.generation
+
+    def idle(state):
+        assert state.metadata_refresh["usage"].rate_limited_generation == generation
+        state.usage_updated_at = datetime.now(UTC) - timedelta(hours=2)
+        return state
+
+    await mutate(account, idle)
+    await poll(account, catalog=False, force=False)
+    await poll(account, catalog=False)
+    assert failure.await_count == 1
+    # A token refresh starts a new credential generation, which may ask again.
+    async with SessionLocal() as session:
+        await session.execute(
+            update(ClaudeAccount).where(ClaudeAccount.source_id == account).values(generation=generation + 1)
+        )
+        await session.commit()
+    recovered = AsyncMock(return_value=UsageSnapshot(five_hour=QuotaWindow(utilization=40)))
+    monkeypatch.setattr(ClaudeClient, "usage", recovered)
+    result = await poll(account, catalog=False, force=False)
+    recovered.assert_awaited_once()
+    assert result.state.usage_error is None and result.quota.windows[0].utilization == 40
 
 
 @pytest.mark.parametrize("endpoint", ["usage", "catalog"])

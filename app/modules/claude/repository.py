@@ -71,6 +71,7 @@ class ClaudeRepository:
             ("seven_day", usage.seven_day),
             ("seven_day_opus", usage.seven_day_opus),
             ("seven_day_sonnet", usage.seven_day_sonnet),
+            ("seven_day_overage_included", usage.seven_day_overage_included),
         ):
             if window is not None:
                 reset = window.resets_at.astimezone(UTC).replace(tzinfo=None) if window.resets_at else None
