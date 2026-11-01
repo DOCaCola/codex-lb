@@ -1000,3 +1000,59 @@ def test_chat_rejects_unknown_message_role():
     }
     with pytest.raises(ValidationError, match="Unsupported message role"):
         ChatCompletionsRequest.model_validate(payload)
+
+
+_LOOKUP_PARAMETERS = {
+    "type": "object",
+    "properties": {"record_id": {"type": "string"}, "grep": {"type": "string"}, "context": {"type": "integer"}},
+    "required": ["record_id"],
+}
+
+
+def _converted_tools(payload: dict[str, JsonValue]) -> list[JsonValue]:
+    tools = ChatCompletionsRequest.model_validate(payload).to_responses_request().to_payload()["tools"]
+    assert isinstance(tools, list)
+    return tools
+
+
+@pytest.mark.parametrize("strict", ["omitted", None])
+def test_chat_function_tools_keep_the_chat_non_strict_default(strict: object) -> None:
+    """Responses may treat an omitted flag as strict (Soju06/codex-lb#2691)."""
+    function: dict[str, JsonValue] = {"name": "lookup_record", "parameters": _LOOKUP_PARAMETERS}
+    flat: dict[str, JsonValue] = {"type": "function", "name": "lookup_flat", "parameters": _LOOKUP_PARAMETERS}
+    if strict is None:
+        function["strict"] = None
+        flat["strict"] = None
+    payload: dict[str, JsonValue] = {
+        "model": "gpt-6.1-sol",
+        "messages": [{"role": "user", "content": "find it"}],
+        "tools": [{"type": "function", "function": function}, flat],
+    }
+    tools = _converted_tools(payload)
+    assert [cast(dict, tool)["strict"] for tool in tools] == [False, False]
+    assert [cast(dict, tool)["parameters"] for tool in tools] == [_LOOKUP_PARAMETERS, _LOOKUP_PARAMETERS]
+    assert flat.get("strict", "omitted") == strict
+
+
+@pytest.mark.parametrize("strict", [True, False])
+def test_chat_function_tools_keep_explicit_strictness(strict: bool) -> None:
+    parameters = {**_LOOKUP_PARAMETERS, "required": ["record_id", "grep", "context"], "additionalProperties": False}
+    tools = _converted_tools(
+        {
+            "model": "gpt-6.1-sol",
+            "messages": [{"role": "user", "content": "find it"}],
+            "tools": [{"type": "function", "function": {"name": "f", "parameters": parameters, "strict": strict}}],
+        }
+    )
+    assert cast(dict, tools[0])["strict"] is strict
+
+
+def test_responses_shaped_chat_payload_keeps_strict_omission() -> None:
+    tools = _converted_tools(
+        {
+            "model": "gpt-6.1-sol",
+            "input": "find it",
+            "tools": [{"type": "function", "name": "lookup_record", "parameters": _LOOKUP_PARAMETERS}],
+        }
+    )
+    assert "strict" not in cast(dict, tools[0])
