@@ -302,11 +302,16 @@ Claude SHALL support Responses over downstream HTTP and WebSocket while using HT
 - **THEN** it fails explicitly and requires portable context rather than guessing its origin from affinity
 
 ### Requirement: Advertised version following
-The service SHALL asynchronously follow the canonical stable Claude Code release at startup when stale and every 24 hours, sharing state across workers. It MUST preserve the last valid version on discovery failure, distinguish last checked from last changed, support manual pin/rollback, and use one immutable identity snapshot per request. It MUST NOT download executable updates or fabricate private billing fingerprints.
+The service SHALL asynchronously follow the canonical stable Claude Code release at startup when stale and every 24 hours, sharing state across workers. A newer release SHALL be adopted only after its published native build was downloaded, matched to the registry's integrity hash and scanned for its Stainless SDK and runtime versions; requests SHALL send the CLI, SDK and runtime versions of one verified build. The build MUST NOT be executed. The service MUST preserve the last verified version on discovery or verification failure, distinguish last checked from last changed, support manual pin/rollback to a verified build, and use one immutable identity snapshot per request. It MUST NOT fabricate private billing fingerprints.
 
 #### Scenario: Unchanged version check
 - **WHEN** discovery succeeds with the current version
 - **THEN** last checked advances while last changed remains unchanged
+
+#### Scenario: New release verification
+- **WHEN** discovery returns a newer release
+- **THEN** it is advertised only after its build yielded one SDK and one runtime version, which are sent with it
+- **AND** a failed verification keeps the last verified build and retries later
 
 ### Requirement: Unified account controls
 Claude SHALL appear alongside existing accounts in account and dashboard collections, with the shared add-account chooser, pause/resume, privacy and read-only controls. Quotas and API-equivalent token costs MUST remain distinguishable from actual subscription charges.
@@ -756,11 +761,16 @@ Last successful observations and timestamps SHALL survive failures. HTTP errors 
 - **THEN** the subscription refresh still completes and the refresh's state write succeeds
 
 ### Requirement: Claude request usage and timing
-Claude native and adapted request logs SHALL preserve inclusive input/output tokens, separately reported cache reads and writes, and only provider-reported reasoning tokens. The gateway SHALL measure upstream-attempt duration and time to first nonempty generated text, thinking or tool payload from a monotonic pre-open anchor. Nonempty redacted-thinking data and thinking signatures SHALL establish opaque first output. Metadata, pings and empty deltas MUST NOT establish first-token latency. Error, cancellation and truncated streams SHALL finalize duration without inventing first-token latency. Timing observation MUST precede Responses adaptation and MUST NOT expose opaque contents or infer reasoning token counts.
+Claude native and adapted request logs SHALL preserve inclusive input/output tokens, separately reported cache reads and writes, and only provider-reported reasoning tokens. When a cumulative stream usage update changes the cache-write total without restating its 5-minute/1-hour split, the whole total SHALL be attributed to the single cache lifetime used by every cache marker of the dispatched body; with mixed or absent lifetimes the split SHALL become unknown rather than keep the earlier, partial split. The gateway SHALL measure upstream-attempt duration and time to first nonempty generated text, thinking or tool payload from a monotonic pre-open anchor. Nonempty redacted-thinking data and thinking signatures SHALL establish opaque first output. Metadata, pings and empty deltas MUST NOT establish first-token latency. Error, cancellation and truncated streams SHALL finalize duration without inventing first-token latency. Timing observation MUST precede Responses adaptation and MUST NOT expose opaque contents or infer reasoning token counts.
 
 #### Scenario: Cached thinking stream
 - **WHEN** a stream reports uncached input, cache reads, cache writes and output but no reasoning token count
 - **THEN** its inclusive totals and cache breakdown persist, while reasoning tokens remain unknown
+
+#### Scenario: Server-side sampling rounds raise cache writes
+- **WHEN** a request whose cache markers all use the 1-hour lifetime receives a final usage update with a larger cache-write total and no split
+- **THEN** all cache writes are recorded and priced as 1-hour writes
+- **AND** a request with mixed lifetimes records the total with an unknown split and an unknown cost
 
 #### Scenario: Opaque first output
 - **WHEN** a native stream emits nonempty redacted-thinking data or a thinking signature before visible output

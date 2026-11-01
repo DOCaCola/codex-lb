@@ -47,7 +47,6 @@ _MODEL_OPTION_DELIMITER = ":::"
 _CONVERSATION_MAX_LOOKBACK = timedelta(days=30)
 
 
-
 def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:
     raw = (value or "").strip()
     if not raw:

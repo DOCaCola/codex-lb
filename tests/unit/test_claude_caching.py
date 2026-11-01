@@ -4,18 +4,19 @@ from copy import deepcopy
 import pytest
 
 from app.modules.claude.caching import cache_translated, retain_thinking
-from app.modules.claude.profile import CLI_IDENTITY, RequestProfile
+from app.modules.claude.profile import CLI_IDENTITY, ClientBuild, RequestProfile
 from app.modules.claude.request import project_request
 from app.modules.claude.wire_identity import project_session
 
 pytestmark = pytest.mark.unit
 
 _HOUR = {"type": "ephemeral", "ttl": "1h"}
+BUILD = ClientBuild("2.1.316", "0.128.0", "v26.12.1")
 
 
 def _oauth_projection(messages):
     profile = RequestProfile.create(
-        version="2.1.283", source_id="a", client_scope="client", conversation_id="conversation", native=False
+        build=BUILD, source_id="a", client_scope="client", conversation_id="conversation", native=False
     )
     logical = {
         "model": "claude-opus-5-5",
@@ -133,7 +134,7 @@ def test_earlier_turn_thinking_is_kept_only_when_thinking_is_on(thinking, retain
 def test_synthesized_identity_is_stable_scoped_and_names_the_serving_account():
     def make(source="a", client="client", conversation="conversation"):
         profile = RequestProfile.create(
-            version="2.1.283", source_id=source, client_scope=client, conversation_id=conversation, native=False
+            build=BUILD, source_id=source, client_scope=client, conversation_id=conversation, native=False
         )
         body = {"metadata": {"other": "preserved"}}
         project_session(

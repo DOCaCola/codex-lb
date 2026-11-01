@@ -94,7 +94,7 @@ caps and the global advertised-version pin. Privacy blur and read-only permissio
 apply. Missing quota windows show unknown; stale data is labeled, not reset to zero.
 Enabled accounts trigger leader-owned quota refresh every three minutes, catalog refresh
 every six hours, and stable version discovery at startup when stale/every 24 hours.
-Pinning affects advertised CLI version, not SDK/runtime baselines or profile revision.
+Pinning selects a verified build (CLI, SDK and runtime versions together), not the profile revision.
 
 ## References
 
@@ -166,8 +166,8 @@ same scoped session UUID as the header. `account_uuid` is empty: the stored
 provider identity fingerprint cannot recover the actual UUID. Runtime OS and
 architecture are advertised consistently. The observed browser-access header is
 included; the unobserved stream-helper header is not synthesized (recognized
-native caller values remain preserved). SDK/runtime versions remain reviewed
-constants, separate from dynamically discovered Claude Code version.
+native caller values remain preserved). SDK/runtime versions come from the same
+verified build as the advertised CLI version (see Advertised version following).
 
 CLIProxyAPI revision `ef9e712` was inspected on 2026-09-27 as a structural
 reference, not copied source. The isolated bundled Codex app-server 0.157.1

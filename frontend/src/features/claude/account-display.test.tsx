@@ -305,11 +305,13 @@ describe("Claude shared account surfaces", () => {
     server.use(
       http.get("/api/claude-accounts/version", () =>
         HttpResponse.json({
-          effectiveVersion: "2.1.282",
-          discoveredVersion: "2.1.282",
+          effective: { version: "2.1.316", sdkVersion: "0.128.0", runtimeVersion: "v26.12.1", verifiedAt: null },
+          discoveredVersion: "2.1.316",
           pinnedVersion: null,
+          builds: [{ version: "2.1.316", sdkVersion: "0.128.0", runtimeVersion: "v26.12.1", verifiedAt: null }],
           lastCheckedAt: null,
           lastChangedAt: null,
+          retryAt: null,
           error: null,
         }),
       ),

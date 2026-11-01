@@ -26,6 +26,7 @@ from app.modules.claude.native import NativeObserver, usage_totals
 from app.modules.claude.observations import record_headers
 from app.modules.claude.recovery import historical_recovery
 from app.modules.claude.refusals import record_refused_response
+from app.modules.claude.request import cache_write_ttl
 from app.modules.claude.resources import record_origins
 from app.modules.claude.responses import ResponsesProjection, Usage
 from app.modules.model_sources.forwarding import (
@@ -140,7 +141,10 @@ async def _open_responses(
         )
         raise normalize_thread_error(prepared.body, safe_error) from None
     transport = SourceStreamTransport(stack, scheduler=scheduler)
-    native_observer = NativeObserver(holder)
+    cache_ttl = cache_write_ttl(prepared.body)
+    native_observer = NativeObserver(holder, cache_ttl=cache_ttl)
+    if projection is not None:
+        projection.cache_ttl = cache_ttl
     observer = SourceStreamUsageParser(holder, response_shape="responses")
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
     start_usage: JsonValue = None

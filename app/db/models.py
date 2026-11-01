@@ -2151,6 +2151,7 @@ class ClaudeVersionState(Base):
     __tablename__ = "claude_version_state"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # The newest verified release (a claude_client_builds version); it advances only after verification.
     discovered_version: Mapped[str] = mapped_column(String, nullable=False)
     pinned_version: Mapped[str | None] = mapped_column(String, nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -2158,6 +2159,19 @@ class ClaudeVersionState(Base):
     retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     etag: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ClaudeClientBuild(Base):
+    """A verified Claude Code release: the SDK and runtime versions were read from its published build."""
+
+    __tablename__ = "claude_client_builds"
+
+    version: Mapped[str] = mapped_column(String, primary_key=True)
+    sdk_version: Mapped[str] = mapped_column(String, nullable=False)
+    runtime_version: Mapped[str] = mapped_column(String, nullable=False)
+    package: Mapped[str] = mapped_column(String, nullable=False)
+    integrity: Mapped[str] = mapped_column(String, nullable=False)
+    verified_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class ClaudeCooldown(Base):

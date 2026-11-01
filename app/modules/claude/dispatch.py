@@ -205,7 +205,7 @@ class ClaudeDispatchPreparer:
             or has_helper_identity(logical, incoming_headers, count_tokens=endpoint == "count_tokens"),
         )
         profile = RequestProfile.create(
-            version=identity.version,
+            build=identity,
             source_id=account.source_id,
             client_scope=api_key.id if api_key else "anonymous",
             conversation_id=conversation_id,

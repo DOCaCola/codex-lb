@@ -8,6 +8,7 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import (
     CLI_IDENTITY,
     MID_SYSTEM_BETA,
+    ClientBuild,
     RequestProfile,
     management_headers,
     recognize_native,
@@ -18,12 +19,14 @@ from tests.claude_json_helpers import array, at
 
 pytestmark = pytest.mark.unit
 
+BUILD = ClientBuild("2.1.282", "0.112.1", "v26.3.0")
+
 
 def profile(
-    *, version="2.1.282", source_id="account-a", client_scope="key-a", conversation_id="conversation-a", native=False
+    *, build=BUILD, source_id="account-a", client_scope="key-a", conversation_id="conversation-a", native=False
 ):
     return RequestProfile.create(
-        version=version,
+        build=build,
         source_id=source_id,
         client_scope=client_scope,
         conversation_id=conversation_id,
@@ -38,7 +41,7 @@ def test_session_identity_and_request_isolation():
     assert first.session_id != profile(source_id="account-b").session_id
     assert first.session_id != profile(client_scope="key-b").session_id
     assert first.session_id != profile(conversation_id="conversation-b").session_id
-    assert first.session_id == profile(version="2.1.283").session_id
+    assert first.session_id == profile(build=ClientBuild("2.1.316", "0.128.0", "v26.12.1")).session_id
 
 
 def test_headers_replace_credentials_and_exclude_hop_by_hop():
@@ -56,7 +59,9 @@ def test_headers_replace_credentials_and_exclude_hop_by_hop():
     assert headers["authorization"] == "Bearer provider-secret"
     assert not {"x-api-key", "connection", "host", "cookie"} & headers.keys()
     assert headers["user-agent"] == "claude-cli/2.1.282 (external, cli)"
-    assert headers["x-stainless-package-version"] != request.version
+    # The advertised CLI, SDK and runtime versions come from one verified build.
+    assert headers["x-stainless-package-version"] == "0.112.1"
+    assert headers["x-stainless-runtime-version"] == "v26.3.0"
     assert "context-management-2025-06-27" in headers["anthropic-beta"]
     assert incoming == before
     rotated = request.headers("rotated-secret", endpoint="messages", incoming={})

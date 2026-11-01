@@ -10,6 +10,7 @@ from app.db.models import ModelSource, ModelSourceModel, RequestLog
 from app.modules.api_keys.service import _reserve_cost_budget_microdollars
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.native import NativeObserver
+from app.modules.claude.request import cache_write_ttl
 from app.modules.claude.responses import Usage
 from app.modules.model_sources.catalog import source_model_cost_usd
 from app.modules.model_sources.forwarding import SourceStreamUsageParser, SourceUsageHolder
@@ -50,6 +51,69 @@ def test_claude_cache_detail_is_inclusive_and_merges_partial_deltas():
     assert holder.usage.cache_creation_tokens == 30
     assert (holder.usage.cache_creation_5m_tokens, holder.usage.cache_creation_1h_tokens) == (20, 10)
     assert holder.usage.reasoning_tokens is None
+
+
+def _sampled_rounds(cache_ttl: str | None) -> SourceUsageHolder:
+    """Server-tool sampling: the cumulative delta raises cache writes without restating their split."""
+    holder = SourceUsageHolder()
+    observer = NativeObserver(holder, cache_ttl=cache_ttl)
+    first_round = {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 500}
+    observer.consume(
+        {
+            "type": "message_start",
+            "message": {
+                "usage": {"input_tokens": 10, "cache_creation_input_tokens": 500, "cache_creation": first_round}
+            },
+        }
+    )
+    observer.consume(
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"input_tokens": 20, "cache_read_input_tokens": 500, "cache_creation_input_tokens": 800},
+        }
+    )
+    return holder
+
+
+def test_cumulative_cache_writes_follow_the_request_cache_lifetime():
+    usage = _sampled_rounds("1h").usage
+    assert usage.cache_creation_tokens == 800
+    assert (usage.cache_creation_5m_tokens, usage.cache_creation_1h_tokens) == (0, 800)
+    price = ModelPrice(
+        input_per_1m=1, cached_input_per_1m=0.1, output_per_1m=5, cache_write_5m_per_1m=1.25, cache_write_1h_per_1m=2
+    )
+    tokens = ClaudeUsageTokens(
+        input_tokens=usage.input_tokens,
+        output_tokens=0,
+        cached_input_tokens=usage.cached_input_tokens,
+        cache_creation_tokens=usage.cache_creation_tokens,
+        cache_creation_5m_tokens=usage.cache_creation_5m_tokens,
+        cache_creation_1h_tokens=usage.cache_creation_1h_tokens,
+    )
+    breakdown = calculate_claude_cost_breakdown(tokens, price)
+    assert breakdown is not None
+    assert breakdown.cache_write_usd == pytest.approx(800 * 2 / 1_000_000)
+
+
+def test_cumulative_cache_writes_with_mixed_lifetimes_stay_unknown():
+    usage = _sampled_rounds(None).usage
+    assert usage.cache_creation_tokens == 800
+    assert (usage.cache_creation_5m_tokens, usage.cache_creation_1h_tokens) == (None, None)
+
+
+def test_cache_write_lifetime_of_a_request():
+    one_hour = {"type": "ephemeral", "ttl": "1h"}
+    assert cache_write_ttl({"system": [{"type": "text", "text": "s", "cache_control": one_hour}]}) == "1h"
+    assert cache_write_ttl({"cache_control": {"type": "ephemeral"}}) == "5m"
+    mixed = {
+        "tools": [{"name": "t", "cache_control": one_hour}],
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "u", "cache_control": {"type": "ephemeral"}}]}
+        ],
+    }
+    assert cache_write_ttl(mixed) is None
+    assert cache_write_ttl({"messages": []}) is None
 
 
 def _native_stream(stop_reason: str, *, close_block: bool) -> NativeObserver:

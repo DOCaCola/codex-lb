@@ -20,8 +20,6 @@ CLI_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 OAUTH_BETA = "oauth-2025-04-20"
 CLI_BETA = "claude-code-20250219"
 MID_SYSTEM_BETA = "mid-conversation-system-2026-04-07"
-SDK_VERSION = "0.112.1"
-RUNTIME_VERSION = "v26.3.0"
 _NATIVE_UA = re.compile(r"^claude-cli/(\d+)\.(\d+)\.(\d+) \(external, cli\)$")
 _BETA = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 _NATIVE_HEADERS = frozenset(
@@ -50,6 +48,15 @@ _NATIVE_HEADERS = frozenset(
         "x-claude-code-context-compacted",
     }
 )
+
+
+@dataclass(frozen=True)
+class ClientBuild:
+    """A verified Claude Code release: its CLI, Stainless SDK and runtime versions occur only together."""
+
+    version: str
+    sdk_version: str
+    runtime_version: str
 
 
 def management_headers(token: str, version: str) -> dict[str, str]:
@@ -93,19 +100,23 @@ def session_identity(source_id: str, client_scope: str, conversation_id: str) ->
 
 @dataclass(frozen=True)
 class RequestProfile:
-    version: str
+    build: ClientBuild
     session_id: str
     request_id: str
     native: bool
     revision: str = PROFILE_REVISION
 
+    @property
+    def version(self) -> str:
+        return self.build.version
+
     @classmethod
     def create(
-        cls, *, version: str, source_id: str, client_scope: str, conversation_id: str, native: bool
+        cls, *, build: ClientBuild, source_id: str, client_scope: str, conversation_id: str, native: bool
     ) -> RequestProfile:
         # Length-prefix the components so account/scope/conversation boundaries
         # cannot collide. Tokens do not participate in this durable identity.
-        return cls(version, session_identity(source_id, client_scope, conversation_id), str(uuid4()), native)
+        return cls(build, session_identity(source_id, client_scope, conversation_id), str(uuid4()), native)
 
     def headers(
         self,
@@ -124,9 +135,9 @@ class RequestProfile:
             result.update(
                 {
                     "x-stainless-lang": "js",
-                    "x-stainless-package-version": SDK_VERSION,
+                    "x-stainless-package-version": self.build.sdk_version,
                     "x-stainless-runtime": "node",
-                    "x-stainless-runtime-version": RUNTIME_VERSION,
+                    "x-stainless-runtime-version": self.build.runtime_version,
                     "x-stainless-os": {"Darwin": "MacOS"}.get(platform.system(), platform.system()),
                     "x-stainless-arch": {"aarch64": "arm64", "x86_64": "x64", "AMD64": "x64"}.get(
                         platform.machine(), platform.machine()

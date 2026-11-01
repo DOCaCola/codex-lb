@@ -894,7 +894,7 @@ async def test_nonstream_truncation_is_error_and_closes_transport(async_client, 
 
 def native_headers():
     return {
-        "User-Agent": "claude-cli/2.1.282 (external, cli)",
+        "User-Agent": "claude-cli/2.1.316 (external, cli)",
         "x-app": "cli",
         "x-stainless-lang": "js",
         "anthropic-beta": "oauth-2025-04-20",

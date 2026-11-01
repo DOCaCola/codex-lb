@@ -104,6 +104,14 @@ def _cache_controls(body: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
     return [control for control in controls if isinstance(control, dict)]
 
 
+def cache_write_ttl(body: dict[str, JsonValue]) -> str | None:
+    """The one cache lifetime all of this request's cache writes use; None when lifetimes are mixed or absent."""
+    ttls = {control.get("ttl", "5m") for control in _cache_controls(body)}
+    if ttls == {"5m"}:
+        return "5m"
+    return "1h" if ttls == {"1h"} else None
+
+
 def _preserve_cache_ttl_order(logical: dict[str, JsonValue], body: dict[str, JsonValue]) -> bool:
     original = _cache_controls(logical)
     projected = _cache_controls(body)

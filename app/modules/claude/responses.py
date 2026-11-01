@@ -79,6 +79,25 @@ class Usage(BaseModel):
             "cache_creation_1h_input_tokens": one_hour,
         }
 
+    def merged(self, update: dict[str, JsonValue], *, cache_ttl: str | None) -> Usage:
+        """Apply a cumulative ``message_delta`` usage update.
+
+        Server-tool sampling rounds raise the cumulative cache-write total without restating its 5m/1h
+        split, so the ``message_start`` split covers only the first round (sub2api #8412). The writes then
+        belong to the request's single cache lifetime; with mixed lifetimes the split is unknown.
+        """
+        merged = Usage.model_validate({**self.model_dump(), **update})
+        total = merged.cache_creation_input_tokens
+        if "cache_creation" in update or total == self.cache_creation_input_tokens:
+            return merged
+        known = total is not None and cache_ttl is not None
+        return merged.model_copy(
+            update={
+                "cache_creation_5m_input_tokens": (total if cache_ttl == "5m" else 0) if known else None,
+                "cache_creation_1h_input_tokens": (total if cache_ttl == "1h" else 0) if known else None,
+            }
+        )
+
     def responses(self) -> dict[str, JsonValue]:
         total_input = self.input_tokens + self.cache_read_input_tokens + (self.cache_creation_input_tokens or 0)
         details: dict[str, JsonValue] = {
@@ -159,6 +178,8 @@ class ResponsesProjection:
     search_calls: dict[str, tuple[int, dict[str, JsonValue]]] = field(default_factory=dict)
     block_types: Counter[str] = field(default_factory=Counter)
     usage: Usage = field(default_factory=Usage)
+    # Cache lifetime of the body actually sent, which attributes cumulative cache writes (see Usage.merged).
+    cache_ttl: str | None = None
     stop_reason: str | None = None
     refusal_category: str | None = None
     refusal_explanation: str | None = None
@@ -456,7 +477,7 @@ class ResponsesProjection:
             update = event.get("usage", {})
             if not isinstance(update, dict):
                 raise ClaudeError("Invalid Claude stream usage")
-            self.usage = Usage.model_validate({**self.usage.model_dump(), **update})
+            self.usage = self.usage.merged(update, cache_ttl=self.cache_ttl)
             return []
         if kind == "message_stop":
             return self._stop()

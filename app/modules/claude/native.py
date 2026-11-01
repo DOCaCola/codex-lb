@@ -27,6 +27,8 @@ def usage_totals(usage: Usage) -> SourceUsage:
 @dataclass
 class NativeObserver:
     holder: SourceUsageHolder
+    # Cache lifetime of the body actually sent, which attributes cumulative cache writes (see Usage.merged).
+    cache_ttl: str | None = None
     usage: Usage = field(default_factory=Usage)
     started: bool = False
     stopped: bool = False
@@ -55,7 +57,7 @@ class NativeObserver:
             update = event.get("usage", {})
             if not isinstance(update, dict):
                 raise ClaudeError("Invalid Claude usage delta")
-            self.usage = Usage.model_validate({**self.usage.model_dump(), **update})
+            self.usage = self.usage.merged(update, cache_ttl=self.cache_ttl)
         elif kind == "message_stop":
             # A mid-stream refusal may leave blocks open; Anthropic's stream is forwarded as sent.
             if not self.started or self.stop_reason is None or (self.open_blocks and self.stop_reason != "refusal"):
