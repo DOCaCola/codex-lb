@@ -1406,7 +1406,7 @@ The dashboard SHALL load translations through `i18next` + `react-i18next`, suppo
 
 ### Requirement: Settings page renders in the active locale
 
-The Settings page and its constituent sections (`Appearance`, `Routing`, `Import`, `Session`, `Password`, `TOTP`) SHALL render all user-visible strings — page title and subtitle, section headings and descriptions, switch and select labels, button labels, dialog titles and descriptions, validation messages, warning banners, and toast messages — through the active i18n locale. Selecting `zh-CN` MUST translate the entire surface above to Simplified Chinese, with the explicit exceptions of the embedded `ApiKeysSection`, `FirewallSection`, `QuotaPlannerSection`, `StickySessionsSection`, and `UpstreamProxySettings` rendered inside Settings, which belong to other capabilities and remain English until their own migrations.
+The Settings page and its constituent sections (`Appearance`, `Routing`, `Import`, `Session`, `Password`, `TOTP`) SHALL render all user-visible strings — page title, section headings and descriptions, switch and select labels, button labels, dialog titles and descriptions, validation messages, warning banners, and toast messages — through the active i18n locale. Selecting `zh-CN` MUST translate the entire surface above to Simplified Chinese, with the explicit exceptions of the embedded `ApiKeysSection`, `FirewallSection`, `QuotaPlannerSection`, `StickySessionsSection`, and `UpstreamProxySettings` rendered inside Settings, which belong to other capabilities and remain English until their own migrations.
 
 #### Scenario: Switching to Simplified Chinese translates the Settings page
 
@@ -3917,8 +3917,8 @@ other section SHALL be listed for every session that can open Settings. Opening
 `/settings` SHALL navigate to `/settings/general`, opening a section the session
 cannot use SHALL navigate to `/settings/general`, and an unknown section SHALL
 render the not-found surface. A section's cards SHALL mount, and their data
-requests SHALL fire, only while that section is open. The page heading,
-subtitle and the read-only, trusted-header and disabled-auth notices SHALL
+requests SHALL fire, only while that section is open. The page title row and
+the read-only, trusted-header and disabled-auth notices SHALL
 render above the menu on every section. On narrow viewports the menu SHALL
 render as one horizontally scrollable row without group labels, scrolled so
 the open section's entry is visible.
@@ -4370,10 +4370,11 @@ window start to the end.
 
 ### Requirement: Logs page keeps navigation in view
 
-The Logs page SHALL render no page title. It SHALL render one toolbar card holding the view switch, the active view's
-time range, refresh, a one-line summary and a compact pager (range, previous and next); in the Request Logs view the
-toolbar's second row SHALL hold the search, filters, conversation badge, reset and column controls. The summary SHALL
-show the filtered request count with its short cost, the full cost coverage on hover, or the conversation count.
+The Logs page SHALL start with the shared page title row holding the view switch, the active view's time range,
+refresh, a one-line summary and a compact pager (range, previous and next). In the Request Logs view one filter card
+below it SHALL hold the search, filters, conversation badge, reset and column controls; the Conversations view has no
+filter card. The summary SHALL show the filtered request count with its short cost, the full cost coverage on hover,
+or the conversation count.
 
 Each view's table SHALL render in a pane that fills the remaining viewport height and scrolls its rows inside, with a
 pinned column header and the full pager in its footer, so the page height does not change with page size, paging or
@@ -4432,15 +4433,16 @@ and `costCoverage`; the page MUST NOT render a separate conversation summary.
 
 ### Requirement: Reports toolbar
 
-The `/reports` page MUST start with one toolbar card and MUST NOT render a page title or subtitle. The first row MUST
+The `/reports` page MUST start with a toolbar that stays pinned below the navigation while scrolling and MUST NOT
+render a subtitle. Its first row MUST be the shared page title row and MUST
 contain the `7d`, `30d`, `90d` and `Custom` range presets, the selected range as a readable label, the comparison
 window, the time the report was generated and a refresh action. Start and end date inputs MUST be shown while
-`Custom` is active. The second row MUST contain multi-select `Accounts`, `API keys`, `Models` and `User agents`
+`Custom` is active. A filter card below it MUST contain multi-select `Accounts`, `API keys`, `Models` and `User agents`
 filters, a `Reset` action shown while any filter is active, and a `Sections` menu.
 
 #### Scenario: Toolbar replaces title and filter card
 - **WHEN** an authenticated operator opens `/reports`
-- **THEN** the page shows the toolbar card without a page title
+- **THEN** the page shows its title row and then the toolbar card
 - **AND** the default `7d` preset is highlighted and its range and comparison window are shown
 
 #### Scenario: Custom range shows date inputs
@@ -4846,12 +4848,16 @@ ends, formatted like the limit-row reset times.
 
 ### Requirement: Countdowns coarsen with the time left
 
-Every reset and expiry countdown SHALL round down and show at least one minute. It SHALL show days only from three
-days left, days and hours from one day up to three days, hours and minutes below one day, also when the minutes are
-zero, and minutes only below one hour. Elapsed durations, such as a conversation's Lasted value, are not countdowns.
+Every reset and expiry countdown SHALL round down and show at least one minute. It SHALL show minutes only below one
+hour, hours and minutes below one day, also when the minutes are zero, and days and hours from one day on, also when
+the hours are zero. Cooldowns, the 5-hour, weekly and API key limit windows coming back, SHALL keep days and hours
+however far away. Expiries, a subscription end or a reset credit running out, SHALL show days only from three days
+left. Elapsed durations, such as a conversation's Lasted value, are not countdowns.
 
 #### Scenario: Three days or more
-- **WHEN** a quota resets in 6 days 13 hours
+- **WHEN** a weekly quota resets in 6 days 13 hours
+- **THEN** its countdown reads `in 6d 13h`
+- **WHEN** a subscription ends in 6 days 13 hours
 - **THEN** its countdown reads `in 6d`
 
 #### Scenario: Between one and three days
@@ -4874,3 +4880,24 @@ format. OpenRouter balances MAY show up to four fraction digits.
 #### Scenario: OpenRouter amounts match other providers
 - **WHEN** an OpenRouter card shows a daily spend of 0 and a balance of 5.7394
 - **THEN** they render as `$0.00` and `$5.7394`
+
+### Requirement: Top-level pages share one title row
+
+Dashboard, Logs, Reports, Providers, API Keys and Settings SHALL each start with the same title row: the page title
+as the level-one heading in one size and weight, optional page controls right after it, optional short muted context,
+and page actions aligned to the right edge. The row SHALL sit above the page content, outside any card, and SHALL NOT
+carry an icon or a subtitle. Pages whose first toolbar row holds page controls SHALL place those controls in the title
+row, so the title adds no height of its own. Account and key detail views keep their breadcrumb in place of the row.
+
+#### Scenario: Same title on every page
+- **WHEN** an operator opens Dashboard, Logs, Reports, Providers, API Keys or Settings
+- **THEN** each page starts with its title in the same size and weight, outside any card
+
+#### Scenario: Context and actions share the row
+- **WHEN** an operator opens API Keys
+- **THEN** the key summary follows the title and the Create key action sits at the right end of the same row
+
+#### Scenario: Toolbar controls share the row
+- **WHEN** an operator opens Logs
+- **THEN** the view switch, time range and refresh follow the title, and the summary and pager sit at the right end
+  of the same row
