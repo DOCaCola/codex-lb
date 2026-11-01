@@ -5919,6 +5919,8 @@ async def _dispatch_source_responses_response(
         FailoverState,
         classify_refusals,
         is_authentication_failure,
+        is_oauth_organization_refusal,
+        record_oauth_organization_refusal,
         record_refusals,
         recover_authentication,
     )
@@ -6028,6 +6030,16 @@ async def _dispatch_source_responses_response(
                     if native_request is not None
                     else payload.routing_reasoning_effort,
                 )
+                if recovery.budget.remaining == 0:
+                    raise
+                await anyio.lowlevel.checkpoint()
+                continue
+            if is_oauth_organization_refusal(exc):
+                assert recovery.source_id is not None and recovery.credential_generation is not None
+                await record_oauth_organization_refusal(recovery.source_id, recovery.credential_generation)
+                recovery.excluded.add(recovery.source_id)
+                recovery.retry_source_id = None
+                recovery.last_error = exc
                 if recovery.budget.remaining == 0:
                     raise
                 await anyio.lowlevel.checkpoint()

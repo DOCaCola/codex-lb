@@ -74,7 +74,16 @@ class ClaudePoolUnavailable(ClaudeError):
 class Eligibility:
     eligible: bool
     reason: Literal[
-        "ready", "paused", "credentials", "refreshing", "refresh_backoff", "model", "reasoning", "quota", "cooldown"
+        "ready",
+        "paused",
+        "credentials",
+        "subscription",
+        "refreshing",
+        "refresh_backoff",
+        "model",
+        "reasoning",
+        "quota",
+        "cooldown",
     ]
     retry_at: datetime | None = None
     quota_windows: tuple[str, ...] = ()
@@ -93,11 +102,13 @@ def eligibility(
         return Eligibility(False, "paused")
     if account.credential_status != "ready":
         return Eligibility(False, "credentials")
+    state = AccountState.model_validate_json(account.state_json)
+    if state.oauth_refused_at is not None:
+        return Eligibility(False, "subscription")
     if account.refresh_intent is not None:
         return Eligibility(False, "refreshing")
     if not source.supports_responses or not any(row.model == model and row.is_enabled for row in source.models):
         return Eligibility(False, "model")
-    state = AccountState.model_validate_json(account.state_json)
     upstream_model = model.removeprefix("anthropic/")
     entry = next((entry for entry in state.catalog if entry.id == upstream_model), None)
     spec = reasoning_spec(upstream_model, entry.capabilities if entry else None)
@@ -213,7 +224,7 @@ async def select_account(
         # letting the client recover using its selected model. A temporary,
         # unknown or per-attempt exclusion keeps the existing retry contract.
         operator_action_required = bool(reasons) and all(
-            reason in {"paused", "credentials", "model", "reasoning"} for reason in reasons
+            reason in {"paused", "credentials", "subscription", "model", "reasoning"} for reason in reasons
         )
         unavailable_status = 400 if operator_action_required else 503
         if owner_source_id is not None or quota_only:
@@ -246,6 +257,13 @@ async def select_account(
                 explain_unavailable(
                     "No eligible Claude account permits the requested or default reasoning effort", reasons
                 ),
+                status_code=400,
+            )
+        if reasons and all(reason == "subscription" for reason in reasons):
+            raise ClaudePoolUnavailable(
+                "claude_subscription_inactive",
+                "Anthropic refuses OAuth for this Claude account's organization; renew the subscription, "
+                "then refresh or reconnect the account",
                 status_code=400,
             )
         raise ClaudePoolUnavailable(

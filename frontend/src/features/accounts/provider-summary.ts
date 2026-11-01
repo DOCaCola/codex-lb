@@ -311,6 +311,7 @@ function claudeSummary(account: ClaudeAccount, context: SummaryContext, now: num
     status,
     tone: STATUS_TONE[status],
     notice:
+      (account.state.oauth_refused_at !== null ? notice("bad", context.t("providers.notice.subscriptionInactive")) : null) ??
       statusNotice(status, context.t) ??
       (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, short].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
       (account.state.usage_error ? notice("warn", context.t("providers.notice.usageUnavailable")) : null) ??

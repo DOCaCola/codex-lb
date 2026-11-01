@@ -48,6 +48,7 @@ export const ClaudeAccountSchema = z.object({
     catalog_error: z.string().nullable(),
     usage_updated_at: z.string().nullable(),
     usage_error: z.string().nullable(),
+    oauth_refused_at: z.string().nullable(),
   }),
   quota: z.object({
     observedAt: z.string().nullable(),

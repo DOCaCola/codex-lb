@@ -40,6 +40,7 @@ export function createClaudeAccount(overrides: Partial<ClaudeAccount> = {}): Cla
       catalog_error: null,
       usage_updated_at: null,
       usage_error: null,
+      oauth_refused_at: null,
     },
     quota: {
       observedAt: null,

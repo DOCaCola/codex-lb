@@ -3,6 +3,8 @@ import type { ClaudeAccount } from "./api";
 export function claudeStatus(account: ClaudeAccount) {
   if (!account.isEnabled) return "paused";
   if (account.credentialStatus !== "ready") return "reauth_required";
+  // Anthropic refused OAuth for the organization: routing excludes the account until it recovers.
+  if (account.state.oauth_refused_at !== null) return "deactivated";
   if (
     account.quota.models.length &&
     account.quota.models.every((model) => model.blocked)

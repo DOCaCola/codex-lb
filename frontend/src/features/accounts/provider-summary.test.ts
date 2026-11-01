@@ -92,6 +92,13 @@ describe("provider summaries", () => {
   it("explains why an account needs attention", () => {
     expect(codex({ status: "paused" }).notice).toEqual({ tone: "off", text: "Paused", label: "Paused", until: null });
     expect(codex({ status: "reauth_required" }).notice).toEqual({ tone: "bad", text: "Sign in again", label: "Sign in again", until: null });
+    const base = createClaudeAccount();
+    const refused = summarizeEntry(
+      { kind: "claude", account: createClaudeAccount({ state: { ...base.state, oauth_refused_at: inHours(-1) } }) },
+      summaryContext({ now: NOW }),
+    );
+    expect(refused.status).toBe("deactivated");
+    expect(refused.notice).toEqual({ tone: "bad", text: "Subscription inactive", label: "Subscription inactive", until: null });
     const drained = codex({
       status: "quota_exceeded",
       resetAtSecondary: inHours(30),

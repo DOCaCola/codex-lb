@@ -2446,6 +2446,7 @@
   "providers.notice.paused": "已暂停",
   "providers.notice.reauth": "需要重新登录",
   "providers.notice.usageUnavailable": "用量不可用",
+  "providers.notice.subscriptionInactive": "订阅未激活",
   "providers.notice.verification": "需要验证",
   "providers.notice.monitoringStale": "监控数据已过期",
   "providers.notice.hold.banned": "已被 Google 停用",

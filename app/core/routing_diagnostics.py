@@ -20,6 +20,7 @@ RoutingExclusion = Literal[
     "authentication",
     "balance",
     "rate_limit",
+    "subscription",
 ]
 
 

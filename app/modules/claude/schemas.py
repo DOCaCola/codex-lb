@@ -251,6 +251,9 @@ class AccountState(BaseModel):
     usage_check_started_at: datetime | None = None
     header_usage: dict[Literal["five_hour", "seven_day"], HeaderQuotaObservation] = Field(default_factory=dict)
     reset_barriers: dict[str, datetime] = Field(default_factory=dict)
+    # Anthropic refused OAuth for the organization (lapsed subscription). Routing excludes the
+    # account until a usage or subscription refresh started afterwards succeeds, or a reconnect.
+    oauth_refused_at: datetime | None = None
 
 
 WindowName = Literal["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]

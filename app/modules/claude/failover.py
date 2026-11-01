@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -55,6 +56,39 @@ def is_authentication_failure(error: ModelSourceForwardingError) -> bool:
         return False
     detail = error.payload.get("error")
     return isinstance(detail, dict) and detail.get("type") in (None, "authentication_error")
+
+
+_OAUTH_ORGANIZATION_REFUSAL = re.compile(
+    r"OAuth authentication is (?:currently )?not allowed for this organi[sz]ation[.!]?"
+)
+
+
+def is_oauth_organization_refusal(error: ModelSourceForwardingError) -> bool:
+    """Anthropic's whole-message verdict that the organization lost subscription OAuth access."""
+    if error.upstream_status_code != 403:
+        return False
+    detail = error.payload.get("error")
+    if not isinstance(detail, dict) or detail.get("type") != "permission_error":
+        return False
+    message = detail.get("message")
+    return isinstance(message, str) and _OAUTH_ORGANIZATION_REFUSAL.fullmatch(message.strip()) is not None
+
+
+async def record_oauth_organization_refusal(source_id: str, credential_generation: int) -> None:
+    """Exclude the account until a later metadata refresh succeeds; a replaced credential is unaffected."""
+    now = datetime.now(UTC)
+
+    def refuse(state: AccountState) -> AccountState | None:
+        if state.oauth_refused_at is not None:
+            return None
+        state.oauth_refused_at = now
+        return state
+
+    async with get_background_session() as session:
+        recorded = await ClaudeRepository(session).mutate_state(source_id, credential_generation, refuse)
+        await session.commit()
+    if recorded is not None:
+        logger.info("claude_oauth_organization_refused source_id=%s", source_id)
 
 
 async def recover_authentication(

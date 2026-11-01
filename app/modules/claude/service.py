@@ -270,6 +270,7 @@ class ClaudeService:
                         state.subscription = subscription
                     state.subscription_updated_at = None
                     state.subscription_error = None
+                    state.oauth_refused_at = None
                     state.metadata_refresh.pop("subscription", None)
                     return state
 
@@ -502,6 +503,15 @@ class ClaudeService:
                     assert isinstance(result, SubscriptionMetadata)
                     state.subscription = result
                     state.subscription_updated_at = completed_at
+            # A usage or subscription read that Anthropic answered after the organization refusal
+            # shows OAuth works again; a still-lapsed subscription refuses the next request anew.
+            if (
+                error is None
+                and endpoint != "catalog"
+                and state.oauth_refused_at is not None
+                and requested_at > state.oauth_refused_at
+            ):
+                state.oauth_refused_at = None
             return state
 
         merged = await self.repository.mutate_state(source_id, generation, finish)

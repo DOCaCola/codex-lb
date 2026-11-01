@@ -2446,6 +2446,7 @@
   "providers.notice.paused": "Paused",
   "providers.notice.reauth": "Sign in again",
   "providers.notice.usageUnavailable": "Usage unavailable",
+  "providers.notice.subscriptionInactive": "Subscription inactive",
   "providers.notice.verification": "Verification requested",
   "providers.notice.monitoringStale": "Monitoring stale",
   "providers.notice.hold.banned": "Suspended by Google",
