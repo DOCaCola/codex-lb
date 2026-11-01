@@ -1612,7 +1612,6 @@
   "settings.sections.automations": "自动化",
   "settings.sections.data": "数据",
   "settings.sections.notifications": "通知",
-  "settings.page.subtitle": "配置仪表盘、访问、路由与运维。",
   "settings.page.readOnlyNotice": "你当前以只读访客身份查看仪表盘。管理员控制项已禁用。",
   "settings.page.trustedHeaderNotice": "仪表盘访问由可信反向代理头部鉴权。密码与 TOTP 仅作为可选的回退登录方式保留。",
   "settings.page.disabledNotice": "仪表盘鉴权已被配置完全跳过。请仅在网络受限或外部已有访问控制的场景下使用此模式。",

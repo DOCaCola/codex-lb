@@ -7,7 +7,6 @@ import {
   Layers,
   Route,
   Server,
-  Settings,
   Shield,
   SlidersHorizontal,
   Users,
@@ -18,6 +17,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { AlertMessage } from "@/components/alert-message";
 import { LoadingOverlay } from "@/components/layout/loading-overlay";
+import { PageHeader } from "@/components/layout/page-header";
 import { RouteLoading } from "@/components/layout/route-recovery";
 import { Button } from "@/components/ui/button";
 import { hasPermission, useAuthStore } from "@/features/auth/hooks/use-auth";
@@ -160,14 +160,8 @@ export function SettingsLayout() {
     : null;
 
   return (
-    <div className="animate-fade-in-up space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Settings className="h-5 w-5 text-primary" />
-          {t("settings.page.title")}
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("settings.page.subtitle")}</p>
-      </div>
+    <div className="animate-fade-in-up space-y-4">
+      <PageHeader title={t("settings.page.title")} />
 
       {error ? <AlertMessage variant="error">{error}</AlertMessage> : null}
       {settings && !canWrite ? (

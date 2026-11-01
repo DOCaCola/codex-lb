@@ -1616,7 +1616,6 @@
   "settings.page.disabledNotice": "설정에 의해 Dashboard 인증이 완전히 우회됩니다. 네트워크 제한이나 외부 접근 제어 뒤에서만 사용하세요.",
   "settings.page.readOnlyNotice": "읽기 전용 Guest access로 Dashboard를 보고 있습니다. 관리자 제어는 비활성화됩니다.",
   "settings.page.savingLabel": "설정 저장 중...",
-  "settings.page.subtitle": "Dashboard, 접근, 라우팅, 운영을 설정합니다.",
   "access.card.title": "접근",
   "access.card.description": "누가 이 대시보드를 열 수 있고 어떻게 로그인하는지 정합니다.",
   "access.tabs.people": "사람",

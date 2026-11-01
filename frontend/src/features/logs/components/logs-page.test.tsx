@@ -208,7 +208,7 @@ describe("LogsPage", () => {
 
     renderWithProviders(<LogsPage />);
 
-    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Logs" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Log controls" })).toBeInTheDocument();
     expect(within(logSection()).getByText("Loading...")).toBeInTheDocument();
     expect(screen.queryByTestId("recent-requests-table")).not.toBeInTheDocument();

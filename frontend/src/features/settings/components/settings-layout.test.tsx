@@ -335,6 +335,12 @@ describe("Settings sections", () => {
     expect(screen.queryByText("Appearance Settings")).not.toBeInTheDocument();
   });
 
+  it("starts with the shared title row without icon or subtitle", () => {
+    renderSettings("/settings/models");
+    expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByTestId("page-header")).toHaveTextContent(/^Settings$/);
+  });
+
   it("groups each section's cards", () => {
     const { unmount } = renderSettings("/settings/accounts");
     expect(screen.getByText("Import Settings")).toBeInTheDocument();

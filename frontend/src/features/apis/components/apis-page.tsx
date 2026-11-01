@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertMessage } from "@/components/alert-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoadingOverlay } from "@/components/layout/loading-overlay";
+import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRailCollapsed } from "@/features/accounts/hooks/use-rail-collapsed";
@@ -108,7 +109,7 @@ export function ApisPage() {
   if (!canReadKeys) {
     return (
       <div className="animate-fade-in-up space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">{t("apis.page.title")}</h1>
+        <PageHeader title={t("apis.page.title")} />
         <div
           role="status"
           className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card p-8 text-center"
@@ -129,25 +130,29 @@ export function ApisPage() {
   return (
     <div className="animate-fade-in-up space-y-4">
       {selectedId === null ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h1 className="text-xl font-semibold tracking-tight">{t("apis.page.title")}</h1>
-          {apiKeys.length > 0 ? (
-            <p className="text-sm text-muted-foreground tabular-nums" data-testid="api-keys-summary">
-              {t("apis.page.summary", {
-                count: apiKeys.length,
-                active: activeCount,
-                week: formatCurrency(weekCost),
-                lifetime: formatCurrency(lifetimeTotal),
-              })}
-            </p>
-          ) : null}
-          {canWrite ? (
-            <Button type="button" size="sm" className="ml-auto gap-1.5" onClick={() => createDialog.show()}>
-              <Plus className="h-3.5 w-3.5" />
-              {t("apis.list.createKey")}
-            </Button>
-          ) : null}
-        </div>
+        <PageHeader
+          title={t("apis.page.title")}
+          meta={
+            apiKeys.length > 0 ? (
+              <p className="tabular-nums" data-testid="api-keys-summary">
+                {t("apis.page.summary", {
+                  count: apiKeys.length,
+                  active: activeCount,
+                  week: formatCurrency(weekCost),
+                  lifetime: formatCurrency(lifetimeTotal),
+                })}
+              </p>
+            ) : null
+          }
+          actions={
+            canWrite ? (
+              <Button type="button" size="sm" className="gap-1.5" onClick={() => createDialog.show()}>
+                <Plus className="h-3.5 w-3.5" />
+                {t("apis.list.createKey")}
+              </Button>
+            ) : null
+          }
+        />
       ) : (
         <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
           <Link to="/keys" className="hover:text-foreground">

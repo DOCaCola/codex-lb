@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AlertMessage } from "@/components/alert-message";
 import { LoadingOverlay } from "@/components/layout/loading-overlay";
+import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -236,16 +237,19 @@ export function ProvidersPage() {
                   {({ onAdd: onAddOpenAICompatible, detail: modelSourceDetail }) => (
                     <div className="animate-fade-in-up space-y-4">
                       {selectedId === null ? (
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                          <h1 className="text-xl font-semibold tracking-tight">{t("providers.page.title")}</h1>
-                          {summaries.length > 0 ? (
-                            <p className="text-sm text-muted-foreground" data-testid="providers-summary">
-                              {t("providers.page.ready", { ready: readyCount, total: summaries.length })}
-                              {attentionCount > 0 ? " · " + t("providers.page.attention", { count: attentionCount }) : null}
-                              {pausedCount > 0 ? " · " + t("providers.page.paused", { count: pausedCount }) : null}
-                            </p>
-                          ) : null}
-                          <div className="ml-auto flex items-center gap-2">
+                        <PageHeader
+                          title={t("providers.page.title")}
+                          meta={
+                            summaries.length > 0 ? (
+                              <p data-testid="providers-summary">
+                                {t("providers.page.ready", { ready: readyCount, total: summaries.length })}
+                                {attentionCount > 0 ? " · " + t("providers.page.attention", { count: attentionCount }) : null}
+                                {pausedCount > 0 ? " · " + t("providers.page.paused", { count: pausedCount }) : null}
+                              </p>
+                            ) : null
+                          }
+                          actions={
+                            <>
                             {canWrite ? (
                               <Button
                                 type="button"
@@ -263,8 +267,9 @@ export function ProvidersPage() {
                               <Plus className="h-3.5 w-3.5" />
                               {t("accounts.list.addAccount")}
                             </Button>
-                          </div>
-                        </div>
+                            </>
+                          }
+                        />
                       ) : (
                         <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
                           <Link to="/providers" className="hover:text-foreground">

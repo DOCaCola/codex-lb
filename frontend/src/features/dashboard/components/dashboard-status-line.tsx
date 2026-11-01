@@ -95,7 +95,7 @@ export function DashboardStatusLine({ summaries }: { summaries: ProviderSummary[
     );
   }
   return (
-    <p data-testid="dashboard-status-line" className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13px] text-muted-foreground">
+    <p data-testid="dashboard-status-line" className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
       {parts.map((part, index) => (
         <Fragment key={index}>
           {index > 0 ? <span aria-hidden>·</span> : null}

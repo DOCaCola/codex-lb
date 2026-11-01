@@ -28,6 +28,7 @@ import {
 } from "@/features/dashboard/components/dashboard-accounts";
 import { DashboardSkeleton } from "@/features/dashboard/components/dashboard-skeleton";
 import { DashboardStatusLine } from "@/features/dashboard/components/dashboard-status-line";
+import { PageHeader } from "@/components/layout/page-header";
 import { QuotaSection } from "@/features/dashboard/components/quota-section";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import {
@@ -247,134 +248,134 @@ export function DashboardPage() {
   const providersLoading = claudeQuery.isLoading || antigravityQuery.isLoading || openRouterQuery.isLoading;
 
   return (
-    <div className="animate-fade-in-up space-y-7">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <h1 className="text-lg font-semibold tracking-tight">
-          {t("dashboard.page.title")}
-        </h1>
-        <div className="min-w-0 flex-1">
-          {view ? <DashboardStatusLine summaries={summaries} /> : null}
-        </div>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-          aria-label={t("dashboard.page.refresh")}
-          title={t("dashboard.page.refresh")}
-        >
-          <RefreshCw
-            className={`h-4 w-4${isRefreshing ? " animate-spin" : ""}`}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-
-      {errorMessage ? (
-        <AlertMessage variant="error">{errorMessage}</AlertMessage>
-      ) : null}
-
-      {(dashboardQuery.isPending || dashboardQuery.isFetching) &&
-      !view &&
-      displayedDashboardLoadError === null ? (
-        <DashboardSkeleton />
-      ) : !view ? (
-        <div className="space-y-3 rounded-xl border bg-card p-4">
-          <div role="alert">
-            <AlertMessage variant="error">
-              {displayedDashboardLoadError ?? "Request failed"}
-            </AlertMessage>
-          </div>
-          <Button
+    <div className="animate-fade-in-up space-y-4">
+      <PageHeader
+        title={t("dashboard.page.title")}
+        meta={view ? <DashboardStatusLine summaries={summaries} /> : null}
+        actions={
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            aria-busy={overviewRetryBusy}
-            disabled={overviewRetryBusy}
-            onClick={() => {
-              const retryTimeframe = overviewTimeframe;
-              setRetainedDashboardLoadError({
-                timeframe: retryTimeframe,
-                message: displayedDashboardLoadError ?? "Request failed",
-              });
-              setOverviewRetryTimeframe(retryTimeframe);
-              void dashboardQuery.refetch().finally(() => {
-                setOverviewRetryTimeframe((current) =>
-                  current === retryTimeframe ? null : current,
-                );
-              });
-            }}
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+            aria-label={t("dashboard.page.refresh")}
+            title={t("dashboard.page.refresh")}
           >
-            {t("common.actions.retry")}
-          </Button>
-        </div>
-      ) : (
-        <>
-          <QuotaSection
-            view={view}
-            codexAccounts={codexAccounts}
-            primaryCapacityCredits={
-              overview?.summary.primaryWindow.capacityCredits ?? 0
-            }
-            secondaryCapacityCredits={
-              overview?.summary.secondaryWindow?.capacityCredits ?? 0
-            }
-            claudeAccounts={claudeAccounts}
-            antigravityAccounts={antigravityAccounts}
-            summaries={summariesById}
-            modelSourceColors={accountColors.modelSources}
-            keyColors={keyColors}
-          />
+            <RefreshCw
+              className={`h-4 w-4${isRefreshing ? " animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+        }
+      />
 
-          <section className="flex flex-col gap-2.5" data-testid="accounts-section">
-            <SectionHeader title={t("accounts.page.title")} hint={accountsHint}>
-              <AccountViewModeToggle
-                value={accountViewMode}
-                onChange={setAccountViewMode}
-              />
-            </SectionHeader>
-            {accountViewMode === "list" ? (
-              <DashboardAccountList
-                summaries={summaries}
-                colors={accountColors}
-                activity={activity}
-                activityAvailable={activityAvailable}
-                actions={actions}
-              />
-            ) : (
-              <DashboardAccountCards
-                summaries={summaries}
-                colors={accountColors}
-                activity={activity}
-                activityAvailable={activityAvailable}
-                actions={actions}
-              />
-            )}
-            {providersLoading ? (
-              <p className="text-sm text-muted-foreground">
-                {t("dashboard.accounts.loadingProviders")}
-              </p>
-            ) : null}
-            {providerErrors.map((error) => (
-              <p key={error.message} role="alert" className="text-sm text-destructive">
-                {error.message}
-              </p>
-            ))}
-          </section>
+      <div className="space-y-7">
+        {errorMessage ? (
+          <AlertMessage variant="error">{errorMessage}</AlertMessage>
+        ) : null}
 
-          <section className="flex flex-col gap-2.5" data-testid="activity-section">
-            <SectionHeader title={t("dashboard.activity.title")}>
-              <ChartToggle<OverviewTimeframe>
-                label={t("dashboard.filters.overviewTimeframe")}
-                value={overviewTimeframe}
-                onChange={handleOverviewTimeframeChange}
-                options={OVERVIEW_TIMEFRAMES.map((value) => ({ value, label: value }))}
-              />
-            </SectionHeader>
-            <ActivityStrip stats={view.stats} />
-          </section>
-        </>
-      )}
+        {(dashboardQuery.isPending || dashboardQuery.isFetching) &&
+        !view &&
+        displayedDashboardLoadError === null ? (
+          <DashboardSkeleton />
+        ) : !view ? (
+          <div className="space-y-3 rounded-xl border bg-card p-4">
+            <div role="alert">
+              <AlertMessage variant="error">
+                {displayedDashboardLoadError ?? "Request failed"}
+              </AlertMessage>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-busy={overviewRetryBusy}
+              disabled={overviewRetryBusy}
+              onClick={() => {
+                const retryTimeframe = overviewTimeframe;
+                setRetainedDashboardLoadError({
+                  timeframe: retryTimeframe,
+                  message: displayedDashboardLoadError ?? "Request failed",
+                });
+                setOverviewRetryTimeframe(retryTimeframe);
+                void dashboardQuery.refetch().finally(() => {
+                  setOverviewRetryTimeframe((current) =>
+                    current === retryTimeframe ? null : current,
+                  );
+                });
+              }}
+            >
+              {t("common.actions.retry")}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <QuotaSection
+              view={view}
+              codexAccounts={codexAccounts}
+              primaryCapacityCredits={
+                overview?.summary.primaryWindow.capacityCredits ?? 0
+              }
+              secondaryCapacityCredits={
+                overview?.summary.secondaryWindow?.capacityCredits ?? 0
+              }
+              claudeAccounts={claudeAccounts}
+              antigravityAccounts={antigravityAccounts}
+              summaries={summariesById}
+              modelSourceColors={accountColors.modelSources}
+              keyColors={keyColors}
+            />
+
+            <section className="flex flex-col gap-2.5" data-testid="accounts-section">
+              <SectionHeader title={t("accounts.page.title")} hint={accountsHint}>
+                <AccountViewModeToggle
+                  value={accountViewMode}
+                  onChange={setAccountViewMode}
+                />
+              </SectionHeader>
+              {accountViewMode === "list" ? (
+                <DashboardAccountList
+                  summaries={summaries}
+                  colors={accountColors}
+                  activity={activity}
+                  activityAvailable={activityAvailable}
+                  actions={actions}
+                />
+              ) : (
+                <DashboardAccountCards
+                  summaries={summaries}
+                  colors={accountColors}
+                  activity={activity}
+                  activityAvailable={activityAvailable}
+                  actions={actions}
+                />
+              )}
+              {providersLoading ? (
+                <p className="text-sm text-muted-foreground">
+                  {t("dashboard.accounts.loadingProviders")}
+                </p>
+              ) : null}
+              {providerErrors.map((error) => (
+                <p key={error.message} role="alert" className="text-sm text-destructive">
+                  {error.message}
+                </p>
+              ))}
+            </section>
+
+            <section className="flex flex-col gap-2.5" data-testid="activity-section">
+              <SectionHeader title={t("dashboard.activity.title")}>
+                <ChartToggle<OverviewTimeframe>
+                  label={t("dashboard.filters.overviewTimeframe")}
+                  value={overviewTimeframe}
+                  onChange={handleOverviewTimeframeChange}
+                  options={OVERVIEW_TIMEFRAMES.map((value) => ({ value, label: value }))}
+                />
+              </SectionHeader>
+              <ActivityStrip stats={view.stats} />
+            </section>
+          </>
+        )}
+      </div>
 
       {resetCreditDialog.data ? (
         <ResetCreditConfirmDialog

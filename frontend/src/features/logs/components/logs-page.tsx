@@ -6,6 +6,7 @@ import { Columns3, List, MessagesSquare, RefreshCw, RotateCcw } from "lucide-rea
 
 import { AlertMessage } from "@/components/alert-message";
 import { ChartToggle } from "@/components/chart-toggle";
+import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -301,110 +302,117 @@ export function LogsPage() {
       data-testid="logs-section"
       data-view={logsView}
     >
+      <section className="shrink-0 space-y-4" aria-label={t("logs.page.controls")}>
+        <PageHeader
+          title={t("nav.logs")}
+          controls={
+            <>
+              {canReadConversations ? (
+                <ChartToggle
+                  label={t("logs.page.view")}
+                  value={logsView}
+                  onChange={handleViewChange}
+                  options={[
+                    {
+                      value: "request-logs",
+                      label: t("dashboard.views.request-logs"),
+                      icon: <List className="h-3.5 w-3.5" aria-hidden="true" />,
+                    },
+                    {
+                      value: "conversations",
+                      label: t("dashboard.views.conversations"),
+                      icon: <MessagesSquare className="h-3.5 w-3.5" aria-hidden="true" />,
+                    },
+                  ]}
+                />
+              ) : (
+                <h2 className="text-[13px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {t("dashboard.views.request-logs")}
+                </h2>
+              )}
+              <span className="h-5 w-px bg-border" aria-hidden="true" />
+              {logsView === "conversations" ? (
+                <ConversationTimeframeSelect
+                  value={conversationsState.filters.timeframe}
+                  onChange={handleConversationTimeframeChange}
+                />
+              ) : (
+                <TimeframeSelect
+                  value={filters.timeframe}
+                  onChange={(timeframe) => updateFilters({ timeframe, offset: 0 })}
+                />
+              )}
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+                aria-label={t("logs.page.refresh")}
+                title={t("logs.page.refresh")}
+              >
+                <RefreshCw
+                  className={`h-4 w-4${isRefreshing ? " animate-spin" : ""}`}
+                  aria-hidden="true"
+                />
+              </button>
+            </>
+          }
+          actions={
+            <>
+              {summary ? (
+                <span className="text-xs tabular-nums text-muted-foreground" data-testid="logs-summary">
+                  {summary}
+                </span>
+              ) : null}
+              {pager ? (
+                <>
+                  <span className="h-5 w-px bg-border" aria-hidden="true" />
+                  <CompactPaginationControls {...pager} />
+                </>
+              ) : null}
+            </>
+          }
+        />
+        {logsView === "request-logs" ? (
+          <div className="rounded-xl border bg-card p-3">
+            <RequestFilters
+              filters={filters}
+              accountOptions={accountOptions}
+              apiKeyOptions={apiKeyOptions}
+              modelOptions={modelOptions}
+              statusOptions={statusOptions}
+              showApiKeyFilter={canReadApiKeys}
+              trailing={columnControls}
+              onSearchChange={(search) => updateFilters({ search, offset: 0 })}
+              onAccountChange={(accountIds) => updateFilters({ accountIds, offset: 0 })}
+              onApiKeyChange={(apiKeyIds) => updateFilters({ apiKeyIds, offset: 0 })}
+              onModelChange={(modelOptionsSelected) =>
+                updateFilters({ modelOptions: modelOptionsSelected, offset: 0 })
+              }
+              onStatusChange={(statuses) => updateFilters({ statuses, offset: 0 })}
+              onConversationDismiss={handleConversationDismiss}
+              onReset={() =>
+                updateFilters({
+                  search: "",
+                  timeframe: "all",
+                  accountIds: [],
+                  apiKeyIds: [],
+                  modelOptions: [],
+                  statuses: [],
+                  conversationId: null,
+                  offset: 0,
+                })
+              }
+            />
+          </div>
+        ) : null}
+      </section>
+
       {errorMessage ? (
         <div className="shrink-0">
           <AlertMessage variant="error">{errorMessage}</AlertMessage>
         </div>
       ) : null}
-
-      <section
-        className="shrink-0 space-y-3 rounded-xl border bg-card p-3"
-        aria-label={t("logs.page.controls")}
-      >
-        <div className="flex flex-wrap items-center gap-3">
-          {canReadConversations ? (
-            <ChartToggle
-              label={t("logs.page.view")}
-              value={logsView}
-              onChange={handleViewChange}
-              options={[
-                {
-                  value: "request-logs",
-                  label: t("dashboard.views.request-logs"),
-                  icon: <List className="h-3.5 w-3.5" aria-hidden="true" />,
-                },
-                {
-                  value: "conversations",
-                  label: t("dashboard.views.conversations"),
-                  icon: <MessagesSquare className="h-3.5 w-3.5" aria-hidden="true" />,
-                },
-              ]}
-            />
-          ) : (
-            <h2 className="text-[13px] font-medium uppercase tracking-wider text-muted-foreground">
-              {t("dashboard.views.request-logs")}
-            </h2>
-          )}
-          <span className="h-5 w-px bg-border" aria-hidden="true" />
-          {logsView === "conversations" ? (
-            <ConversationTimeframeSelect
-              value={conversationsState.filters.timeframe}
-              onChange={handleConversationTimeframeChange}
-            />
-          ) : (
-            <TimeframeSelect
-              value={filters.timeframe}
-              onChange={(timeframe) => updateFilters({ timeframe, offset: 0 })}
-            />
-          )}
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-            aria-label={t("logs.page.refresh")}
-            title={t("logs.page.refresh")}
-          >
-            <RefreshCw
-              className={`h-4 w-4${isRefreshing ? " animate-spin" : ""}`}
-              aria-hidden="true"
-            />
-          </button>
-          <span className="flex-1" />
-          {summary ? (
-            <span className="text-xs tabular-nums text-muted-foreground" data-testid="logs-summary">
-              {summary}
-            </span>
-          ) : null}
-          {pager ? (
-            <>
-              <span className="h-5 w-px bg-border" aria-hidden="true" />
-              <CompactPaginationControls {...pager} />
-            </>
-          ) : null}
-        </div>
-        {logsView === "request-logs" ? (
-          <RequestFilters
-            filters={filters}
-            accountOptions={accountOptions}
-            apiKeyOptions={apiKeyOptions}
-            modelOptions={modelOptions}
-            statusOptions={statusOptions}
-            showApiKeyFilter={canReadApiKeys}
-            trailing={columnControls}
-            onSearchChange={(search) => updateFilters({ search, offset: 0 })}
-            onAccountChange={(accountIds) => updateFilters({ accountIds, offset: 0 })}
-            onApiKeyChange={(apiKeyIds) => updateFilters({ apiKeyIds, offset: 0 })}
-            onModelChange={(modelOptionsSelected) =>
-              updateFilters({ modelOptions: modelOptionsSelected, offset: 0 })
-            }
-            onStatusChange={(statuses) => updateFilters({ statuses, offset: 0 })}
-            onConversationDismiss={handleConversationDismiss}
-            onReset={() =>
-              updateFilters({
-                search: "",
-                timeframe: "all",
-                accountIds: [],
-                apiKeyIds: [],
-                modelOptions: [],
-                statuses: [],
-                conversationId: null,
-                offset: 0,
-              })
-            }
-          />
-        ) : null}
-      </section>
 
       {logsView === "conversations" ? (
         <ConversationsView state={conversationsState} accounts={accounts} />

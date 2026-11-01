@@ -1612,7 +1612,6 @@
   "settings.sections.automations": "Automations",
   "settings.sections.data": "Data",
   "settings.sections.notifications": "Notifications",
-  "settings.page.subtitle": "Configure the dashboard, access, routing and operations.",
   "settings.page.readOnlyNotice": "You are viewing the dashboard with read-only guest access. Admin controls are disabled.",
   "settings.page.trustedHeaderNotice": "Dashboard access is authenticated by a trusted reverse-proxy header. Password and TOTP stay available only as optional fallback login.",
   "settings.page.disabledNotice": "Dashboard auth is fully bypassed by configuration. Only use this mode behind network restrictions or external access control.",

@@ -3,6 +3,7 @@ import { LayoutList, RefreshCw, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ChartToggle } from "@/components/chart-toggle";
+import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -91,90 +92,93 @@ export function ReportsToolbar({
   const previous = rangeComplete ? previousWindow(filters.startDate, filters.endDate) : null;
 
   return (
-    <section
-      aria-label={t("reports.toolbar.label")}
-      className="sticky top-[4.25rem] z-10 space-y-2 rounded-xl border bg-card/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/85"
-    >
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold tracking-tight text-foreground">{t("nav.reports")}</h1>
-        <span aria-hidden="true" className="h-5 w-px bg-border" />
-        <ChartToggle
-          label={t("reports.toolbar.range")}
-          value={preset}
-          onChange={onPresetChange}
-          options={[
-            ...RANGE_PRESETS.map((value) => ({ value, label: value })),
-            { value: "custom" as const, label: t("reports.toolbar.custom") },
-          ]}
-        />
-        {preset === "custom" ? (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                name="report-start-date"
-                autoComplete="off"
-                aria-label={t("reports.filters.startDate")}
-                aria-invalid={!rangeValid || undefined}
-                aria-describedby={rangeValid ? undefined : dateRangeErrorId}
-                max={startDateMax}
-                value={filters.startDate}
-                onChange={(event) => onFiltersChange({ ...filters, startDate: event.target.value })}
-                className="h-8 rounded-md border bg-transparent px-2 text-xs text-foreground aria-invalid:border-destructive aria-invalid:ring-destructive/20"
-              />
-              <span aria-hidden="true" className="text-xs text-muted-foreground">
-                –
+    <section aria-label={t("reports.toolbar.label")} className="sticky top-[3.4375rem] z-10 -mt-3 space-y-4 bg-background pt-3">
+      <PageHeader
+        title={t("nav.reports")}
+        controls={
+          <>
+            <ChartToggle
+              label={t("reports.toolbar.range")}
+              value={preset}
+              onChange={onPresetChange}
+              options={[
+                ...RANGE_PRESETS.map((value) => ({ value, label: value })),
+                { value: "custom" as const, label: t("reports.toolbar.custom") },
+              ]}
+            />
+            {preset === "custom" ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    name="report-start-date"
+                    autoComplete="off"
+                    aria-label={t("reports.filters.startDate")}
+                    aria-invalid={!rangeValid || undefined}
+                    aria-describedby={rangeValid ? undefined : dateRangeErrorId}
+                    max={startDateMax}
+                    value={filters.startDate}
+                    onChange={(event) => onFiltersChange({ ...filters, startDate: event.target.value })}
+                    className="h-8 rounded-md border bg-transparent px-2 text-xs text-foreground aria-invalid:border-destructive aria-invalid:ring-destructive/20"
+                  />
+                  <span aria-hidden="true" className="text-xs text-muted-foreground">
+                    –
+                  </span>
+                  <input
+                    type="date"
+                    name="report-end-date"
+                    autoComplete="off"
+                    aria-label={t("reports.filters.endDate")}
+                    aria-invalid={!rangeValid || undefined}
+                    aria-describedby={rangeValid ? undefined : dateRangeErrorId}
+                    min={filters.startDate || undefined}
+                    max={today}
+                    value={filters.endDate}
+                    onChange={(event) => onFiltersChange({ ...filters, endDate: event.target.value })}
+                    className="h-8 rounded-md border bg-transparent px-2 text-xs text-foreground aria-invalid:border-destructive aria-invalid:ring-destructive/20"
+                  />
+                </div>
+                {rangeValid ? null : (
+                  <p id={dateRangeErrorId} aria-live="polite" className="text-xs text-destructive">
+                    {t("reports.filters.invalidDateRange")}
+                  </p>
+                )}
+              </div>
+            ) : rangeComplete ? (
+              <span className="text-sm font-medium tabular-nums" data-testid="reports-range-label">
+                {formatReportRange(filters.startDate, filters.endDate, dateDisplayFormat)}
               </span>
-              <input
-                type="date"
-                name="report-end-date"
-                autoComplete="off"
-                aria-label={t("reports.filters.endDate")}
-                aria-invalid={!rangeValid || undefined}
-                aria-describedby={rangeValid ? undefined : dateRangeErrorId}
-                min={filters.startDate || undefined}
-                max={today}
-                value={filters.endDate}
-                onChange={(event) => onFiltersChange({ ...filters, endDate: event.target.value })}
-                className="h-8 rounded-md border bg-transparent px-2 text-xs text-foreground aria-invalid:border-destructive aria-invalid:ring-destructive/20"
-              />
-            </div>
-            {rangeValid ? null : (
-              <p id={dateRangeErrorId} aria-live="polite" className="text-xs text-destructive">
-                {t("reports.filters.invalidDateRange")}
-              </p>
-            )}
-          </div>
-        ) : rangeComplete ? (
-          <span className="text-sm font-medium tabular-nums" data-testid="reports-range-label">
-            {formatReportRange(filters.startDate, filters.endDate, dateDisplayFormat)}
-          </span>
-        ) : null}
-        {showComparison && previous ? (
-          <span className="text-xs text-muted-foreground">
-            {t("reports.toolbar.comparedWith", {
-              range: formatReportRange(previous.startDate, previous.endDate, dateDisplayFormat, { withYear: false }),
-            })}
-          </span>
-        ) : null}
-        <span className="flex-1" />
-        {generatedAt ? (
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {t("reports.toolbar.updated", { time: formatGeneratedTime(generatedAt) })}
-          </span>
-        ) : null}
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshing || !rangeValid}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-          aria-label={t("reports.toolbar.refresh")}
-          title={t("reports.toolbar.refresh")}
-        >
-          <RefreshCw className={`h-4 w-4${refreshing ? " animate-spin" : ""}`} aria-hidden="true" />
-        </button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+            ) : null}
+            {showComparison && previous ? (
+              <span className="text-xs text-muted-foreground">
+                {t("reports.toolbar.comparedWith", {
+                  range: formatReportRange(previous.startDate, previous.endDate, dateDisplayFormat, { withYear: false }),
+                })}
+              </span>
+            ) : null}
+          </>
+        }
+        actions={
+          <>
+            {generatedAt ? (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {t("reports.toolbar.updated", { time: formatGeneratedTime(generatedAt) })}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing || !rangeValid}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              aria-label={t("reports.toolbar.refresh")}
+              title={t("reports.toolbar.refresh")}
+            >
+              <RefreshCw className={`h-4 w-4${refreshing ? " animate-spin" : ""}`} aria-hidden="true" />
+            </button>
+          </>
+        }
+      />
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3">
         <MultiSelectFilter
           label={t("reports.filters.accounts")}
           values={filters.accounts}
