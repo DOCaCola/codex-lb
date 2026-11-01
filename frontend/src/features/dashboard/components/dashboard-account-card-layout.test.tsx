@@ -39,10 +39,23 @@ describe("dashboard account card layout", () => {
 
   it("shows the time left until a notice ends", () => {
     const now = Date.parse("2026-11-01T10:00:00Z");
-    const limit: ProviderNotice = { tone: "bad", text: "", label: "Weekly limit · back", until: "2026-11-04T09:00:00Z" };
-    const subscription: ProviderNotice = { tone: "warn", text: "", label: "Subscription ends", until: "2026-11-01T17:00:00Z" };
-    expect(noticeHeadline(limit, now)).toBe("Weekly limit · back in 2d 23h");
+    const limit: ProviderNotice = {
+      tone: "bad",
+      text: "",
+      label: "Weekly limit · back",
+      until: { at: "2026-11-07T09:00:00Z", kind: "cooldown" },
+    };
+    const subscription: ProviderNotice = {
+      tone: "warn",
+      text: "",
+      label: "Subscription ends",
+      until: { at: "2026-11-01T17:00:00Z", kind: "expiry" },
+    };
+    expect(noticeHeadline(limit, now)).toBe("Weekly limit · back in 5d 23h");
     expect(noticeHeadline(subscription, now)).toBe("Subscription ends in 7h 0m");
+    expect(noticeHeadline({ ...subscription, until: { at: "2026-11-08T13:00:00Z", kind: "expiry" } }, now)).toBe(
+      "Subscription ends in 7d",
+    );
     expect(noticeHeadline({ ...limit, label: "Paused", until: null }, now)).toBe("Paused");
   });
 

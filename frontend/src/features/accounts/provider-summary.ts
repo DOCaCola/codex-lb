@@ -25,7 +25,7 @@ import type { OpenRouterAccount } from "@/features/openrouter/api";
 import { keyAllowance, money, openRouterBalance, openRouterStatus } from "@/features/openrouter/display-values";
 import type { AccountQuotaDisplayPreference } from "@/hooks/use-account-quota-display";
 import { normalizeStatus, type DashboardAccountStatus } from "@/utils/account-status";
-import { formatPercentNullable, formatQuotaResetLabel, formatSlug, parseDate } from "@/utils/formatters";
+import { formatPercentNullable, formatQuotaResetLabel, formatSlug, parseDate, type CountdownKind } from "@/utils/formatters";
 
 export type ProviderKind = AccountProvider;
 
@@ -85,16 +85,19 @@ export type LimitSummary = {
 
 export type SummaryTone = "ok" | "warn" | "bad" | "off";
 
-/** Why an account needs attention: a full sentence, a short headline for tight spaces, and when the condition ends. */
-export type ProviderNotice = { tone: Exclude<SummaryTone, "ok">; text: string; label: string; until: string | null };
+/** When a notice's condition ends, and whether that is a quota coming back or something running out. */
+export type NoticeEnd = { at: string; kind: CountdownKind };
 
-function notice(tone: ProviderNotice["tone"], text: string, label = text, until: string | null = null): ProviderNotice {
+/** Why an account needs attention: a full sentence, a short headline for tight spaces, and when the condition ends. */
+export type ProviderNotice = { tone: Exclude<SummaryTone, "ok">; text: string; label: string; until: NoticeEnd | null };
+
+function notice(tone: ProviderNotice["tone"], text: string, label = text, until: NoticeEnd | null = null): ProviderNotice {
   return { tone, text, label, until };
 }
 
 /** The short headline followed by the time left until the condition ends, counted when rendered. */
 export function noticeHeadline(value: ProviderNotice, now = Date.now()): string {
-  return value.until ? value.label + " " + formatQuotaResetLabel(value.until, now) : value.label;
+  return value.until ? value.label + " " + formatQuotaResetLabel(value.until.at, now, value.until.kind) : value.label;
 }
 
 export type ProviderSummary = {
@@ -200,7 +203,10 @@ function exhaustedNotice(limits: LimitSummary[], tone: "warn" | "bad", now: numb
   if (!drained) return null;
   const label = `${drained.label} limit`;
   if (!drained.resetAt) return notice(tone, `${label} reached`, label);
-  return notice(tone, `${label} · back ${formatQuotaResetLabel(drained.resetAt, now)}`, `${label} · back`, drained.resetAt);
+  return notice(tone, `${label} · back ${formatQuotaResetLabel(drained.resetAt, now)}`, `${label} · back`, {
+    at: drained.resetAt,
+    kind: "cooldown",
+  });
 }
 
 function subscriptionNotice(ends: AccountSubscriptionEnd[] | undefined, target: AccountColorTarget, now: number): ProviderNotice | null {
@@ -209,7 +215,7 @@ function subscriptionNotice(ends: AccountSubscriptionEnd[] | undefined, target: 
   const end = Date.parse(endsAt);
   if (end <= now) return null;
   const date = new Date(end).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  return notice("warn", `Subscription ends ${date}`, "Subscription ends", endsAt);
+  return notice("warn", `Subscription ends ${date}`, "Subscription ends", { at: endsAt, kind: "expiry" });
 }
 
 function statusNotice(status: DashboardAccountStatus, t: TFunction): ProviderNotice | null {

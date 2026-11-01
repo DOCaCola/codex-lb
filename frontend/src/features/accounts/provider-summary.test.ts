@@ -100,7 +100,7 @@ describe("provider summaries", () => {
     expect(drained.tone).toBe("bad");
     expect(drained.notice?.text).toMatch(/^Weekly limit · back in /);
     expect(drained.notice?.label).toBe("Weekly limit · back");
-    expect(drained.notice?.until).toBe(inHours(30));
+    expect(drained.notice?.until).toEqual({ at: inHours(30), kind: "cooldown" });
     expect(drained.routingPolicy).toBe("normal");
     expect(codex({ status: "deactivated" }).routingPolicy).toBeNull();
   });
@@ -110,7 +110,12 @@ describe("provider summaries", () => {
       { kind: "codex", account: createAccountSummary() },
       summaryContext({ now: NOW, subscriptionEnds: [{ accountId: "acc_primary", modelSourceId: null, endsAt: inHours(48) }] }),
     );
-    expect(summary.notice).toEqual({ tone: "warn", text: expect.stringMatching(/^Subscription ends /), label: "Subscription ends", until: inHours(48) });
+    expect(summary.notice).toEqual({
+      tone: "warn",
+      text: expect.stringMatching(/^Subscription ends /),
+      label: "Subscription ends",
+      until: { at: inHours(48), kind: "expiry" },
+    });
   });
 
   it("filters by attention and pause state and searches across providers", () => {

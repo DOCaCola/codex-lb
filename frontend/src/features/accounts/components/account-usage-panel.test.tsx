@@ -95,7 +95,7 @@ describe("AccountUsagePanel", () => {
     expect(screen.getByText("Additional Quotas")).toBeInTheDocument();
     expect(screen.getByText("GPT-5.3-Codex-Spark")).toBeInTheDocument();
     expect(screen.getByText(/35% used/)).toBeInTheDocument();
-    expect(screen.getByText("Resets in 6d")).toBeInTheDocument();
+    expect(screen.getByText("Resets in 6d 13h")).toBeInTheDocument();
   });
 
   it("renders Reserve in the same additional-quota layout without a routing badge", () => {
