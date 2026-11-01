@@ -6,14 +6,15 @@ export const openRouterBalance = (account: OpenRouterAccount) =>
   account.state.credits
     ? account.state.credits.total_credits - account.state.credits.total_usage
     : null;
+/** Dollar amounts in the dashboard's en-US currency format, keeping OpenRouter's sub-cent balance precision. */
+const moneyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
 export const money = (value: number | null | undefined) =>
-  value == null
-    ? "Unknown"
-    : new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency: "USD",
-        maximumFractionDigits: 4,
-      }).format(value);
+  value == null ? "Unknown" : moneyFormatter.format(value);
 export const keyAllowance = (account: OpenRouterAccount) =>
   account.state.key?.limit === null
     ? "No key cap"

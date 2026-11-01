@@ -95,7 +95,7 @@ describe("AccountUsagePanel", () => {
     expect(screen.getByText("Additional Quotas")).toBeInTheDocument();
     expect(screen.getByText("GPT-5.3-Codex-Spark")).toBeInTheDocument();
     expect(screen.getByText(/35% used/)).toBeInTheDocument();
-    expect(screen.getByText("Resets in 6d 13h")).toBeInTheDocument();
+    expect(screen.getByText("Resets in 6d")).toBeInTheDocument();
   });
 
   it("renders Reserve in the same additional-quota layout without a routing badge", () => {
@@ -111,7 +111,7 @@ describe("AccountUsagePanel", () => {
     expect(screen.getByText("60% used")).toBeInTheDocument();
     expect(screen.getByText("Weekly", { exact: true })).toBeInTheDocument();
     expect(screen.getByTestId("additional-quota-windows")).toHaveClass("sm:grid-cols-2");
-    expect(screen.getByText("Resets in 1h")).toBeInTheDocument();
+    expect(screen.getByText("Resets in 1h 0m")).toBeInTheDocument();
     expect(screen.queryByText("Burn first")).not.toBeInTheDocument();
   });
 
@@ -137,7 +137,7 @@ describe("AccountUsagePanel", () => {
     }] });
     render(<AccountUsagePanel account={account} />);
     expect(screen.getByText("Usage unknown")).toBeInTheDocument();
-    expect(screen.getByText("Resets in 1h")).toBeInTheDocument();
+    expect(screen.getByText("Resets in 1h 0m")).toBeInTheDocument();
     expect(screen.queryByText("0% used")).not.toBeInTheDocument();
   });
 

@@ -364,21 +364,26 @@ export function formatExpiresIn(iso: string): string | null {
   return remaining > 0 ? formatRelative(remaining) : null;
 }
 
-/** The two largest units of a positive duration, rounded down; at least one minute. */
+const COUNTDOWN_DAYS_ONLY_FROM = 3;
+
+/**
+ * Countdown units, rounded down and at least one minute: days alone from three days on, days and hours from one day
+ * on, hours and minutes below one day (also "7h 0m"), minutes alone below one hour.
+ */
 function formatTwoUnits(ms: number, prefix: "formatters.relative" | "formatters.duration"): string {
   const totalMinutes = Math.max(1, Math.floor(ms / 60_000));
   if (totalMinutes < 60) {
     return t(prefix + ".minutes", { count: totalMinutes });
   }
   if (totalMinutes < 1440) {
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return minutes > 0 ? t(prefix + ".hoursMinutes", { hours, minutes }) : t(prefix + ".hours", { count: hours });
+    return t(prefix + ".hoursMinutes", { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 });
   }
   const totalHours = Math.floor(totalMinutes / 60);
   const days = Math.floor(totalHours / 24);
   const hours = totalHours % 24;
-  return hours > 0 ? t(prefix + ".daysHours", { days, hours }) : t(prefix + ".days", { count: days });
+  return days >= COUNTDOWN_DAYS_ONLY_FROM || hours === 0
+    ? t(prefix + ".days", { count: days })
+    : t(prefix + ".daysHours", { days, hours });
 }
 
 /** Time until something happens, for example "in 2h 40m". */
@@ -386,7 +391,7 @@ export function formatResetRelative(ms: number): string {
   return formatTwoUnits(ms, "formatters.relative");
 }
 
-/** A bare duration, for example "2h 40m" or "1d 15h". */
+/** A bare countdown, for example "2h 40m", "1d 15h" or "6d". */
 export function formatDuration(ms: number): string {
   return formatTwoUnits(ms, "formatters.duration");
 }

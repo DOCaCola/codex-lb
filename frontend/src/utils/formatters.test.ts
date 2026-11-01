@@ -170,7 +170,10 @@ it("formats elapsed latency values", () => {
     expect(formatRelative(30 * 60 * 60_000)).toBe("in 2d");
     expect(formatResetRelative(30 * 60_000)).toBe("in 30m");
     expect(formatResetRelative((4 * 60 + 13) * 60_000)).toBe("in 4h 13m");
-    expect(formatResetRelative((6 * 24 + 13) * 60 * 60_000)).toBe("in 6d 13h");
+    expect(formatResetRelative(7 * 60 * 60_000)).toBe("in 7h 0m");
+    expect(formatResetRelative((2 * 24 + 23) * 60 * 60_000)).toBe("in 2d 23h");
+    expect(formatResetRelative((3 * 24 + 1) * 60 * 60_000)).toBe("in 3d");
+    expect(formatResetRelative((6 * 24 + 13) * 60 * 60_000)).toBe("in 6d");
     expect(formatCountdown(125)).toBe("2:05");
   });
 
@@ -180,7 +183,7 @@ it("formats elapsed latency values", () => {
       expiringSoon: false,
     });
     expect(formatTimeRemaining("2026-01-07T06:30:00.000Z")).toEqual({
-      label: "6d 6h",
+      label: "6d",
       expiringSoon: true,
     });
     expect(formatTimeRemaining("2026-01-01T01:12:00.000Z")).toEqual({
@@ -204,7 +207,7 @@ it("formats elapsed latency values", () => {
     const inPast = new Date(Date.now() - 1_000).toISOString();
     expect(formatQuotaResetLabel(in30m)).toBe("in 30m");
     expect(formatQuotaResetLabel(in4h13m)).toBe("in 4h 13m");
-    expect(formatQuotaResetLabel(in6d13h)).toBe("in 6d 13h");
+    expect(formatQuotaResetLabel(in6d13h)).toBe("in 6d");
     expect(formatQuotaResetLabel(inPast)).toBe("now");
     expect(formatQuotaResetLabel("1970-01-01T00:00:00.000Z")).toBe(RESET_ERROR_LABEL);
     expect(formatQuotaResetLabel("bad-date")).toBe(RESET_ERROR_LABEL);

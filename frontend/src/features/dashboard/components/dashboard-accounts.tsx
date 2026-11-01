@@ -14,6 +14,7 @@ import {
   PROVIDER_LABELS,
   accountHref,
   noticeClass,
+  noticeHeadline,
   type LimitSummary,
   type ProviderNotice,
   type ProviderSummary,
@@ -23,7 +24,6 @@ import {
 import { ExtraUsageBadge } from "@/features/claude/account-display";
 import { accountSubscriptionCredits } from "@/features/dashboard/account-credit-display";
 import type { AccountSummary } from "@/features/dashboard/schemas";
-import { money } from "@/features/openrouter/display-values";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { cn } from "@/lib/utils";
@@ -59,9 +59,9 @@ const STRIP: Record<ProviderNotice["tone"], string> = {
   off: "bg-muted text-muted-foreground",
 };
 
-/** Today's cost: OpenRouter reports its own daily spend; other providers use recorded requests. */
+/** Today's cost, formatted alike for every provider: OpenRouter reports its own daily spend; others use recorded requests. */
 function todayCost(summary: ProviderSummary, activity: Map<string, AccountActivity> | undefined, available: boolean): string | null {
-  if (summary.entry.kind === "openrouter") return money(summary.entry.account.state.key?.usage_daily);
+  if (summary.entry.kind === "openrouter") return formatCurrency(summary.entry.account.state.key?.usage_daily);
   if (!available) return null;
   return formatCurrency(activity?.get(summary.activityKey)?.today.costUsd ?? 0);
 }
@@ -201,8 +201,8 @@ function ResetCreditButton({ account, actions }: { account: AccountSummary; acti
   );
 }
 
-/** The remedy for an account that needs attention, when there is one. */
-function StripAction({ summary, actions }: { summary: ProviderSummary; actions: DashboardAccountActions }) {
+/** The remedy for a paused or signed-out account, shown next to its notice. */
+function StatusAction({ summary, actions }: { summary: ProviderSummary; actions: DashboardAccountActions }) {
   const { t } = useTranslation();
   if (summary.status === "paused") {
     return (
@@ -229,36 +229,43 @@ function StripAction({ summary, actions }: { summary: ProviderSummary; actions: 
       </Button>
     );
   }
-  if (summary.entry.kind === "codex" && summary.resetCredits > 0 && (summary.status === "limited" || summary.status === "exceeded")) {
-    return <ResetCreditButton account={summary.entry.account} actions={actions} />;
-  }
   return null;
 }
 
-function CodexFooter({ account, actions, resetInStrip }: { account: AccountSummary; actions: DashboardAccountActions; resetInStrip: boolean }) {
+/** A list row has no credits line, so a limited Codex account offers its reset credit next to the status. */
+function ListRowAction({ summary, actions }: { summary: ProviderSummary; actions: DashboardAccountActions }) {
+  if (summary.entry.kind === "codex" && summary.resetCredits > 0 && (summary.status === "limited" || summary.status === "exceeded")) {
+    return <ResetCreditButton account={summary.entry.account} actions={actions} />;
+  }
+  return <StatusAction summary={summary} actions={actions} />;
+}
+
+/** The credits line every Codex card shows, with the reset-credit button, at the same place on every Codex card. */
+function CodexFooter({ account, actions }: { account: AccountSummary; actions: DashboardAccountActions }) {
   const { t } = useTranslation();
   const subscription = Math.max(0, Math.round(accountSubscriptionCredits(account) ?? 0));
   const purchased = Math.max(0, Math.round(account.creditsBalance ?? 0));
-  const showCredits = subscription > 0 || purchased > 0 || account.creditsUnlimited;
-  const showReset = (account.availableResetCredits ?? 0) > 0 && !resetInStrip;
-  if (!showCredits && !showReset) return null;
+  const showReset = (account.availableResetCredits ?? 0) > 0;
   return (
     <div className="flex min-h-[34px] items-center gap-2 border-t pt-[9px] text-xs text-muted-foreground" data-testid="account-card-footer">
-      {showCredits ? (
-        <span className="min-w-0 truncate whitespace-nowrap" title={t("dashboard.accounts.creditsTitle")}>
-          {t("dashboard.accounts.credits", {
-            subscription: formatNumber(subscription),
-            purchased: account.creditsUnlimited ? t("common.states.unlimited") : formatNumber(purchased),
-          })}
-        </span>
-      ) : null}
+      <span className="min-w-0 truncate whitespace-nowrap" title={t("dashboard.accounts.creditsTitle")}>
+        {t("dashboard.accounts.credits", {
+          subscription: formatNumber(subscription),
+          purchased: account.creditsUnlimited ? t("common.states.unlimited") : formatNumber(purchased),
+        })}
+      </span>
       <span className="flex-1" />
       {showReset ? <ResetCreditButton account={account} actions={actions} /> : null}
     </div>
   );
 }
 
-/** One account of any provider: limits first, then a status strip and footer only when they carry information. */
+/**
+ * One account of any provider. Every card has the same slots: header and limits at the top, then a bottom group pinned
+ * to the card's bottom edge: the provider footer (the Codex credits line and reset-credit button) and a status-strip
+ * slot that is reserved whether or not the account needs attention. Footer, reset button and strip therefore sit at the
+ * same place on every card.
+ */
 export function DashboardAccountCard({
   summary,
   color,
@@ -274,8 +281,7 @@ export function DashboardAccountCard({
   const dim = summary.status === "paused";
   const codex = summary.entry.kind === "codex" ? summary.entry.account : null;
   const strip = summary.notice;
-  const stripAction = strip ? <StripAction summary={summary} actions={actions} /> : null;
-  const resetInStrip = !!codex && summary.resetCredits > 0 && (summary.status === "limited" || summary.status === "exceeded");
+  const stripAction = strip ? <StatusAction summary={summary} actions={actions} /> : null;
   return (
     <article
       data-testid="dashboard-account-card"
@@ -303,23 +309,23 @@ export function DashboardAccountCard({
           ))}
         </div>
       ) : null}
-      {strip ? (
-        <div
-          className={cn("mt-auto flex h-8 items-center gap-[7px] rounded-[7px] pr-[5px] pl-2.5 text-xs font-medium", STRIP[strip.tone])}
-          data-testid="account-card-strip"
-        >
-          <span className="min-w-0 truncate" title={strip.text}>
-            {strip.label}
-          </span>
-          <span className="flex-1" />
-          {stripAction}
+      <div className="mt-auto flex flex-col gap-[11px]" data-testid="account-card-bottom">
+        {codex ? <CodexFooter account={codex} actions={actions} /> : null}
+        <div className="h-8" data-testid="account-card-strip-slot">
+          {strip ? (
+            <div
+              className={cn("flex h-full items-center gap-[7px] rounded-[7px] pr-[5px] pl-2.5 text-xs font-medium", STRIP[strip.tone])}
+              data-testid="account-card-strip"
+            >
+              <span className="min-w-0 truncate tabular-nums" title={strip.text}>
+                {noticeHeadline(strip)}
+              </span>
+              <span className="flex-1" />
+              {stripAction}
+            </div>
+          ) : null}
         </div>
-      ) : null}
-      {codex ? (
-        <div className={cn(!strip && "mt-auto")}>
-          <CodexFooter account={codex} actions={actions} resetInStrip={resetInStrip} />
-        </div>
-      ) : null}
+      </div>
     </article>
   );
 }
@@ -356,16 +362,22 @@ function NoAccounts() {
 export function DashboardAccountCards({ summaries, colors, activity, activityAvailable, actions }: DashboardAccountsProps) {
   if (summaries.length === 0) return <NoAccounts />;
   return (
-    <div data-testid="dashboard-account-cards" className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-3">
-      {summaries.map((summary) => (
-        <DashboardAccountCard
-          key={summary.kind + ":" + summary.id}
-          summary={summary}
-          color={summaryColor(summary, colors)}
-          today={todayCost(summary, activity, activityAvailable)}
-          actions={actions}
-        />
-      ))}
+    // Rows share one height from two columns (2 × 300px + gap) on; a single column keeps natural card heights.
+    <div className="@container/cards">
+      <div
+        data-testid="dashboard-account-cards"
+        className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-3 @min-[38.25rem]/cards:auto-rows-fr"
+      >
+        {summaries.map((summary) => (
+          <DashboardAccountCard
+            key={summary.kind + ":" + summary.id}
+            summary={summary}
+            color={summaryColor(summary, colors)}
+            today={todayCost(summary, activity, activityAvailable)}
+            actions={actions}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -427,11 +439,11 @@ export function DashboardAccountList({ summaries, colors, activity, activityAvai
                 <StatusBadge status={summary.status} />
                 {summary.notice ? (
                   <span className={cn("mt-0.5 block max-w-48 truncate text-[11px]", noticeClass(summary.notice.tone))} title={summary.notice.text}>
-                    {summary.notice.label}
+                    {noticeHeadline(summary.notice)}
                   </span>
                 ) : null}
               </div>
-              <StripAction summary={summary} actions={actions} />
+              <ListRowAction summary={summary} actions={actions} />
             </div>
             <div className="col-span-2 grid gap-2 sm:grid-cols-2 lg:contents">
               <ListLimit limit={first} label={first ? limitLabel(summary, first) : ""} color={color} />

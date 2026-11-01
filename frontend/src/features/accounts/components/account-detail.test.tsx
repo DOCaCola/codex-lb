@@ -183,7 +183,7 @@ describe("AccountDetail", () => {
     const { onResetCredit } = renderDetail(account);
     await userEvent.click(screen.getByRole("button", { name: "Reset (3)" }));
     expect(onResetCredit).toHaveBeenCalledWith(account.accountId);
-    expect(screen.getByText("2h")).toBeInTheDocument();
+    expect(screen.getByText("2h 0m")).toBeInTheDocument();
   });
 
   it("hides the reset credit expiry when settings disable it", () => {
@@ -195,7 +195,7 @@ describe("AccountDetail", () => {
       { showResetCreditExpiryBadge: false },
     );
     expect(screen.getByRole("button", { name: "Reset (3)" })).toBeInTheDocument();
-    expect(screen.queryByText("2h")).not.toBeInTheDocument();
+    expect(screen.queryByText("2h 0m")).not.toBeInTheDocument();
   });
 
   it.each(["paused", "deactivated", "reauth_required"] as const)("disables reset credits for %s accounts", (status) => {

@@ -90,8 +90,8 @@ describe("provider summaries", () => {
   });
 
   it("explains why an account needs attention", () => {
-    expect(codex({ status: "paused" }).notice).toEqual({ tone: "off", text: "Paused", label: "Paused" });
-    expect(codex({ status: "reauth_required" }).notice).toEqual({ tone: "bad", text: "Sign in again", label: "Sign in again" });
+    expect(codex({ status: "paused" }).notice).toEqual({ tone: "off", text: "Paused", label: "Paused", until: null });
+    expect(codex({ status: "reauth_required" }).notice).toEqual({ tone: "bad", text: "Sign in again", label: "Sign in again", until: null });
     const drained = codex({
       status: "quota_exceeded",
       resetAtSecondary: inHours(30),
@@ -99,7 +99,8 @@ describe("provider summaries", () => {
     });
     expect(drained.tone).toBe("bad");
     expect(drained.notice?.text).toMatch(/^Weekly limit · back in /);
-    expect(drained.notice?.label).toBe("Weekly limit");
+    expect(drained.notice?.label).toBe("Weekly limit · back");
+    expect(drained.notice?.until).toBe(inHours(30));
     expect(drained.routingPolicy).toBe("normal");
     expect(codex({ status: "deactivated" }).routingPolicy).toBeNull();
   });
@@ -109,7 +110,7 @@ describe("provider summaries", () => {
       { kind: "codex", account: createAccountSummary() },
       summaryContext({ now: NOW, subscriptionEnds: [{ accountId: "acc_primary", modelSourceId: null, endsAt: inHours(48) }] }),
     );
-    expect(summary.notice).toEqual({ tone: "warn", text: expect.stringMatching(/^Subscription ends /), label: expect.stringMatching(/^Subscription ends /) });
+    expect(summary.notice).toEqual({ tone: "warn", text: expect.stringMatching(/^Subscription ends /), label: "Subscription ends", until: inHours(48) });
   });
 
   it("filters by attention and pause state and searches across providers", () => {
