@@ -40,6 +40,7 @@ const firewallSectionMock = vi.fn();
 const quotaPlannerSectionMock = vi.fn();
 const stickySessionsSectionMock = vi.fn();
 const modelCatalogueSettingsMock = vi.fn();
+const compactionRouteSettingsMock = vi.fn();
 const dataRetentionSettingsMock = vi.fn();
 const upstreamTimeoutSettingsMock = vi.fn();
 
@@ -108,6 +109,13 @@ vi.mock("@/features/settings/components/model-catalogue-settings", () => ({
   ModelCatalogueSettings: (props: unknown) => {
     modelCatalogueSettingsMock(props);
     return <div>Model Catalogue Settings</div>;
+  },
+}));
+
+vi.mock("@/features/settings/components/compaction-route-settings", () => ({
+  CompactionRouteSettings: (props: unknown) => {
+    compactionRouteSettingsMock(props);
+    return <div>Compaction Route Settings</div>;
   },
 }));
 
@@ -335,6 +343,7 @@ describe("Settings sections", () => {
 
     renderSettings("/settings/models");
     expect(screen.getByText("Model Catalogue Settings")).toBeInTheDocument();
+    expect(screen.getByText("Compaction Route Settings")).toBeInTheDocument();
   });
 
   it("renders the upstream cards together", () => {
@@ -379,6 +388,7 @@ describe("Settings sections", () => {
 
     renderSettings("/settings/models");
     expect(modelCatalogueSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
+    expect(compactionRouteSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
   });
 
   it("disables write-capable sections and hides restricted surfaces for read-only guests", () => {

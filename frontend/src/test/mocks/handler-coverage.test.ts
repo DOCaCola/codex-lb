@@ -36,9 +36,11 @@ const EXPECTED_ENDPOINTS = [
 	"GET /api/conversations/:conversationId",
 	// accounts
 	"GET /api/claude-accounts",
+	"GET /api/claude-accounts/:id/trends",
 	"GET /api/antigravity-accounts",
 	"GET /api/antigravity-accounts/:id/trends",
 	"GET /api/openrouter-accounts",
+	"GET /api/openrouter-accounts/:id/trends",
 	"GET /api/reports",
 	"GET /api/accounts",
 	"GET /api/accounts/:accountId/models",
@@ -132,6 +134,8 @@ const EXPECTED_ENDPOINTS = [
 	"GET /api/settings/model-compaction-routes",
 	"PUT /api/settings/model-compaction-routes/:slug*",
 	"DELETE /api/settings/model-compaction-routes/:slug*",
+	"GET /api/settings/quota-reset-webhook",
+	"GET /api/settings/quota-reset-webhook/destination",
 	"GET /api/sticky-sessions",
 	"POST /api/sticky-sessions/delete",
 	"POST /api/sticky-sessions/delete-filtered",
@@ -156,6 +160,7 @@ const EXPECTED_ENDPOINTS = [
 	"DELETE /api/model-sources/:sourceId",
 	// api-keys
 	"GET /api/api-keys/",
+	"GET /api/api-keys/trends",
 	"POST /api/api-keys/",
 	"PATCH /api/api-keys/:keyId",
 	"DELETE /api/api-keys/:keyId",
