@@ -24,6 +24,7 @@ const ROW_GRID = "grid grid-cols-[minmax(0,1fr)_72px_58px] items-center gap-3";
 /** The API keys that used the provider most in the last two hours, with their cost over that window. */
 export function TopConsumersCard({ provider, consumers, keyColors }: TopConsumersCardProps) {
   const { t } = useTranslation();
+  const sparklineMax = Math.max(0, ...consumers.flatMap((consumer) => consumer.costBuckets));
 
   return (
     <section
@@ -71,7 +72,11 @@ export function TopConsumersCard({ provider, consumers, keyColors }: TopConsumer
                       {t("dashboard.topConsumers.tokens", { value: formatCompactNumber(consumer.billableTokens) })}
                     </span>
                   </span>
-                  <KeySparkline buckets={consumer.costBuckets} color={color ?? "var(--muted-foreground)"} />
+                  <KeySparkline
+                    buckets={consumer.costBuckets}
+                    color={color ?? "var(--muted-foreground)"}
+                    scaleMax={sparklineMax}
+                  />
                   <span
                     className="text-right font-semibold tabular-nums"
                     title={t("dashboard.topConsumers.costTooltip", {

@@ -78,6 +78,23 @@ describe("TopConsumersCard", () => {
     expect(screen.getAllByText("Unknown")).toHaveLength(2);
   });
 
+  it("draws every cost trend on the scale of the largest one", () => {
+    render(
+      <TopConsumersCard
+        provider="codex"
+        keyColors={new Map()}
+        consumers={[
+          consumer({ name: "large", costBuckets: [...EMPTY_BUCKETS.slice(1), 10] }),
+          consumer({ name: "small", costBuckets: [...EMPTY_BUCKETS.slice(1), 5] }),
+        ]}
+      />,
+    );
+
+    const [large, small] = screen.getAllByTestId("top-consumer-row");
+    expect(large.querySelector("path[stroke]")?.getAttribute("d")).toMatch(/L72,2$/);
+    expect(small.querySelector("path[stroke]")?.getAttribute("d")).toMatch(/L72,12$/);
+  });
+
   it("states when there were no requests", () => {
     render(<TopConsumersCard provider="codex" consumers={[]} keyColors={new Map()} />);
 

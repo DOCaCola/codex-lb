@@ -61,20 +61,23 @@ export function KeyLimitMeter({ limit, color }: { limit: LimitRule; color: strin
 }
 
 /** Cost of a key over equal time buckets, oldest first; a flat line when the key was idle. */
-export function KeySparkline({ buckets, color, width = 72, height = 24 }: {
+export function KeySparkline({ buckets, color, scaleMax, width = 72, height = 24 }: {
   buckets: number[] | undefined;
   color: string | undefined;
+  /** Shared vertical scale for sparklines compared side by side; defaults to the series' own peak. */
+  scaleMax?: number;
   width?: number;
   height?: number;
 }) {
-  const max = Math.max(0, ...(buckets ?? []));
-  if (!buckets || max === 0) {
+  const peak = Math.max(0, ...(buckets ?? []));
+  if (!buckets || peak === 0) {
     return (
       <svg aria-hidden="true" width={width} height={height} className="shrink-0">
         <line x1="0" x2={width} y1={height - 1} y2={height - 1} stroke="var(--border)" />
       </svg>
     );
   }
+  const max = scaleMax ?? peak;
   const points = buckets.map((value, index) => [
     (index / (buckets.length - 1)) * width,
     height - 2 - (value / max) * (height - 4),
