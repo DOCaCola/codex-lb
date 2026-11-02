@@ -232,12 +232,15 @@ function StatusAction({ summary, actions }: { summary: ProviderSummary; actions:
   return null;
 }
 
-/** A list row has no credits line, so a limited Codex account offers its reset credit next to the status. */
+/** A list row has no credits line, so a Codex account with reset credits offers them next to its status remedy. */
 function ListRowAction({ summary, actions }: { summary: ProviderSummary; actions: DashboardAccountActions }) {
-  if (summary.entry.kind === "codex" && summary.resetCredits > 0 && (summary.status === "limited" || summary.status === "exceeded")) {
-    return <ResetCreditButton account={summary.entry.account} actions={actions} />;
-  }
-  return <StatusAction summary={summary} actions={actions} />;
+  const resettable = summary.entry.kind === "codex" && summary.resetCredits > 0 ? summary.entry.account : null;
+  return (
+    <>
+      <StatusAction summary={summary} actions={actions} />
+      {resettable ? <ResetCreditButton account={resettable} actions={actions} /> : null}
+    </>
+  );
 }
 
 /** The credits line every Codex card shows, with the reset-credit button, at the same place on every Codex card. */

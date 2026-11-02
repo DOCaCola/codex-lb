@@ -75,6 +75,30 @@ describe("dashboard account card layout", () => {
     expect(within(screen.getByTestId("dashboard-account-row")).getByRole("button", { name: /2 resets/ })).toBeInTheDocument();
   });
 
+  it("offers reset credits on every list row that has them, whatever the account's state", () => {
+    const available = createAccountSummary({ availableResetCredits: 1 });
+    const paused = createAccountSummary({
+      accountId: "acc_paused",
+      email: "paused@example.com",
+      displayName: "paused@example.com",
+      status: "paused",
+      availableResetCredits: 3,
+    });
+    const without = createAccountSummary({
+      accountId: "acc_none",
+      email: "none@example.com",
+      displayName: "none@example.com",
+      availableResetCredits: 0,
+    });
+    renderDashboardAccounts({ accounts: [available, paused, without] }, { view: "list" });
+    const rows = screen.getAllByTestId("dashboard-account-row");
+    const row = (email: string) => rows.find((candidate) => within(candidate).queryByText(email))!;
+    expect(within(row("primary@example.com")).getByRole("button", { name: /1 reset/ })).toBeEnabled();
+    expect(within(row("paused@example.com")).getByRole("button", { name: /Resume/ })).toBeInTheDocument();
+    expect(within(row("paused@example.com")).getByRole("button", { name: /3 resets/ })).toBeDisabled();
+    expect(within(row("none@example.com")).queryByRole("button", { name: /reset/ })).not.toBeInTheDocument();
+  });
+
   it("gives grid rows the height of the tallest card from two columns on", () => {
     renderDashboardAccounts({ accounts: [createAccountSummary()] });
     const grid = screen.getByTestId("dashboard-account-cards");
