@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
@@ -13,6 +14,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from app.core.crypto import TokenEncryptor
+from app.core.usage.recent import Reading
 from app.core.utils.time import utcnow
 from app.db.models import (
     AccountRoutingPolicy,
@@ -38,6 +40,7 @@ from app.modules.antigravity.quota import (
     quota_fresh,
     quota_weight,
     window_status,
+    with_recent_usage,
 )
 from app.modules.antigravity.repository import AntigravityRepository
 from app.modules.antigravity.schemas import (
@@ -54,6 +57,8 @@ from app.modules.antigravity.schemas import (
     OAuthComplete,
     OAuthStart,
     OAuthStarted,
+    QuotaFamily,
+    QuotaWindowName,
     Subscription,
     Tier,
 )
@@ -122,13 +127,25 @@ class AntigravityService:
         return CloudCodeClient(await AntigravityVersionService(self.repository.session).snapshot())
 
     async def list_accounts(self) -> list[AntigravityAccountResponse]:
-        rows = await self.repository.list_accounts()
-        cooldowns = await self.repository.cooldowns([row.source_id for row in rows], datetime.now(UTC))
-        return [self._response(row, [item for item in cooldowns if item.source_id == row.source_id]) for row in rows]
+        return await self._responses(await self.repository.list_accounts())
 
     async def response(self, source_id: str) -> AntigravityAccountResponse:
-        row = await self._get(source_id)
-        return self._response(row, await self.repository.cooldowns([source_id], datetime.now(UTC)))
+        return (await self._responses([await self._get(source_id)]))[0]
+
+    async def _responses(self, rows: list[AntigravityAccount]) -> list[AntigravityAccountResponse]:
+        now = utcnow()
+        source_ids = [row.source_id for row in rows]
+        cooldowns = await self.repository.cooldowns(source_ids, now.replace(tzinfo=UTC))
+        baselines = await self.repository.recent_quota_baselines(source_ids, now)
+        return [
+            self._response(
+                row,
+                [item for item in cooldowns if item.source_id == row.source_id],
+                baselines.get(row.source_id, {}),
+                now,
+            )
+            for row in rows
+        ]
 
     async def start_oauth(self, payload: OAuthStart) -> OAuthStarted:
         target = await self._get(payload.source_id) if payload.source_id is not None else None
@@ -422,10 +439,15 @@ class AntigravityService:
         await self.repository.sources.delete(source_id)
 
     @staticmethod
-    def _response(row: AntigravityAccount, cooldowns: list[AntigravityCooldown]) -> AntigravityAccountResponse:
+    def _response(
+        row: AntigravityAccount,
+        cooldowns: list[AntigravityCooldown],
+        baselines: Mapping[tuple[QuotaFamily, QuotaWindowName], Reading],
+        now: datetime,
+    ) -> AntigravityAccountResponse:
         state = AccountState.model_validate_json(row.state_json)
         plan = plan_type(state.subscription)
-        now = datetime.now(UTC)
+        aware_now = now.replace(tzinfo=UTC)
         return AntigravityAccountResponse(
             id=row.source_id,
             name=row.source.name,
@@ -442,8 +464,8 @@ class AntigravityService:
             plan_type=plan,
             quota_weight=quota_weight(plan),
             state=state,
-            windows=window_status(state, now),
-            quota_fresh=quota_fresh(state, now),
+            windows=with_recent_usage(window_status(state, aware_now), baselines, now),
+            quota_fresh=quota_fresh(state, aware_now),
             cooldowns=[
                 Cooldown(scope=item.scope, until=item.until.replace(tzinfo=UTC), reason=item.reason)
                 for item in cooldowns

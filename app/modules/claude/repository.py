@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.usage.recent import LONG_LOOKBACK, SHORT_LOOKBACK, Reading, recent_lookback
 from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudePendingReconnect, ClaudeQuotaHistory
 from app.modules.claude.credentials import ClaudeError
-from app.modules.claude.schemas import AccountState, QuotaProvenance, UsageSnapshot
+from app.modules.claude.quota import WINDOW_LENGTHS
+from app.modules.claude.schemas import AccountState, QuotaProvenance, UsageSnapshot, WindowName
 from app.modules.model_sources.repository import ModelSourcesRepository
 
 
@@ -23,6 +25,40 @@ class ClaudeRepository:
     async def list_accounts(self) -> list[ClaudeAccount]:
         rows = await self.session.scalars(select(ClaudeAccount))
         return sorted(rows.unique(), key=lambda row: (row.source.name, row.source_id))
+
+    async def recent_quota_baselines(
+        self, source_ids: Sequence[str], now: datetime
+    ) -> dict[str, dict[WindowName, Reading]]:
+        """Each account's newest reading per window at the start of its recent-usage lookback (naive UTC)."""
+        baselines: dict[str, dict[WindowName, Reading]] = {}
+        for lookback in (SHORT_LOOKBACK, LONG_LOOKBACK):
+            names = [name for name, length in WINDOW_LENGTHS.items() if recent_lookback(length) == lookback]
+            cutoff = now - lookback
+            ranked = (
+                select(
+                    ClaudeQuotaHistory.source_id,
+                    ClaudeQuotaHistory.window,
+                    ClaudeQuotaHistory.observed_at,
+                    ClaudeQuotaHistory.used_percent,
+                    func.row_number()
+                    .over(
+                        partition_by=(ClaudeQuotaHistory.source_id, ClaudeQuotaHistory.window),
+                        order_by=ClaudeQuotaHistory.observed_at.desc(),
+                    )
+                    .label("rank"),
+                )
+                .where(
+                    ClaudeQuotaHistory.source_id.in_(source_ids),
+                    ClaudeQuotaHistory.window.in_(names),
+                    ClaudeQuotaHistory.observed_at <= cutoff,
+                    # An older reading predates every current window of these lengths.
+                    ClaudeQuotaHistory.observed_at >= cutoff - max(WINDOW_LENGTHS[name] for name in names),
+                )
+                .subquery()
+            )
+            for row in await self.session.execute(select(ranked).where(ranked.c.rank == 1)):
+                baselines.setdefault(row.source_id, {})[row.window] = Reading(row.observed_at, row.used_percent)
+        return baselines
 
     async def mutate_state(
         self, source_id: str, generation: int, mutate: Callable[[AccountState], AccountState | None]

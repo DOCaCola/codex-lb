@@ -9,10 +9,13 @@ never used as exhaustion evidence.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.core.types import JsonValue
+from app.core.usage.recent import Reading, recent_used_percent
+from app.core.utils.time import to_utc_naive
 from app.modules.antigravity.catalog import quota_family
 from app.modules.antigravity.schemas import (
     AccountState,
@@ -143,6 +146,31 @@ def window_status(state: AccountState, now: datetime) -> list[WindowStatus]:
             exhausted=bucket.remaining_fraction <= 0,
         )
         for bucket in current_buckets(state, now)
+    ]
+
+
+WINDOW_LENGTHS: dict[QuotaWindowName, timedelta] = {"five_hour": timedelta(hours=5), "weekly": timedelta(days=7)}
+
+
+def with_recent_usage(
+    windows: list[WindowStatus],
+    baselines: Mapping[tuple[QuotaFamily, QuotaWindowName], Reading],
+    now: datetime,
+) -> list[WindowStatus]:
+    """Windows reporting the share used in the last hour (5h) or 24 hours (weekly); ``now`` is naive UTC."""
+    return [
+        window.model_copy(
+            update={
+                "recent_used_percent": recent_used_percent(
+                    used_percent=window.used_percent,
+                    resets_at=to_utc_naive(window.resets_at) if window.resets_at is not None else None,
+                    window=WINDOW_LENGTHS[window.window],
+                    baseline=baselines.get((window.family, window.window)),
+                    now=now,
+                )
+            }
+        )
+        for window in windows
     ]
 
 

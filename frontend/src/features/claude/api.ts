@@ -65,6 +65,8 @@ export const ClaudeAccountSchema = z.object({
         resetsAt: z.string().nullable(),
         freshness: z.enum(["fresh", "stale", "unknown"]),
         exhausted: z.boolean(),
+        /** Used in the last hour (5h) or 24 hours (weekly); null when the history cannot tell. */
+        recentUsedPercent: z.number().nullable(),
       }),
     ),
     models: z.array(

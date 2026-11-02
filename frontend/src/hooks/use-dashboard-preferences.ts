@@ -6,6 +6,7 @@ const ACCOUNT_BURNRATE_STORAGE_KEY = "codex-lb-account-burnrate-enabled";
 const ACCOUNT_VIEW_MODE_STORAGE_KEY = "codex-lb-dashboard-account-view-mode";
 const DASHBOARD_REFRESH_STORAGE_KEY = "codex-lb-dashboard-refresh-seconds";
 const QUOTA_PROVIDER_STORAGE_KEY = "codex-lb-dashboard-quota-provider";
+const RECENT_USAGE_STORAGE_KEY = "codex-lb-dashboard-recent-usage";
 
 export type DashboardRefreshSeconds = 5 | 15 | 30 | 60;
 
@@ -16,12 +17,14 @@ type DashboardPreferencesState = {
   accountViewMode: DashboardAccountViewMode;
   refreshSeconds: DashboardRefreshSeconds;
   quotaProvider: QuotaProvider;
+  recentUsageEnabled: boolean;
   initialized: boolean;
   initializePreferences: () => void;
   setAccountBurnrateEnabled: (enabled: boolean) => void;
   setAccountViewMode: (mode: DashboardAccountViewMode) => void;
   setRefreshSeconds: (seconds: DashboardRefreshSeconds) => void;
   setQuotaProvider: (provider: QuotaProvider) => void;
+  setRecentUsageEnabled: (enabled: boolean) => void;
 };
 
 function readStoredAccountBurnrateEnabled(): boolean | null {
@@ -63,6 +66,27 @@ function persistAccountBurnrateEnabled(enabled: boolean): void {
   window.localStorage.setItem(ACCOUNT_BURNRATE_STORAGE_KEY, String(enabled));
 }
 
+function readStoredRecentUsageEnabled(): boolean | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const stored = window.localStorage.getItem(RECENT_USAGE_STORAGE_KEY);
+  if (stored === "true") {
+    return true;
+  }
+  if (stored === "false") {
+    return false;
+  }
+  return null;
+}
+
+function persistRecentUsageEnabled(enabled: boolean): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(RECENT_USAGE_STORAGE_KEY, String(enabled));
+}
+
 function readStoredQuotaProvider(): QuotaProvider | null {
   if (typeof window === "undefined") {
     return null;
@@ -97,17 +121,20 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
   accountViewMode: "cards",
   refreshSeconds: 15,
   quotaProvider: "codex",
+  recentUsageEnabled: true,
   initialized: false,
   initializePreferences: () => {
     const accountBurnrateEnabled = readStoredAccountBurnrateEnabled() ?? true;
     const accountViewMode = readStoredAccountViewMode() ?? "cards";
     const refreshSeconds = readStoredRefreshSeconds() ?? 15;
     const quotaProvider = readStoredQuotaProvider() ?? "codex";
+    const recentUsageEnabled = readStoredRecentUsageEnabled() ?? true;
     persistAccountBurnrateEnabled(accountBurnrateEnabled);
     persistAccountViewMode(accountViewMode);
     persistRefreshSeconds(refreshSeconds);
     persistQuotaProvider(quotaProvider);
-    set({ accountBurnrateEnabled, accountViewMode, refreshSeconds, quotaProvider, initialized: true });
+    persistRecentUsageEnabled(recentUsageEnabled);
+    set({ accountBurnrateEnabled, accountViewMode, refreshSeconds, quotaProvider, recentUsageEnabled, initialized: true });
   },
   setAccountBurnrateEnabled: (enabled) => {
     persistAccountBurnrateEnabled(enabled);
@@ -124,5 +151,9 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
   setQuotaProvider: (provider) => {
     persistQuotaProvider(provider);
     set({ quotaProvider: provider, initialized: true });
+  },
+  setRecentUsageEnabled: (enabled) => {
+    persistRecentUsageEnabled(enabled);
+    set({ recentUsageEnabled: enabled, initialized: true });
   },
 }));

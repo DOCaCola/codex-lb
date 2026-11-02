@@ -151,8 +151,10 @@ class DashboardRepository:
             history.setdefault((row.source_id, cast(QuotaFamily, row.family)), []).append(row)
         return history
 
-    async def latest_usage_by_account(self, window: str) -> dict[str, UsageHistory]:
-        return await self._usage_repo.latest_by_account(window=window)
+    async def latest_usage_by_account(
+        self, window: str, *, at_or_before: datetime | None = None
+    ) -> dict[str, UsageHistory]:
+        return await self._usage_repo.latest_by_account(window=window, at_or_before=at_or_before)
 
     async def bulk_usage_history_since(
         self,

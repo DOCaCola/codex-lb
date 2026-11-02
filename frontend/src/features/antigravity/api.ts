@@ -65,6 +65,8 @@ export const AntigravityAccountSchema = z.object({
       usedPercent: z.number(),
       resetsAt: z.string().nullable(),
       exhausted: z.boolean(),
+      /** Used in the last hour (5h) or 24 hours (weekly); null when the history cannot tell. */
+      recentUsedPercent: z.number().nullable(),
     }),
   ),
   /** Whether the readings come from a recent, successful quota poll. */

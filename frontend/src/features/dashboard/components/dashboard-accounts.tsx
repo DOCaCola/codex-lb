@@ -24,11 +24,19 @@ import {
 import { ExtraUsageBadge } from "@/features/claude/account-display";
 import { accountSubscriptionCredits } from "@/features/dashboard/account-credit-display";
 import type { AccountSummary } from "@/features/dashboard/schemas";
+import { useDashboardPreferencesStore } from "@/hooks/use-dashboard-preferences";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { cn } from "@/lib/utils";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
-import { formatCurrency, formatDateTimeInline, formatNumber, formatResetCountdown, formatTimeRemaining } from "@/utils/formatters";
+import {
+  formatCurrency,
+  formatDateTimeInline,
+  formatNumber,
+  formatPercentNullable,
+  formatResetCountdown,
+  formatTimeRemaining,
+} from "@/utils/formatters";
 
 export type DashboardAccountActions = {
   readOnly: boolean;
@@ -71,16 +79,41 @@ function limitLabel(summary: ProviderSummary, limit: LimitSummary): string {
   return summary.kind === "antigravity" ? limit.short : limit.label;
 }
 
+/** Tucks the recent slice under the fill's rounded end so the two read as one bar. */
+const RECENT_OVERLAP_PX = 3;
+
 function LimitFill({ limit, color }: { limit: LimitSummary; color: string | undefined }) {
+  const { t } = useTranslation();
+  const recentUsageEnabled = useDashboardPreferencesStore((s) => s.recentUsageEnabled);
   const percent = limit.percentLeft;
+  const recent = recentUsageEnabled && percent !== null ? limit.recent : null;
+  const recentWidth = recent && percent !== null ? Math.min(recent.usedPercent, 100 - percent) : 0;
+  const recentLabel = recent
+    ? t(recent.period === "hour" ? "dashboard.accounts.recentHour" : "dashboard.accounts.recentDay", {
+        value: formatPercentNullable(recent.usedPercent, 1),
+      })
+    : undefined;
   return (
-    <div className="relative h-[5px] rounded-full bg-muted">
+    <div className="relative h-[5px] rounded-full bg-muted" title={recentLabel}>
+      {recentWidth > 0 && percent !== null ? (
+        <span
+          aria-hidden="true"
+          data-testid="limit-recent-usage"
+          className="absolute inset-y-0 rounded-r-full"
+          style={{
+            left: percent > 0 ? `calc(${percent}% - ${RECENT_OVERLAP_PX}px)` : 0,
+            width: percent > 0 ? `calc(${recentWidth}% + ${RECENT_OVERLAP_PX}px)` : recentWidth + "%",
+            backgroundColor: `color-mix(in oklch, ${color ?? "var(--primary)"} 16%, transparent)`,
+          }}
+        />
+      ) : null}
       {percent !== null ? (
         <div
-          className={cn("h-full rounded-full", percent === 0 ? "bg-destructive" : !color && "bg-primary")}
+          className={cn("relative h-full rounded-full", percent === 0 ? "bg-destructive" : !color && "bg-primary")}
           style={{ width: percent + "%", backgroundColor: percent === 0 ? undefined : color }}
         />
       ) : null}
+      {recentLabel ? <span className="sr-only">{recentLabel}</span> : null}
       {limit.pacePercent !== null ? (
         <span
           aria-hidden="true"

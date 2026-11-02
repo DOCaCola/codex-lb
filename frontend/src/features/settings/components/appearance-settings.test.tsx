@@ -53,6 +53,20 @@ describe("AppearanceSettings", () => {
     expect(useDashboardPreferencesStore.getState().refreshSeconds).toBe(5);
   });
 
+  it("toggles recent usage on the dashboard limit bars", async () => {
+    const user = userEvent.setup();
+    useDashboardPreferencesStore.setState({ recentUsageEnabled: true });
+    render(<AppearanceSettings />);
+
+    const toggle = screen.getByRole("switch", { name: "Show recent usage on limit bars" });
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+
+    expect(useDashboardPreferencesStore.getState().recentUsageEnabled).toBe(false);
+    expect(window.localStorage.getItem("codex-lb-dashboard-recent-usage")).toBe("false");
+  });
+
   it("exposes selected state for the time-format toggle", async () => {
     const user = userEvent.setup();
 

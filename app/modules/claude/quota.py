@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Mapping
+from datetime import datetime, timedelta
 
+from app.core.usage.recent import Reading, recent_used_percent
+from app.core.utils.time import to_utc_naive
 from app.modules.claude.metadata import USAGE_IDLE_INTERVAL
 from app.modules.claude.model_selection import effective_selections
 from app.modules.claude.schemas import (
@@ -19,6 +22,34 @@ from app.modules.claude.schemas import (
 # Two idle usage reads, so an idle account stays routable between them.
 QUOTA_FRESHNESS = 2 * USAGE_IDLE_INTERVAL
 HEADER_WINDOWS: frozenset[HeaderWindow] = frozenset({"five_hour", "seven_day", "seven_day_overage_included"})
+WINDOW_LENGTHS: dict[WindowName, timedelta] = {
+    "five_hour": timedelta(hours=5),
+    "seven_day": timedelta(days=7),
+    "seven_day_opus": timedelta(days=7),
+    "seven_day_sonnet": timedelta(days=7),
+    "seven_day_overage_included": timedelta(days=7),
+}
+
+
+def with_recent_usage(quota: QuotaStatus, baselines: Mapping[WindowName, Reading], now: datetime) -> QuotaStatus:
+    """Quota whose windows report the share used in the last hour (5h) or 24 hours; ``now`` is naive UTC."""
+    windows = [
+        window.model_copy(
+            update={
+                "recent_used_percent": recent_used_percent(
+                    used_percent=window.utilization,
+                    resets_at=to_utc_naive(window.resets_at) if window.resets_at is not None else None,
+                    window=WINDOW_LENGTHS[window.name],
+                    baseline=baselines.get(window.name),
+                    now=now,
+                )
+            }
+        )
+        if window.utilization is not None
+        else window
+        for window in quota.windows
+    ]
+    return quota.model_copy(update={"windows": windows})
 
 
 def _window(name: WindowName, value: QuotaWindow | None, state: AccountState, now: datetime) -> WindowStatus:

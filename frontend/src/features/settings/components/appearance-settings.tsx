@@ -62,6 +62,8 @@ export function AppearanceSettings() {
   const setQuotaDisplay = useAccountQuotaDisplayStore((s) => s.setQuotaDisplay);
   const accountBurnrateEnabled = useDashboardPreferencesStore((s) => s.accountBurnrateEnabled);
   const setAccountBurnrateEnabled = useDashboardPreferencesStore((s) => s.setAccountBurnrateEnabled);
+  const recentUsageEnabled = useDashboardPreferencesStore((s) => s.recentUsageEnabled);
+  const setRecentUsageEnabled = useDashboardPreferencesStore((s) => s.setRecentUsageEnabled);
   const dateDisplayFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
   const setDateDisplayFormat = useDateDisplayFormatStore((s) => s.setDateDisplayFormat);
   const refreshSeconds = useDashboardPreferencesStore((s) => s.refreshSeconds);
@@ -219,6 +221,18 @@ export function AppearanceSettings() {
               aria-label={t("settings.appearance.burnProjection.ariaLabel")}
               checked={accountBurnrateEnabled}
               onCheckedChange={setAccountBurnrateEnabled}
+            />
+          </div>
+
+          <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">{t("settings.appearance.recentUsage.label")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.appearance.recentUsage.description")}</p>
+            </div>
+            <Switch
+              aria-label={t("settings.appearance.recentUsage.ariaLabel")}
+              checked={recentUsageEnabled}
+              onCheckedChange={setRecentUsageEnabled}
             />
           </div>
         </div>

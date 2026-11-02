@@ -24,6 +24,9 @@ class AccountUsage(DashboardModel):
     primary_remaining_percent: float | None = None
     secondary_remaining_percent: float | None = None
     monthly_remaining_percent: float | None = None
+    # Used in the last hour (5h) or 24 hours (weekly); only the dashboard overview reports it.
+    primary_recent_used_percent: float | None = None
+    secondary_recent_used_percent: float | None = None
 
 
 class AccountRequestUsage(DashboardModel):

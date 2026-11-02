@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 from app.core import usage as usage_core
@@ -8,6 +9,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.usage.pacing import scheduled_remaining_series
 from app.core.usage.quota import account_credit_policy, apply_usage_quota
+from app.core.usage.recent import Reading, recent_lookback, recent_used_percent
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.masking import mask_email
@@ -34,6 +36,9 @@ from app.modules.usage.mappers import usage_history_to_window_row
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
 _RESET_CREDITS_INELIGIBLE_STATUSES = frozenset({AccountStatus.PAUSED, AccountStatus.DEACTIVATED})
 
+RecentUsageBaselines = Mapping[tuple[str, timedelta], Mapping[str, UsageHistory]]
+"""Each account's newest reading at the start of a recent-usage lookback, keyed by (window, lookback)."""
+
 
 def build_account_summaries(
     *,
@@ -48,6 +53,7 @@ def build_account_summaries(
     include_auth: bool = True,
     reset_credits_store: RateLimitResetCreditsStore | None = None,
     redact_identity: bool = False,
+    recent_baselines: RecentUsageBaselines | None = None,
 ) -> list[AccountSummary]:
     store = reset_credits_store or get_rate_limit_reset_credits_store()
     duplicate_keys = _duplicate_detection_keys_appearing_more_than_once(accounts)
@@ -65,6 +71,7 @@ def build_account_summaries(
             is_email_duplicate=_duplicate_detection_key(account) in duplicate_keys,
             reset_credits_snapshot=_reset_credits_snapshot_for_account(account, store),
             redact_identity=redact_identity,
+            recent_baselines=recent_baselines,
         )
         for account in accounts
     ]
@@ -113,6 +120,7 @@ def _account_to_summary(
     is_email_duplicate: bool = False,
     reset_credits_snapshot: RateLimitResetCreditsSnapshot | None = None,
     redact_identity: bool = False,
+    recent_baselines: RecentUsageBaselines | None = None,
 ) -> AccountSummary:
     plan_type = coerce_account_plan_type(account.plan_type, DEFAULT_PLAN)
     # Principals without account write access see the account, its status and
@@ -257,6 +265,17 @@ def _account_to_summary(
         remaining_credits_primary = None
         reset_at_primary = None
         window_minutes_primary = None
+    now = datetime.fromtimestamp(now_epoch, timezone.utc).replace(tzinfo=None)
+    primary_recent_used_percent = (
+        _recent_used_percent(effective_primary_usage, recent_baselines, now)
+        if primary_remaining_percent is not None
+        else None
+    )
+    secondary_recent_used_percent = (
+        _recent_used_percent(effective_secondary_usage, recent_baselines, now)
+        if secondary_remaining_percent is not None
+        else None
+    )
 
     return AccountSummary(
         account_id=account.id,
@@ -276,6 +295,8 @@ def _account_to_summary(
             primary_remaining_percent=primary_remaining_percent,
             secondary_remaining_percent=secondary_remaining_percent,
             monthly_remaining_percent=monthly_remaining_percent,
+            primary_recent_used_percent=primary_recent_used_percent,
+            secondary_recent_used_percent=secondary_recent_used_percent,
         ),
         reset_at_primary=reset_at_primary,
         reset_at_secondary=reset_at_secondary,
@@ -490,6 +511,29 @@ def _normalize_used_percent(entry: UsageHistory | None) -> float | None:
     if not entry:
         return None
     return entry.used_percent
+
+
+def _recent_used_percent(
+    entry: UsageHistory | None,
+    baselines: RecentUsageBaselines | None,
+    now: datetime,
+) -> float | None:
+    """Recent usage of a displayed window, measured against a baseline from the same stored window."""
+    if baselines is None or entry is None or entry.window_minutes is None:
+        return None
+    window = timedelta(minutes=entry.window_minutes)
+    baseline = baselines.get((entry.window or "primary", recent_lookback(window)), {}).get(entry.account_id)
+    return recent_used_percent(
+        used_percent=entry.used_percent,
+        resets_at=(
+            datetime.fromtimestamp(entry.reset_at, timezone.utc).replace(tzinfo=None)
+            if entry.reset_at is not None
+            else None
+        ),
+        window=window,
+        baseline=Reading(baseline.recorded_at, baseline.used_percent) if baseline is not None else None,
+        now=now,
+    )
 
 
 def _extract_credit_status(

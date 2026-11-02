@@ -80,8 +80,12 @@ export type LimitSummary = {
   caption: string | null;
   /** Share that should be left now at an even pace through the window; null when not applicable. */
   pacePercent: number | null;
+  /** Share used in the last hour (5h) or 24 hours (weekly); null when unknown, none, or not a quota window. */
+  recent: RecentUsage | null;
   stale: boolean;
 };
+
+export type RecentUsage = { usedPercent: number; period: "hour" | "day" };
 
 export type SummaryTone = "ok" | "warn" | "bad" | "off";
 
@@ -165,6 +169,10 @@ function clampPercent(value: number | null | undefined): number | null {
   return value == null || !Number.isFinite(value) ? null : Math.max(0, Math.min(100, value));
 }
 
+function recentUsage(usedPercent: number | null | undefined, period: RecentUsage["period"]): RecentUsage | null {
+  return usedPercent != null && usedPercent > 0 ? { usedPercent, period } : null;
+}
+
 function percentLimit(
   key: string,
   label: string,
@@ -172,6 +180,7 @@ function percentLimit(
   percentLeft: number | null | undefined,
   resetAt: string | null | undefined,
   pacePercent: number | null,
+  recent: RecentUsage | null,
   stale = false,
 ): LimitSummary {
   const left = clampPercent(percentLeft);
@@ -184,6 +193,7 @@ function percentLimit(
     resetAt: resetAt ?? null,
     caption: null,
     pacePercent,
+    recent,
     stale,
   };
 }
@@ -238,12 +248,15 @@ function codexSummary(account: AccountSummary, context: SummaryContext, now: num
         usage?.secondaryRemainingPercent,
         account.resetAtSecondary,
         linearPacePercent(account.resetAtSecondary, account.windowMinutesSecondary ?? WEEK_MINUTES, now),
+        recentUsage(usage?.secondaryRecentUsedPercent, "day"),
       )
     : null;
-  const fiveHour = hasPrimary ? percentLimit("5h", "5h", "5h", usage?.primaryRemainingPercent, account.resetAtPrimary, null) : null;
+  const fiveHour = hasPrimary
+    ? percentLimit("5h", "5h", "5h", usage?.primaryRemainingPercent, account.resetAtPrimary, null, recentUsage(usage?.primaryRecentUsedPercent, "hour"))
+    : null;
   const limits =
     hasMonthly && !hasPrimary && !hasSecondary
-      ? [percentLimit("monthly", "Monthly", "Month", usage?.monthlyRemainingPercent, account.resetAtMonthly, null)]
+      ? [percentLimit("monthly", "Monthly", "Month", usage?.monthlyRemainingPercent, account.resetAtMonthly, null, null)]
       : preferredWindows(weekly, fiveHour, context.quotaDisplay);
   const status = normalizeStatus(account.status);
   const alias = account.alias?.trim() || "";
@@ -289,6 +302,7 @@ function claudeSummary(account: ClaudeAccount, context: SummaryContext, now: num
       source.utilization === null ? null : 100 - source.utilization,
       source.resetsAt,
       pace ? linearPacePercent(source.resetsAt, minutes, now) : null,
+      recentUsage(source.recentUsedPercent, minutes > FIVE_HOURS_MINUTES ? "day" : "hour"),
       source.freshness === "stale",
     );
   const sevenDay = window("seven_day");
@@ -346,6 +360,7 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
       remainingOf(window),
       window.resetsAt,
       window.window === "weekly" ? linearPacePercent(window.resetsAt, WEEK_MINUTES, now) : null,
+      recentUsage(window.recentUsedPercent, window.window === "weekly" ? "day" : "hour"),
     ),
   );
   const status = normalizeStatus(antigravityStatus(account, now));
@@ -395,6 +410,7 @@ function openRouterSummary(account: OpenRouterAccount, context: SummaryContext):
     resetAt: null,
     caption: credits ? `of ${money(credits.total_credits)}` : null,
     pacePercent: null,
+    recent: null,
     stale: !!credits && !!credits_error,
   };
   const allowanceLimit: LimitSummary = {
@@ -406,6 +422,7 @@ function openRouterSummary(account: OpenRouterAccount, context: SummaryContext):
     resetAt: null,
     caption: key && key.limit !== null ? `of ${money(key.limit)}${key.limit_reset ? ` · ${key.limit_reset}` : ""}` : null,
     pacePercent: null,
+    recent: null,
     stale: !!key && !!key_error,
   };
   const status = normalizeStatus(openRouterStatus(account));

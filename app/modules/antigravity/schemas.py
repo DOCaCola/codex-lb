@@ -127,6 +127,8 @@ class WindowStatus(DashboardModel):
     used_percent: float
     resets_at: datetime | None
     exhausted: bool
+    # Used in the last hour (5h) or 24 hours (weekly); account responses fill it from quota history.
+    recent_used_percent: float | None = None
 
 
 class Cooldown(DashboardModel):

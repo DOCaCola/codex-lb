@@ -3,7 +3,7 @@ import type { AntigravityAccount, AntigravityWindow } from "./api";
 export function createAntigravityWindow(
   overrides: Partial<AntigravityWindow> & Pick<AntigravityWindow, "family" | "window">,
 ): AntigravityWindow {
-  return { usedPercent: 0, resetsAt: null, exhausted: false, ...overrides };
+  return { usedPercent: 0, resetsAt: null, exhausted: false, recentUsedPercent: null, ...overrides };
 }
 
 export function createAntigravityAccount(overrides: Partial<AntigravityAccount> = {}): AntigravityAccount {

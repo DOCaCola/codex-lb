@@ -310,6 +310,8 @@ class WindowStatus(DashboardModel):
     resets_at: datetime | None
     freshness: Literal["fresh", "stale", "unknown"]
     exhausted: bool
+    # Used in the last hour (5h) or 24 hours (weekly); account responses fill it from quota history.
+    recent_used_percent: float | None = None
 
 
 class ModelQuota(DashboardModel):

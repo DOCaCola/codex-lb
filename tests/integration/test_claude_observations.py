@@ -303,3 +303,50 @@ async def test_overshoot_is_persisted_and_exposed_as_exhausted(async_client, poo
             )
         )
         assert sample == 104
+
+
+async def test_account_quota_reports_recent_usage(async_client, pool):
+    now = datetime.now(UTC).replace(microsecond=0)
+    naive_now = now.replace(tzinfo=None)
+    _, state = await snapshot(pool[0])
+    state = state.model_copy(
+        update={
+            "usage": UsageSnapshot(
+                five_hour=QuotaWindow(utilization=40, resets_at=now + timedelta(hours=3)),
+                seven_day=QuotaWindow(utilization=36, resets_at=now + timedelta(days=4)),
+            ),
+            "usage_updated_at": now,
+            "usage_requested_at": now,
+        }
+    )
+    async with SessionLocal() as session:
+        await session.execute(
+            update(ClaudeAccount).where(ClaudeAccount.source_id == pool[0]).values(state_json=state.model_dump_json())
+        )
+        session.add_all(
+            [
+                ClaudeQuotaHistory(
+                    source_id=pool[0],
+                    observed_at=naive_now - timedelta(minutes=70),
+                    window="five_hour",
+                    used_percent=25,
+                ),
+                ClaudeQuotaHistory(
+                    source_id=pool[0],
+                    observed_at=naive_now - timedelta(minutes=30),
+                    window="five_hour",
+                    used_percent=33,
+                ),
+                ClaudeQuotaHistory(
+                    source_id=pool[0], observed_at=naive_now - timedelta(hours=25), window="seven_day", used_percent=30
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await async_client.get("/api/claude-accounts")
+    assert response.status_code == 200
+    account = next(item for item in response.json()["accounts"] if item["id"] == pool[0])
+    windows = {window["name"]: window["recentUsedPercent"] for window in account["quota"]["windows"]}
+    assert windows["five_hour"] == 15
+    assert windows["seven_day"] == 6

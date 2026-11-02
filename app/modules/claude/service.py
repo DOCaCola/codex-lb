@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, update
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.crypto import TokenEncryptor
+from app.core.usage.recent import Reading
 from app.core.utils.time import utcnow
 from app.db.models import (
     AccountRoutingPolicy,
@@ -37,7 +39,7 @@ from app.modules.claude.metadata import (
     refresh_due,
 )
 from app.modules.claude.model_selection import effective_selections
-from app.modules.claude.quota import extra_usage_enabled, quota_status
+from app.modules.claude.quota import extra_usage_enabled, quota_status, with_recent_usage
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
@@ -62,6 +64,7 @@ from app.modules.claude.schemas import (
     ProfileOrganization,
     SubscriptionMetadata,
     UsageSnapshot,
+    WindowName,
 )
 from app.modules.claude.subscription import quota_weights, subscription_plan
 from app.modules.claude.version import ClaudeVersionService
@@ -87,7 +90,7 @@ class ClaudeService:
         return row
 
     async def list_accounts(self) -> list[ClaudeAccountResponse]:
-        return [self._response(row) for row in await self.repository.list_accounts()]
+        return await self._responses(await self.repository.list_accounts())
 
     async def import_account(self, payload: ClaudeImport) -> ClaudeAccountResponse:
         imported = payload.credentials.claudeAiOauth
@@ -172,7 +175,7 @@ class ClaudeService:
         except IntegrityError as exc:
             await self.repository.session.rollback()
             raise ClaudeError("This Claude grant or authenticated account is already imported") from exc
-        return self._response(row)
+        return await self._single_response(row)
 
     async def reconnect(self, source_id: str, payload: ClaudeReconnect) -> ClaudeAccountResponse:
         row = await self._get(source_id)
@@ -286,7 +289,7 @@ class ClaudeService:
             raise ClaudeError("Claude credentials changed during reconnect; start a new enrollment")
         if identity_changed:
             logger.info("claude_identity_replaced source_id=%s generation=%d", source_id, generation + 1)
-        return self._response(await self._get(source_id))
+        return await self._single_response(await self._get(source_id))
 
     async def _hold_reconnect(
         self,
@@ -393,7 +396,7 @@ class ClaudeService:
             or payload.all_models is not None
             or payload.reasoning_restrictions is not None,
         )
-        return self._response(row)
+        return await self._single_response(row)
 
     async def refresh(self, source_id: str, *, catalog: bool = True, force: bool = True) -> ClaudeAccountResponse:
         row = await self._get(source_id)
@@ -405,7 +408,7 @@ class ClaudeService:
             refresh_due(state, endpoint, refresh_started_at, force=force, generation=row.generation)
             for endpoint in endpoints
         ):
-            return self._response(row)
+            return await self._single_response(row)
         snapshot = await self.auth.snapshot(source_id)
         identity = await ClaudeVersionService(self.repository.session).snapshot()
         for endpoint in endpoints:
@@ -418,7 +421,7 @@ class ClaudeService:
                 force=force,
                 refresh_started_at=refresh_started_at,
             )
-        return self._response(await self._get(source_id))
+        return await self._single_response(await self._get(source_id))
 
     async def _refresh_endpoint(
         self,
@@ -580,8 +583,16 @@ class ClaudeService:
         await self._get(source_id)
         await self.repository.sources.delete(source_id)
 
+    async def _single_response(self, row: ClaudeAccount) -> ClaudeAccountResponse:
+        return (await self._responses([row]))[0]
+
+    async def _responses(self, rows: list[ClaudeAccount]) -> list[ClaudeAccountResponse]:
+        now = utcnow()
+        baselines = await self.repository.recent_quota_baselines([row.source_id for row in rows], now)
+        return [self._response(row, baselines.get(row.source_id, {}), now) for row in rows]
+
     @staticmethod
-    def _response(row: ClaudeAccount) -> ClaudeAccountResponse:
+    def _response(row: ClaudeAccount, baselines: Mapping[WindowName, Reading], now: datetime) -> ClaudeAccountResponse:
         status = row.credential_status
         if status == "ready" and row.identity_fingerprint is None:
             status = "unverified"
@@ -603,7 +614,7 @@ class ClaudeService:
             expires_at=row.expires_at.replace(tzinfo=UTC),
             extra_usage_enabled=extra_usage_enabled(state),
             state=state,
-            quota=quota_status(state, now=datetime.now(UTC)),
+            quota=with_recent_usage(quota_status(state, now=now.replace(tzinfo=UTC)), baselines, now),
         )
 
 

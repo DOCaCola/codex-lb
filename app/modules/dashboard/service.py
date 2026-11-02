@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
 from app.core.crypto import TokenEncryptor
+from app.core.usage.recent import LONG_LOOKBACK, SHORT_LOOKBACK
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
@@ -110,6 +111,11 @@ class DashboardService:
         secondary_usage = await self._repo.latest_usage_by_account("secondary")
         monthly_usage = await self._repo.latest_usage_by_account("monthly")
         limit_warmups_by_account = await self._repo.latest_limit_warmups_by_account(account_ids)
+        recent_baselines = {
+            (window, lookback): await self._repo.latest_usage_by_account(window, at_or_before=now - lookback)
+            for window in ("primary", "secondary")
+            for lookback in (SHORT_LOOKBACK, LONG_LOOKBACK)
+        }
 
         account_summaries = sorted(
             build_account_summaries(
@@ -121,6 +127,7 @@ class DashboardService:
                 encryptor=self._encryptor,
                 include_auth=False,
                 redact_identity=redact_identity,
+                recent_baselines=recent_baselines,
             ),
             key=lambda a: a.capacity_credits_primary or 0,
             reverse=True,

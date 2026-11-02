@@ -3,13 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.usage.recent import LONG_LOOKBACK, SHORT_LOOKBACK, Reading, recent_lookback
 from app.core.utils.time import utcnow
 from app.db.models import AntigravityAccount, AntigravityCooldown, AntigravityOAuthFlow, AntigravityQuotaHistory
 from app.modules.antigravity.errors import AntigravityError
-from app.modules.antigravity.schemas import AccountState, QuotaBucket
+from app.modules.antigravity.quota import WINDOW_LENGTHS
+from app.modules.antigravity.schemas import AccountState, QuotaBucket, QuotaFamily, QuotaWindowName
 from app.modules.model_sources.repository import ModelSourcesRepository
 
 QUOTA_HISTORY_RETENTION = timedelta(days=30)
@@ -35,6 +37,47 @@ class AntigravityRepository:
     async def list_accounts(self) -> list[AntigravityAccount]:
         rows = await self.session.scalars(select(AntigravityAccount))
         return sorted(rows.unique(), key=lambda row: (row.source.name, row.source_id))
+
+    async def recent_quota_baselines(
+        self, source_ids: Sequence[str], now: datetime
+    ) -> dict[str, dict[tuple[QuotaFamily, QuotaWindowName], Reading]]:
+        """Each account's newest reading per family window at the start of its recent-usage lookback (naive UTC)."""
+        baselines: dict[str, dict[tuple[QuotaFamily, QuotaWindowName], Reading]] = {}
+        for lookback in (SHORT_LOOKBACK, LONG_LOOKBACK):
+            names = [name for name, length in WINDOW_LENGTHS.items() if recent_lookback(length) == lookback]
+            cutoff = now - lookback
+            ranked = (
+                select(
+                    AntigravityQuotaHistory.source_id,
+                    AntigravityQuotaHistory.family,
+                    AntigravityQuotaHistory.window,
+                    AntigravityQuotaHistory.observed_at,
+                    AntigravityQuotaHistory.used_percent,
+                    func.row_number()
+                    .over(
+                        partition_by=(
+                            AntigravityQuotaHistory.source_id,
+                            AntigravityQuotaHistory.family,
+                            AntigravityQuotaHistory.window,
+                        ),
+                        order_by=AntigravityQuotaHistory.observed_at.desc(),
+                    )
+                    .label("rank"),
+                )
+                .where(
+                    AntigravityQuotaHistory.source_id.in_(source_ids),
+                    AntigravityQuotaHistory.window.in_(names),
+                    AntigravityQuotaHistory.observed_at <= cutoff,
+                    # An older reading predates every current window of these lengths.
+                    AntigravityQuotaHistory.observed_at >= cutoff - max(WINDOW_LENGTHS[name] for name in names),
+                )
+                .subquery()
+            )
+            for row in await self.session.execute(select(ranked).where(ranked.c.rank == 1)):
+                baselines.setdefault(row.source_id, {})[(row.family, row.window)] = Reading(
+                    row.observed_at, row.used_percent
+                )
+        return baselines
 
     async def mutate_state(
         self, source_id: str, generation: int, mutate: Callable[[AccountState], AccountState | None]

@@ -56,6 +56,7 @@ const account: ClaudeAccount = {
         resetsAt: null,
         freshness: "unknown",
         exhausted: false,
+        recentUsedPercent: null,
       },
       {
         name: "seven_day",
@@ -63,6 +64,7 @@ const account: ClaudeAccount = {
         resetsAt: null,
         freshness: "stale",
         exhausted: false,
+        recentUsedPercent: null,
       },
     ],
   },
@@ -159,6 +161,7 @@ describe("Claude shared account surfaces", () => {
                 resetsAt: null,
                 freshness: "unknown",
                 exhausted: false,
+                recentUsedPercent: null,
               },
               {
                 name: "seven_day_sonnet",
@@ -166,6 +169,7 @@ describe("Claude shared account surfaces", () => {
                 resetsAt: null,
                 freshness: "stale",
                 exhausted: false,
+                recentUsedPercent: null,
               },
             ],
           },

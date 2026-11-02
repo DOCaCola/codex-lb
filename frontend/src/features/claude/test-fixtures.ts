@@ -10,6 +10,7 @@ export function createClaudeQuotaWindow(
     resetsAt: null,
     freshness: "fresh",
     exhausted: false,
+    recentUsedPercent: null,
     ...overrides,
   };
 }

@@ -377,6 +377,7 @@ def _latest_by_account_sqlite(
     db_path: str,
     window: str | None,
     account_ids: list[str] | None,
+    at_or_before: datetime | None = None,
 ) -> dict[str, UsageHistory]:
     if account_ids is None:
         account_sql = "select id from accounts"
@@ -394,6 +395,9 @@ def _latest_by_account_sqlite(
     else:
         window_clause = "window = ?"
         window_params = [window]
+    if at_or_before is not None:
+        window_clause += " and recorded_at <= ?"
+        window_params = [*window_params, at_or_before.isoformat(sep=" ")]
     latest_sql = f"""
         select id, account_id, recorded_at, window, used_percent,
                input_tokens, output_tokens, reset_at, window_minutes,
@@ -1000,12 +1004,16 @@ class UsageRepository:
         window: str | None = None,
         *,
         account_ids: Collection[str] | None = None,
+        at_or_before: datetime | None = None,
     ) -> dict[str, UsageHistory]:
+        """Each account's newest reading of a window, optionally the newest at or before a moment."""
         conditions = _window_clause(window)
         if account_ids is not None and not account_ids:
             return {}
         if account_ids is not None:
             conditions = and_(conditions, UsageHistory.account_id.in_(account_ids))
+        if at_or_before is not None:
+            conditions = and_(conditions, UsageHistory.recorded_at <= at_or_before)
         bind = self._session.get_bind()
         dialect = bind.dialect.name if bind else "sqlite"
         sqlite_path = _sqlite_path_from_bind(bind) if dialect == "sqlite" else None
@@ -1015,6 +1023,7 @@ class UsageRepository:
                 str(sqlite_path),
                 window,
                 list(account_ids) if account_ids is not None else None,
+                at_or_before,
             )
         if dialect == "postgresql":
             acct_stmt = select(Account.id)

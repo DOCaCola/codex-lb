@@ -9,6 +9,9 @@ const AccountUsageSchema = z.object({
   primaryRemainingPercent: z.number().nullable(),
   secondaryRemainingPercent: z.number().nullable(),
   monthlyRemainingPercent: z.number().nullable().optional(),
+  /** Used in the last hour (5h) or 24 hours (weekly); only the dashboard overview reports it. */
+  primaryRecentUsedPercent: z.number().nullable().optional(),
+  secondaryRecentUsedPercent: z.number().nullable().optional(),
 });
 
 const AccountRequestUsageSchema = z.object({
