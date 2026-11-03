@@ -4974,7 +4974,7 @@ async def test_v1_responses_http_bridge_reuses_quota_admitted_spark_then_rejects
     await registry.update(
         {"pro": [spark_model]},
         per_account_results={account_id: ("pro", [])},
-        active_account_plans={account_id: "pro"},
+        member_account_plans={account_id: "pro"},
     )
     fake_upstream = _FakeBridgeUpstreamWebSocket()
     connect_calls: list[tuple[str | None, str | None]] = []
@@ -5025,7 +5025,7 @@ async def test_v1_responses_http_bridge_reuses_quota_admitted_spark_then_rejects
     await registry.update(
         {"pro": [spark_model]},
         per_account_results={account_id: ("plus", [])},
-        active_account_plans={account_id: "plus"},
+        member_account_plans={account_id: "plus"},
     )
     snapshot = registry.get_snapshot()
     assert snapshot is not None

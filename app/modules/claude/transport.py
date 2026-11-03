@@ -18,7 +18,7 @@ from app.core.clients.stream_errors import StreamEventTooLargeError, StreamIdleT
 from app.core.clock import REAL_CLOCK, REAL_SCHEDULER, Clock, Scheduler
 from app.core.types import JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
-from app.modules.claude.cache_lineage import CACHE_LINEAGE
+from app.modules.claude.cache_lineage import CACHE_LINEAGE, report_cache_diagnosis
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.dispatch import PreparedClaudeRequest
 from app.modules.claude.identity import require_current_identity
@@ -149,6 +149,8 @@ async def _open_responses(
     events = _iter_sse_events(response, source_stream_idle_seconds(), 8 * 1024 * 1024)
     start_usage: JsonValue = None
     start_transformations: JsonValue = None
+    start_message_id: JsonValue = None
+    start_diagnostics: JsonValue = None
     try:
         await record_headers(
             prepared.source.id, prepared.credential_generation, response.headers, requested_at=requested_at
@@ -190,6 +192,8 @@ async def _open_responses(
                     if isinstance(message, dict):
                         start_usage = message.get("usage")
                         start_transformations = message.get("input_transformations")
+                        start_message_id = message.get("id")
+                        start_diagnostics = message.get("diagnostics")
                     if isinstance(message, dict) and message.get("content", []) == []:
                         usage = message.get("usage", {})
                         if isinstance(usage, dict) and usage.get("output_tokens", 0) == 0:
@@ -212,6 +216,9 @@ async def _open_responses(
         body=prepared.body,
         usage=start_usage,
         transformations=start_transformations,
+    )
+    report_cache_diagnosis(
+        conversation_id=prepared.conversation_id, source_id=prepared.source.id, diagnostics=start_diagnostics
     )
 
     async def frames() -> AsyncIterator[bytes]:
@@ -250,6 +257,13 @@ async def _open_responses(
                     if event.get("type") == "ping":
                         yield frame.encode() if projection is None else b": keepalive\n\n"
                         continue
+                    delta = event.get("delta")
+                    if event.get("type") == "message_delta" and isinstance(delta, dict):
+                        report_cache_diagnosis(
+                            conversation_id=prepared.conversation_id,
+                            source_id=prepared.source.id,
+                            diagnostics=delta.get("diagnostics"),
+                        )
                     from pydantic import JsonValue as PydanticJsonValue
 
                     safe_event = (
@@ -293,6 +307,13 @@ async def _open_responses(
                         observer.feed(encoded)
                         yield encoded
                     if projection.stopped:
+                        # Only a finished message is a reference for the next request's diagnosis.
+                        if (
+                            prepared.diagnostics is not None
+                            and projection.stop_reason is not None
+                            and isinstance(start_message_id, str)
+                        ):
+                            CACHE_LINEAGE.complete_diagnostics(prepared.diagnostics, start_message_id)
                         return
             raise _failure("model_source_stream_truncated", "Claude stream ended before message_stop")
         except ClaudeError as exc:
@@ -447,6 +468,11 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                         body=prepared.body,
                         usage=data.get("usage"),
                         transformations=data.get("input_transformations"),
+                    )
+                    report_cache_diagnosis(
+                        conversation_id=prepared.conversation_id,
+                        source_id=prepared.source.id,
+                        diagnostics=data.get("diagnostics"),
                     )
                 return SourceResponsesCompletion(
                     data,

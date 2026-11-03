@@ -14,6 +14,7 @@ from app.core.crypto import TokenEncryptor
 from app.db.models import ModelSource
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.auth import ClaudeAuth
+from app.modules.claude.cache_lineage import CACHE_DIAGNOSIS_BETA, CACHE_LINEAGE, DiagnosticsTicket
 from app.modules.claude.caching import (
     CONTEXT_MANAGEMENT_BETA,
     EXTENDED_CACHE_TTL_BETA,
@@ -59,6 +60,7 @@ class PreparedClaudeRequest:
     require_complete_history: bool = False
     reasoning_effort: str | None = None
     session_id: str | None = None
+    diagnostics: DiagnosticsTicket | None = None
 
 
 class ClaudeDispatchPreparer:
@@ -228,6 +230,11 @@ class ClaudeDispatchPreparer:
         if translated:
             cache_translated(projected.body, instruction_turn=projected.instruction_turn)
             transformations += ("translated_cache_boundaries",)
+        diagnostics = None
+        if translated and endpoint == "messages":
+            diagnostics = CACHE_LINEAGE.begin_diagnostics(source_id=account.source_id, conversation_id=conversation_id)
+            projected.body["diagnostics"] = {"previous_message_id": diagnostics.previous_message_id}
+            transformations += ("cache_diagnostics",)
         if retains_thinking:
             transformations += ("thinking_retention",)
         if bind_replayed_thinking(projected.body):
@@ -239,6 +246,8 @@ class ClaudeDispatchPreparer:
             feature_betas.append(EXTENDED_CACHE_TTL_BETA)
         if retains_thinking:
             feature_betas.append(CONTEXT_MANAGEMENT_BETA)
+        if diagnostics is not None:
+            feature_betas.append(CACHE_DIAGNOSIS_BETA)
         # Upstream rejects a binding without its beta, whoever supplied the binding.
         thinking = projected.body.get("thinking")
         if isinstance(thinking, dict) and "block_binding" in thinking:
@@ -311,6 +320,7 @@ class ClaudeDispatchPreparer:
             identity_generation=identity_generation,
             plan_type=subscription_plan(AccountState.model_validate_json(account.state_json).subscription),
             reasoning_effort=reasoning_effort,
+            diagnostics=diagnostics,
             native_binding=NativeSessionBinding(
                 client_scope=api_key.id if api_key else "anonymous",
                 conversation_id=conversation_id,

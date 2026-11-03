@@ -499,7 +499,7 @@ async def test_refresh_once_closes_account_read_session_before_fetch_models(
 
 
 @pytest.mark.asyncio
-async def test_refresh_once_clears_registry_when_no_active_accounts(
+async def test_refresh_once_clears_registry_when_no_member_accounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _Leader:

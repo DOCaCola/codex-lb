@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import JsonValue
 
-from app.modules.claude.cache_lineage import CacheLineage
+from app.modules.claude.cache_lineage import CacheLineage, report_cache_diagnosis
 
 
 class _Clock:
@@ -232,3 +232,72 @@ def test_miss_without_reference_is_silent_and_capacity_is_bounded(caplog: pytest
         )
 
     assert _misses(caplog) == []
+
+
+def test_diagnosis_reference_is_per_account_and_conversation_and_expires_with_the_cache() -> None:
+    clock = _Clock()
+    lineage = CacheLineage(clock=clock)
+    first = lineage.begin_diagnostics(source_id="claude-a", conversation_id="conversation")
+    assert first.previous_message_id is None
+    lineage.complete_diagnostics(first, "msg_a1")
+
+    def previous(source_id: str, conversation_id: str) -> str | None:
+        return lineage.begin_diagnostics(source_id=source_id, conversation_id=conversation_id).previous_message_id
+
+    assert previous("claude-a", "conversation") == "msg_a1"
+    assert previous("claude-b", "conversation") is None
+    assert previous("claude-a", "other") is None
+
+    clock.now_s += 3601
+    assert previous("claude-a", "conversation") is None
+
+
+def test_an_earlier_request_finishing_last_does_not_replace_the_reference() -> None:
+    lineage = CacheLineage(clock=_Clock())
+    earlier = lineage.begin_diagnostics(source_id="claude-a", conversation_id="conversation")
+    later = lineage.begin_diagnostics(source_id="claude-a", conversation_id="conversation")
+    lineage.complete_diagnostics(later, "msg_later")
+    lineage.complete_diagnostics(earlier, "msg_earlier")
+
+    assert lineage.begin_diagnostics(source_id="claude-a", conversation_id="conversation").previous_message_id == (
+        "msg_later"
+    )
+
+
+def test_diagnostics_field_is_not_a_prompt_parameter(caplog: pytest.LogCaptureFixture) -> None:
+    lineage = CacheLineage(clock=_Clock())
+    body = _body(["exec"], [_user("one")])
+    lineage.observe(
+        conversation_id="conversation",
+        session_id=None,
+        source_id="claude-a",
+        body={**body, "diagnostics": {"previous_message_id": None}},
+        usage=_HIT,
+    )
+
+    with caplog.at_level(logging.INFO):
+        lineage.observe(
+            conversation_id="conversation",
+            session_id=None,
+            source_id="claude-a",
+            body={**body, "diagnostics": {"previous_message_id": "msg_1"}},
+            usage=_MISS,
+        )
+
+    [line] = _misses(caplog)
+    assert "params=same" in line
+
+
+def test_anthropic_diagnosis_is_logged_as_reported(caplog: pytest.LogCaptureFixture) -> None:
+    reason: JsonValue = {"type": "previous_message_not_found", "cache_missed_input_tokens": 52_000}
+    with caplog.at_level(logging.INFO):
+        report_cache_diagnosis(conversation_id="conversation", source_id="claude-a", diagnostics=None)
+        report_cache_diagnosis(
+            conversation_id="conversation", source_id="claude-a", diagnostics={"cache_miss_reason": reason}
+        )
+
+    [line] = [record.getMessage() for record in caplog.records if "claude_cache_diagnosis" in record.getMessage()]
+    assert line == (
+        "claude_cache_diagnosis conversation_id=conversation source_id=claude-a "
+        "type=previous_message_not_found missed_input_tokens=52000"
+    )

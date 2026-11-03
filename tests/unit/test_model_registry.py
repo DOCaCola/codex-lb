@@ -212,7 +212,7 @@ async def test_prefers_websockets_does_not_use_bootstrap_after_snapshot():
     await registry.update(
         {"plus": [_model("model-http")]},
         per_account_results={"account-plus": ("plus", [_model("model-http")])},
-        active_account_plans={"account-plus": "plus"},
+        member_account_plans={"account-plus": "plus"},
     )
 
     assert registry.prefers_websockets("gpt-5.3-codex-spark") is False
@@ -533,7 +533,7 @@ async def test_plan_types_for_model_service_tier_rejects_missing_authoritative_t
     await registry.update(
         {"pro": [model]},
         per_account_results={"account-pro": ("pro", [])},
-        active_account_plans={"account-pro": "pro"},
+        member_account_plans={"account-pro": "pro"},
     )
 
     snapshot = registry.get_snapshot()
@@ -561,7 +561,7 @@ async def test_cyber_access_programs_follow_each_account_catalog():
             "account-standard": ("pro", [standard]),
             "account-none": ("pro", [no_metadata]),
         },
-        active_account_plans={"account-daybreak": "pro", "account-standard": "pro", "account-none": "pro"},
+        member_account_plans={"account-daybreak": "pro", "account-standard": "pro", "account-none": "pro"},
     )
 
     assert registry.cyber_access_programs_for_account("gpt-6-astra", "account-daybreak") == frozenset(
@@ -575,7 +575,7 @@ async def test_cyber_access_programs_follow_each_account_catalog():
     await registry.update(
         {"pro": [standard]},
         per_account_results={"account-standard": ("pro", [standard])},
-        active_account_plans={"account-daybreak": "pro", "account-standard": "pro"},
+        member_account_plans={"account-daybreak": "pro", "account-standard": "pro"},
     )
 
     assert registry.cyber_access_programs_for_account("gpt-6-astra", "account-daybreak") == frozenset(
@@ -595,7 +595,7 @@ async def test_account_ids_for_model_tracks_complete_account_catalogs():
             "account-sol": ("pro", [shared, sol]),
             "account-default": ("pro", [shared]),
         },
-        active_account_plans={"account-sol": "pro", "account-default": "pro"},
+        member_account_plans={"account-sol": "pro", "account-default": "pro"},
     )
 
     assert registry.account_ids_for_model("gpt-5.6-sol") == frozenset({"account-sol"})
@@ -611,7 +611,7 @@ async def test_partial_first_refresh_degrades_account_capabilities_to_unknown():
     await registry.update(
         {"pro": [shared]},
         per_account_results={"account-known": ("pro", [shared])},
-        active_account_plans={"account-known": "pro", "account-fetch-failed": "pro"},
+        member_account_plans={"account-known": "pro", "account-fetch-failed": "pro"},
     )
 
     snapshot = registry.get_snapshot()
@@ -669,13 +669,13 @@ async def test_account_ids_for_model_service_tier_preserves_missing_active_accou
             "account-fast": ("pro", [fast]),
             "account-default": ("pro", [no_fast]),
         },
-        active_account_plans={"account-fast": "pro", "account-default": "pro"},
+        member_account_plans={"account-fast": "pro", "account-default": "pro"},
     )
 
     await registry.update(
         {"pro": [no_fast]},
         per_account_results={"account-default": ("pro", [no_fast])},
-        active_account_plans={"account-fast": "pro", "account-default": "pro"},
+        member_account_plans={"account-fast": "pro", "account-default": "pro"},
     )
 
     assert registry.account_ids_for_model_service_tier("gpt-5.5", "priority") == frozenset({"account-fast"})
@@ -754,7 +754,7 @@ async def test_partial_update_does_not_promote_metadata_only_stale_catalog() -> 
             "account-pro": ("pro", [routable, metadata_only]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-pro": "pro", "account-plus": "plus"},
+        member_account_plans={"account-pro": "pro", "account-plus": "plus"},
     )
     first = registry.get_snapshot()
     assert first is not None
@@ -764,7 +764,7 @@ async def test_partial_update_does_not_promote_metadata_only_stale_catalog() -> 
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-pro": "pro", "account-plus": "plus"},
+        member_account_plans={"account-pro": "pro", "account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -781,6 +781,32 @@ async def test_partial_update_does_not_promote_metadata_only_stale_catalog() -> 
 
 
 @pytest.mark.asyncio
+async def test_catalog_order_does_not_depend_on_which_plans_refreshed():
+    registry = ModelRegistry(ttl_seconds=60.0)
+    early = replace(_model("gpt-early"), priority=0)
+    later = replace(_model("gpt-later"), priority=2)
+    tie_b = replace(_model("gpt-tie-b"), priority=1)
+    tie_a = replace(_model("gpt-tie-a"), priority=1)
+    members = {"account-pro": "pro", "account-plus": "plus"}
+    await registry.update(
+        {"plus": [later, tie_b], "pro": [tie_a, early]},
+        per_account_results={"account-plus": ("plus", [later, tie_b]), "account-pro": ("pro", [tie_a, early])},
+        member_account_plans=members,
+    )
+    full = list(registry.get_models_with_fallback())
+
+    # Only pro refreshes, so the plus catalog is carried over and merged first.
+    await registry.update(
+        {"pro": [tie_a, early]},
+        per_account_results={"account-pro": ("pro", [tie_a, early])},
+        member_account_plans=members,
+    )
+
+    assert full == ["gpt-early", "gpt-tie-a", "gpt-tie-b", "gpt-later"]
+    assert list(registry.get_models_with_fallback()) == full
+
+
+@pytest.mark.asyncio
 async def test_partial_update_drops_capabilities_for_inactive_accounts():
     registry = ModelRegistry(ttl_seconds=60.0)
     sol = _model("gpt-5.6-sol")
@@ -791,13 +817,13 @@ async def test_partial_update_drops_capabilities_for_inactive_accounts():
             "account-pro": ("pro", [sol]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-pro": "pro", "account-plus": "plus"},
+        member_account_plans={"account-pro": "pro", "account-plus": "plus"},
     )
 
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-plus": "plus"},
+        member_account_plans={"account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -828,7 +854,7 @@ async def test_stale_plan_drops_models_only_removed_account_advertised():
             "account-sol": ("pro", [sol]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={
+        member_account_plans={
             "account-fail": "pro",
             "account-sol": "pro",
             "account-plus": "plus",
@@ -840,7 +866,7 @@ async def test_stale_plan_drops_models_only_removed_account_advertised():
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-fail": "pro", "account-plus": "plus"},
+        member_account_plans={"account-fail": "pro", "account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -877,7 +903,7 @@ async def test_stale_plan_drops_removed_advertiser_model_when_previous_non_autho
             "account-a": ("pro", [private]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-a": "pro", "account-b": "pro", "account-plus": "plus"},
+        member_account_plans={"account-a": "pro", "account-b": "pro", "account-plus": "plus"},
     )
     first = registry.get_snapshot()
     assert first is not None
@@ -889,7 +915,7 @@ async def test_stale_plan_drops_removed_advertiser_model_when_previous_non_autho
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-b": "pro", "account-plus": "plus"},
+        member_account_plans={"account-b": "pro", "account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -913,13 +939,13 @@ async def test_unknown_account_keeps_removed_catalog_model_suppressed_until_read
             "account-a": ("pro", [sol]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-a": "pro", "account-b": "pro", "account-plus": "plus"},
+        member_account_plans={"account-a": "pro", "account-b": "pro", "account-plus": "plus"},
     )
 
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-b": "pro", "account-plus": "plus"},
+        member_account_plans={"account-b": "pro", "account-plus": "plus"},
     )
 
     second = registry.get_snapshot()
@@ -931,7 +957,7 @@ async def test_unknown_account_keeps_removed_catalog_model_suppressed_until_read
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-b": "pro", "account-plus": "plus"},
+        member_account_plans={"account-b": "pro", "account-plus": "plus"},
     )
 
     third = registry.get_snapshot()
@@ -948,7 +974,7 @@ async def test_unknown_account_keeps_removed_catalog_model_suppressed_until_read
             "account-b": ("pro", [sol]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-b": "pro", "account-plus": "plus"},
+        member_account_plans={"account-b": "pro", "account-plus": "plus"},
     )
 
     fourth = registry.get_snapshot()
@@ -972,13 +998,13 @@ async def test_complete_refresh_suppresses_removed_private_catalog_model() -> No
             "account-private": ("pro", [private_alpha]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-private": "pro", "account-plus": "plus"},
+        member_account_plans={"account-private": "pro", "account-plus": "plus"},
     )
 
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-plus": "plus"},
+        member_account_plans={"account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -997,7 +1023,7 @@ async def test_authoritative_catalog_does_not_suppress_never_known_operator_mapp
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-plus": "plus"},
+        member_account_plans={"account-plus": "plus"},
     )
 
     assert registry.plan_types_for_model("operator-mapped-never-known") == frozenset()
@@ -1012,7 +1038,7 @@ async def test_first_authoritative_catalog_suppresses_omitted_bootstrap_model() 
     await registry.update(
         {"pro": [advertised]},
         per_account_results={"account-pro": ("pro", [advertised])},
-        active_account_plans={"account-pro": "pro"},
+        member_account_plans={"account-pro": "pro"},
     )
 
     snapshot = registry.get_snapshot()
@@ -1035,14 +1061,14 @@ async def test_authoritative_empty_catalog_drops_and_suppresses_stale_model() ->
     await registry.update(
         {"pro": [stale_private]},
         per_account_results={"account-pro": ("pro", [stale_private])},
-        active_account_plans={"account-pro": "pro"},
+        member_account_plans={"account-pro": "pro"},
     )
     assert registry.account_ids_for_model("private-empty-removed") == frozenset({"account-pro"})
 
     await registry.update(
         {"pro": []},
         per_account_results={"account-pro": ("pro", [])},
-        active_account_plans={"account-pro": "pro"},
+        member_account_plans={"account-pro": "pro"},
     )
 
     snapshot = registry.get_snapshot()
@@ -1070,12 +1096,12 @@ async def test_private_catalog_model_reappearance_clears_suppression() -> None:
             "account-private": ("pro", [private_alpha]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-private": "pro", "account-plus": "plus"},
+        member_account_plans={"account-private": "pro", "account-plus": "plus"},
     )
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-plus": "plus"},
+        member_account_plans={"account-plus": "plus"},
     )
     assert registry.is_suppressed_model("private-alpha") is True
 
@@ -1085,7 +1111,7 @@ async def test_private_catalog_model_reappearance_clears_suppression() -> None:
             "account-private-new": ("pro", [private_alpha]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-private-new": "pro", "account-plus": "plus"},
+        member_account_plans={"account-private-new": "pro", "account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -1107,7 +1133,7 @@ async def test_plan_change_drops_failed_account_stale_catalog() -> None:
             "account-changed": ("pro", [pro_only]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={"account-changed": "pro", "account-plus": "plus"},
+        member_account_plans={"account-changed": "pro", "account-plus": "plus"},
     )
 
     # The account changes from pro to plus but its new catalog fetch fails. Its
@@ -1115,7 +1141,7 @@ async def test_plan_change_drops_failed_account_stale_catalog() -> None:
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-changed": "plus", "account-plus": "plus"},
+        member_account_plans={"account-changed": "plus", "account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()
@@ -1140,7 +1166,7 @@ async def test_plan_change_drops_only_changed_account_from_stale_plan() -> None:
             "account-unchanged": ("pro", [unchanged_only]),
             "account-plus": ("plus", [shared]),
         },
-        active_account_plans={
+        member_account_plans={
             "account-changed": "pro",
             "account-unchanged": "pro",
             "account-plus": "plus",
@@ -1153,7 +1179,7 @@ async def test_plan_change_drops_only_changed_account_from_stale_plan() -> None:
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={
+        member_account_plans={
             "account-changed": "plus",
             "account-unchanged": "pro",
             "account-plus": "plus",
@@ -1177,7 +1203,7 @@ async def test_stale_plan_preserves_models_with_unknown_account_provenance():
     # (an older/plan-only snapshot that never captured per-account catalogs), it must
     # be preserved on carryover rather than dropped, even though we now know the active
     # account set. Here the first refresh is plan-only (no per_account_results), so
-    # model_accounts is empty; a later refresh of another plan (with active_account_plans)
+    # model_accounts is empty; a later refresh of another plan (with member_account_plans)
     # must not drop the pro-only model whose provenance is unknown.
     registry = ModelRegistry(ttl_seconds=60.0)
     pro_only = _model("pro-only")
@@ -1193,7 +1219,7 @@ async def test_stale_plan_preserves_models_with_unknown_account_provenance():
     await registry.update(
         {"plus": [shared]},
         per_account_results={"account-plus": ("plus", [shared])},
-        active_account_plans={"account-pro": "pro", "account-plus": "plus"},
+        member_account_plans={"account-pro": "pro", "account-plus": "plus"},
     )
 
     snapshot = registry.get_snapshot()

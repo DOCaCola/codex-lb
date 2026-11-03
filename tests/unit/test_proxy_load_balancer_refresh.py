@@ -2689,7 +2689,7 @@ async def test_select_account_canonicalizes_quota_omission_provenance_for_equiva
     await registry.update(
         {"pro": [spark_model]},
         per_account_results={plus.id: ("plus", []), pro.id: ("pro", [])},
-        active_account_plans={plus.id: "plus", pro.id: "pro"},
+        member_account_plans={plus.id: "plus", pro.id: "pro"},
     )
     monkeypatch.setattr("app.modules.proxy.load_balancer.get_model_registry", lambda: registry)
     monkeypatch.setattr("app.modules.proxy._service.support.get_model_registry", lambda: registry)
@@ -2786,7 +2786,7 @@ async def test_select_account_rejects_quota_override_for_unadvertised_service_ti
     await registry.update(
         {"pro": [spark_model]},
         per_account_results={account.id: ("pro", [])},
-        active_account_plans={account.id: "pro"},
+        member_account_plans={account.id: "pro"},
     )
     monkeypatch.setattr("app.modules.proxy.load_balancer.get_model_registry", lambda: registry)
 
@@ -3081,7 +3081,7 @@ async def test_select_account_uses_bootstrap_plan_filter_during_partial_first_re
     await registry.update(
         {"pro": [gpt54]},
         per_account_results={"acc-pro-partial": ("pro", [gpt54])},
-        active_account_plans={"acc-pro-partial": "pro", account.id: "free"},
+        member_account_plans={"acc-pro-partial": "pro", account.id: "free"},
     )
 
     monkeypatch.setattr("app.modules.proxy.load_balancer.get_model_registry", lambda: registry)
@@ -3288,7 +3288,7 @@ async def test_select_account_degrades_when_registry_omits_selectable_account(mo
     await registry.update(
         {"plus": [model]},
         per_account_results={stale_account.id: ("plus", [model])},
-        active_account_plans={stale_account.id: "plus"},
+        member_account_plans={stale_account.id: "plus"},
     )
 
     now = utcnow()

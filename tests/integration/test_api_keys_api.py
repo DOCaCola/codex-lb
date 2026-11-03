@@ -845,7 +845,7 @@ async def test_api_key_enforces_service_tier_for_responses(
     await get_model_registry().update(
         {"pro": [advertising_model]},
         per_account_results={account_id: ("pro", [advertising_model])},
-        active_account_plans={account_id: "pro"},
+        member_account_plans={account_id: "pro"},
     )
 
     created = await async_client.post(

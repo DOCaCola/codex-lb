@@ -9,6 +9,12 @@ for a forked side chat, with its parent session's latest request.
 Signed thinking is bound to the same prefix. When Claude reports thinking it
 dropped or kept despite a failed binding check (``input_transformations``), the
 report is logged with the same comparison, so the reshaping that caused it is named.
+
+Anthropic can also explain a miss itself. A request carrying ``diagnostics`` with
+the previous message of the same conversation on the same account (the field
+Claude Code sends, with the ``cache-diagnosis-2026-04-07`` beta) receives
+``diagnostics.cache_miss_reason`` on ``message_start`` or ``message_delta``.
+Translated requests carry it as CLIProxyAPI's do; Claude Code supplies its own.
 """
 
 from __future__ import annotations
@@ -26,9 +32,13 @@ from app.core.clock import REAL_CLOCK, Clock
 
 logger = logging.getLogger(__name__)
 
-_UNCACHED_PARAMS = frozenset({"messages", "tools", "system", "metadata", "stream", "max_tokens"})
+_UNCACHED_PARAMS = frozenset({"messages", "tools", "system", "metadata", "stream", "max_tokens", "diagnostics"})
 _LISTED_NAMES = 8
 _CAPACITY = 256
+# A completed message is a diagnosis reference for as long as its 1-hour cache entry lives.
+_DIAGNOSTICS_TTL_SECONDS = 3600.0
+_DIAGNOSTICS_CAPACITY = 4096
+CACHE_DIAGNOSIS_BETA = "cache-diagnosis-2026-04-07"
 
 
 def _without_markers(value: JsonValue) -> JsonValue:
@@ -117,11 +127,56 @@ def _message_blocks(message: JsonValue) -> str:
     return f"{message.get('role')}[{kinds}]"
 
 
+@dataclass(frozen=True, slots=True)
+class DiagnosticsTicket:
+    """The diagnosis reference one request was sent with, and its send order."""
+
+    source_id: str
+    conversation_id: str
+    sequence: int
+    previous_message_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CompletedMessage:
+    message_id: str
+    sequence: int
+    completed_at: float
+
+
 class CacheLineage:
     def __init__(self, *, capacity: int = _CAPACITY, clock: Clock = REAL_CLOCK) -> None:
         self._capacity = capacity
         self._clock = clock
         self._shapes: OrderedDict[str, PrefixShape] = OrderedDict()
+        self._completed: OrderedDict[tuple[str, str], _CompletedMessage] = OrderedDict()
+        self._sequence = 0
+
+    def begin_diagnostics(self, *, source_id: str, conversation_id: str) -> DiagnosticsTicket:
+        """Message IDs belong to one account, so a reference never crosses accounts."""
+        self._sequence += 1
+        key = (source_id, conversation_id)
+        completed = self._completed.get(key)
+        if completed is not None and self._clock.monotonic() - completed.completed_at > _DIAGNOSTICS_TTL_SECONDS:
+            del self._completed[key]
+            completed = None
+        return DiagnosticsTicket(
+            source_id=source_id,
+            conversation_id=conversation_id,
+            sequence=self._sequence,
+            previous_message_id=completed.message_id if completed is not None else None,
+        )
+
+    def complete_diagnostics(self, ticket: DiagnosticsTicket, message_id: str) -> None:
+        """Record a completed message; a request sent earlier never replaces a later one."""
+        key = (ticket.source_id, ticket.conversation_id)
+        current = self._completed.get(key)
+        if current is not None and current.sequence > ticket.sequence:
+            return
+        self._completed[key] = _CompletedMessage(message_id, ticket.sequence, self._clock.monotonic())
+        self._completed.move_to_end(key)
+        while len(self._completed) > _DIAGNOSTICS_CAPACITY:
+            self._completed.popitem(last=False)
 
     def observe(
         self,
@@ -239,6 +294,22 @@ def _full_miss_write(usage: object) -> int | None:
     if usage.get("cache_read_input_tokens") == 0 and isinstance(written, int) and written > 0:
         return written
     return None
+
+
+def report_cache_diagnosis(*, conversation_id: str, source_id: str, diagnostics: object) -> None:
+    """Log Anthropic's own explanation of a miss; its types are logged as reported."""
+    if not isinstance(diagnostics, Mapping):
+        return
+    reason = diagnostics.get("cache_miss_reason")
+    if not isinstance(reason, Mapping):
+        return
+    logger.info(
+        "claude_cache_diagnosis conversation_id=%s source_id=%s type=%s missed_input_tokens=%s",
+        conversation_id,
+        source_id,
+        reason.get("type"),
+        reason.get("cache_missed_input_tokens"),
+    )
 
 
 CACHE_LINEAGE = CacheLineage()

@@ -70,6 +70,7 @@ def install_upstream(
     delta_usage=None,
     drop=None,
     transformations=None,
+    start_diagnostics=None,
 ):
     from app.modules.claude import transport
 
@@ -90,6 +91,8 @@ def install_upstream(
         start: dict[str, JsonValue] = {"id": message_id, "usage": start_usage or {"input_tokens": 10}}
         if transformations is not None:
             start["input_transformations"] = transformations
+        if start_diagnostics is not None:
+            start["diagnostics"] = start_diagnostics
         events = [
             {"type": "message_start", "message": start},
             {"type": "ping"},
@@ -975,6 +978,38 @@ async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_c
     assert response.status_code == 200, response.text
     assert captured[1][2]["thinking"] == {"type": "adaptive"}
     assert "thinking-binding-controls-2026-08-01" not in captured[1][3]["anthropic-beta"]
+
+
+async def test_translated_turns_send_the_previous_message_for_cache_diagnosis(async_client, pool, monkeypatch, caplog):
+    import logging
+
+    headers = {"session_id": "cache-diagnosis"}
+    body = {"model": MODEL, "input": "Hello", "stream": False}
+    first, _ = install_upstream(monkeypatch, message_id="msg_first")
+    response = await async_client.post("/v1/responses", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert first[0][2]["diagnostics"] == {"previous_message_id": None}
+    assert "cache-diagnosis-2026-04-07" in first[0][3]["anthropic-beta"].split(",")
+
+    reason = {"type": "tools_changed", "cache_missed_input_tokens": 1234}
+    second, _ = install_upstream(monkeypatch, message_id="msg_second", start_diagnostics={"cache_miss_reason": reason})
+    with caplog.at_level(logging.INFO, logger="app.modules.claude.cache_lineage"):
+        response = await async_client.post("/v1/responses", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert second[0][2]["diagnostics"] == {"previous_message_id": "msg_first"}
+    [line] = [record.getMessage() for record in caplog.records if "claude_cache_diagnosis" in record.getMessage()]
+    assert f"source_id={second[0][0]} type=tools_changed missed_input_tokens=1234" in line
+
+
+async def test_unfinished_translated_turn_is_not_a_cache_diagnosis_reference(async_client, pool, monkeypatch):
+    headers = {"session_id": "cache-diagnosis-truncated"}
+    body = {"model": MODEL, "input": "Hello", "stream": False}
+    install_upstream(monkeypatch, message_id="msg_cut", truncate=True)
+    assert (await async_client.post("/v1/responses", headers=headers, json=body)).status_code != 200
+    captured, _ = install_upstream(monkeypatch, message_id="msg_next")
+    response = await async_client.post("/v1/responses", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert captured[0][2]["diagnostics"] == {"previous_message_id": None}
 
 
 async def test_responses_turn_on_progress_model_delivers_update_as_commentary(async_client, pool, monkeypatch):

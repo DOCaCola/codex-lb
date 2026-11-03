@@ -38,6 +38,15 @@ logger = logging.getLogger(__name__)
 # exercise the loop with a short interval.
 _REFRESH_INTERVAL_SECONDS = 300
 
+# The published catalog follows pool membership, not availability. Quota,
+# rate limits, pauses and pending re-authentication are temporary: Codex
+# renders the catalog into its tool definitions, so letting them change the
+# catalog rewrites every client's cached prompt prefix.
+_NON_MEMBER_STATUSES = frozenset({AccountStatus.DEACTIVATED})
+# A paused account is not contacted upstream, and pending re-authentication has
+# no usable credentials. Both keep their last-known catalog.
+_NON_FETCHING_STATUSES = frozenset({AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED})
+
 
 @dataclass(slots=True)
 class _TransportRecoveryState:
@@ -122,18 +131,23 @@ class ModelRefreshScheduler:
             if not grouped:
                 await get_model_registry().clear()
                 get_account_selection_cache().invalidate()
-                logger.info("Model registry cleared because no active accounts remain")
+                logger.info("Model registry cleared because no member accounts remain")
                 await _persist_registry_state_and_bump()
                 return True
 
             encryptor = TokenEncryptor()
             per_plan_results: dict[str, list[UpstreamModel]] = {}
             per_account_results: dict[str, tuple[str, list[UpstreamModel]]] = {}
-            active_account_plans: dict[str, str] = {}
+            member_account_plans: dict[str, str] = {}
+            fetch_attempted = False
 
-            for plan_type, candidates in grouped.items():
-                for account in candidates:
-                    active_account_plans[account.id] = plan_type
+            for plan_type, members in grouped.items():
+                for account in members:
+                    member_account_plans[account.id] = plan_type
+                candidates = [account for account in members if account.status not in _NON_FETCHING_STATUSES]
+                if not candidates:
+                    continue
+                fetch_attempted = True
                 result = await _fetch_with_failover(
                     candidates,
                     encryptor,
@@ -147,7 +161,7 @@ class ModelRefreshScheduler:
                 await registry.update(
                     per_plan_results,
                     per_account_results=per_account_results,
-                    active_account_plans=active_account_plans,
+                    member_account_plans=member_account_plans,
                 )
                 snapshot = registry.get_snapshot()
                 total_models = len(snapshot.models) if snapshot else 0
@@ -158,6 +172,8 @@ class ModelRefreshScheduler:
                 )
                 get_account_selection_cache().invalidate()
                 await _persist_registry_state_and_bump()
+            elif not fetch_attempted:
+                logger.info("Model registry refresh skipped; every member account is paused or awaiting re-auth")
             else:
                 logger.warning("Model registry refresh failed for all plans")
                 # Every upstream fetch failed, so the leader made no change and
@@ -213,7 +229,7 @@ async def _persist_registry_state_and_bump() -> None:
 def _group_by_plan(accounts: list[Account]) -> dict[str, list[Account]]:
     grouped: dict[str, list[Account]] = {}
     for account in accounts:
-        if account.status != AccountStatus.ACTIVE:
+        if account.status in _NON_MEMBER_STATUSES:
             continue
         plan_type = account.plan_type
         if not plan_type:

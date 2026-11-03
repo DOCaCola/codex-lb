@@ -828,7 +828,7 @@ async def test_proxy_compact_synthesizes_final_subscription_routing_hint(
     await registry.update(
         {"plus": [catalog_model]},
         per_account_results={account_id: ("plus", [catalog_model])},
-        active_account_plans={account_id: "plus"},
+        member_account_plans={account_id: "plus"},
     )
     if omit_account_header:
 

@@ -583,6 +583,10 @@ def _merge_service_tier_metadata(existing: UpstreamModel, incoming: UpstreamMode
     return replace(incoming, raw=merged_raw)
 
 
+def _catalog_order(models: dict[str, UpstreamModel]) -> dict[str, UpstreamModel]:
+    return dict(sorted(models.items(), key=lambda item: (item[1].priority, item[0])))
+
+
 class ModelRegistry:
     def __init__(self, *, ttl_seconds: float = 300.0) -> None:
         if ttl_seconds <= 0:
@@ -795,7 +799,7 @@ class ModelRegistry:
         return (time.monotonic() - self._snapshot.fetched_at) >= self._ttl_seconds
 
     async def clear(self) -> None:
-        """Drop live capability state when no active accounts remain.
+        """Drop live capability state when no member accounts remain.
 
         This resets to the bootstrap-floor state (equivalent to never having
         refreshed): every reader falls back to the static bootstrap catalog. We
@@ -818,7 +822,7 @@ class ModelRegistry:
         per_plan_results: dict[str, list[UpstreamModel]],
         *,
         per_account_results: dict[str, tuple[str, list[UpstreamModel]]] | None = None,
-        active_account_plans: dict[str, str] | None = None,
+        member_account_plans: dict[str, str] | None = None,
     ) -> None:
         if not per_plan_results:
             logger.warning("Model registry refresh produced no plan results; keeping cached snapshot")
@@ -843,26 +847,26 @@ class ModelRegistry:
                     previous_plans = set(previous.plan_models.keys())
                     refreshed_plans = set(per_plan_results.keys())
                     stale_plans = previous_plans - refreshed_plans
-                    if active_account_plans is not None:
-                        stale_plans.intersection_update(active_account_plans.values())
+                    if member_account_plans is not None:
+                        stale_plans.intersection_update(member_account_plans.values())
                         stale_account_ids = {
                             account_id
                             for account_id, plan_type in previous.account_plans.items()
-                            if account_id in active_account_plans
+                            if account_id in member_account_plans
                             and plan_type in stale_plans
-                            and active_account_plans[account_id] == plan_type
+                            and member_account_plans[account_id] == plan_type
                         }
                         refreshed_account_ids = set(per_account_results or {})
                         stale_account_ids.update(
                             account_id
                             for account_id, previous_plan_type in previous.account_plans.items()
-                            if account_id in active_account_plans
+                            if account_id in member_account_plans
                             and account_id not in refreshed_account_ids
                             # A retained catalog proves capabilities only for the
                             # plan that produced it. A plan change without a fresh
                             # catalog leaves the active account unknown instead of
                             # re-labeling old entitlements as new-plan support.
-                            and active_account_plans[account_id] == previous_plan_type
+                            and member_account_plans[account_id] == previous_plan_type
                         )
                     else:
                         stale_account_ids = {
@@ -872,32 +876,36 @@ class ModelRegistry:
                         }
 
                     # Carryover invariant: never carry forward a stale-plan model
-                    # that no currently-active account of that plan advertises, per
+                    # that no current member account of that plan advertises, per
                     # the last-known per-account catalogs in ``previous.model_accounts``.
                     #
-                    # This runs whenever we know the active account set
-                    # (``active_account_plans`` is not None), REGARDLESS of whether the
+                    # Membership is pool membership, not availability: an exhausted,
+                    # rate-limited, paused or re-auth-pending account stays a member,
+                    # so temporary conditions never change the published catalog.
+                    #
+                    # This runs whenever we know the member account set
+                    # (``member_account_plans`` is not None), REGARDLESS of whether the
                     # previous snapshot was authoritative. The authoritative flag governs
                     # whether per-account *routing* is trusted (see ``account_ids_for_model``),
                     # not whether a dead model is dropped from discovery: a first-refresh
                     # (non-authoritative) snapshot can still record that a private model
-                    # was advertised only by an account that is now removed/paused, and
-                    # that model must not linger in discovery once no active account serves it.
+                    # was advertised only by an account that is now removed/deactivated, and
+                    # that model must not linger in discovery once no member account serves it.
                     #
-                    # An active account whose refresh transiently failed keeps its
+                    # A member account whose refresh failed or was not attempted keeps its
                     # last-known models (it is in ``stale_account_ids`` and still appears
                     # in ``previous.model_accounts``). A model with NO per-account
                     # provenance at all (an older/plan-only snapshot that never captured
                     # per-account catalogs) is preserved rather than dropped, so we
                     # degrade safe when we cannot attribute a model to any account.
                     supported_stale_slugs: dict[str, set[str]] | None = None
-                    if active_account_plans is not None:
+                    if member_account_plans is not None:
                         supported_stale_slugs = {}
                         for slug, account_ids in previous.model_accounts.items():
                             for account_id in account_ids:
                                 if account_id not in stale_account_ids:
                                     continue
-                                plan_of_account = active_account_plans.get(
+                                plan_of_account = member_account_plans.get(
                                     account_id, previous.account_plans.get(account_id)
                                 )
                                 if plan_of_account in stale_plans:
@@ -912,7 +920,7 @@ class ModelRegistry:
                                 for slug in stale_slugs
                                 # Unknown per-account provenance -> keep (degrade safe).
                                 if not previous.model_accounts.get(slug)
-                                # Known provenance -> keep only with an active advertiser.
+                                # Known provenance -> keep only with a member advertiser.
                                 or slug in supported
                             ]
                         for slug in stale_slugs:
@@ -927,8 +935,8 @@ class ModelRegistry:
                                     )
                     for account_id in stale_account_ids:
                         plan_type = (
-                            active_account_plans.get(account_id)
-                            if active_account_plans is not None
+                            member_account_plans.get(account_id)
+                            if member_account_plans is not None
                             else previous.account_plans.get(account_id)
                         )
                         if plan_type is not None:
@@ -1022,7 +1030,7 @@ class ModelRegistry:
                 }
                 frozen_model_accounts = {slug: frozenset(account_ids) for slug, account_ids in model_accounts.items()}
                 authoritative_account_catalogs = per_account_results is not None and set(
-                    active_account_plans or per_account_results
+                    member_account_plans or per_account_results
                 ).issubset(account_plans)
 
                 if authoritative_account_catalogs:
@@ -1067,7 +1075,10 @@ class ModelRegistry:
                     metadata_models.update(account_metadata_models)
                 metadata_models.update(models)
                 self._snapshot = ModelRegistrySnapshot(
-                    models=models,
+                    # Clients sort by priority and keep the served order for ties, and
+                    # carried-over plans are merged before refreshed ones. A fixed order
+                    # keeps the served catalog identical across refreshes.
+                    models=_catalog_order(models),
                     model_plans=frozen_model_plans,
                     plan_models=frozen_plan_models,
                     model_service_tier_plans=frozen_model_service_tier_plans,
@@ -1080,7 +1091,7 @@ class ModelRegistry:
                     suppressed_model_slugs=frozenset(suppressed_model_slugs),
                     model_cyber_access_program_accounts=frozen_model_cyber_access_program_accounts,
                 )
-                self._metadata_models = metadata_models
+                self._metadata_models = _catalog_order(metadata_models)
             except Exception:
                 self._snapshot = previous
                 logger.warning("Model registry refresh failed; keeping cached snapshot", exc_info=True)
