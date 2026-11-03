@@ -147,6 +147,7 @@ export type SummaryContext = {
 
 const FIVE_HOURS_MINUTES = 300;
 const WEEK_MINUTES = 10_080;
+const SUBSCRIPTION_END_LEAD_MS = 3 * 24 * 3_600_000;
 
 const STATUS_TONE: Record<DashboardAccountStatus, SummaryTone> = {
   active: "ok",
@@ -219,11 +220,21 @@ function exhaustedNotice(limits: LimitSummary[], tone: "warn" | "bad", now: numb
   });
 }
 
-function subscriptionNotice(ends: AccountSubscriptionEnd[] | undefined, target: AccountColorTarget, now: number): ProviderNotice | null {
+/**
+ * A subscription end is shown once it matters: when it falls inside the running quota cycle, which ends at
+ * `cycleEnd`, or when it is at most three days away.
+ */
+function subscriptionNotice(
+  ends: AccountSubscriptionEnd[] | undefined,
+  target: AccountColorTarget,
+  cycleEnd: number | undefined,
+  now: number,
+): ProviderNotice | null {
   const endsAt = findSubscriptionEnd(ends, target);
   if (endsAt === null) return null;
   const end = Date.parse(endsAt);
   if (end <= now) return null;
+  if (end - now > SUBSCRIPTION_END_LEAD_MS && (cycleEnd === undefined || end > cycleEnd)) return null;
   const date = new Date(end).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   return notice("warn", `Subscription ends ${date}`, "Subscription ends", { at: endsAt, kind: "expiry" });
 }
@@ -277,7 +288,12 @@ function codexSummary(account: AccountSummary, context: SummaryContext, now: num
     notice:
       statusNotice(status, context.t) ??
       (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, fiveHour].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
-      subscriptionNotice(context.subscriptionEnds, target, now),
+      subscriptionNotice(
+        context.subscriptionEnds,
+        target,
+        parseDate(hasSecondary ? account.resetAtSecondary : account.resetAtMonthly)?.getTime(),
+        now,
+      ),
     limits,
     routingPolicy: status === "reauth" || status === "deactivated" ? null : (account.routingPolicy ?? "normal"),
     models: null,
@@ -329,7 +345,7 @@ function claudeSummary(account: ClaudeAccount, context: SummaryContext, now: num
       statusNotice(status, context.t) ??
       (status === "limited" || status === "exceeded" ? exhaustedNotice([weekly, short].filter((v) => v !== null), STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
       (account.state.usage_error ? notice("warn", context.t("providers.notice.usageUnavailable")) : null) ??
-      subscriptionNotice(context.subscriptionEnds, target, now),
+      subscriptionNotice(context.subscriptionEnds, target, parseDate(sevenDay?.resetsAt)?.getTime(), now),
     limits: preferredWindows(weekly, short, context.quotaDisplay),
     routingPolicy: account.routingPolicy,
     models: account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"}`,
@@ -365,6 +381,10 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
   );
   const status = normalizeStatus(antigravityStatus(account, now));
   const target = { modelSourceId: account.id };
+  const weeklyResets = account.windows
+    .filter((window) => window.window === "weekly")
+    .flatMap((window) => parseDate(window.resetsAt)?.getTime() ?? []);
+  const lastWeeklyReset = weeklyResets.length > 0 ? Math.max(...weeklyResets) : undefined;
   const plan = context.t(`antigravity.plan.${account.planType}`);
   const holdNotice: ProviderNotice | null = account.hold ? notice("bad", context.t(`providers.notice.hold.${account.hold}`)) : null;
   return {
@@ -384,7 +404,7 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
       statusNotice(status, context.t) ??
       (account.state.verification ? notice("warn", context.t("providers.notice.verification")) : null) ??
       (status === "limited" || status === "exceeded" ? exhaustedNotice(limits, STATUS_TONE[status] === "bad" ? "bad" : "warn", now) : null) ??
-      subscriptionNotice(context.subscriptionEnds, target, now),
+      subscriptionNotice(context.subscriptionEnds, target, lastWeeklyReset, now),
     limits,
     routingPolicy: account.routingPolicy,
     models: antigravityModelSummary(account),

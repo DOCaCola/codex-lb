@@ -112,16 +112,45 @@ describe("provider summaries", () => {
     expect(codex({ status: "deactivated" }).routingPolicy).toBeNull();
   });
 
-  it("warns about an upcoming subscription end", () => {
-    const summary = summarizeEntry(
-      { kind: "codex", account: createAccountSummary() },
-      summaryContext({ now: NOW, subscriptionEnds: [{ accountId: "acc_primary", modelSourceId: null, endsAt: inHours(48) }] }),
-    );
-    expect(summary.notice).toEqual({
-      tone: "warn",
-      text: expect.stringMatching(/^Subscription ends /),
-      label: "Subscription ends",
-      until: { at: inHours(48), kind: "expiry" },
+  describe("subscription end notice", () => {
+    const endingIn = (hours: number, overrides: Parameters<typeof createAccountSummary>[0] = {}) =>
+      summarizeEntry(
+        { kind: "codex", account: createAccountSummary(overrides) },
+        summaryContext({ now: NOW, subscriptionEnds: [{ accountId: "acc_primary", modelSourceId: null, endsAt: inHours(hours) }] }),
+      ).notice;
+
+    it("shows an end inside the running weekly cycle", () => {
+      expect(endingIn(100, { resetAtSecondary: inHours(120) })).toEqual({
+        tone: "warn",
+        text: expect.stringMatching(/^Subscription ends /),
+        label: "Subscription ends",
+        until: { at: inHours(100), kind: "expiry" },
+      });
+    });
+
+    it("hides an end after the weekly reset until three days before it", () => {
+      expect(endingIn(100, { resetAtSecondary: inHours(24) })).toBeNull();
+      expect(endingIn(72, { resetAtSecondary: inHours(24) })?.until).toEqual({ at: inHours(72), kind: "expiry" });
+    });
+
+    it("uses only the three-day lead without a weekly or monthly window", () => {
+      const fiveHourOnly = { resetAtSecondary: null, windowMinutesSecondary: null, usage: { primaryRemainingPercent: 50, secondaryRemainingPercent: null, monthlyRemainingPercent: null } };
+      expect(endingIn(100, fiveHourOnly)).toBeNull();
+      expect(endingIn(48, fiveHourOnly)?.label).toBe("Subscription ends");
+    });
+
+    it("follows the monthly cycle of monthly-only accounts", () => {
+      const monthly = {
+        resetAtPrimary: null,
+        resetAtSecondary: null,
+        resetAtMonthly: inHours(24 * 20),
+        windowMinutesPrimary: null,
+        windowMinutesSecondary: null,
+        windowMinutesMonthly: 43_200,
+        usage: { primaryRemainingPercent: null, secondaryRemainingPercent: null, monthlyRemainingPercent: 60 },
+      };
+      expect(endingIn(24 * 10, monthly)?.label).toBe("Subscription ends");
+      expect(endingIn(24 * 25, monthly)).toBeNull();
     });
   });
 
