@@ -543,7 +543,7 @@ MUST name that tier.
 ### Requirement: Unknown account catalogs degrade without false exclusion
 
 The system MUST distinguish an account catalog that successfully omitted a
-capability from an account catalog that could not be fetched. If any active
+capability from an account catalog that could not be fetched. If any member
 account has neither a current nor retained last-known catalog, account-level
 capability indexes MUST NOT be treated as authoritative and selection MUST use
 the existing plan-level fallback. Operator-mapped model slugs MUST NOT be
@@ -562,7 +562,7 @@ scheduled refresh, model/plan filtering would be skipped (an unsupported plan
 could be selected) and `/v1/models` would report no models.
 
 Carrying a plan's catalog forward when its refresh does not complete MUST NOT
-re-advertise a model that no currently-active account of that plan advertises,
+re-advertise a model that no current member account of that plan advertises,
 per the last-known per-account catalogs. This drop invariant MUST hold
 regardless of whether the previous snapshot was authoritative: the authoritative
 distinction governs whether per-account routing is trusted, not whether a dead
@@ -572,25 +572,25 @@ catalogs), the system MUST preserve it rather than drop it, degrading safe when 
 model cannot be attributed to any account.
 
 A retained account catalog MUST remain associated with the plan type that
-produced it. If an active account changes plan type and its new catalog refresh
+produced it. If an member account changes plan type and its new catalog refresh
 fails, the system MUST leave that account's catalog unknown rather than
 re-labeling its old capabilities as support for the new plan. Any previously
 advertised catalog slug explicitly suppressed because all its known advertisers
-left the active set MUST still enter plan filtering and select no account,
+left the member set MUST still enter plan filtering and select no account,
 whether or not it is part of the static bootstrap catalog; this is distinct from
 an operator-mapped slug that has no catalog evidence at all.
 
 #### Scenario: Catalog fetch partially fails after restart
 
 - **GIVEN** there is no previous registry snapshot
-- **AND** one active account catalog refresh succeeds while another fails
+- **AND** one member account catalog refresh succeeds while another fails
 - **WHEN** selection evaluates a model or service tier
 - **THEN** the partial index is non-authoritative
 - **AND** the failed account is not classified as lacking every capability
 
 #### Scenario: No active accounts fall back to the bootstrap floor
 
-- **GIVEN** live capability state is cleared because no active accounts remain
+- **GIVEN** live capability state is cleared because no member accounts remain
 - **WHEN** an account is added before the next scheduled refresh completes
 - **THEN** canonical bootstrap models remain discoverable via `/v1/models`
 - **AND** those models remain plan-gated by the bootstrap catalog
@@ -598,15 +598,15 @@ an operator-mapped slug that has no catalog evidence at all.
 
 #### Scenario: Failed refresh has last-known account data
 
-- **GIVEN** every active account had a successful earlier catalog
+- **GIVEN** every member account had a successful earlier catalog
 - **AND** one account fails a later refresh
-- **WHEN** that account remains active
+- **WHEN** that account remains a member
 - **THEN** its last-known capability data is retained
 - **AND** the complete snapshot remains authoritative
 
 #### Scenario: Successful empty catalog withdraws stale capabilities
 
-- **GIVEN** an active account previously advertised a model
+- **GIVEN** an member account previously advertised a model
 - **AND** its later catalog refresh succeeds with an empty model list
 - **WHEN** the next registry snapshot is built
 - **THEN** the empty catalog is treated as successful account coverage
@@ -643,7 +643,7 @@ an operator-mapped slug that has no catalog evidence at all.
 #### Scenario: Failed refresh follows an account plan-type change
 
 - **GIVEN** an account previously advertised a catalog while on one plan type
-- **AND** the active account record now has a different plan type
+- **AND** the member account record now has a different plan type
 - **AND** its catalog refresh fails in that cycle
 - **WHEN** the next registry snapshot is built
 - **THEN** the prior catalog is not retained for that account
@@ -652,36 +652,37 @@ an operator-mapped slug that has no catalog evidence at all.
 #### Scenario: Account is paused or removed
 
 - **GIVEN** an account has retained catalog capabilities
-- **WHEN** it is no longer in the active account set
+- **WHEN** it is paused, it stays in the member account set and its retained catalog stays in discovery while routing skips it
+- **AND WHEN** it is deactivated or deleted, it leaves the member account set
 - **THEN** its capabilities no longer contribute to discovery or routing
 
 #### Scenario: Removed account is the sole advertiser within a stale plan
 
 - **GIVEN** two accounts share a plan and only one advertised a given model
 - **AND** the plan's refresh does not complete this cycle, so its catalog is carried forward
-- **AND** the sole advertiser is no longer in the active account set
-- **AND** the other account of that plan remains active
+- **AND** the sole advertiser is no longer in the member account set
+- **AND** the other account of that plan remains a member
 - **WHEN** the stale plan's retained catalog is merged into discovery
 - **THEN** the model advertised only by the removed account leaves discovery
-- **AND** the models still advertised by the remaining active account are retained
+- **AND** the models still advertised by the remaining member account are retained
 
 #### Scenario: Sole advertiser removed under a non-authoritative previous snapshot
 
 - **GIVEN** a first refresh recorded a model advertised by one account of a plan
 - **AND** a same-plan account had no catalog, so the snapshot is non-authoritative
-- **WHEN** that sole advertiser is removed while another same-plan account stays active
+- **WHEN** that sole advertiser is removed while another same-plan account stays a member
 - **AND** the plan's refresh does not complete in a later cycle
 - **THEN** the model advertised only by the removed account still leaves discovery
 
 #### Scenario: Removed catalog model stays suppressed across repeated partial refreshes
 
-- **GIVEN** a snapshot suppressed a previously advertised catalog model because every last-known advertiser left the active account set
-- **WHEN** later refresh cycles remain non-authoritative and still do not produce fresh active evidence for that model
+- **GIVEN** a snapshot suppressed a previously advertised catalog model because every last-known advertiser left the member account set
+- **WHEN** later refresh cycles remain non-authoritative and still do not produce fresh member evidence for that model
 - **THEN** the model stays absent from discovery and plan gating across those repeated partial refreshes
 
 #### Scenario: Suppressed catalog model cannot select an account
 
-- **GIVEN** a snapshot explicitly suppresses a previously advertised model because no active account advertises it
+- **GIVEN** a snapshot explicitly suppresses a previously advertised model because no member account advertises it
 - **WHEN** account selection receives a request for that model
 - **THEN** the selector rejects every account for that model
 - **AND** it does not treat the known suppressed slug as an operator-mapped unknown
@@ -696,8 +697,8 @@ an operator-mapped slug that has no catalog evidence at all.
 
 #### Scenario: Fresh active evidence clears catalog suppression
 
-- **GIVEN** a catalog model was previously suppressed after its last-known advertisers left the active account set
-- **WHEN** a later refresh records that an active account advertises that model again
+- **GIVEN** a catalog model was previously suppressed after its last-known advertisers left the member account set
+- **WHEN** a later refresh records that an member account advertises that model again
 - **THEN** the suppression is cleared
 - **AND** the model returns to discovery and plan gating from live registry data
 
@@ -711,7 +712,7 @@ an operator-mapped slug that has no catalog evidence at all.
 #### Scenario: Carried-forward model has unknown per-account provenance
 
 - **GIVEN** a plan-only snapshot carried a model with no per-account provenance
-- **WHEN** the plan is stale in a later refresh that knows the active account set
+- **WHEN** the plan is stale in a later refresh that knows the member account set
 - **THEN** the model is preserved in discovery rather than dropped
 
 ### Requirement: Speed and service tier metadata aggregates across accounts
@@ -1644,3 +1645,39 @@ The Anthropic models list SHALL contain exactly the models the API key may use t
 #### Scenario: API key visibility
 - **WHEN** the API key's allowed models exclude `gpt-6-astra`
 - **THEN** the list does not contain `clb-claude-gpt-6-astra`
+
+### Requirement: The served Codex catalog follows pool membership, not availability
+
+The model registry refresh SHALL treat every account that is not deactivated or
+deleted as a member of its plan's catalog. Quota exhaustion, rate limiting,
+pausing and pending re-authentication SHALL NOT remove an account's plan or its
+last-known models from the catalog. Catalogs SHALL be fetched from member
+accounts that are neither paused nor awaiting re-authentication; a member that
+is not fetched, or whose fetch fails, SHALL keep its last-known catalog. The
+registry SHALL order its catalog by model priority and then slug, so that the
+served catalog is identical across refreshes that see the same models,
+whichever plans were refreshed and whichever were carried over.
+
+#### Scenario: Account exhausts its quota
+
+- **GIVEN** the only account of a plan advertises a model no other plan has
+- **WHEN** that account becomes quota-exceeded, rate-limited, paused or awaiting re-authentication and the registry refreshes
+- **THEN** `/backend-api/codex/models` returns byte-identical content and the persisted snapshot hash is unchanged
+
+#### Scenario: Paused account is not contacted
+
+- **GIVEN** a member account is paused
+- **WHEN** the registry refreshes
+- **THEN** no catalog is fetched with its credentials and its last-known catalog is retained
+
+#### Scenario: Account is deactivated
+
+- **GIVEN** the only account of a plan advertises a model no other plan has
+- **WHEN** that account is deactivated and the registry refreshes
+- **THEN** the model leaves the served catalog
+
+#### Scenario: A plan is carried over
+
+- **GIVEN** a refresh in which one plan is fetched and another is carried over from the previous snapshot
+- **WHEN** the catalog is served
+- **THEN** its model order equals the order after a refresh of both plans
