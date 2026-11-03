@@ -4,15 +4,17 @@ from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
-from app.db.models import ClaudeAccount
+from app.db.models import ClaudeAccount, ClaudeCooldown
 from app.db.session import SessionLocal
 from app.modules.claude import service as service_module
 from app.modules.claude.auth import ClaudeAuth
 from app.modules.claude.client import ClaudeClient
+from app.modules.claude.failover import Refusal, record_refusals
 from app.modules.claude.metadata import MetadataHTTPError
 from app.modules.claude.observations import record_headers
+from app.modules.claude.quota_evidence import read_evidence
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import CatalogModel, QuotaWindow, UsageSnapshot
 from app.modules.claude.service import ClaudeService
@@ -59,6 +61,110 @@ async def mutate(source_id, callback):
         assert row is not None
         await repo.mutate_state(source_id, row.generation, callback)
         await session.commit()
+
+
+async def restrictions(source_id):
+    async with SessionLocal() as session:
+        rows = await session.scalars(select(ClaudeCooldown).where(ClaudeCooldown.source_id == source_id))
+        return [(row.model, item.window) for row in rows for item in read_evidence(row).restrictions]
+
+
+@pytest.mark.parametrize("scheduled", [False, True])
+async def test_fresh_usage_recovers_upgrade_quota_only(async_client, account, monkeypatch, scheduled):
+    until = datetime.now(UTC) + timedelta(hours=2)
+    await record_refusals(
+        account,
+        "claude-test",
+        (
+            Refusal("account", until, "retry_after", "five_hour"),
+            Refusal("account", until, "reset", "seven_day"),
+            Refusal("model", until, "retry_after", "entitlement"),
+            Refusal("model", until, "default", "unknown"),
+        ),
+    )
+    monkeypatch.setattr(
+        ClaudeClient,
+        "usage",
+        AsyncMock(
+            return_value=UsageSnapshot(
+                five_hour=QuotaWindow(utilization=0),
+                seven_day=QuotaWindow(utilization=100, resets_at=until),
+            )
+        ),
+    )
+    if scheduled:
+        await poll(account, catalog=False, force=False)
+    else:
+        response = await async_client.post(f"/api/claude-accounts/{account}/refresh")
+        assert response.status_code == 200
+    assert sorted(await restrictions(account)) == [
+        ("*", "seven_day"),
+        ("claude-test", "entitlement"),
+        ("claude-test", "unknown"),
+    ]
+
+
+@pytest.mark.parametrize("result", ["missing", "failed", "expired"])
+async def test_usage_without_current_headroom_keeps_refusal(account, monkeypatch, result):
+    now = datetime.now(UTC)
+    await record_refusals(account, "claude-test", (Refusal("account", now + timedelta(hours=1), "reset", "five_hour"),))
+    reader = AsyncMock(return_value=UsageSnapshot())
+    if result == "failed":
+        reader.side_effect = MetadataHTTPError("/api/oauth/usage", 429, "600")
+    elif result == "expired":
+        reader.return_value = UsageSnapshot(five_hour=QuotaWindow(utilization=0, resets_at=now - timedelta(seconds=1)))
+    monkeypatch.setattr(ClaudeClient, "usage", reader)
+    await poll(account, catalog=False)
+    assert await restrictions(account) == [("*", "five_hour")]
+
+
+@pytest.mark.parametrize("race", ["refusal", "credential", "headers"])
+async def test_usage_recovery_preserves_new_evidence(account, monkeypatch, race):
+    now = datetime.now(UTC)
+    until = now + timedelta(hours=2)
+    await record_refusals(account, "claude-test", (Refusal("account", until, "retry_after", "five_hour"),))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def usage(*args):
+        entered.set()
+        await release.wait()
+        return UsageSnapshot(five_hour=QuotaWindow(utilization=0))
+
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(side_effect=usage))
+    task = asyncio.create_task(poll(account, catalog=False))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        if race == "refusal":
+            await record_refusals(account, "claude-test", (Refusal("account", until, "retry_after", "five_hour"),))
+        elif race == "credential":
+            async with SessionLocal() as session:
+                await session.execute(
+                    update(ClaudeAccount)
+                    .where(ClaudeAccount.source_id == account)
+                    .values(
+                        generation=ClaudeAccount.generation + 1,
+                    )
+                )
+                await session.commit()
+        else:
+            async with SessionLocal() as session:
+                row = await session.get(ClaudeAccount, account)
+                generation = row.generation
+            await record_headers(
+                account,
+                generation,
+                {
+                    "anthropic-ratelimit-unified-5h-utilization": "1",
+                    "anthropic-ratelimit-unified-5h-reset": str(until.timestamp()),
+                },
+                requested_at=datetime.now(UTC),
+            )
+        release.set()
+        await task
+        assert await restrictions(account) == [("*", "five_hour")]
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("endpoint", ["usage", "catalog"])

@@ -1,10 +1,12 @@
 import math
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.db.models import ClaudeAccount, ClaudeCooldown
 from app.db.session import SessionLocal
+from app.modules.claude.client import ClaudeClient
 from app.modules.claude.failover import Refusal, record_refusals
 from app.modules.claude.routing import ClaudePoolUnavailable
 from app.modules.claude.schemas import AccountState, QuotaWindow, UsageSnapshot
@@ -24,6 +26,28 @@ async def exhaust(source, deadline):
         state.usage_requested_at = state.usage_updated_at
         row.state_json = state.model_dump_json()
         await session.commit()
+
+
+async def test_upgrade_refresh_restores_bound_owner_routing(pool, async_client, monkeypatch):
+    source = pool[0]
+    deadline = datetime.now(UTC) + timedelta(hours=2)
+    await exhaust(source, deadline)
+    await record_refusals(source, MODEL, (Refusal("account", deadline, "retry_after", "five_hour"),))
+    with pytest.raises(ClaudePoolUnavailable):
+        await choose(owner_source_id=source)
+    monkeypatch.setattr(
+        ClaudeClient,
+        "usage",
+        AsyncMock(
+            return_value=UsageSnapshot(
+                five_hour=QuotaWindow(utilization=0),
+                seven_day=QuotaWindow(utilization=34),
+            )
+        ),
+    )
+    response = await async_client.post(f"/api/claude-accounts/{source}/refresh")
+    assert response.status_code == 200, response.text
+    assert await choose(owner_source_id=source) == source
 
 
 async def test_latest_per_account_earliest_across_pool_and_owner(pool):

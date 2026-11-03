@@ -40,6 +40,7 @@ from app.modules.claude.metadata import (
 )
 from app.modules.claude.model_selection import effective_selections
 from app.modules.claude.quota import extra_usage_enabled, quota_status, with_recent_usage
+from app.modules.claude.quota_evidence import capture_quota_recovery, reconcile_usage
 from app.modules.claude.repository import ClaudeRepository
 from app.modules.claude.schemas import (
     CLAUDE_BASE_URL,
@@ -450,6 +451,11 @@ class ClaudeService:
             return state
 
         claimed = await self.repository.mutate_state(source_id, generation, claim)
+        recovery = (
+            await capture_quota_recovery(self.repository.session, source_id)
+            if claimed is not None and endpoint == "usage"
+            else {}
+        )
         # Release the transaction before any network I/O, including on a no-op.
         await self.repository.session.commit()
         if claimed is None:
@@ -541,6 +547,7 @@ class ClaudeService:
                 await self.repository.record_quota(
                     source_id, sample, completed_at, provenance="usage_api", sample_seconds=60
                 )
+                await reconcile_usage(self.repository.session, source_id, recovery, sample, completed_at)
         await self.repository.session.commit()
 
     async def _verified_subscription(self, source_id: str, bootstrap: BootstrapResponse) -> SubscriptionMetadata:

@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClaudeAccount, ClaudeCooldown
-from app.modules.claude.schemas import AccountState
+from app.modules.claude.schemas import AccountState, UsageSnapshot
 from app.modules.model_sources.service import ModelSourceNotFoundError
 
 
@@ -20,6 +20,40 @@ class Restriction(BaseModel):
 
 class Evidence(BaseModel):
     restrictions: list[Restriction] = Field(default_factory=list)
+
+
+async def capture_quota_recovery(session: AsyncSession, source_id: str) -> dict[str, Evidence]:
+    """Caller holds the account mutation lock until this snapshot is committed."""
+    rows = await session.scalars(select(ClaudeCooldown).where(ClaudeCooldown.source_id == source_id))
+    return {row.model: read_evidence(row) for row in rows}
+
+
+async def reconcile_usage(
+    session: AsyncSession,
+    source_id: str,
+    captured: dict[str, Evidence],
+    usage: UsageSnapshot,
+    now: datetime,
+) -> None:
+    """Reconcile only captured evidence under the accepted usage publication lock."""
+    available = {
+        name
+        for name, window in (
+            ("five_hour", usage.five_hour),
+            ("seven_day", usage.seven_day),
+            ("seven_day_overage_included", usage.seven_day_overage_included),
+        )
+        if window is not None and window.utilization < 100
+    }
+    for model, before in captured.items():
+        row = await session.get(ClaudeCooldown, (source_id, model), populate_existing=True)
+        if row is None:
+            continue
+        evidence = read_evidence(row)
+        evidence.restrictions = [
+            item for item in evidence.restrictions if item.window not in available or item not in before.restrictions
+        ]
+        await save_evidence(session, row, evidence, now)
 
 
 async def lock_account(session: AsyncSession, source_id: str) -> ClaudeAccount:
