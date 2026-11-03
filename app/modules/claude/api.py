@@ -10,6 +10,7 @@ from app.core.auth.dependencies import (
     validate_dashboard_session,
 )
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
+from app.core.usage.recent import RecentLookbacks, recent_lookbacks_query
 from app.dependencies import get_claude_service
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.identity import ReconnectIdentityMismatch
@@ -52,8 +53,11 @@ def _held(exc: ReconnectIdentityMismatch) -> DashboardConflictError:
 
 
 @router.get("", response_model=ClaudeAccountsResponse)
-async def list_accounts(service: ClaudeService = Depends(get_claude_service)) -> ClaudeAccountsResponse:
-    return ClaudeAccountsResponse(accounts=await service.list_accounts())
+async def list_accounts(
+    lookbacks: RecentLookbacks = Depends(recent_lookbacks_query),
+    service: ClaudeService = Depends(get_claude_service),
+) -> ClaudeAccountsResponse:
+    return ClaudeAccountsResponse(accounts=await service.list_accounts(lookbacks))
 
 
 @router.post("/import", response_model=ClaudeAccountResponse)

@@ -4,11 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
-import { getDashboardOverview } from "@/features/dashboard/api";
+import { dashboardOverviewQuery } from "@/features/dashboard/hooks/use-dashboard";
 import { DEFAULT_OVERVIEW_TIMEFRAME } from "@/features/dashboard/schemas";
 import { getServiceReadiness } from "@/features/health/api";
 import { getRuntimeVersion } from "@/features/runtime/api";
 import { getSettings } from "@/features/settings/api";
+import { useRecentLookbacks } from "@/hooks/use-dashboard-preferences";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { formatTimeLong } from "@/utils/formatters";
 
@@ -92,6 +93,7 @@ function getRoutingLabel(
 export function StatusBar({ onHeightChange }: StatusBarProps = {}) {
   const { t } = useTranslation();
   const footerRef = useRef<HTMLElement>(null);
+  const recentLookbacks = useRecentLookbacks();
   const readinessQuery = useQuery({
     queryKey: ["health", "ready"],
     queryFn: getServiceReadiness,
@@ -100,8 +102,7 @@ export function StatusBar({ onHeightChange }: StatusBarProps = {}) {
     retry: false,
   });
   const { data: lastSyncAt = null } = useQuery({
-    queryKey: ["dashboard", "overview", DEFAULT_OVERVIEW_TIMEFRAME],
-    queryFn: () => getDashboardOverview({ timeframe: DEFAULT_OVERVIEW_TIMEFRAME }),
+    ...dashboardOverviewQuery(DEFAULT_OVERVIEW_TIMEFRAME, recentLookbacks),
     refetchInterval: STATUS_REFRESH_INTERVAL_MS,
     refetchIntervalInBackground: false,
     select: (data) => data.lastSyncAt,

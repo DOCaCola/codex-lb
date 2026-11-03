@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 
-from app.core.usage.recent import Reading, recent_used_percent
+from app.core.usage.recent import Reading, RecentLookbacks, recent_used_percent
 from app.core.utils.time import to_utc_naive
 from app.modules.claude.metadata import USAGE_IDLE_INTERVAL
 from app.modules.claude.model_selection import effective_selections
@@ -31,8 +31,10 @@ WINDOW_LENGTHS: dict[WindowName, timedelta] = {
 }
 
 
-def with_recent_usage(quota: QuotaStatus, baselines: Mapping[WindowName, Reading], now: datetime) -> QuotaStatus:
-    """Quota whose windows report the share used in the last hour (5h) or 24 hours; ``now`` is naive UTC."""
+def with_recent_usage(
+    quota: QuotaStatus, baselines: Mapping[WindowName, Reading], lookbacks: RecentLookbacks, now: datetime
+) -> QuotaStatus:
+    """Quota whose windows report the share used within their recent-usage lookback; ``now`` is naive UTC."""
     windows = [
         window.model_copy(
             update={
@@ -40,6 +42,7 @@ def with_recent_usage(quota: QuotaStatus, baselines: Mapping[WindowName, Reading
                     used_percent=window.utilization,
                     resets_at=to_utc_naive(window.resets_at) if window.resets_at is not None else None,
                     window=WINDOW_LENGTHS[window.name],
+                    lookback=lookbacks.for_window(WINDOW_LENGTHS[window.name]),
                     baseline=baselines.get(window.name),
                     now=now,
                 )

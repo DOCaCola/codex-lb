@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.usage.recent import LONG_LOOKBACK, SHORT_LOOKBACK, Reading, recent_lookback
+from app.core.usage.recent import Reading, RecentLookbacks
 from app.db.models import ClaudeAccount, ClaudeOAuthFlow, ClaudePendingReconnect, ClaudeQuotaHistory
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.quota import WINDOW_LENGTHS
@@ -27,12 +27,11 @@ class ClaudeRepository:
         return sorted(rows.unique(), key=lambda row: (row.source.name, row.source_id))
 
     async def recent_quota_baselines(
-        self, source_ids: Sequence[str], now: datetime
+        self, source_ids: Sequence[str], now: datetime, lookbacks: RecentLookbacks
     ) -> dict[str, dict[WindowName, Reading]]:
         """Each account's newest reading per window at the start of its recent-usage lookback (naive UTC)."""
         baselines: dict[str, dict[WindowName, Reading]] = {}
-        for lookback in (SHORT_LOOKBACK, LONG_LOOKBACK):
-            names = [name for name, length in WINDOW_LENGTHS.items() if recent_lookback(length) == lookback]
+        for lookback, names in lookbacks.group(WINDOW_LENGTHS).items():
             cutoff = now - lookback
             ranked = (
                 select(

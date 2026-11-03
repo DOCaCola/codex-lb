@@ -85,7 +85,8 @@ export type LimitSummary = {
   stale: boolean;
 };
 
-export type RecentUsage = { usedPercent: number; period: "hour" | "day" };
+/** Share used within the recent-usage period: `short` for 5h limits, `long` for weekly ones. */
+export type RecentUsage = { usedPercent: number; period: "short" | "long" };
 
 export type SummaryTone = "ok" | "warn" | "bad" | "off";
 
@@ -259,11 +260,11 @@ function codexSummary(account: AccountSummary, context: SummaryContext, now: num
         usage?.secondaryRemainingPercent,
         account.resetAtSecondary,
         linearPacePercent(account.resetAtSecondary, account.windowMinutesSecondary ?? WEEK_MINUTES, now),
-        recentUsage(usage?.secondaryRecentUsedPercent, "day"),
+        recentUsage(usage?.secondaryRecentUsedPercent, "long"),
       )
     : null;
   const fiveHour = hasPrimary
-    ? percentLimit("5h", "5h", "5h", usage?.primaryRemainingPercent, account.resetAtPrimary, null, recentUsage(usage?.primaryRecentUsedPercent, "hour"))
+    ? percentLimit("5h", "5h", "5h", usage?.primaryRemainingPercent, account.resetAtPrimary, null, recentUsage(usage?.primaryRecentUsedPercent, "short"))
     : null;
   const limits =
     hasMonthly && !hasPrimary && !hasSecondary
@@ -318,7 +319,7 @@ function claudeSummary(account: ClaudeAccount, context: SummaryContext, now: num
       source.utilization === null ? null : 100 - source.utilization,
       source.resetsAt,
       pace ? linearPacePercent(source.resetsAt, minutes, now) : null,
-      recentUsage(source.recentUsedPercent, minutes > FIVE_HOURS_MINUTES ? "day" : "hour"),
+      recentUsage(source.recentUsedPercent, minutes > FIVE_HOURS_MINUTES ? "long" : "short"),
       source.freshness === "stale",
     );
   const sevenDay = window("seven_day");
@@ -376,7 +377,7 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
       remainingOf(window),
       window.resetsAt,
       window.window === "weekly" ? linearPacePercent(window.resetsAt, WEEK_MINUTES, now) : null,
-      recentUsage(window.recentUsedPercent, window.window === "weekly" ? "day" : "hour"),
+      recentUsage(window.recentUsedPercent, window.window === "weekly" ? "long" : "short"),
     ),
   );
   const status = normalizeStatus(antigravityStatus(account, now));

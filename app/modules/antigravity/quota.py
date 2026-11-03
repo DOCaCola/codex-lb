@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.core.types import JsonValue
-from app.core.usage.recent import Reading, recent_used_percent
+from app.core.usage.recent import Reading, RecentLookbacks, recent_used_percent
 from app.core.utils.time import to_utc_naive
 from app.modules.antigravity.catalog import quota_family
 from app.modules.antigravity.schemas import (
@@ -155,9 +155,10 @@ WINDOW_LENGTHS: dict[QuotaWindowName, timedelta] = {"five_hour": timedelta(hours
 def with_recent_usage(
     windows: list[WindowStatus],
     baselines: Mapping[tuple[QuotaFamily, QuotaWindowName], Reading],
+    lookbacks: RecentLookbacks,
     now: datetime,
 ) -> list[WindowStatus]:
-    """Windows reporting the share used in the last hour (5h) or 24 hours (weekly); ``now`` is naive UTC."""
+    """Windows reporting the share used within their recent-usage lookback; ``now`` is naive UTC."""
     return [
         window.model_copy(
             update={
@@ -165,6 +166,7 @@ def with_recent_usage(
                     used_percent=window.used_percent,
                     resets_at=to_utc_naive(window.resets_at) if window.resets_at is not None else None,
                     window=WINDOW_LENGTHS[window.window],
+                    lookback=lookbacks.for_window(WINDOW_LENGTHS[window.window]),
                     baseline=baselines.get((window.family, window.window)),
                     now=now,
                 )

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.usage.recent import LONG_LOOKBACK, SHORT_LOOKBACK, Reading, recent_lookback
+from app.core.usage.recent import Reading, RecentLookbacks
 from app.core.utils.time import utcnow
 from app.db.models import AntigravityAccount, AntigravityCooldown, AntigravityOAuthFlow, AntigravityQuotaHistory
 from app.modules.antigravity.errors import AntigravityError
@@ -39,12 +39,11 @@ class AntigravityRepository:
         return sorted(rows.unique(), key=lambda row: (row.source.name, row.source_id))
 
     async def recent_quota_baselines(
-        self, source_ids: Sequence[str], now: datetime
+        self, source_ids: Sequence[str], now: datetime, lookbacks: RecentLookbacks
     ) -> dict[str, dict[tuple[QuotaFamily, QuotaWindowName], Reading]]:
         """Each account's newest reading per family window at the start of its recent-usage lookback (naive UTC)."""
         baselines: dict[str, dict[tuple[QuotaFamily, QuotaWindowName], Reading]] = {}
-        for lookback in (SHORT_LOOKBACK, LONG_LOOKBACK):
-            names = [name for name, length in WINDOW_LENGTHS.items() if recent_lookback(length) == lookback]
+        for lookback, names in lookbacks.group(WINDOW_LENGTHS).items():
             cutoff = now - lookback
             ranked = (
                 select(

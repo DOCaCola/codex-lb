@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appendRecentLookbacks, type RecentLookbacks } from "@/hooks/use-dashboard-preferences";
 import { del, get, patch, post } from "@/lib/api-client";
 
 export const QUOTA_FAMILIES = ["gemini", "argon", "claude"] as const;
@@ -116,7 +117,8 @@ export type VersionUpdate = { platform?: string; pinnedSha512?: string; clearPin
 const path = "/api/antigravity-accounts";
 const accountPath = (id: string) => path + "/" + encodeURIComponent(id);
 
-export const listAccounts = () => get(path, z.object({ accounts: z.array(AntigravityAccountSchema) }));
+export const listAccounts = (recent: RecentLookbacks) =>
+  get(`${path}?${appendRecentLookbacks(new URLSearchParams(), recent).toString()}`, z.object({ accounts: z.array(AntigravityAccountSchema) }));
 export const importAccount = (body: { name: string; credentials: unknown }) =>
   post(path + "/import", AntigravityAccountSchema, { body });
 export const startOAuth = (body: { name: string; sourceId?: string }) =>

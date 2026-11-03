@@ -10,6 +10,7 @@ from app.core.auth.dependencies import (
     validate_dashboard_session,
 )
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
+from app.core.usage.recent import RecentLookbacks, recent_lookbacks_query
 from app.dependencies import get_antigravity_service
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.schemas import (
@@ -49,9 +50,10 @@ def _bad_request(exc: AntigravityError) -> DashboardBadRequestError:
 
 @router.get("", response_model=AntigravityAccountsResponse)
 async def list_accounts(
+    lookbacks: RecentLookbacks = Depends(recent_lookbacks_query),
     service: AntigravityService = Depends(get_antigravity_service),
 ) -> AntigravityAccountsResponse:
-    return AntigravityAccountsResponse(accounts=await service.list_accounts())
+    return AntigravityAccountsResponse(accounts=await service.list_accounts(lookbacks))
 
 
 @router.post("/import", response_model=AntigravityAccountResponse)

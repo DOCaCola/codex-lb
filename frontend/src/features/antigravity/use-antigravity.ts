@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRecentLookbacks } from "@/hooks/use-dashboard-preferences";
 import * as api from "./api";
 
 export function useAntigravityAccounts() {
+  const recent = useRecentLookbacks();
   return useQuery({
-    queryKey: ["antigravity-accounts"],
-    queryFn: api.listAccounts,
+    queryKey: ["antigravity-accounts", recent],
+    queryFn: () => api.listAccounts(recent),
     refetchInterval: 60000,
   });
 }

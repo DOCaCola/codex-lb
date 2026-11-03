@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.crypto import TokenEncryptor
-from app.core.usage.recent import Reading
+from app.core.usage.recent import Reading, RecentLookbacks
 from app.core.utils.time import utcnow
 from app.db.models import (
     AccountRoutingPolicy,
@@ -90,8 +90,8 @@ class ClaudeService:
             raise ModelSourceNotFoundError("Claude account not found")
         return row
 
-    async def list_accounts(self) -> list[ClaudeAccountResponse]:
-        return await self._responses(await self.repository.list_accounts())
+    async def list_accounts(self, lookbacks: RecentLookbacks) -> list[ClaudeAccountResponse]:
+        return await self._responses(await self.repository.list_accounts(), lookbacks)
 
     async def import_account(self, payload: ClaudeImport) -> ClaudeAccountResponse:
         imported = payload.credentials.claudeAiOauth
@@ -591,15 +591,17 @@ class ClaudeService:
         await self.repository.sources.delete(source_id)
 
     async def _single_response(self, row: ClaudeAccount) -> ClaudeAccountResponse:
-        return (await self._responses([row]))[0]
+        return (await self._responses([row], RecentLookbacks()))[0]
 
-    async def _responses(self, rows: list[ClaudeAccount]) -> list[ClaudeAccountResponse]:
+    async def _responses(self, rows: list[ClaudeAccount], lookbacks: RecentLookbacks) -> list[ClaudeAccountResponse]:
         now = utcnow()
-        baselines = await self.repository.recent_quota_baselines([row.source_id for row in rows], now)
-        return [self._response(row, baselines.get(row.source_id, {}), now) for row in rows]
+        baselines = await self.repository.recent_quota_baselines([row.source_id for row in rows], now, lookbacks)
+        return [self._response(row, baselines.get(row.source_id, {}), lookbacks, now) for row in rows]
 
     @staticmethod
-    def _response(row: ClaudeAccount, baselines: Mapping[WindowName, Reading], now: datetime) -> ClaudeAccountResponse:
+    def _response(
+        row: ClaudeAccount, baselines: Mapping[WindowName, Reading], lookbacks: RecentLookbacks, now: datetime
+    ) -> ClaudeAccountResponse:
         status = row.credential_status
         if status == "ready" and row.identity_fingerprint is None:
             status = "unverified"
@@ -621,7 +623,7 @@ class ClaudeService:
             expires_at=row.expires_at.replace(tzinfo=UTC),
             extra_usage_enabled=extra_usage_enabled(state),
             state=state,
-            quota=with_recent_usage(quota_status(state, now=now.replace(tzinfo=UTC)), baselines, now),
+            quota=with_recent_usage(quota_status(state, now=now.replace(tzinfo=UTC)), baselines, lookbacks, now),
         )
 
 

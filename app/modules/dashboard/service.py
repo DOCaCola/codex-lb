@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
 from app.core.crypto import TokenEncryptor
-from app.core.usage.recent import LONG_LOOKBACK, SHORT_LOOKBACK
+from app.core.usage.recent import RecentLookbacks
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import DashboardSettings, UsageHistory
-from app.modules.accounts.mappers import build_account_summaries
+from app.modules.accounts.mappers import RecentUsageBaselines, build_account_summaries
 from app.modules.dashboard.antigravity_pace import build_antigravity_weekly_pace
 from app.modules.dashboard.builders import (
     build_dashboard_overview_summary,
@@ -101,6 +101,7 @@ class DashboardService:
         self,
         timeframe_key: DashboardOverviewTimeframeKey = "7d",
         *,
+        recent_lookbacks: RecentLookbacks,
         redact_identity: bool = False,
     ) -> DashboardOverviewResponse:
         now = utcnow()
@@ -111,11 +112,16 @@ class DashboardService:
         secondary_usage = await self._repo.latest_usage_by_account("secondary")
         monthly_usage = await self._repo.latest_usage_by_account("monthly")
         limit_warmups_by_account = await self._repo.latest_limit_warmups_by_account(account_ids)
-        recent_baselines = {
-            (window, lookback): await self._repo.latest_usage_by_account(window, at_or_before=now - lookback)
-            for window in ("primary", "secondary")
-            for lookback in (SHORT_LOOKBACK, LONG_LOOKBACK)
-        }
+        # The window name does not fix the window length (a weekly-only account reports its week as primary),
+        # so each stored window gets a baseline for both lookbacks.
+        recent_baselines = RecentUsageBaselines(
+            lookbacks=recent_lookbacks,
+            readings={
+                (window, lookback): await self._repo.latest_usage_by_account(window, at_or_before=now - lookback)
+                for window in ("primary", "secondary")
+                for lookback in dict.fromkeys((recent_lookbacks.short, recent_lookbacks.long))
+            },
+        )
 
         account_summaries = sorted(
             build_account_summaries(

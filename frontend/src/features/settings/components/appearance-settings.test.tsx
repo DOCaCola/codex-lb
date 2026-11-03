@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -36,7 +36,12 @@ describe("AppearanceSettings", () => {
     useTimeFormatStore.setState({ timeFormat: "12h" });
     useDateDisplayFormatStore.setState({ dateDisplayFormat: "default" });
     useAccountQuotaDisplayStore.setState({ quotaDisplay: "both" });
-    useDashboardPreferencesStore.setState({ refreshSeconds: 15 });
+    useDashboardPreferencesStore.setState({
+      refreshSeconds: 15,
+      recentUsageEnabled: true,
+      recentShortMinutes: 60,
+      recentLongPeriod: 1440,
+    });
   });
 
   it("updates the dashboard refresh cadence", async () => {
@@ -67,13 +72,54 @@ describe("AppearanceSettings", () => {
     expect(window.localStorage.getItem("codex-lb-dashboard-recent-usage")).toBe("false");
   });
 
+  it("selects the recent usage periods for 5h and weekly limits", async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSettings />);
+
+    const fiveHour = screen.getByRole("group", { name: "Recent usage period for 5h limits" });
+    const weekly = screen.getByRole("group", { name: "Recent usage period for weekly limits" });
+    expect(within(fiveHour).getAllByRole("button").map((button) => button.textContent)).toEqual(["15m", "30m", "1h"]);
+    expect(within(weekly).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "1h",
+      "2h",
+      "4h",
+      "6h",
+      "12h",
+      "24h",
+      "Today",
+    ]);
+    expect(within(fiveHour).getByRole("button", { name: "1h" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(weekly).getByRole("button", { name: "24h" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(within(fiveHour).getByRole("button", { name: "15m" }));
+    await user.click(within(weekly).getByRole("button", { name: "Today" }));
+
+    expect(useDashboardPreferencesStore.getState().recentShortMinutes).toBe(15);
+    expect(useDashboardPreferencesStore.getState().recentLongPeriod).toBe("today");
+    expect(window.localStorage.getItem("codex-lb-dashboard-recent-short-minutes")).toBe("15");
+    expect(window.localStorage.getItem("codex-lb-dashboard-recent-long-period")).toBe("today");
+    expect(within(weekly).getByRole("button", { name: "Today" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("disables the period pickers while recent usage is hidden", () => {
+    useDashboardPreferencesStore.setState({ recentUsageEnabled: false });
+    render(<AppearanceSettings />);
+
+    for (const name of ["Recent usage period for 5h limits", "Recent usage period for weekly limits"]) {
+      for (const button of within(screen.getByRole("group", { name })).getAllByRole("button")) {
+        expect(button).toBeDisabled();
+      }
+    }
+  });
+
   it("exposes selected state for the time-format toggle", async () => {
     const user = userEvent.setup();
 
     render(<AppearanceSettings />);
 
-    const button12h = screen.getByRole("button", { name: /12h/i });
-    const button24h = screen.getByRole("button", { name: /24h/i });
+    const timeFormat = screen.getByRole("group", { name: "Time format" });
+    const button12h = within(timeFormat).getByRole("button", { name: /12h/i });
+    const button24h = within(timeFormat).getByRole("button", { name: /24h/i });
 
     expect(button12h).toHaveAttribute("aria-pressed", "true");
     expect(button24h).toHaveAttribute("aria-pressed", "false");

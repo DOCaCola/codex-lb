@@ -15,7 +15,7 @@ const usage = {
 
 describe("dashboard recent usage slice", () => {
   beforeEach(() => {
-    useDashboardPreferencesStore.setState({ recentUsageEnabled: true });
+    useDashboardPreferencesStore.setState({ recentUsageEnabled: true, recentShortMinutes: 60, recentLongPeriod: 1440 });
   });
 
   it("tints the share used in the last hour right after the remaining fill", () => {
@@ -26,6 +26,24 @@ describe("dashboard recent usage slice", () => {
     expect(slices[0]).toHaveStyle({ left: "calc(60% - 3px)", width: "calc(12.5% + 3px)" });
     expect(slices[0].parentElement).toHaveAttribute("title", "Used 12.5% in the last hour");
     expect(within(card).getByText("Used 12.5% in the last hour")).toHaveClass("sr-only");
+  });
+
+  it("names the chosen recent usage periods", () => {
+    useDashboardPreferencesStore.setState({ recentShortMinutes: 30, recentLongPeriod: 360 });
+    renderDashboardAccounts({
+      accounts: [createAccountSummary({ usage: { ...usage, secondaryRemainingPercent: 70, secondaryRecentUsedPercent: 4 } })],
+    });
+    const card = screen.getByTestId("dashboard-account-card");
+    expect(within(card).getByText("Used 12.5% in the last 30 minutes")).toBeInTheDocument();
+    expect(within(card).getByText("Used 4% in the last 6 hours")).toBeInTheDocument();
+  });
+
+  it("names the weekly period since local midnight as today", () => {
+    useDashboardPreferencesStore.setState({ recentLongPeriod: "today" });
+    renderDashboardAccounts({
+      accounts: [createAccountSummary({ usage: { ...usage, secondaryRemainingPercent: 70, secondaryRecentUsedPercent: 4 } })],
+    });
+    expect(within(screen.getByTestId("dashboard-account-card")).getByText("Used 4% today")).toBeInTheDocument();
   });
 
   it("caps the slice at the used part of the bar", () => {

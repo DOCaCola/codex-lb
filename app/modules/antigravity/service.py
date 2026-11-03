@@ -14,7 +14,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from app.core.crypto import TokenEncryptor
-from app.core.usage.recent import Reading
+from app.core.usage.recent import Reading, RecentLookbacks
 from app.core.utils.time import utcnow
 from app.db.models import (
     AccountRoutingPolicy,
@@ -126,22 +126,25 @@ class AntigravityService:
     async def _client(self) -> CloudCodeClient:
         return CloudCodeClient(await AntigravityVersionService(self.repository.session).snapshot())
 
-    async def list_accounts(self) -> list[AntigravityAccountResponse]:
-        return await self._responses(await self.repository.list_accounts())
+    async def list_accounts(self, lookbacks: RecentLookbacks) -> list[AntigravityAccountResponse]:
+        return await self._responses(await self.repository.list_accounts(), lookbacks)
 
     async def response(self, source_id: str) -> AntigravityAccountResponse:
-        return (await self._responses([await self._get(source_id)]))[0]
+        return (await self._responses([await self._get(source_id)], RecentLookbacks()))[0]
 
-    async def _responses(self, rows: list[AntigravityAccount]) -> list[AntigravityAccountResponse]:
+    async def _responses(
+        self, rows: list[AntigravityAccount], lookbacks: RecentLookbacks
+    ) -> list[AntigravityAccountResponse]:
         now = utcnow()
         source_ids = [row.source_id for row in rows]
         cooldowns = await self.repository.cooldowns(source_ids, now.replace(tzinfo=UTC))
-        baselines = await self.repository.recent_quota_baselines(source_ids, now)
+        baselines = await self.repository.recent_quota_baselines(source_ids, now, lookbacks)
         return [
             self._response(
                 row,
                 [item for item in cooldowns if item.source_id == row.source_id],
                 baselines.get(row.source_id, {}),
+                lookbacks,
                 now,
             )
             for row in rows
@@ -443,6 +446,7 @@ class AntigravityService:
         row: AntigravityAccount,
         cooldowns: list[AntigravityCooldown],
         baselines: Mapping[tuple[QuotaFamily, QuotaWindowName], Reading],
+        lookbacks: RecentLookbacks,
         now: datetime,
     ) -> AntigravityAccountResponse:
         state = AccountState.model_validate_json(row.state_json)
@@ -464,7 +468,7 @@ class AntigravityService:
             plan_type=plan,
             quota_weight=quota_weight(plan),
             state=state,
-            windows=with_recent_usage(window_status(state, aware_now), baselines, now),
+            windows=with_recent_usage(window_status(state, aware_now), baselines, lookbacks, now),
             quota_fresh=quota_fresh(state, aware_now),
             cooldowns=[
                 Cooldown(scope=item.scope, until=item.until.replace(tzinfo=UTC), reason=item.reason)

@@ -1,4 +1,5 @@
 import { Play, RotateCcw, ShieldCheck, Users } from "lucide-react";
+import type { TFunction } from "i18next";
 import type { CSSProperties, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -24,7 +25,7 @@ import {
 import { ExtraUsageBadge } from "@/features/claude/account-display";
 import { accountSubscriptionCredits } from "@/features/dashboard/account-credit-display";
 import type { AccountSummary } from "@/features/dashboard/schemas";
-import { useDashboardPreferencesStore } from "@/hooks/use-dashboard-preferences";
+import { useDashboardPreferencesStore, useRecentLookbacks } from "@/hooks/use-dashboard-preferences";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { cn } from "@/lib/utils";
@@ -82,17 +83,27 @@ function limitLabel(summary: ProviderSummary, limit: LimitSummary): string {
 /** Tucks the recent slice under the fill's rounded end so the two read as one bar. */
 const RECENT_OVERLAP_PX = 3;
 
+function recentPeriodLabel(t: TFunction, minutes: number): string {
+  return minutes % 60 === 0
+    ? t("dashboard.accounts.recentPeriod.hours", { count: minutes / 60 })
+    : t("dashboard.accounts.recentPeriod.minutes", { count: minutes });
+}
+
 function LimitFill({ limit, color }: { limit: LimitSummary; color: string | undefined }) {
   const { t } = useTranslation();
   const recentUsageEnabled = useDashboardPreferencesStore((s) => s.recentUsageEnabled);
+  const { recentShortMinutes, recentLongPeriod } = useRecentLookbacks();
   const percent = limit.percentLeft;
   const recent = recentUsageEnabled && percent !== null ? limit.recent : null;
   const recentWidth = recent && percent !== null ? Math.min(recent.usedPercent, 100 - percent) : 0;
-  const recentLabel = recent
-    ? t(recent.period === "hour" ? "dashboard.accounts.recentHour" : "dashboard.accounts.recentDay", {
-        value: formatPercentNullable(recent.usedPercent, 1),
-      })
-    : undefined;
+  const recentPeriod = recent?.period === "short" ? recentShortMinutes : recentLongPeriod;
+  const recentValue = recent ? formatPercentNullable(recent.usedPercent, 1) : null;
+  const recentLabel =
+    recentValue === null
+      ? undefined
+      : recentPeriod === "today"
+        ? t("dashboard.accounts.recentToday", { value: recentValue })
+        : t("dashboard.accounts.recentUsage", { value: recentValue, period: recentPeriodLabel(t, recentPeriod) });
   return (
     <div className="relative h-[5px] rounded-full bg-muted" title={recentLabel}>
       {recentWidth > 0 && percent !== null ? (

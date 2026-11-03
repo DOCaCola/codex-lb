@@ -9,6 +9,7 @@
 
 - [x] 2.1 Faint account-colour slice after the remaining fill, with tooltip
 - [x] 2.2 Appearance toggle (browser-local, default on)
+- [x] 2.3 Period choices (browser-local): 5h 15m/30m/1h, weekly 1h–24h or Today, sent as request parameters
 
 ## 3. Verification
 

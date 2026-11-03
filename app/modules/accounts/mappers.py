@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.core import usage as usage_core
@@ -9,7 +10,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.usage.pacing import scheduled_remaining_series
 from app.core.usage.quota import account_credit_policy, apply_usage_quota
-from app.core.usage.recent import Reading, recent_lookback, recent_used_percent
+from app.core.usage.recent import Reading, RecentLookbacks, recent_used_percent
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.masking import mask_email
@@ -36,8 +37,13 @@ from app.modules.usage.mappers import usage_history_to_window_row
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
 _RESET_CREDITS_INELIGIBLE_STATUSES = frozenset({AccountStatus.PAUSED, AccountStatus.DEACTIVATED})
 
-RecentUsageBaselines = Mapping[tuple[str, timedelta], Mapping[str, UsageHistory]]
-"""Each account's newest reading at the start of a recent-usage lookback, keyed by (window, lookback)."""
+
+@dataclass(frozen=True, slots=True)
+class RecentUsageBaselines:
+    """Each account's newest reading at the start of a recent-usage lookback, keyed by (window, lookback)."""
+
+    lookbacks: RecentLookbacks
+    readings: Mapping[tuple[str, timedelta], Mapping[str, UsageHistory]]
 
 
 def build_account_summaries(
@@ -522,7 +528,8 @@ def _recent_used_percent(
     if baselines is None or entry is None or entry.window_minutes is None:
         return None
     window = timedelta(minutes=entry.window_minutes)
-    baseline = baselines.get((entry.window or "primary", recent_lookback(window)), {}).get(entry.account_id)
+    lookback = baselines.lookbacks.for_window(window)
+    baseline = baselines.readings.get((entry.window or "primary", lookback), {}).get(entry.account_id)
     return recent_used_percent(
         used_percent=entry.used_percent,
         resets_at=(
@@ -531,6 +538,7 @@ def _recent_used_percent(
             else None
         ),
         window=window,
+        lookback=lookback,
         baseline=Reading(baseline.recorded_at, baseline.used_percent) if baseline is not None else None,
         now=now,
     )

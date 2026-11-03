@@ -9,6 +9,7 @@ from app.core.auth.dependencies import (
     validate_dashboard_session,
 )
 from app.core.openai.model_registry import get_model_registry, is_public_model
+from app.core.usage.recent import RecentLookbacks, recent_lookbacks_query
 from app.db.session import detach_session_objects, get_background_session
 from app.dependencies import DashboardContext, get_dashboard_context
 from app.modules.dashboard.schemas import (
@@ -33,11 +34,13 @@ router = APIRouter(
 )
 async def get_overview(
     timeframe: DashboardOverviewTimeframeKey = Query("7d"),
+    recent_lookbacks: RecentLookbacks = Depends(recent_lookbacks_query),
     principal: DashboardPrincipal = Depends(validate_dashboard_session),
     context: DashboardContext = Depends(get_dashboard_context),
 ) -> DashboardOverviewResponse:
     return await context.service.get_overview(
         timeframe,
+        recent_lookbacks=recent_lookbacks,
         redact_identity=not principal.has(Permission.ACCOUNTS_WRITE),
     )
 

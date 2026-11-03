@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appendRecentLookbacks, type RecentLookbacks } from "@/hooks/use-dashboard-preferences";
 import { ApiError, del, get, patch, post } from "@/lib/api-client";
 
 export const SelectionSchema = z.object({
@@ -95,8 +96,8 @@ const OAuthStartedSchema = z.object({
   expiresAt: z.string(),
 });
 export type OAuthStarted = z.infer<typeof OAuthStartedSchema>;
-export const listAccounts = () =>
-  get(path, z.object({ accounts: z.array(ClaudeAccountSchema) }));
+export const listAccounts = (recent: RecentLookbacks) =>
+  get(`${path}?${appendRecentLookbacks(new URLSearchParams(), recent).toString()}`, z.object({ accounts: z.array(ClaudeAccountSchema) }));
 export const importAccount = (body: {
   name: string;
   credentials: unknown;

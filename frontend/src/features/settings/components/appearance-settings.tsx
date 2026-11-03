@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { Switch } from "@/components/ui/switch";
 import { useAccountQuotaDisplayStore, type AccountQuotaDisplayPreference } from "@/hooks/use-account-quota-display";
 import {
+  RECENT_LONG_PERIODS,
+  RECENT_SHORT_MINUTES,
   useDashboardPreferencesStore,
   type DashboardRefreshSeconds,
 } from "@/hooks/use-dashboard-preferences";
@@ -29,6 +31,58 @@ const DATE_FORMAT_OPTIONS: { value: DateDisplayFormat; labelKey: string }[] = [
 ];
 
 const REFRESH_OPTIONS: DashboardRefreshSeconds[] = [5, 15, 30, 60];
+
+function PeriodPicker<T extends number | "today">({
+  label,
+  ariaLabel,
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  ariaLabel: string;
+  options: readonly T[];
+  value: T;
+  disabled: boolean;
+  onChange: (minutes: T) => void;
+}) {
+  const { t } = useTranslation();
+  const optionLabel = (period: number | "today") =>
+    period === "today"
+      ? t("settings.appearance.recentPeriod.today")
+      : period % 60 === 0
+        ? t("settings.appearance.recentPeriod.hours", { hours: period / 60 })
+        : t("settings.appearance.recentPeriod.minutes", { minutes: period });
+  return (
+    <div className="flex items-center justify-between gap-3 sm:justify-end">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <div
+        role="group"
+        aria-label={ariaLabel}
+        className={cn("flex items-center gap-1 rounded-lg border border-border/50 bg-muted/40 p-0.5", disabled && "opacity-50")}
+      >
+        {options.map((period) => (
+          <button
+            key={period}
+            type="button"
+            disabled={disabled}
+            aria-pressed={value === period}
+            onClick={() => onChange(period)}
+            className={cn(
+              "rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors duration-200 disabled:cursor-not-allowed",
+              value === period
+                ? "bg-background text-foreground shadow-[var(--shadow-xs)]"
+                : "text-muted-foreground enabled:hover:text-foreground",
+            )}
+          >
+            {optionLabel(period)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const QUOTA_DISPLAY_OPTIONS: {
   value: AccountQuotaDisplayPreference;
@@ -64,6 +118,10 @@ export function AppearanceSettings() {
   const setAccountBurnrateEnabled = useDashboardPreferencesStore((s) => s.setAccountBurnrateEnabled);
   const recentUsageEnabled = useDashboardPreferencesStore((s) => s.recentUsageEnabled);
   const setRecentUsageEnabled = useDashboardPreferencesStore((s) => s.setRecentUsageEnabled);
+  const recentShortMinutes = useDashboardPreferencesStore((s) => s.recentShortMinutes);
+  const setRecentShortMinutes = useDashboardPreferencesStore((s) => s.setRecentShortMinutes);
+  const recentLongPeriod = useDashboardPreferencesStore((s) => s.recentLongPeriod);
+  const setRecentLongPeriod = useDashboardPreferencesStore((s) => s.setRecentLongPeriod);
   const dateDisplayFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
   const setDateDisplayFormat = useDateDisplayFormatStore((s) => s.setDateDisplayFormat);
   const refreshSeconds = useDashboardPreferencesStore((s) => s.refreshSeconds);
@@ -116,7 +174,11 @@ export function AppearanceSettings() {
               <p className="text-sm font-medium">{t("settings.appearance.timeFormat.label")}</p>
               <p className="text-xs text-muted-foreground">{t("settings.appearance.timeFormat.description")}</p>
             </div>
-            <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-muted/40 p-0.5">
+            <div
+              role="group"
+              aria-label={t("settings.appearance.timeFormat.label")}
+              className="flex items-center gap-1 rounded-lg border border-border/50 bg-muted/40 p-0.5"
+            >
               {TIME_FORMAT_OPTIONS.map(({ value, labelKey }) => (
                 <button
                   key={value}
@@ -234,6 +296,31 @@ export function AppearanceSettings() {
               checked={recentUsageEnabled}
               onCheckedChange={setRecentUsageEnabled}
             />
+          </div>
+
+          <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">{t("settings.appearance.recentPeriod.label")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.appearance.recentPeriod.description")}</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <PeriodPicker
+                label={t("settings.appearance.recentPeriod.fiveHour")}
+                ariaLabel={t("settings.appearance.recentPeriod.fiveHourAriaLabel")}
+                options={RECENT_SHORT_MINUTES}
+                value={recentShortMinutes}
+                disabled={!recentUsageEnabled}
+                onChange={setRecentShortMinutes}
+              />
+              <PeriodPicker
+                label={t("settings.appearance.recentPeriod.weekly")}
+                ariaLabel={t("settings.appearance.recentPeriod.weeklyAriaLabel")}
+                options={RECENT_LONG_PERIODS}
+                value={recentLongPeriod}
+                disabled={!recentUsageEnabled}
+                onChange={setRecentLongPeriod}
+              />
+            </div>
           </div>
         </div>
       </div>

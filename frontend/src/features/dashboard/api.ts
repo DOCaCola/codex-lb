@@ -1,4 +1,5 @@
 import { get } from "@/lib/api-client";
+import { appendRecentLookbacks, type RecentLookbacks } from "@/hooks/use-dashboard-preferences";
 
 import {
   ConversationDetailsSchema,
@@ -43,6 +44,7 @@ export type RequestLogFacetFilters = {
 
 export type DashboardOverviewParams = {
   timeframe?: OverviewTimeframe;
+  recent: RecentLookbacks;
 };
 
 function appendMany(params: URLSearchParams, key: string, values?: string[]): void {
@@ -56,9 +58,10 @@ function appendMany(params: URLSearchParams, key: string, values?: string[]): vo
   }
 }
 
-export function getDashboardOverview(params: DashboardOverviewParams = {}) {
+export function getDashboardOverview(params: DashboardOverviewParams) {
   const query = new URLSearchParams();
   query.set("timeframe", params.timeframe ?? DEFAULT_OVERVIEW_TIMEFRAME);
+  appendRecentLookbacks(query, params.recent);
   return get(`${DASHBOARD_PATH}/overview?${query.toString()}`, DashboardOverviewSchema);
 }
 

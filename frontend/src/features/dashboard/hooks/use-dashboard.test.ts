@@ -27,7 +27,7 @@ function createWrapper(queryClient: QueryClient) {
 
 describe("useDashboard", () => {
   it("loads dashboard overview via MSW and configures the selected refetch cadence", async () => {
-    useDashboardPreferencesStore.setState({ refreshSeconds: 15 });
+    useDashboardPreferencesStore.setState({ refreshSeconds: 15, recentShortMinutes: 60, recentLongPeriod: 1440 });
     const queryClient = createTestQueryClient();
     const { result } = renderHook(() => useDashboard("30d"), {
       wrapper: createWrapper(queryClient),
@@ -38,17 +38,20 @@ describe("useDashboard", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.accounts.length).toBeGreaterThan(0);
 
-    const query = queryClient.getQueryCache().find({ queryKey: ["dashboard", "overview", "30d"] });
+    const query = queryClient.getQueryCache().find({
+      queryKey: ["dashboard", "overview", "30d", { recentShortMinutes: 60, recentLongPeriod: 1440 }],
+    });
     const refetchInterval = (query?.options as { refetchInterval?: unknown } | undefined)
       ?.refetchInterval;
     expect(refetchInterval).toBe(15_000);
   });
 
-  it("passes timeframe to the overview endpoint", async () => {
-    let requestedTimeframe: string | null = null;
+  it("passes timeframe and recent usage periods to the overview endpoint", async () => {
+    useDashboardPreferencesStore.setState({ recentShortMinutes: 30, recentLongPeriod: 720 });
+    let requestedParams: URLSearchParams | null = null;
     server.use(
       http.get("/api/dashboard/overview", ({ request }) => {
-        requestedTimeframe = new URL(request.url).searchParams.get("timeframe");
+        requestedParams = new URL(request.url).searchParams;
         return HttpResponse.json({
           lastSyncAt: "2026-01-01T00:00:00Z",
           timeframe: { key: "1d", windowMinutes: 1440, bucketSeconds: 3600, bucketCount: 24 },
@@ -83,7 +86,11 @@ describe("useDashboard", () => {
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(requestedTimeframe).toBe("1d");
+    const params = requestedParams as URLSearchParams | null;
+    expect(params?.get("timeframe")).toBe("1d");
+    expect(params?.get("recentShortMinutes")).toBe("30");
+    expect(params?.get("recentLongMinutes")).toBe("720");
+    expect(params?.has("recentLongSince")).toBe(false);
   });
 
   it("applies the selected cadence to projection polling", () => {
