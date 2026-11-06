@@ -28,9 +28,46 @@ _SEEDED_BUILDS = (
     ),
 )
 
+_SETTINGS_COLUMN = "antigravity_single_account_id"
+_TABLES = (
+    "antigravity_accounts",
+    "antigravity_oauth_flows",
+    "antigravity_client_builds",
+    "antigravity_version_state",
+    "antigravity_quota_history",
+    "antigravity_cooldowns",
+    "antigravity_session_owners",
+)
+
+
+def _settings_has_column() -> bool:
+    columns = sa.inspect(op.get_bind()).get_columns("dashboard_settings")
+    return _SETTINGS_COLUMN in {str(column["name"]) for column in columns}
+
 
 def upgrade() -> None:
-    op.add_column("dashboard_settings", sa.Column("antigravity_single_account_id", sa.String(), nullable=True))
+    if not _settings_has_column():
+        op.add_column("dashboard_settings", sa.Column(_SETTINGS_COLUMN, sa.String(), nullable=True))
+    existing = set(sa.inspect(op.get_bind()).get_table_names())
+    if "antigravity_accounts" not in existing:
+        _create_accounts()
+    if "antigravity_oauth_flows" not in existing:
+        _create_oauth_flows()
+    if "antigravity_client_builds" not in existing:
+        # Seed the starting identity only with the table it belongs to, so a
+        # replay leaves later verified builds and their state untouched.
+        _seed_builds(_create_client_builds())
+    if "antigravity_version_state" not in existing:
+        _create_version_state()
+    if "antigravity_quota_history" not in existing:
+        _create_quota_history()
+    if "antigravity_cooldowns" not in existing:
+        _create_cooldowns()
+    if "antigravity_session_owners" not in existing:
+        _create_session_owners()
+
+
+def _create_accounts() -> None:
     op.create_table(
         "antigravity_accounts",
         sa.Column("source_id", sa.String(), sa.ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True),
@@ -51,6 +88,9 @@ def upgrade() -> None:
         sa.Column("last_selected_at", sa.DateTime(), nullable=True),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
     )
+
+
+def _create_oauth_flows() -> None:
     op.create_table(
         "antigravity_oauth_flows",
         sa.Column("state_hash", sa.String(), primary_key=True),
@@ -64,7 +104,10 @@ def upgrade() -> None:
         ),
         sa.Column("expires_at", sa.DateTime(), nullable=False),
     )
-    builds = op.create_table(
+
+
+def _create_client_builds() -> sa.Table:
+    return op.create_table(
         "antigravity_client_builds",
         sa.Column("sha512", sa.String(), primary_key=True),
         sa.Column("platform", sa.String(), nullable=False, index=True),
@@ -74,6 +117,9 @@ def upgrade() -> None:
         sa.Column("archive_url", sa.String(), nullable=True),
         sa.Column("verified_at", sa.DateTime(), nullable=False),
     )
+
+
+def _create_version_state() -> None:
     op.create_table(
         "antigravity_version_state",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -84,6 +130,9 @@ def upgrade() -> None:
         sa.Column("retry_at", sa.DateTime(), nullable=True),
         sa.Column("error", sa.String(), nullable=True),
     )
+
+
+def _create_quota_history() -> None:
     op.create_table(
         "antigravity_quota_history",
         sa.Column(
@@ -98,6 +147,9 @@ def upgrade() -> None:
         sa.Column("used_percent", sa.Float(), nullable=False),
         sa.Column("resets_at", sa.DateTime(), nullable=True),
     )
+
+
+def _create_cooldowns() -> None:
     op.create_table(
         "antigravity_cooldowns",
         sa.Column(
@@ -110,6 +162,9 @@ def upgrade() -> None:
         sa.Column("until", sa.DateTime(), nullable=False),
         sa.Column("reason", sa.String(), nullable=False),
     )
+
+
+def _create_session_owners() -> None:
     op.create_table(
         "antigravity_session_owners",
         sa.Column("scope_hash", sa.String(), primary_key=True),
@@ -121,6 +176,9 @@ def upgrade() -> None:
         ),
         sa.Column("expires_at", sa.DateTime(), nullable=False, index=True),
     )
+
+
+def _seed_builds(builds: sa.Table) -> None:
     verified_at = datetime(2026, 10, 29, 4, 0, 0)
     op.bulk_insert(
         builds,
@@ -140,15 +198,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in (
-        "antigravity_session_owners",
-        "antigravity_cooldowns",
-        "antigravity_quota_history",
-        "antigravity_version_state",
-        "antigravity_client_builds",
-        "antigravity_oauth_flows",
-        "antigravity_accounts",
-    ):
-        op.drop_table(table)
-    with op.batch_alter_table("dashboard_settings") as batch:
-        batch.drop_column("antigravity_single_account_id")
+    existing = set(sa.inspect(op.get_bind()).get_table_names())
+    for table in reversed(_TABLES):
+        if table in existing:
+            op.drop_table(table)
+    if _settings_has_column():
+        with op.batch_alter_table("dashboard_settings") as batch:
+            batch.drop_column(_SETTINGS_COLUMN)
