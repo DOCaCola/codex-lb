@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Literal
 
@@ -9,7 +10,6 @@ from app.core.metrics.prometheus import (
     image_request_duration_seconds,
     image_requests_total,
 )
-from app.core.openai.images import is_supported_image_model
 
 logger = logging.getLogger("app.modules.proxy.api")
 
@@ -17,12 +17,16 @@ ImageRoute = Literal["generations", "edits"]
 IMAGE_ROUTE_STARTED_AT_STATE = "_codex_lb_image_route_started_at"
 IMAGE_ROUTE_MODEL_STATE = "_codex_lb_image_route_model"
 IMAGE_ROUTE_STREAM_STATE = "_codex_lb_image_route_stream"
+# OpenAI image model IDs: family, optional variant and optional dated
+# snapshot (for example ``gpt-image-2.6-flare-2026-11-04``). The shape keeps
+# the metric label bounded while new releases need no code change.
+_IMAGE_MODEL_LABEL = re.compile(r"gpt-image-\d{1,2}(\.\d{1,2})?(-[a-z]{1,16})?(-\d{4}-\d{2}-\d{2})?")
 
 
 def _bounded_model_label(model: str | None) -> str:
     if model is None or not model:
         return "unknown"
-    if is_supported_image_model(model):
+    if _IMAGE_MODEL_LABEL.fullmatch(model):
         return model
     return "invalid"
 

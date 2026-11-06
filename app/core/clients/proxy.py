@@ -25,6 +25,7 @@ from typing import (
     Awaitable,
     Callable,
     Final,
+    Literal,
     Mapping,
     NoReturn,
     Protocol,
@@ -5737,7 +5738,10 @@ _NATIVE_IMAGE_RESPONSE_MAX_BYTES = 100 * 1024 * 1024
 
 
 async def _native_image_response_body(response: Any) -> bytes:
-    """Bound native image buffering, including routed HTTP responses."""
+    """Bound native image buffering, including routed HTTP responses.
+
+    The caller owns releasing the response.
+    """
 
     def reject_oversize() -> NoReturn:
         raise ProxyResponseError(
@@ -5756,9 +5760,208 @@ async def _native_image_response_body(response: Any) -> bytes:
             if len(body) + len(chunk) > _NATIVE_IMAGE_RESPONSE_MAX_BYTES:
                 reject_oversize()
             body.extend(chunk)
-        return bytes(body)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise ProxyResponseError(
+            502,
+            openai_error("upstream_unavailable", str(exc) or "Native image response read failed"),
+            failure_phase="body_read",
+        ) from exc
+    return bytes(body)
+
+
+@dataclass(frozen=True)
+class NativeImageStream:
+    """A successful native image event stream.
+
+    ``chunks`` owns the upstream connection: exhausting or closing it releases
+    the response, its HTTP client and any circuit-breaker scope.
+    """
+
+    status_code: int
+    headers: Mapping[str, str]
+    chunks: AsyncGenerator[bytes, None]
+
+
+def _is_event_stream(headers: Mapping[str, str]) -> bool:
+    content_type = next((value for key, value in headers.items() if key.lower() == "content-type"), "")
+    return content_type.split(";", 1)[0].strip().lower() == "text/event-stream"
+
+
+async def _native_image_stream_chunks(
+    response: Any,
+    resources: contextlib.AsyncExitStack,
+) -> AsyncGenerator[bytes, None]:
+    async with resources:
+        if isinstance(response.content, bytes):
+            yield response.content
+            return
+        try:
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                yield chunk
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise ProxyResponseError(
+                502,
+                openai_error("upstream_unavailable", str(exc) or "Native image stream read failed"),
+                failure_phase="body_read",
+            ) from exc
+
+
+async def native_image_request(
+    operation: Literal["generations", "edits"],
+    *,
+    payload: bytes,
+    headers: Mapping[str, str],
+    access_token: str,
+    account_id: str | None,
+    timeout_seconds: float,
+    base_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
+    route: ResolvedUpstreamRoute | None = None,
+    codex_client: CodexClient | None = None,
+    route_trace: UpstreamProxyRouteTrace | None = None,
+    allow_direct_egress: bool = True,
+) -> CodexControlResponse | NativeImageStream:
+    """POST one native ChatGPT image operation without following redirects.
+
+    A successful ``text/event-stream`` response is returned as an open
+    stream; every other response is buffered up to 100 MiB. Upstream error
+    statuses are returned, never raised.
+    """
+    settings = with_dashboard_overrides(get_settings())
+    upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
+    url = f"{upstream_base}/codex/images/{operation}"
+    kind = f"codex_control_images_{operation}"
+    upstream_headers = _build_upstream_headers(headers, access_token, account_id, accept=headers.get("accept", "*/*"))
+    _replace_header_preserving_position(
+        upstream_headers, "content-type", "application/json", fallback_name="Content-Type"
+    )
+    total_timeout = max(0.001, timeout_seconds)
+    connect_timeout = min(
+        _effective_stream_timeout(settings.upstream_connect_timeout_seconds, "connect"),
+        total_timeout,
+    )
+    timeout = aiohttp.ClientTimeout(total=total_timeout, sock_connect=connect_timeout, sock_read=total_timeout)
+    require_route_or_direct_egress_opt_in(
+        route=route,
+        allow_direct_egress=allow_direct_egress,
+        operation=f"Codex control images/{operation}",
+    )
+    if route is None and route_trace is not None:
+        route_trace.record_direct()
+    started_at = time.monotonic()
+    status_code: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    # Prompts and image bytes never enter upstream payload traces.
+    _maybe_log_upstream_request_start(
+        kind=kind,
+        url=url,
+        headers=upstream_headers,
+        method="POST",
+        payload_summary=_summarize_json_payload({}),
+    )
+    resources = contextlib.AsyncExitStack()
+    try:
+        if route is not None:
+            active_codex_client = codex_client
+            if active_codex_client is None:
+                active_codex_client = CodexClient(create_codex_session())
+                resources.push_async_callback(active_codex_client.close)
+            try:
+                result = await active_codex_client.request_with_route_metadata(
+                    "POST",
+                    url,
+                    route=route,
+                    data=payload,
+                    headers=upstream_headers,
+                    timeout=total_timeout,
+                    allow_redirects=False,
+                    buffer_response=False,
+                )
+            except CodexTransportError as exc:
+                raise ProxyResponseError(
+                    502,
+                    openai_error(
+                        "upstream_unavailable",
+                        _codex_route_transport_error_message(
+                            route=route,
+                            route_trace=route_trace,
+                            operation=f"images/{operation}",
+                            exc=exc,
+                        ),
+                    ),
+                    failure_phase=exc.failure_phase or "connect",
+                ) from exc
+            response: Any = result.response
+            if route_trace is not None:
+                route_trace.record(route=result.route, fallback_used=result.fallback_used)
+            resources.push_async_callback(release_codex_response, response)
+        else:
+            client_session = session
+            if client_session is None:
+                lease = await acquire_http_client()
+                resources.push_async_callback(lease.close)
+                client_session = lease.client.session
+            response = await resources.enter_async_context(
+                _service_circuit_breaker_context(
+                    client_session.request(
+                        "POST",
+                        url,
+                        data=payload,
+                        headers=upstream_headers,
+                        timeout=timeout,
+                        allow_redirects=False,
+                    ),
+                    settings=settings,
+                    account_id=account_id,
+                )
+            )
+        status_code = _codex_response_status(response)
+        response_headers = _codex_response_headers(response)
+        if 200 <= status_code < 300 and _is_event_stream(response_headers):
+            return NativeImageStream(
+                status_code=status_code,
+                headers=response_headers,
+                chunks=_native_image_stream_chunks(response, resources.pop_all()),
+            )
+        return CodexControlResponse(
+            status_code=status_code,
+            body=await _native_image_response_body(response),
+            headers=response_headers,
+        )
+    except ProxyResponseError as exc:
+        error_code, error_message = _error_details_from_envelope(exc.payload)
+        raise
+    except CircuitBreakerOpenError as exc:
+        error_code = "upstream_unavailable"
+        error_message = "Upstream circuit breaker is open"
+        raise ProxyResponseError(
+            503,
+            openai_error("upstream_unavailable", error_message),
+            failure_phase="connect",
+        ) from exc
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        error_code = "upstream_unavailable"
+        error_message = str(exc) or "Request to upstream timed out"
+        raise ProxyResponseError(
+            502,
+            openai_error("upstream_unavailable", error_message),
+            failure_phase="connect",
+        ) from exc
     finally:
-        response.release()
+        try:
+            await resources.aclose()
+        finally:
+            _maybe_log_upstream_request_complete(
+                kind=kind,
+                url=url,
+                headers=upstream_headers,
+                method="POST",
+                started_at=started_at,
+                status_code=status_code,
+                error_code=error_code,
+                error_message=error_message,
+            )
 
 
 async def codex_control_request(
@@ -5782,7 +5985,6 @@ async def codex_control_request(
     settings = with_dashboard_overrides(get_settings())
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
     normalized_path = path.strip("/")
-    native_image = normalized_path in {"images/generations", "images/edits"}
     effective_privacy_policy = (
         CodexControlRequestPrivacyPolicy.PRIVATE_REALTIME if normalized_path == "realtime/calls" else privacy_policy
     )
@@ -5835,13 +6037,7 @@ async def codex_control_request(
     error_message: str | None = None
     payload_summary: dict[str, JsonValue] | None = None
     sensitive_realtime_payload = effective_privacy_policy.redacts_sensitive_details
-    if (
-        not native_image
-        and not sensitive_realtime_payload
-        and payload
-        and content_type
-        and "json" in content_type.lower()
-    ):
+    if not sensitive_realtime_payload and payload and content_type and "json" in content_type.lower():
         with contextlib.suppress(Exception):
             decoded = json.loads(payload)
             if isinstance(decoded, dict):
@@ -5858,10 +6054,7 @@ async def codex_control_request(
         ),
         payload_json=(
             payload.decode("utf-8", errors="replace")
-            if not native_image
-            and not sensitive_realtime_payload
-            and payload is not None
-            and "upstream_payload" in settings.trace_channels
+            if not sensitive_realtime_payload and payload is not None and "upstream_payload" in settings.trace_channels
             else None
         ),
         privacy_policy=effective_privacy_policy,
@@ -5878,9 +6071,6 @@ async def codex_control_request(
                     "headers": upstream_headers,
                     "timeout": total_timeout,
                 }
-                if native_image:
-                    request_kwargs["allow_redirects"] = False
-                    request_kwargs["buffer_response"] = False
                 request_with_metadata = getattr(active_codex_client, "request_with_route_metadata", None)
                 if callable(request_with_metadata):
                     result = await request_with_metadata(request_method, url, **request_kwargs)
@@ -5891,17 +6081,14 @@ async def codex_control_request(
                     response = await active_codex_client.request(request_method, url, **request_kwargs)
                     if route_trace is not None:
                         route_trace.record(route=route, fallback_used=False)
-                if native_image:
-                    body = await _native_image_response_body(response)
             finally:
                 if owns_codex_client:
                     close = getattr(active_codex_client, "close", None)
                     if callable(close):
                         await close()
             status_code = _codex_response_status(response)
-            if not native_image:
-                body = await _codex_response_body(response)
-            if status_code >= 400 and not native_image:
+            body = await _codex_response_body(response)
+            if status_code >= 400:
                 error_payload = await _codex_error_payload_from_response(response)
                 error_code, error_message = _error_details_from_envelope(error_payload)
                 raise ProxyResponseError(status_code, error_payload)
@@ -5919,14 +6106,13 @@ async def codex_control_request(
                 data=payload,
                 headers=upstream_headers,
                 timeout=timeout,
-                **({"allow_redirects": False} if native_image else {}),
             ),
             settings=settings,
             account_id=account_id,
         ) as resp:
             status_code = resp.status
             try:
-                body = await _native_image_response_body(resp) if native_image else await resp.read()
+                body = await resp.read()
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 message = str(exc) or "Request to upstream timed out"
                 error_code = "upstream_unavailable"
@@ -5936,7 +6122,7 @@ async def codex_control_request(
                     openai_error("upstream_unavailable", message),
                     failure_phase="body_read",
                 ) from exc
-            if resp.status >= 400 and not native_image:
+            if resp.status >= 400:
                 error_payload = await _error_payload_from_raw_body(resp, body)
                 error_code, error_message = _error_details_from_envelope(error_payload)
                 raise ProxyResponseError(resp.status, error_payload, failure_phase="status")

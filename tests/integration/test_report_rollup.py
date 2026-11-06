@@ -234,26 +234,3 @@ async def test_report_rollup_migration_roundtrip(tmp_path):
             await conn.run_sync(upgrade_again)
     finally:
         await engine.dispose()
-
-
-async def test_model_rewrite_skips_report_history_but_updates_exact_watermark_tail(db_setup):
-    from app.modules.request_logs.repository import RequestLogsRepository
-
-    await _seed()
-    await _fold(END)
-    async with SessionLocal() as session:
-        session.add(RequestLog(request_id="report-fold-1", requested_at=END, model="m-live", status="success"))
-        await session.commit()
-        assert await RequestLogsRepository(session).update_model_for_request("report-fold-1", "gpt-5.1") == 1
-        rows = (
-            (
-                await session.execute(
-                    select(RequestLog.model)
-                    .where(RequestLog.request_id == "report-fold-1")
-                    .order_by(RequestLog.requested_at)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert rows == ["m2", "gpt-5.1"]

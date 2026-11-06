@@ -424,19 +424,21 @@ async def test_native_images_use_resolved_route_without_rewriting_errors(route, 
     upstream = _Response()
     upstream.status_code = status
     upstream.content = b'{"error":{"code":"native-error","extra":"kept"}}'
-    client = _CodexClient(upstream)
-    response = await codex_control_request(
-        "images/generations",
-        method="POST",
+    client = _RouteMetadataCodexClient(upstream)
+    trace = UpstreamProxyRouteTrace()
+    response = await proxy_module.native_image_request(
+        "generations",
         payload=b'{"model":"gpt-image-2","prompt":"test"}',
-        query_params={},
         headers={"content-type": "application/json"},
         access_token="access",
         account_id="chatgpt_account",
+        timeout_seconds=30,
         base_url="https://chatgpt.test",
         route=route,
         codex_client=cast(Any, client),
+        route_trace=trace,
     )
+    assert isinstance(response, proxy_module.CodexControlResponse)
     assert response.status_code == status
     assert response.body == upstream.content
     assert len(client.calls) == 1
@@ -444,6 +446,7 @@ async def test_native_images_use_resolved_route_without_rewriting_errors(route, 
     assert client.calls[0]["allow_redirects"] is False
     assert client.calls[0]["buffer_response"] is False
     assert client.calls[0]["route"] is route
+    assert trace.endpoint_id == "ep_1"
 
 
 @pytest.mark.asyncio

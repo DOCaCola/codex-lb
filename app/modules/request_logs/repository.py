@@ -34,7 +34,6 @@ from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import (
     Account,
-    AccountUsageRollupState,
     ApiKey,
     ModelSource,
     RequestDemandQuarterRollup,
@@ -44,7 +43,6 @@ from app.db.models import (
     RequestUsageHourlyRollup,
 )
 from app.db.session import relax_commit_durability, sqlite_writer_section
-from app.modules.accounts.usage_rollup import lock_fold_state
 from app.modules.accounts.usage_time_rollup import (
     HOURLY_BUCKET_SECONDS,
     WARMUP_REQUEST_KINDS,
@@ -1297,80 +1295,6 @@ class RequestLogsRepository:
             .limit(1)
         )
         return await self._session.scalar(stmt)
-
-    async def update_model_for_request(self, request_id: str, model: str) -> int:
-        """Override the ``model`` field of any logs matching ``request_id``.
-
-        Used by route handlers that translate a public request shape (e.g.
-        ``/v1/images/generations``) into an internal Responses request: the
-        first-pass log row stores the internal host model used for routing,
-        and we rewrite it here once the public effective model is known so
-        the dashboard and usage views surface the user-visible model.
-
-        Only rows in the un-folded live tail — strictly above the lifetime
-        watermark (its fold interval is ``(start, end]``) AND at or above the
-        hourly and report watermarks (half-open ``[start, end)``) — are rewritten:
-        ``model`` is a rollup dimension and ``cost_usd`` a folded measure, so
-        mutating a row any rollup already captured would silently diverge
-        that rollup from raw (and the divergence becomes unrepairable once
-        retention prunes the raw row).
-        A matching row below the watermarks can only be a client-reused
-        request id colliding with unrelated old traffic — the rewrite's
-        target is the row the caller inserted moments ago. The fold-state
-        lock serializes this against an in-flight fold slice. The
-        conversation satellite needs no bound here: neither ``model`` nor
-        ``cost_usd`` is folded into it.
-
-        Returns the number of rows that were updated.
-        """
-        async with sqlite_writer_section():
-            resolved_request_id = ensure_request_id(request_id)
-            try:
-                await lock_fold_state(self._session)
-                watermarks = (
-                    await self._session.execute(
-                        select(
-                            AccountUsageRollupState.folded_through,
-                            AccountUsageRollupState.hourly_folded_through,
-                            AccountUsageRollupState.reports_folded_through,
-                        ).where(AccountUsageRollupState.id == 1)
-                    )
-                ).first()
-                # Fetch the affected rows so we can recompute ``cost_usd``
-                # from the new model. ``add_log`` derives the cost at insert
-                # time from the original (host) model; without recomputing
-                # here, dashboards would mix the public ``gpt-image-*`` model
-                # label with host-model pricing and report inaccurate cost.
-                stmt = select(RequestLog).where(RequestLog.request_id == resolved_request_id)
-                if watermarks is not None:
-                    # A row is un-folded by EVERY rollup only when it clears
-                    # all bounds, each matching its fold's own interval
-                    # convention: the lifetime fold is `(start, end]`
-                    # (inclusive end — a row AT the watermark is folded), the
-                    # hourly and report folds are `[start, end)`.
-                    folded_through, hourly_folded_through, reports_folded_through = watermarks
-                    stmt = stmt.where(
-                        RequestLog.requested_at > folded_through,
-                        RequestLog.requested_at >= hourly_folded_through,
-                        RequestLog.requested_at >= reports_folded_through,
-                    )
-                result_rows = await self._session.execute(stmt)
-                logs = list(result_rows.scalars())
-                if not logs:
-                    # End the transaction: the fold-state row lock (and the
-                    # bootstrap insert behind it) must not outlive this call.
-                    await _safe_rollback(self._session)
-                    return 0
-                for log in logs:
-                    log.model = model
-                    log.cost_usd = calculated_cost_from_log(typing_cast(RequestLogLike, log))
-                await self._session.commit()
-            except sa_exc.ResourceClosedError:
-                return 0
-            except BaseException:
-                await _safe_rollback(self._session)
-                raise
-            return len(logs)
 
     async def list_recent(
         self,

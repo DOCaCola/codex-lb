@@ -12,6 +12,7 @@ from starlette.routing import WebSocketRoute
 from starlette.testclient import WebSocketDenialResponse
 
 import app.modules.proxy.api as proxy_api_module
+import app.modules.proxy.service as proxy_module
 from app.core.auth import dependencies as auth_dependencies
 from app.core.clients.proxy import CODEX_LB_REQUIRED_CAPABILITY_HEADER, CodexControlResponse
 from app.db.session import SessionLocal
@@ -591,8 +592,7 @@ async def test_daybreak_capability_image_routes_authenticate_then_fail_closed(
     async def fail_before_routing(*_args: Any, **_kwargs: Any) -> None:
         pytest.fail("capability-bearing image request must fail before image routing")
 
-    monkeypatch.setattr(proxy_api_module, "_proxy_images_generation_request", fail_before_routing)
-    monkeypatch.setattr(proxy_api_module, "_proxy_images_edit_request", fail_before_routing)
+    monkeypatch.setattr(proxy_module.ProxyService, "native_image_request", fail_before_routing)
     headers = dict(_CAPABILITY_HEADERS)
     if auth_state == "valid":
         key = await _create_api_key(f"Daybreak image guard {path}")

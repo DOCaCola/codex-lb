@@ -68,7 +68,7 @@ _wait_for_websocket_continuity_gap = ["scheduler", "clock"]
 "app/modules/proxy/_service/http_bridge/mixin.py" = { raw-timeout = 1 }
 "app/modules/proxy/_service/realtime_live.py" = { raw-timeout = 2, raw-task-spawn = 3 }
 "app/modules/proxy/_service/request_log.py" = { raw-timeout = 1 }
-"app/modules/proxy/api.py" = { missing-scheduler-kwarg = 19 }
+"app/modules/proxy/api.py" = { missing-scheduler-kwarg = 17 }
 "app/modules/proxy/http_bridge_event_batcher.py" = { raw-timeout = 3, raw-task-spawn = 3 }
 
 [allowances.clock]  # raw-clock-read; unlisted modules = 0
@@ -86,11 +86,10 @@ _wait_for_websocket_continuity_gap = ["scheduler", "clock"]
 "app/modules/proxy/_service/websocket/helpers.py" = 3
 "app/modules/proxy/account_cache.py" = 2
 "app/modules/proxy/account_eligibility.py" = 1
-"app/modules/proxy/api.py" = 7
+"app/modules/proxy/api.py" = 5
 "app/modules/proxy/client_usage_cache.py" = 2
 "app/modules/proxy/durable_bridge_repository.py" = 2
 "app/modules/proxy/images_observability.py" = 1
-"app/modules/proxy/images_service.py" = 2
 "app/modules/proxy/load_balancer.py" = 3
 ```
 <!-- proxy-timing-seams:end -->

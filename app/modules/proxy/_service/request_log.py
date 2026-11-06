@@ -4,8 +4,6 @@ import asyncio
 import logging
 from typing import Protocol, cast
 
-import anyio
-
 from app.core.clock import clock_for, scheduler_for
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, proxy_phase_latency_seconds
 from app.core.usage.request_operation import RequestOperation, get_request_operation
@@ -77,81 +75,6 @@ def _normalize_session_id(session_id: str | None) -> str | None:
 
 
 class _RequestLogMixin:
-    async def rewrite_request_log_model(self, request_id: str, model: str) -> None:
-        """Override the ``model`` field on any ``request_logs`` row that
-        matches ``request_id``.
-
-        Used by route adapters that translate a public request shape
-        (currently ``/v1/images/*``) into an internal Responses request: the
-        first-pass log row stores the internal host model the proxy used
-        for routing, and we rewrite it here once the public effective model
-        is known so dashboards and usage views surface the user-visible
-        ``gpt-image-*`` model instead of the host (e.g. ``gpt-5.5``).
-
-        The rewrite is persistence, not response work: it runs as a tracked
-        background task (drained at shutdown alongside the log inserts), so
-        image responses never wait on log durability. Inside the task we
-        first await this request's pending detached insert, then retry with
-        short backoff while the row is still missing (the upstream
-        ``stream_responses`` generator writes its row from a ``finally``
-        block that can race with the call site here).
-        """
-        if not request_id or not model:
-            return
-        task = scheduler_for(self).create_task(
-            self._rewrite_request_log_model_once(request_id, model),
-            name=f"proxy-request-log-rewrite-{request_id}",
-        )
-        self._track_request_log_task(task, account_id=None, request_id=request_id)
-
-    async def _rewrite_request_log_model_once(self, request_id: str, model: str) -> None:
-        proxy = cast(_RequestLogServiceProtocol, self)
-        insert_task_name = f"proxy-request-log-{request_id}"
-        clock = clock_for(self)
-        scheduler = scheduler_for(self)
-        with anyio.CancelScope(shield=True):
-            try:
-                deadline = clock.monotonic() + 30
-                rowcount = 0
-                delay = 0.0
-                while True:
-                    # Re-check for this request's insert task every iteration:
-                    # the stream generator's finally can schedule the insert
-                    # on a later event-loop turn than this rewrite task, so a
-                    # one-time snapshot could miss it and fall back to blind
-                    # polling against a DB-gated insert.
-                    for pending_insert in [
-                        task
-                        for task in proxy._request_log_tasks
-                        if task.get_name() == insert_task_name and not task.done()
-                    ]:
-                        remaining = max(0.1, deadline - clock.monotonic())
-                        try:
-                            await scheduler.wait_for(asyncio.shield(pending_insert), timeout=remaining)
-                        except Exception:  # insert failures surface via the update probe below
-                            pass
-                    async with proxy._repo_factory() as repos:
-                        rowcount = await repos.request_logs.update_model_for_request(request_id, model)
-                    if rowcount:
-                        break
-                    if clock.monotonic() >= deadline:
-                        logger.warning(
-                            "rewrite_request_log_model: request_log row for %s never appeared; "
-                            "public effective model %s not recorded",
-                            request_id,
-                            model,
-                        )
-                        break
-                    delay = min(delay + 0.05, 0.8)
-                    await scheduler.sleep(delay)
-            except Exception:
-                logger.warning(
-                    "failed to rewrite request_log model request_id=%s model=%s",
-                    request_id,
-                    model,
-                    exc_info=True,
-                )
-
     async def _write_request_log(
         self,
         *,

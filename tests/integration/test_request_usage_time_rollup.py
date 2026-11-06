@@ -1085,68 +1085,6 @@ async def test_upgrade_repair_restores_coverage_only_for_retained_buckets(db_set
 
 
 @pytest.mark.asyncio
-async def test_model_rewrite_skips_folded_rows(db_setup):
-    """`update_model_for_request` must never rewrite rows below ANY rollup
-    watermark (the bound is max(lifetime, hourly)): model is a folded
-    dimension and cost a folded measure, so a pre-watermark rewrite (a
-    client-reused request id colliding with old traffic) would silently
-    diverge the permanent rollups from raw."""
-    now = utcnow()
-    old_at = floor_to_hour(now - timedelta(days=3)) + timedelta(seconds=30)
-    async with SessionLocal() as session:
-        await AccountsRepository(session).upsert(_make_account("acc_rw", "rewrite-ts@example.com"))
-        logs = RequestLogsRepository(session)
-        await _add_log(logs, account_id="acc_rw", request_id="r_rw", requested_at=old_at)
-        await _add_log(logs, account_id="acc_rw", request_id="r_rw", requested_at=now)
-
-    assert await run_hourly_fold_pass(now=now) >= 1
-    # Make the watermarks DIVERGE (lifetime two hours ahead) and add a row
-    # between them: folded by the lifetime rollup but not yet by the hourly
-    # one, it must still be skipped — the gate is the max, not the min.
-    async with SessionLocal() as session:
-        state = (
-            await session.execute(select(AccountUsageRollupState).where(AccountUsageRollupState.id == 1))
-        ).scalar_one()
-        hourly_watermark = state.hourly_folded_through
-        await session.execute(
-            update(AccountUsageRollupState)
-            .where(AccountUsageRollupState.id == 1)
-            .values(folded_through=hourly_watermark + timedelta(hours=2))
-        )
-        await session.commit()
-    between_at = hourly_watermark + timedelta(minutes=30)
-    # Exactly AT the lifetime watermark: the lifetime fold interval is
-    # `(start, end]`, so this row is already folded and must be skipped too.
-    at_lifetime = hourly_watermark + timedelta(hours=2)
-    async with SessionLocal() as session:
-        logs = RequestLogsRepository(session)
-        await _add_log(logs, account_id="acc_rw", request_id="r_rw", requested_at=between_at)
-        await _add_log(logs, account_id="acc_rw", request_id="r_rw", requested_at=at_lifetime)
-
-    async with SessionLocal() as session:
-        updated = await RequestLogsRepository(session).update_model_for_request("r_rw", "gpt-image-1")
-    assert updated == 1  # the live-tail row only
-
-    async with SessionLocal() as session:
-        model_rows = (await session.execute(select(RequestLog.requested_at, RequestLog.model))).all()
-        models_by_age = {requested_at: model for requested_at, model in model_rows}
-    assert models_by_age[old_at] == "gpt-5.1-codex"  # below both watermarks
-    assert models_by_age[between_at] == "gpt-5.1-codex"  # below the lifetime watermark
-    assert models_by_age[at_lifetime] == "gpt-5.1-codex"  # AT the inclusive lifetime watermark
-    assert models_by_age[now] == "gpt-image-1"
-
-    # The folded hourly bucket still carries the original model dimension.
-    hourly, _, _, _ = await _dump_all_rollups()
-    assert {r.model for r in hourly} == {"gpt-5.1-codex"}
-
-    # A rewrite matching nothing must release the fold-state lock cleanly
-    # (regression guard for the early-return path).
-    async with SessionLocal() as session:
-        assert await RequestLogsRepository(session).update_model_for_request("r_missing", "gpt-image-1") == 0
-    assert await run_hourly_fold_pass(now=now) == 0
-
-
-@pytest.mark.asyncio
 async def test_hourly_fold_crash_resumes_without_double_counting(db_setup, monkeypatch):
     """A crash between slice commits must resume exactly where it left off:
     the committed prefix stays, the interrupted slice re-runs from scratch

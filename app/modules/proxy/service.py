@@ -77,6 +77,7 @@ from app.core.clients.proxy import (
 )
 from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
+from app.core.clients.proxy import native_image_request as core_native_image_request  # noqa: F401
 from app.core.clients.proxy import stream_responses as core_stream_responses  # noqa: F401
 from app.core.clients.proxy import thread_goal_request as core_thread_goal_request
 from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
@@ -353,6 +354,7 @@ from app.modules.proxy._service.http_bridge.retry_circuit import (
     _HTTPBridgeRetryCircuitMixin,
     _initialize_http_bridge_retry_circuit,
 )
+from app.modules.proxy._service.native_images import _NativeImageMixin
 from app.modules.proxy._service.observability import _hash_identifier as _hash_identifier
 from app.modules.proxy._service.observability import _hash_identifier_or_none as _hash_identifier_or_none
 from app.modules.proxy._service.observability import _interesting_header_keys as _interesting_header_keys
@@ -910,6 +912,7 @@ class ProxyService(
     _FileOpsMixin,
     _TranscribeMixin,
     _CodexControlMixin,
+    _NativeImageMixin,
     _RealtimeLiveMixin,
     _CompactMixin,
     _StreamingMixin,

@@ -422,14 +422,10 @@ class Settings(BaseSettings):
     conversation_archive_enabled: bool = False
     conversation_archive_dir: Path = DEFAULT_CONVERSATION_ARCHIVE_DIR
     conversation_archive_queue_max_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
-    # OpenAI Images API compatibility (POST /v1/images/{generations,edits}):
-    # the public default model (``gpt-image-2``) and the internal Responses
-    # host model are fixed constants (``app/core/openai/images.py`` /
-    # ``app/modules/proxy/api.py``). There is intentionally no ``images_max_n``
-    # setting: the upstream ``image_generation`` tool path accepts only a
-    # single image per call and codex-lb does not yet implement client-side
-    # fan-out, so ``n > 1`` is hard-rejected at the API boundary. The cap is
-    # lifted in the same change that introduces fan-out.
+    # OpenAI Images API compatibility (POST /v1/images/{generations,edits})
+    # forwards gpt-image requests to the native ChatGPT image endpoint. The
+    # public default model (``gpt-image-2``) is a fixed constant in
+    # ``app/modules/proxy/native_images.py``.
     # Fallback Codex client version used when the live release lookup fails.
     # Must stay >= the highest ``minimal_client_version`` in the bootstrap
     # catalog (GPT-5.6 requires 0.144.0) or a degraded-startup refresh would

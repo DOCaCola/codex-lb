@@ -3981,11 +3981,9 @@ async def test_stream_responses_streams_post_startup_proxy_error_as_sse(monkeypa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("startup_surface", ["responses_route", "prime_helper"])
 @pytest.mark.parametrize("capacity_recovers", [True, False])
 async def test_external_stream_startup_waits_for_single_account_response_create_capacity(
     monkeypatch: pytest.MonkeyPatch,
-    startup_surface: str,
     capacity_recovers: bool,
 ) -> None:
     settings = _make_proxy_settings()
@@ -4046,37 +4044,20 @@ async def test_external_stream_startup_waits_for_single_account_response_create_
         }
     )
 
-    if startup_surface == "responses_route":
-        response = await proxy_api._stream_responses(
-            request,
-            payload,
-            context=cast(proxy_api.ProxyContext, SimpleNamespace(service=service)),
-            api_key=None,
-        )
-        if capacity_recovers:
-            assert isinstance(response, StreamingResponse)
-            chunks = [chunk async for chunk in response.body_iterator]
-            body = "".join(chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in chunks)
-        else:
-            assert not isinstance(response, StreamingResponse)
-            body = bytes(response.body).decode()
-            assert response.status_code == 429
+    response = await proxy_api._stream_responses(
+        request,
+        payload,
+        context=cast(proxy_api.ProxyContext, SimpleNamespace(service=service)),
+        api_key=None,
+    )
+    if capacity_recovers:
+        assert isinstance(response, StreamingResponse)
+        chunks = [chunk async for chunk in response.body_iterator]
+        body = "".join(chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in chunks)
     else:
-        upstream = service.stream_responses(
-            payload,
-            request.headers,
-            propagate_http_errors=True,
-        )
-        primed, error_response = await proxy_api._prime_upstream_stream(request, upstream, {})
-        if capacity_recovers:
-            assert error_response is None
-            assert primed is not None
-            body = "".join([chunk async for chunk in primed])
-        else:
-            assert primed is None
-            assert error_response is not None
-            assert error_response.status_code == 429
-            body = bytes(error_response.body).decode()
+        assert not isinstance(response, StreamingResponse)
+        body = bytes(response.body).decode()
+        assert response.status_code == 429
 
     assert stream_once_calls > 1
     assert "waiting_for_account_capacity" not in body

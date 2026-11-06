@@ -599,68 +599,35 @@ def _patch_images_upstream(
     *,
     result_b64: str = "FAKE_IMAGE_B64",
     revised_prompt: str = "neat",
-    resp_id: str = "resp_img",
-    size: str = "1024x1024",
-    output_format: str = "png",
     input_tokens: int = 11,
     output_tokens: int = 17,
     captured: dict[str, Any] | None = None,
 ) -> None:
-    """Patch the upstream Codex stream to emit the minimum SSE sequence the
-    images service needs to translate to a successful images.generate /
-    images.edit / images.variation response: an ``image_generation_call``
-    ``output_item.done`` followed by ``response.completed`` carrying
-    ``tool_usage.image_gen`` tokens.
+    """Patch the native ChatGPT image endpoint to return a standard Images
+    API response with usage.
 
     Also patches ``_ensure_fresh_with_budget`` so the call path skips
     upstream account refresh (which would otherwise hit a real network).
     """
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
-        del headers, access_token, base_url, raise_for_status, kwargs
+    async def fake_native(operation, *, payload, account_id, **kwargs):
+        del kwargs
         if captured is not None:
-            captured["model"] = payload.model
+            captured["operation"] = operation
+            captured["payload"] = json.loads(payload)
             captured["account_id"] = account_id
-            captured["tools"] = list(payload.tools)
-        yield _sse(
-            {
-                "type": "response.output_item.done",
-                "output_index": 0,
-                "item": {
-                    "type": "image_generation_call",
-                    "id": "ig_e2e",
-                    "status": "completed",
-                    "result": result_b64,
-                    "revised_prompt": revised_prompt,
-                    "size": size,
-                    "quality": "low",
-                    "background": "auto",
-                    "output_format": output_format,
-                },
-            }
-        )
-        yield _sse(
-            {
-                "type": "response.completed",
-                "response": {
-                    "id": resp_id,
-                    "object": "response",
-                    "status": "completed",
-                    "tool_usage": {
-                        "image_gen": {
-                            "input_tokens": input_tokens,
-                            "output_tokens": output_tokens,
-                        },
-                    },
-                },
-            }
-        )
+        body = {
+            "created": 1,
+            "data": [{"b64_json": result_b64, "revised_prompt": revised_prompt}],
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        }
+        return proxy_module.CodexControlResponse(200, json.dumps(body).encode(), {"content-type": "application/json"})
 
     async def fake_ensure_fresh(self, account, **kwargs):
         del self, kwargs
         return account
 
-    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    monkeypatch.setattr(proxy_module, "core_native_image_request", fake_native)
     monkeypatch.setattr(
         proxy_module.ProxyService,
         "_ensure_fresh_with_budget",
@@ -673,9 +640,8 @@ class TestImages:
     async def test_generate_returns_b64_image(self, sdk_client, monkeypatch):
         """``client.images.generate(...)`` must reach
         ``/v1/images/generations`` and return an ``ImagesResponse`` whose
-        ``data[0].b64_json`` matches the upstream tool result. By default
-        the OpenAI SDK requests ``response_format='b64_json'`` for
-        ``gpt-image-*`` models, which is what the proxy emits."""
+        ``data[0].b64_json`` matches the native result; the request body
+        reaches the native endpoint unchanged."""
         captured: dict[str, Any] = {}
         _patch_images_upstream(
             monkeypatch,
@@ -694,32 +660,31 @@ class TestImages:
 
         assert result.data
         assert result.data[0].b64_json == "GENERATED_B64"
-        # ``revised_prompt`` survives the translation layer.
         assert result.data[0].revised_prompt == "a clean red circle"
-        # Image routes hide the fixed internal host model from clients;
-        # ensure the upstream call really used a host model.
-        assert captured["model"] not in {None, ""}
-        tools = captured["tools"]
-        assert tools, "image_generation tool must be forwarded to upstream"
-        assert tools[0]["type"] == "image_generation"
-        assert tools[0]["model"] == IMAGE_MODEL
+        assert captured["operation"] == "generations"
+        assert captured["payload"] == {
+            "model": IMAGE_MODEL,
+            "prompt": "a red circle",
+            "n": 1,
+            "size": "1024x1024",
+            "quality": "low",
+        }
 
     @pytest.mark.asyncio
     async def test_edit_returns_b64_image(self, sdk_client, monkeypatch):
         """``client.images.edit(image=..., prompt=...)`` posts multipart
-        form-data to ``/v1/images/edits``. The proxy must accept the
-        single ``image`` field, forward the bytes upstream, and return
-        the translated b64 image."""
-        # gpt-image-2 does not accept image edits; switch model for this
-        # case to one that does.
+        form-data to ``/v1/images/edits``. The proxy must send the image
+        to the native endpoint as a data URL and return its result."""
+        captured: dict[str, Any] = {}
         _patch_images_upstream(
             monkeypatch,
             result_b64="EDITED_B64",
             revised_prompt="edited",
+            captured=captured,
         )
 
         result = await sdk_client.images.edit(
-            model="gpt-image-1",
+            model=IMAGE_MODEL,
             image=("input.png", _PNG_1X1_BYTES, "image/png"),
             prompt="add a yellow border",
             n=1,
@@ -728,6 +693,9 @@ class TestImages:
 
         assert result.data
         assert result.data[0].b64_json == "EDITED_B64"
+        assert captured["operation"] == "edits"
+        assert captured["payload"]["images"] == [{"image_url": f"data:image/png;base64,{_PNG_1X1_B64}"}]
+        assert captured["payload"]["n"] == 1
 
     @pytest.mark.asyncio
     async def test_variation_is_clean_4xx(self, sdk_client):

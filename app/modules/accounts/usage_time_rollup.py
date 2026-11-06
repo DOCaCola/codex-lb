@@ -48,9 +48,7 @@ column of ``request_logs`` rows BELOW the relevant watermark must take
 ``lock_fold_state()`` in the same transaction and either mirror the mutation
 into every rollup table that folded it or skip the pre-watermark rows
 (folded buckets are never recomputed from raw — raw may already be pruned by
-retention). ``RequestLogsRepository.update_model_for_request`` takes the
-skip route (and needs no conversation-satellite bound at all: neither
-``model`` nor ``cost_usd`` is folded there).
+retention).
 """
 
 from __future__ import annotations

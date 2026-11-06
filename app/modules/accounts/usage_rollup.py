@@ -29,8 +29,7 @@ logger = logging.getLogger(__name__)
 # a stream-end log write is dated at the write, not at the request start.
 # Measured over one full production history (6.0M rows) the worst insert
 # landed 7.9s below the requested_at frontier (p99.9 = 30ms). Post-insert
-# mutators need no allowance here either: ``update_model_for_request``
-# skips rows at/below the watermarks, and consolidation/deletion reassign
+# mutators need no allowance here either: consolidation/deletion reassign
 # logs under the fold-state lock while mirroring the folded sums.
 #
 # 2h keeps a ~900x margin over the observed worst case (covering scheduler
