@@ -158,6 +158,11 @@ class ChatCompletionsRequest(BaseModel):
         data.pop("n", None)
         data.pop("max_tokens", None)
         data.pop("max_completion_tokens", None)
+        limit = self.max_completion_tokens if self.max_completion_tokens is not None else self.max_tokens
+        if limit is not None:
+            if limit <= 0:
+                raise ClientPayloadError("Output token limit must be positive", param="max_completion_tokens")
+            data["max_output_tokens"] = limit
         response_format = data.pop("response_format", None)
         stream_options = data.pop("stream_options", None)
         raw_tools = self.tools
@@ -289,17 +294,12 @@ class ChatCompletionsRequest(BaseModel):
         if responses.reasoning is not None and responses.reasoning.effort not in (None, "none"):
             assert responses.reasoning.model_extra is not None
             responses.reasoning.model_extra["display"] = display
-        limit = self.max_completion_tokens if self.max_completion_tokens is not None else self.max_tokens
-        extra = responses.model_extra
-        assert extra is not None  # ResponsesRequest allows projection controls as extras.
-        if limit is not None:
-            if limit <= 0:
-                raise ClientPayloadError("Output token limit must be positive", param="max_completion_tokens")
-            extra["max_output_tokens"] = limit
         if self.stop is not None:
             stops = [self.stop] if isinstance(self.stop, str) else self.stop
             if not stops or any(not stop for stop in stops):
                 raise ClientPayloadError("Stop sequences must be non-empty strings", param="stop")
+            extra = responses.model_extra
+            assert extra is not None  # ResponsesRequest allows projection controls as extras.
             extra["stop_sequences"] = stops
 
 

@@ -88,10 +88,11 @@ behavior can set the threshold to `100.0`.
 - The dashboard Force Probe action fires one minimal `responses.create` against
   the selected account and immediately refreshes its usage. The probe uses a
   one-dot prompt and closes the stream after response headers. It omits
-  `max_output_tokens`: the Codex Responses endpoint now rejects that field at
-  any value. For example, a probe with `max_output_tokens=16` returned HTTP 400
-  with `Unsupported parameter: max_output_tokens`, while the same request
-  without the field returned HTTP 200. An accepted 2xx probe
+  `max_output_tokens` because closing after headers already bounds it. In
+  September the Codex Responses endpoint rejected that field at any value (a
+  probe with `max_output_tokens=16` returned HTTP 400 `Unsupported parameter`);
+  since early November it accepts and enforces it (CLIProxyAPI #7230), so
+  client limits are now forwarded on ordinary requests. An accepted 2xx probe
   also contributes to that replica's probing-health recovery streak; non-2xx
   results do not restore routing health. Settlement reloads and normalizes
   weekly/monthly and zero-primary-capacity usage like ordinary routing and is

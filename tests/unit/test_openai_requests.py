@@ -10,6 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from app.core.openai.chat_requests import ChatCompletionsRequest
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.requests import (
     _ESTIMATED_CHARS_PER_TOKEN,
@@ -101,7 +102,6 @@ def test_known_unsupported_upstream_fields_are_stripped():
         "model": "gpt-5.1",
         "instructions": "hi",
         "input": [],
-        "max_output_tokens": 32000,
         "metadata": {"client": "cursor"},
         "prompt_cache_retention": "4h",
         "safety_identifier": "safe_123",
@@ -114,7 +114,6 @@ def test_known_unsupported_upstream_fields_are_stripped():
     request = ResponsesRequest.model_validate(payload)
 
     dumped = request.to_payload()
-    assert "max_output_tokens" not in dumped
     assert "metadata" not in dumped
     assert "prompt_cache_retention" not in dumped
     assert "safety_identifier" not in dumped
@@ -123,6 +122,20 @@ def test_known_unsupported_upstream_fields_are_stripped():
     assert "truncation" not in dumped
     assert "user" not in dumped
     assert dumped["custom_field"] == "kept"
+
+
+def test_client_output_limit_is_forwarded_upstream():
+    responses = ResponsesRequest.model_validate(
+        {"model": "gpt-5.1", "instructions": "hi", "input": [], "max_output_tokens": 32000}
+    )
+    v1 = V1ResponsesRequest.model_validate({"model": "gpt-5.1", "input": "hi", "max_output_tokens": 32000})
+    chat = ChatCompletionsRequest.model_validate(
+        {"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 32000}
+    )
+
+    assert responses.to_payload()["max_output_tokens"] == 32000
+    assert v1.to_responses_request().to_payload()["max_output_tokens"] == 32000
+    assert chat.to_responses_request().to_payload()["max_output_tokens"] == 32000
 
 
 @given(json_arrays)
@@ -208,6 +221,7 @@ def test_compact_known_unsupported_upstream_fields_are_stripped():
         "model": "gpt-5.1",
         "instructions": "hi",
         "input": [],
+        "max_output_tokens": 32000,
         "metadata": {"client": "cursor"},
         "prompt_cache_retention": "4h",
         "safety_identifier": "safe_123",
@@ -218,6 +232,7 @@ def test_compact_known_unsupported_upstream_fields_are_stripped():
     request = ResponsesCompactRequest.model_validate(payload)
 
     dumped = request.to_payload()
+    assert "max_output_tokens" not in dumped
     assert "metadata" not in dumped
     assert "prompt_cache_retention" not in dumped
     assert "safety_identifier" not in dumped

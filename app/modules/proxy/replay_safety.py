@@ -130,6 +130,7 @@ _RESPONSES_PAYLOAD_FIELDS_WITH_DEDICATED_VALIDATION = frozenset(
         "include",
         "input",
         "instructions",
+        "max_output_tokens",
         "metadata",
         "model",
         "parallel_tool_calls",

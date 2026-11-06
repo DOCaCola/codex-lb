@@ -298,7 +298,7 @@ def test_chat_store_true_is_ignored():
     assert responses.store is False
 
 
-def test_chat_max_tokens_are_stripped():
+def test_chat_output_limit_becomes_max_output_tokens():
     payload = {
         "model": "gpt-5.2",
         "messages": [{"role": "user", "content": "hi"}],
@@ -310,6 +310,7 @@ def test_chat_max_tokens_are_stripped():
     dumped = responses.to_payload()
     assert "max_tokens" not in dumped
     assert "max_completion_tokens" not in dumped
+    assert dumped["max_output_tokens"] == 256
 
 
 def test_temperature_and_top_p_are_stripped_for_upstream_compat():

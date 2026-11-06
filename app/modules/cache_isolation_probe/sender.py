@@ -25,8 +25,9 @@ from app.core.clients.codex import CodexTransportError
 from app.core.clients.proxy import UpstreamProxyRouteTrace, stream_responses
 from app.core.crypto import TokenEncryptor
 from app.core.openai.models import ResponseUsage
-from app.core.openai.parsing import parse_sse_event
+from app.core.openai.parsing import parse_sse_data_json, parse_sse_event_payload
 from app.core.openai.requests import ResponsesRequest
+from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.db.models import Account, AccountStatus
 from app.modules.accounts.auth_manager import AuthManager
@@ -63,6 +64,15 @@ class ProbeSendResult:
 
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
+
+
+def _stopped_at_output_limit(event_type: str, data: dict[str, JsonValue] | None) -> bool:
+    """A probe ended by its own output limit still reports the input usage it measures."""
+    if event_type != "response.incomplete" or data is None:
+        return False
+    response = data.get("response")
+    details = response.get("incomplete_details") if isinstance(response, dict) else None
+    return isinstance(details, dict) and details.get("reason") == "max_output_tokens"
 
 
 def _usage_tokens(usage: ResponseUsage | None) -> tuple[int | None, int | None]:
@@ -122,13 +132,10 @@ class CacheProbeSender:
                 "parallel_tool_calls": False,
                 "stream": True,
                 "store": False,
-                # `max_output_tokens` is stripped by `_UNSUPPORTED_UPSTREAM_FIELDS`
-                # before egress, so it cannot bound this call. It is kept because
-                # it states the intent for any model source that does honour it,
-                # and the real bound comes from the two fields below: the probe
-                # only needs `usage.input_tokens_details.cached_tokens` off the
-                # terminal frame, so every output token is waste. Without them a
-                # 28k-token prompt runs an uncapped generation, up to ten per run.
+                # The probe only needs `usage.input_tokens_details.cached_tokens`
+                # off the terminal frame, so every output token is waste: the
+                # limit ends the generation early, and a response stopped by it
+                # still reports the input usage the probe measures.
                 "max_output_tokens": CACHE_PROBE_MAX_OUTPUT_TOKENS,
                 "reasoning": {"effort": "low"},
                 "text": {"verbosity": "low"},
@@ -159,12 +166,13 @@ class CacheProbeSender:
             )
             async with contextlib.aclosing(stream):
                 async for event_block in stream:
-                    event = parse_sse_event(event_block)
+                    data = parse_sse_data_json(event_block)
+                    event = parse_sse_event_payload(data)
                     if event is None:
                         continue
                     if event.response is not None and event.response.usage is not None:
                         usage = event.response.usage
-                    if event.type == "response.completed":
+                    if event.type == "response.completed" or _stopped_at_output_limit(event.type, data):
                         input_tokens, cached_tokens = _usage_tokens(usage)
                         return ProbeSendResult(
                             ok=True,

@@ -16,6 +16,7 @@ from app.core.messages.translate import (
     tool_alias,
     translate_messages_request,
 )
+from app.core.openai.v1_requests import V1ResponsesRequest
 
 KEY = b"k" * 32
 MODEL = "gpt-6.1-sol"
@@ -46,6 +47,14 @@ def _translate(
 
 def _signature(model: str = MODEL, item_id: str = "rs_1", encrypted: str = "enc-1") -> str:
     return seal_reasoning(ReasoningEnvelope(model=model, item_id=item_id, encrypted_content=encrypted), KEY)
+
+
+def test_claude_code_output_limit_reaches_the_upstream_payload():
+    translated = _translate({"messages": [{"role": "user", "content": "hi"}], "max_tokens": 4096})
+
+    upstream = V1ResponsesRequest.model_validate(translated.payload).to_responses_request().to_payload()
+
+    assert upstream["max_output_tokens"] == 4096
 
 
 def _forged_signature() -> str:

@@ -41,21 +41,26 @@ def _account() -> Account:
     )
 
 
-def _completed_event(*, input_tokens: int, cached_tokens: int) -> str:
-    payload = {
-        "type": "response.completed",
-        "response": {
-            "id": "resp-1",
-            "status": "completed",
-            "usage": {
-                "input_tokens": input_tokens,
-                "output_tokens": 1,
-                "total_tokens": input_tokens + 1,
-                "input_tokens_details": {"cached_tokens": cached_tokens},
-            },
+def _completed_event(
+    *,
+    input_tokens: int,
+    cached_tokens: int,
+    event_type: str = "response.completed",
+    incomplete_reason: str | None = None,
+) -> str:
+    response: dict[str, object] = {
+        "id": "resp-1",
+        "status": "completed" if incomplete_reason is None else "incomplete",
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": 1,
+            "total_tokens": input_tokens + 1,
+            "input_tokens_details": {"cached_tokens": cached_tokens},
         },
     }
-    return f"data: {json.dumps(payload)}\n\n"
+    if incomplete_reason is not None:
+        response["incomplete_details"] = {"reason": incomplete_reason}
+    return f"data: {json.dumps({'type': event_type, 'response': response})}\n\n"
 
 
 @asynccontextmanager
@@ -94,6 +99,43 @@ async def test_a_completed_stream_reports_the_cached_token_counts(monkeypatch) -
     assert result.ok is True
     assert result.input_tokens == 28_168
     assert result.cached_tokens == 28_032
+
+
+async def test_a_stream_stopped_by_the_probe_output_limit_is_a_measurement(monkeypatch) -> None:
+    async def _stream(*args, **kwargs) -> AsyncIterator[str]:
+        del args, kwargs
+        yield _completed_event(
+            input_tokens=28_168,
+            cached_tokens=28_032,
+            event_type="response.incomplete",
+            incomplete_reason="max_output_tokens",
+        )
+
+    probe_sender = _build(monkeypatch, _stream)
+
+    result = await probe_sender.send("probe-account", model="gpt-probe", prefix="inert")
+
+    assert result.ok is True
+    assert result.input_tokens == 28_168
+    assert result.cached_tokens == 28_032
+
+
+async def test_a_stream_incomplete_for_another_reason_is_a_failure(monkeypatch) -> None:
+    async def _stream(*args, **kwargs) -> AsyncIterator[str]:
+        del args, kwargs
+        yield _completed_event(
+            input_tokens=28_168,
+            cached_tokens=28_032,
+            event_type="response.incomplete",
+            incomplete_reason="content_filter",
+        )
+
+    probe_sender = _build(monkeypatch, _stream)
+
+    result = await probe_sender.send("probe-account", model="gpt-probe", prefix="inert")
+
+    assert result.ok is False
+    assert result.error_code == "response.incomplete"
 
 
 async def test_the_upstream_stream_is_closed_before_send_returns(monkeypatch) -> None:

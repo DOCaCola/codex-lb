@@ -851,7 +851,6 @@ class ResponsesCompactRequest(BaseModel):
 
 
 _UNSUPPORTED_UPSTREAM_FIELDS = {
-    "max_output_tokens",
     "metadata",
     "prompt_cache_retention",
     "safety_identifier",
@@ -1052,6 +1051,9 @@ def _strip_compact_unsupported_fields(payload: MutableJsonObject) -> MutableJson
     payload.pop("tools", None)
     payload.pop("tool_choice", None)
     payload.pop("client_metadata", None)
+    # The Responses endpoint enforces an output limit, but a capped compaction
+    # would truncate the checkpoint that replaces the conversation history.
+    payload.pop("max_output_tokens", None)
     payload["parallel_tool_calls"] = False
     return payload
 
