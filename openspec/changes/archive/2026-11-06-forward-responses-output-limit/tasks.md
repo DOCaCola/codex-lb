@@ -8,4 +8,4 @@
 - [x] Update the passthrough corpus and add forwarding regressions.
 - [x] Run focused tests, lint, types and strict specs.
 - [ ] Observe a live client-limited response in production.
-- [ ] Archive.
+- [x] Archive.

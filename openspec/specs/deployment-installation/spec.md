@@ -3,7 +3,9 @@
 ## Purpose
 
 Define installation modes, smoke-test expectations, and the operator environment-variable contract at settings-load time, so the Helm chart remains portable across supported deployments and the configuration surface stays minimal (PRINCIPLES.md P2).
+
 ## Requirements
+
 ### Requirement: Helm chart is organized around install modes
 
 The Helm chart MUST document and support three primary install modes: bundled PostgreSQL, direct external database, and external secrets. These install contracts MUST be portable across Kubernetes providers without requiring provider-specific chart forks.
@@ -700,7 +702,6 @@ The following values MUST be fixed at their previously documented defaults:
 - Live-usage write coalescing (minimum write interval and queue size).
 - The request-log count-cache TTL.
 - Circuit-breaker tuning (failure threshold and recovery timeout).
-- The images-route internals (internal host model and partial-images cap).
 - The PostgreSQL pool checkout timeout (30 seconds) and pooled-connection
   recycle window (1800 seconds).
 - The soft-drain/probe thresholds (primary drain threshold 85%, secondary

@@ -8,5 +8,5 @@
 - [x] Bound the observability model label by pattern.
 - [x] Update integration, unit and SDK tests; run lint, types, architecture checks and the suite.
 - [ ] Observe native `/v1` generation, edit and streaming in production.
-- [ ] Archive.
+- [x] Archive.
 
