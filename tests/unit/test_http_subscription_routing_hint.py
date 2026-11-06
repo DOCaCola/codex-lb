@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
+import zstandard
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
@@ -36,22 +37,33 @@ async def loopback(
     received: list[_WireRequest] = []
     completed = asyncio.Event()
 
-    async def respond(request: web.Request) -> web.StreamResponse:
-        try:
-            received.append(_WireRequest(request.headers.copy(), ResponsesRequest.model_validate(await request.json())))
-            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
-            await response.prepare(request)
-            await response.write(
-                b'data: {"type":"response.completed","response":{"id":"resp_loopback","status":"completed"}}\n\n'
-            )
-            await response.write_eof()
-            return response
-        finally:
-            completed.set()
+    def responder(*, zstd_body: bool):
+        # Native ChatGPT egress compresses with zstd; OpenAI-compatible sources
+        # receive plain JSON. The server keeps the wire bytes, as upstream does.
+        async def respond(request: web.Request) -> web.StreamResponse:
+            try:
+                body = await request.read()
+                if zstd_body:
+                    assert request.headers["Content-Encoding"] == "zstd"
+                    body = zstandard.ZstdDecompressor().decompress(body)
+                else:
+                    assert "Content-Encoding" not in request.headers
+                received.append(_WireRequest(request.headers.copy(), ResponsesRequest.model_validate_json(body)))
+                response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+                await response.prepare(request)
+                await response.write(
+                    b'data: {"type":"response.completed","response":{"id":"resp_loopback","status":"completed"}}\n\n'
+                )
+                await response.write_eof()
+                return response
+            finally:
+                completed.set()
 
-    app = web.Application()
-    app.router.add_post("/backend-api/codex/responses", respond)
-    app.router.add_post("/v1/responses", respond)
+        return respond
+
+    app = web.Application(handler_args={"auto_decompress": False})
+    app.router.add_post("/backend-api/codex/responses", responder(zstd_body=True))
+    app.router.add_post("/v1/responses", responder(zstd_body=False))
     server = TestServer(app, host="127.0.0.1")
     async with asyncio.timeout(5):
         await server.start_server()

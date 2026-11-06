@@ -5,11 +5,13 @@ import base64
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator, Mapping
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
+import zstandard
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
@@ -1583,6 +1585,9 @@ async def test_v1_responses_missing_previous_response_owner_fails_closed_before_
 @pytest.mark.asyncio
 async def test_v1_responses_spent_previous_response_owner_reports_reset(async_client, monkeypatch):
     raw_owner_id = "acc_prev_http_spent_owner"
+    # The owner is spent only while its reset lies ahead.
+    reset_at = int(utcnow().timestamp()) + 2 * 86400
+    reset_label = datetime.fromtimestamp(reset_at, UTC).strftime("%Y-%m-%d %H:%M UTC")
     for raw_account_id, email in (
         (raw_owner_id, "prev-http-spent-owner@example.com"),
         ("acc_prev_http_spent_other", "prev-http-spent-other@example.com"),
@@ -1595,7 +1600,7 @@ async def test_v1_responses_spent_previous_response_owner_reports_reset(async_cl
     async with SessionLocal() as session:
         owner = (await session.execute(select(Account).where(Account.chatgpt_account_id == raw_owner_id))).scalar_one()
         owner.status = AccountStatus.RATE_LIMITED
-        owner.reset_at = 1793774149
+        owner.reset_at = reset_at
         session.add(
             RequestLog(
                 account_id=owner.id,
@@ -1629,7 +1634,7 @@ async def test_v1_responses_spent_previous_response_owner_reports_reset(async_cl
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "previous_response_owner_unavailable"
     assert response.json()["error"]["message"] == (
-        "Previous response owner account reached its usage limit (resets 2026-11-04 06:35 UTC); "
+        f"Previous response owner account reached its usage limit (resets {reset_label}); "
         "retry without previous_response_id."
     )
 
@@ -1851,7 +1856,9 @@ async def test_http_previous_response_owner_is_ready_before_persistence(
         await original_persist(self, **kwargs)
 
     async def upstream(request: web.Request) -> web.StreamResponse:
-        payload = await request.json()
+        # Native egress compresses with zstd, which the upstream decodes.
+        assert request.headers["Content-Encoding"] == "zstd"
+        payload = json.loads(zstandard.ZstdDecompressor().decompress(await request.read()))
         origin_accounts.append(request.headers.get("chatgpt-account-id"))
         followup = payload.get("previous_response_id") is not None
         response_id = "resp_http_owner_followup" if followup else anchor_id
@@ -1917,7 +1924,7 @@ async def test_http_previous_response_owner_is_ready_before_persistence(
         await response.write_eof()
         return response
 
-    origin_app = web.Application()
+    origin_app = web.Application(handler_args={"auto_decompress": False})
     origin_app.router.add_post("/codex/responses", upstream)
     runner = web.AppRunner(origin_app)
     await runner.setup()

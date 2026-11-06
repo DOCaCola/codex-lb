@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
+import zstandard
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
@@ -482,7 +483,10 @@ async def loopback(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[list[_Wire]
     received: list[_Wire] = []
 
     async def respond(request: web.Request) -> web.StreamResponse:
-        received.append(_Wire(list(request.headers.items()), await request.read()))
+        # Native egress compresses with zstd; keep the decoded JSON for comparison.
+        assert request.headers["Content-Encoding"] == "zstd"
+        body = zstandard.ZstdDecompressor().decompress(await request.read())
+        received.append(_Wire(list(request.headers.items()), body))
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
         await response.prepare(request)
         await response.write(
@@ -491,7 +495,7 @@ async def loopback(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[list[_Wire]
         await response.write_eof()
         return response
 
-    app = web.Application()
+    app = web.Application(handler_args={"auto_decompress": False})
     app.router.add_post("/backend-api/codex/responses", respond)
     server = TestServer(app, host="127.0.0.1")
     async with asyncio.timeout(10):

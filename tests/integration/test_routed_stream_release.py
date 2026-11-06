@@ -50,7 +50,8 @@ class _HoldingUpstream:
         return response
 
     async def start(self) -> None:
-        app = web.Application()
+        # Native egress compresses the request body with zstd; this proxy never reads it.
+        app = web.Application(handler_args={"auto_decompress": False})
         app.router.add_route("*", "/{tail:.*}", self._handle)
         self._runner = web.AppRunner(app, shutdown_timeout=0.1)
         await self._runner.setup()

@@ -329,6 +329,11 @@ def _patch_transport_settings(
             get=AsyncMock(return_value=SimpleNamespace(upstream_stream_transport=dashboard_transport))
         ),
     )
+    # No HTTP-backed model source can serve these keys, so only the native
+    # transport decides whether the handshake is denied.
+    from app.modules.model_sources import selection
+
+    monkeypatch.setattr(selection, "has_responses_source_access", AsyncMock(return_value=False))
 
 
 @pytest.mark.asyncio

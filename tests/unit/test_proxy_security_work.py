@@ -19,6 +19,7 @@ from app.modules.proxy._service.support import (
 from tests.unit.test_proxy_utils import (
     _make_account,
     _make_proxy_settings,
+    _native_websocket_source_ownership,  # noqa: F401  (autouse: no model-source database here)
     _QueuedTestUpstreamWebSocket,
     _repo_factory,
     _RequestLogsRecorder,

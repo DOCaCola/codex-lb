@@ -17525,6 +17525,13 @@ async def test_native_codex_http_bridge_denied_anchor_refusal_returns_502_before
     event, and the ASGI layer logged an unhandled exception.
     """
     _install_bridge_settings(monkeypatch, enabled=True)
+    from app.modules.proxy import api as proxy_api_module
+
+    # The refusal must land inside the startup probe for this pre-commit case.
+    # The probe returns at the first item, so a wide window costs nothing and
+    # keeps upstream denial plus recovery from outrunning it on a loaded host;
+    # the post-commit twin pins the window to zero instead.
+    monkeypatch.setattr(proxy_api_module, "_HTTP_BRIDGE_STARTUP_ERROR_PROBE_SECONDS", 30.0)
     account_id = await _import_account(
         async_client,
         "acc_native_denied_anchor_precommit",
