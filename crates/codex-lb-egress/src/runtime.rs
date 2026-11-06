@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::http::{ClientKey, ClientPool, classify_error, execute_request};
+use crate::http::{ClientKey, ClientPool, classify_error, error_chain_detail, execute_request};
 use crate::websocket::{
     WebSocketCommand, emit_websocket_error, emit_websocket_setup_error, execute_websocket,
 };
@@ -120,6 +120,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                                 &request.request_id,
                                 "native helper rejected the request",
                                 "setup",
+                                None,
                                 false,
                                 false,
                             ).await?;
@@ -138,6 +139,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                                 &request.request_id,
                                 "native helper rejected the request",
                                 "setup",
+                                None,
                                 false,
                                 false,
                             ).await?;
@@ -160,6 +162,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                                     &request.request_id,
                                     message,
                                     phase,
+                                    error_chain_detail(&error),
                                     retryable,
                                     tls_verification,
                                 ).await?;
@@ -194,6 +197,7 @@ pub async fn run_stdio() -> Result<(), RequestError> {
                                                 &request_id,
                                                 message,
                                                 phase,
+                                                error_chain_detail(error.as_ref()),
                                                 retryable,
                                                 tls_verification,
                                             ).await;
@@ -404,6 +408,7 @@ async fn emit_error(
     request_id: &str,
     message: &str,
     failure_phase: &str,
+    failure_detail: Option<String>,
     retryable_same_contract: bool,
     is_tls_verification_failure: bool,
 ) -> Result<(), std::io::Error> {
@@ -413,6 +418,7 @@ async fn emit_error(
             request_id: request_id.to_owned(),
             message: message.to_owned(),
             failure_phase: failure_phase.to_owned(),
+            failure_detail,
             retryable_same_contract,
             is_tls_verification_failure,
         },

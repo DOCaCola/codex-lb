@@ -380,11 +380,151 @@ pub(crate) fn error_chain_has_invalid_certificate(
     false
 }
 
+/// Payload-free names of the recognised errors in `error`'s source chain,
+/// outermost first and joined by `/` (for example
+/// `hyper_body_write_aborted/io_broken_pipe`). Messages, URLs and header
+/// values never cross into the detail.
+pub(crate) fn error_chain_detail(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    let mut names = Vec::new();
+    let mut current = Some(error);
+    while let Some(source) = current {
+        if let Some(name) = error_name(source) {
+            names.push(name);
+        }
+        current = source.source();
+    }
+    (!names.is_empty()).then(|| names.join("/"))
+}
+
+fn error_name(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        return Some(format!("io_{}", variant_name(&error.kind())));
+    }
+    if let Some(error) = error.downcast_ref::<h2::Error>() {
+        return Some(h2_error_name(error));
+    }
+    if let Some(error) = error.downcast_ref::<hyper::Error>() {
+        return Some(hyper_error_name(error).to_owned());
+    }
+    if let Some(error) = error.downcast_ref::<rustls::Error>() {
+        return Some(format!("tls_{}", variant_name(error)));
+    }
+    None
+}
+
+fn hyper_error_name(error: &hyper::Error) -> &'static str {
+    if error.is_incomplete_message() {
+        "hyper_incomplete_message"
+    } else if error.is_body_write_aborted() {
+        "hyper_body_write_aborted"
+    } else if error.is_canceled() {
+        "hyper_canceled"
+    } else if error.is_closed() {
+        "hyper_closed"
+    } else if error.is_timeout() {
+        "hyper_timeout"
+    } else if error.is_shutdown() {
+        "hyper_shutdown"
+    } else if error.is_parse() {
+        "hyper_parse"
+    } else if error.is_user() {
+        "hyper_user"
+    } else {
+        "hyper"
+    }
+}
+
+/// `h2_<kind>[_remote][_<reason>]`, for example `h2_reset_remote_internal_error`.
+fn h2_error_name(error: &h2::Error) -> String {
+    let kind = if error.is_go_away() {
+        "go_away"
+    } else if error.is_reset() {
+        "reset"
+    } else if error.is_io() {
+        "io"
+    } else {
+        "library"
+    };
+    let origin = if error.is_remote() { "_remote" } else { "" };
+    match error.reason() {
+        // Reason debug-prints its RFC 9113 name (`INTERNAL_ERROR`), or the
+        // numeric code for an unregistered one.
+        Some(reason) => {
+            let name: String = format!("{reason:?}")
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_alphanumeric() {
+                        character.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            format!("h2_{kind}{origin}_{}", name.trim_matches('_'))
+        }
+        None => format!("h2_{kind}{origin}"),
+    }
+}
+
+/// snake_case name of the variant `value` debug-prints as, without its payload.
+pub(crate) fn variant_name(value: &impl std::fmt::Debug) -> String {
+    let debug = format!("{value:?}");
+    let name = debug
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .next()
+        .unwrap_or_default();
+    let mut snake = String::with_capacity(name.len() + 8);
+    for (index, character) in name.char_indices() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                snake.push('_');
+            }
+            snake.push(character.to_ascii_lowercase());
+        } else {
+            snake.push(character);
+        }
+    }
+    snake
+}
+
 #[cfg(test)]
 mod tests {
     use reqwest::header::{ACCEPT, ACCEPT_ENCODING};
 
-    use super::forwarded_headers;
+    use super::{error_chain_detail, forwarded_headers};
+
+    #[derive(Debug)]
+    struct Wrapper(std::io::Error);
+
+    impl std::fmt::Display for Wrapper {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("wrapper for https://chatgpt.com/backend-api")
+        }
+    }
+
+    impl std::error::Error for Wrapper {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn error_chain_detail_names_recognised_errors_without_payloads() {
+        let error = Wrapper(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "reset by https://chatgpt.com",
+        ));
+        assert_eq!(
+            error_chain_detail(&error).as_deref(),
+            Some("io_connection_reset")
+        );
+    }
+
+    #[test]
+    fn error_chain_detail_is_absent_without_recognised_errors() {
+        let error = std::fmt::Error;
+        assert_eq!(error_chain_detail(&error), None);
+    }
 
     #[test]
     fn forwarded_headers_preserve_inbound_accept_encoding() {

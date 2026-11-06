@@ -19,6 +19,7 @@ publish = false
 aws-lc-rs = "=1.18.1"
 base64 = "0.22.1"
 futures-util = { version = "0.3.31", features = ["sink"] }
+h2 = "=0.4.18"
 hyper = "=1.8.1"
 hyper-rustls = { version = "=0.27.7", default-features = false, features = ["http2", "native-tokio", "aws-lc-rs"] }
 hyper-util = "=0.1.20"

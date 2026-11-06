@@ -10035,6 +10035,78 @@ def test_backend_responses_websocket_oversized_anchored_turn_never_reaches_http_
     assert http_bodies[0]["input"] == [*first_input, normalized_call, *delta]
 
 
+def test_backend_responses_websocket_turn_failed_over_http_records_transport_attribution(app_instance, monkeypatch):
+    """A transport failure of a turn sent over HTTP is attributed on its log row.
+
+    The row names the HTTP leg and where and how it failed; the client frame
+    carries no local provenance marker.
+    """
+    import app.core.clients.proxy as core_proxy
+    from app.core.clients.responses_transport import ResponsesTransport
+    from app.core.errors import (
+        SYNTHETIC_TRANSPORT_FAILURE_MARKER,
+        response_failed_event,
+        synthetic_transport_failure_event,
+    )
+    from app.core.utils.request_id import get_request_id
+    from app.core.utils.sse import format_local_sse_event
+
+    limit = 2048
+    log_calls: list[dict[str, Any]] = []
+
+    async def connect():
+        raise AssertionError("an oversized first turn must not open the upstream websocket")
+
+    async def stream_http(text):
+        yield format_local_sse_event(
+            synthetic_transport_failure_event(
+                response_failed_event("upstream_error", "native upstream request failed", response_id=get_request_id())
+            ),
+            failure_phase="request",
+            failure_detail="hyper_incomplete_message",
+        )
+
+    monkeypatch.setattr(core_proxy, "discover_native_egress_client", lambda: None)
+
+    async def select_account(self, headers, **kwargs):
+        return account_fixture(id="acct_http_failure", codex_installation_id="installation"), ResponsesTransport(
+            None, connect=connect, stream_http=stream_http, max_frame_bytes=limit
+        )
+
+    async def write_log(self, **kwargs):
+        log_calls.append(kwargs)
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", AsyncMock(return_value=None))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        proxy_module, "get_settings_cache", lambda: SimpleNamespace(get=AsyncMock(return_value=_websocket_settings()))
+    )
+    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", limit)
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", select_account)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", write_log)
+
+    image = {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 4096}
+    with TestClient(app_instance) as client:
+        with client.websocket_connect(
+            "/backend-api/codex/responses", headers={"session_id": "http-failure"}
+        ) as websocket:
+            websocket.send_json(
+                {"type": "response.create", "model": "gpt-5.4", "input": [{"role": "user", "content": [image]}]}
+            )
+            event = json.loads(websocket.receive_text())
+
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == "upstream_error"
+    assert SYNTHETIC_TRANSPORT_FAILURE_MARKER not in event
+    assert len(log_calls) == 1
+    log = log_calls[0]
+    assert log["status"] == "error"
+    assert log["error_code"] == "upstream_error"
+    assert log["upstream_transport"] == "http"
+    assert log["failure_phase"] == "request"
+    assert log["failure_detail"] == "hyper_incomplete_message"
+
+
 @pytest.mark.parametrize(
     ("endpoint", "expected_code"),
     [("/backend-api/codex/responses", "previous_response_not_found"), ("/v1/responses", "stream_incomplete")],

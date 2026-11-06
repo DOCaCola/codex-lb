@@ -215,6 +215,10 @@ pub enum NativeEvent {
         request_id: String,
         message: String,
         failure_phase: String,
+        /// Payload-free names of the recognised errors in the failure's
+        /// source chain (for example `hyper_incomplete_message`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure_detail: Option<String>,
         retryable_same_contract: bool,
         is_tls_verification_failure: bool,
     },

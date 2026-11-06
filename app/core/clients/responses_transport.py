@@ -11,10 +11,10 @@ from dataclasses import replace
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamWebSocket, UpstreamWebSocketMessage
-from app.core.errors import synthetic_stream_failure_event
+from app.core.errors import SYNTHETIC_TRANSPORT_FAILURE_MARKER, synthetic_stream_failure_event
 from app.core.openai.subagent_messages import UPSTREAM_NAMESPACE, restore_native_collaboration
 from app.core.utils.request_id import get_request_id
-from app.core.utils.sse import parse_sse_data_json, parse_sse_data_json_text
+from app.core.utils.sse import ParsedSseBlock, parse_sse_data_json, parse_sse_data_json_text
 
 logger = logging.getLogger(__name__)
 
@@ -104,9 +104,25 @@ class ResponsesTransport:
             await self._http_idle.wait()
             await self._events.put(UpstreamWebSocketMessage(kind="error", error="Upstream websocket read failed"))
 
-    async def _put_http_event(self, payload: Mapping[str, object]) -> None:
+    async def _put_http_event(
+        self,
+        payload: Mapping[str, object],
+        *,
+        failure_phase: str | None = None,
+        failure_detail: str | None = None,
+    ) -> None:
+        # The relay is the WebSocket client boundary: the internal synthetic
+        # transport-failure marker stays on this side, its attribution travels
+        # on the message for the request log.
+        frame = {key: value for key, value in payload.items() if key != SYNTHETIC_TRANSPORT_FAILURE_MARKER}
         await self._events.put(
-            UpstreamWebSocketMessage(kind="text", text=json.dumps(payload, separators=(",", ":")), transport="http")
+            UpstreamWebSocketMessage(
+                kind="text",
+                text=json.dumps(frame, separators=(",", ":")),
+                transport="http",
+                failure_phase=failure_phase,
+                failure_detail=failure_detail,
+            )
         )
         if payload.get("type") in _HTTP_TERMINAL_EVENT_TYPES:
             self._http_terminal_relayed = True
@@ -127,7 +143,14 @@ class ResponsesTransport:
                                 self._http_response_id = event_response_id
                         if payload.get("type") == "response.output_item.done" and "item" in payload:
                             self._http_output.append(payload["item"])
-                        await self._put_http_event(payload)
+                        if isinstance(block, ParsedSseBlock):
+                            await self._put_http_event(
+                                payload,
+                                failure_phase=block.failure_phase,
+                                failure_detail=block.failure_detail,
+                            )
+                        else:
+                            await self._put_http_event(payload)
         except ProxyResponseError as exc:
             error = exc.payload["error"]
             await self._put_http_event(
@@ -137,16 +160,20 @@ class ResponsesTransport:
                     error_type=error.get("type") or "server_error",
                     response_id=self._http_response_id,
                     error_param=error.get("param"),
-                )
+                ),
+                failure_phase=exc.failure_phase,
+                failure_detail=exc.failure_detail,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Responses HTTP relay failed")
             await self._put_http_event(
                 synthetic_stream_failure_event(
                     "upstream_reset",
                     "Upstream HTTP stream failed",
                     response_id=self._http_response_id,
-                )
+                ),
+                failure_phase="upstream",
+                failure_detail=type(exc).__name__,
             )
 
     async def interrupt_http(self, response_id: str) -> bool:

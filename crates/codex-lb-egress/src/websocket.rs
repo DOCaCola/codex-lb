@@ -27,7 +27,7 @@ use tungstenite::extensions::ExtensionsConfig;
 use tungstenite::extensions::compression::deflate::DeflateConfig;
 use url::Url;
 
-use crate::http::error_chain_has_invalid_certificate;
+use crate::http::{error_chain_has_invalid_certificate, variant_name};
 use crate::runtime::{Output, emit};
 
 pub(crate) trait AsyncIo: AsyncRead + AsyncWrite + Send + Unpin {}
@@ -586,25 +586,4 @@ fn websocket_error_detail(error: &WebSocketError) -> String {
         WebSocketError::Tls(error) => format!("tls_{}", variant_name(error)),
         error => variant_name(error),
     }
-}
-
-/// snake_case name of the variant `value` debug-prints as, without its payload.
-fn variant_name(value: &impl std::fmt::Debug) -> String {
-    let debug = format!("{value:?}");
-    let name = debug
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .next()
-        .unwrap_or_default();
-    let mut snake = String::with_capacity(name.len() + 8);
-    for (index, character) in name.char_indices() {
-        if character.is_ascii_uppercase() {
-            if index > 0 {
-                snake.push('_');
-            }
-            snake.push(character.to_ascii_lowercase());
-        } else {
-            snake.push(character);
-        }
-    }
-    snake
 }

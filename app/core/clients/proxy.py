@@ -4504,6 +4504,8 @@ async def _stream_responses_with_session(
                 "Upstream stream idle timeout",
                 response_id=get_request_id(),
             ),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except StreamEventTooLargeError as exc:
@@ -4564,6 +4566,8 @@ async def _stream_responses_with_session(
             ) from exc
         yield format_local_sse_event(
             synthetic_stream_failure_event(routed_error_code, response_error_message, response_id=get_request_id()),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except NativeEgressTransportError as exc:
@@ -4573,7 +4577,7 @@ async def _stream_responses_with_session(
         error_code = native_error_code
         error_message = native_error_message
         failure_phase = exc.failure_phase
-        failure_detail = "native_transport_error"
+        failure_detail = exc.failure_detail
         failure_exception_type = type(exc).__name__
         if raise_for_status and retryable_same_contract:
             raise ProxyResponseError(
@@ -4598,6 +4602,8 @@ async def _stream_responses_with_session(
                     response_id=get_request_id(),
                 )
             ),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except (NativeEgressProtocolError, NativeEgressError) as exc:
@@ -4613,6 +4619,8 @@ async def _stream_responses_with_session(
             synthetic_transport_failure_event(
                 response_failed_event(native_error_code, native_error_message, response_id=get_request_id())
             ),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except aiohttp.ClientError as exc:
@@ -4661,6 +4669,8 @@ async def _stream_responses_with_session(
             synthetic_stream_failure_event(
                 error_code or "upstream_unavailable", response_error_message, response_id=get_request_id()
             ),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except asyncio.CancelledError:
@@ -4687,6 +4697,8 @@ async def _stream_responses_with_session(
                 synthetic_stream_failure_event(
                     "upstream_unavailable", response_error_message, response_id=get_request_id()
                 ),
+                failure_phase=failure_phase,
+                failure_detail=failure_detail,
             )
             return
         now = time.monotonic()
@@ -4708,6 +4720,8 @@ async def _stream_responses_with_session(
                     "Upstream stream idle timeout",
                     response_id=get_request_id(),
                 ),
+                failure_phase=failure_phase,
+                failure_detail=failure_detail,
             )
             return
         total_elapsed_seconds = max(0.0, now - pre_request_started_at)
@@ -4734,6 +4748,8 @@ async def _stream_responses_with_session(
                     response_error_message,
                     response_id=get_request_id(),
                 ),
+                failure_phase=failure_phase,
+                failure_detail=failure_detail,
             )
             return
         error_code = "upstream_request_timeout"
@@ -4748,6 +4764,8 @@ async def _stream_responses_with_session(
                 "Proxy request budget exhausted",
                 response_id=get_request_id(),
             ),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except GeneratorExit:
@@ -4786,6 +4804,8 @@ async def _stream_responses_with_session(
             synthetic_stream_failure_event(
                 error_code or "upstream_unavailable", response_error_message, response_id=get_request_id()
             ),
+            failure_phase=failure_phase,
+            failure_detail=failure_detail,
         )
         return
     except Exception as exc:
@@ -5334,7 +5354,7 @@ class _CompactCommandTransport:
             }
             error_code = PROCESS_NETWORK_UNAVAILABLE_CODE if process_failure else "upstream_unavailable"
             error_message = "Native compact upstream request failed"
-            failure_detail = "native_transport_error"
+            failure_detail = transport_error.failure_detail if transport_error is not None else "native_protocol_error"
             failure_exception_type = type(exc).__name__
             raise ProxyResponseError(
                 502,

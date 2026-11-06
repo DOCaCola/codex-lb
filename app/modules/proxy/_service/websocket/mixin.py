@@ -1172,6 +1172,8 @@ async def _process_and_forward_upstream_websocket_text(
         continuity_state=continuity_state,
         codex_session_affinity=codex_session_affinity,
         upstream_transport=getattr(message, "transport", "websocket"),
+        failure_phase=getattr(message, "failure_phase", None),
+        failure_detail=getattr(message, "failure_detail", None),
         clock=clock,
     )
     suppress_downstream_event = upstream_control.suppress_downstream_event
@@ -5915,6 +5917,8 @@ class _WebSocketMixin:
         codex_session_affinity: bool = False,
         parsed_frame: _ParsedUpstreamWebSocketFrame | None = None,
         upstream_transport: str = "websocket",
+        failure_phase: str | None = None,
+        failure_detail: str | None = None,
         clock: Clock | None = None,
     ) -> str:
         proxy = cast(_WebSocketServiceProtocol, self)
@@ -6160,6 +6164,15 @@ class _WebSocketMixin:
                 )
                 if request_state is not None:
                     upstream_control.downstream_request_state = request_state
+                    # The terminal may resolve a request no earlier frame
+                    # matched (a local failure carries a local response ID).
+                    request_state.upstream_transport = upstream_transport
+                    # A locally generated transport terminal names where and
+                    # how its exchange failed. A replay clears this override,
+                    # so a replayed turn never inherits it.
+                    if failure_phase is not None and request_state.failure_phase_override is None:
+                        request_state.failure_phase_override = failure_phase
+                        request_state.failure_detail_override = failure_detail
                     # Upstream generation ends here; everything after (affinity
                     # refresh, settlement, cleanup) is local and must not stretch
                     # the throughput sample's span. A later terminal for the same

@@ -171,6 +171,8 @@ class ParsedSseBlock(str):
     plain ``str`` and take the full parse path again. ``is_local`` records a
     producer-generated block without changing its wire payload or retry markers.
     ``response_id_is_local`` also covers a local ID added to a real upstream event.
+    ``failure_phase``/``failure_detail`` attribute a locally generated transport
+    terminal (where and how the upstream exchange failed) for the request log.
     """
 
     # ``__slots__`` is not supported on ``str`` subclasses; the instance dict
@@ -178,6 +180,8 @@ class ParsedSseBlock(str):
     payload: dict[str, JsonValue] | None
     is_local: bool
     response_id_is_local: bool
+    failure_phase: str | None
+    failure_detail: str | None
 
     def __new__(
         cls,
@@ -186,18 +190,32 @@ class ParsedSseBlock(str):
         *,
         is_local: bool = False,
         response_id_is_local: bool = False,
+        failure_phase: str | None = None,
+        failure_detail: str | None = None,
     ) -> ParsedSseBlock:
         instance = super().__new__(cls, block)
         instance.payload = payload
         instance.is_local = is_local
         instance.response_id_is_local = response_id_is_local
+        instance.failure_phase = failure_phase
+        instance.failure_detail = failure_detail
         return instance
 
 
-def format_local_sse_event(payload: dict[str, JsonValue] | ResponseFailedEvent) -> ParsedSseBlock:
+def format_local_sse_event(
+    payload: dict[str, JsonValue] | ResponseFailedEvent,
+    *,
+    failure_phase: str | None = None,
+    failure_detail: str | None = None,
+) -> ParsedSseBlock:
     """Frame a locally generated event with provenance confined to the carrier."""
     return ParsedSseBlock(
-        format_sse_event(payload), cast(dict[str, JsonValue], payload), is_local=True, response_id_is_local=True
+        format_sse_event(payload),
+        cast(dict[str, JsonValue], payload),
+        is_local=True,
+        response_id_is_local=True,
+        failure_phase=failure_phase,
+        failure_detail=failure_detail,
     )
 
 
@@ -205,11 +223,14 @@ def sse_block_with_payload(event_block: str, payload: dict[str, JsonValue] | Non
     """Attach ``payload`` (the result of ``parse_sse_data_json(event_block)``) to the block."""
     if isinstance(event_block, ParsedSseBlock) and event_block.payload is payload:
         return event_block
+    parsed = event_block if isinstance(event_block, ParsedSseBlock) else None
     return ParsedSseBlock(
         event_block,
         payload,
-        is_local=isinstance(event_block, ParsedSseBlock) and event_block.is_local,
-        response_id_is_local=isinstance(event_block, ParsedSseBlock) and event_block.response_id_is_local,
+        is_local=parsed is not None and parsed.is_local,
+        response_id_is_local=parsed is not None and parsed.response_id_is_local,
+        failure_phase=parsed.failure_phase if parsed is not None else None,
+        failure_detail=parsed.failure_detail if parsed is not None else None,
     )
 
 

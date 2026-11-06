@@ -1291,11 +1291,13 @@ def _decode_header_pair(value: object) -> tuple[str, str]:
 def _transport_error_from_event(event: Mapping[str, object]) -> NativeEgressTransportError:
     message = event.get("message")
     failure_phase = event.get("failure_phase")
+    failure_detail = event.get("failure_detail")
     retryable_same_contract = event.get("retryable_same_contract")
     is_tls_verification_failure = event.get("is_tls_verification_failure")
     return NativeEgressTransportError(
         message if isinstance(message, str) else "native request failed",
         failure_phase=failure_phase if isinstance(failure_phase, str) else "request",
+        failure_detail=failure_detail if isinstance(failure_detail, str) else None,
         retryable_same_contract=retryable_same_contract if isinstance(retryable_same_contract, bool) else False,
         is_tls_verification_failure=(
             is_tls_verification_failure if isinstance(is_tls_verification_failure, bool) else False

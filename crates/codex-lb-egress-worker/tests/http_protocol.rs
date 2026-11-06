@@ -563,6 +563,47 @@ async fn http_error_with_sse_options_preserves_raw_body_chunks() {
 }
 
 #[tokio::test]
+async fn origin_closing_before_response_names_the_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind origin");
+    let address = listener.local_addr().expect("origin address");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept native helper");
+        read_request_headers(&mut stream).await;
+        drop(stream);
+    });
+
+    let (helper, mut stdin, mut lines) = start_helper().await;
+    write_command(
+        &mut stdin,
+        &sse_request(
+            "closed-origin",
+            format!("http://{address}/response"),
+            1_000,
+            1024,
+        ),
+    )
+    .await;
+    match read_event(&mut lines, "closed origin error timeout").await {
+        NativeEvent::Error {
+            request_id,
+            message,
+            failure_phase,
+            failure_detail,
+            ..
+        } => {
+            assert_eq!(request_id, "closed-origin");
+            assert_eq!(message, "native upstream request failed");
+            assert_eq!(failure_phase, "request");
+            assert_eq!(failure_detail.as_deref(), Some("hyper_incomplete_message"));
+        }
+        _ => panic!("expected an error event"),
+    }
+
+    stop_helper(helper, stdin, lines).await;
+    server.await.expect("origin task");
+}
+
+#[tokio::test]
 async fn framed_request_bodies_reach_origin_byte_exact() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind origin");
     let address = listener.local_addr().expect("origin address");

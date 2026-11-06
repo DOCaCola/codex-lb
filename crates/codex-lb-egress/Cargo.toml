@@ -16,6 +16,7 @@ base64.workspace = true
 codex-lb-protocol = { version = "0.1.0", path = "../codex-lb-protocol" }
 codex-lb-responses = { version = "0.1.0", path = "../codex-lb-responses" }
 futures-util.workspace = true
+h2.workspace = true
 hyper.workspace = true
 hyper-rustls.workspace = true
 hyper-util.workspace = true
