@@ -43,6 +43,7 @@ from app.core.clients.proxy_websocket import (
     LOCAL_WEBSOCKET_BACKPRESSURE_CODE,
     UpstreamWebSocketMessage,
 )
+from app.core.clients.responses_transport import utf8_size
 from app.core.clock import Scheduler
 from app.core.errors import (
     PREVIOUS_RESPONSE_MALFORMED_PARAM_REASON,
@@ -547,6 +548,64 @@ def _websocket_anchor_connection_retired_error() -> ProxyResponseError:
             "previous_response_not_found",
             "The upstream connection holding the conversation state this request relies on "
             "has closed; resend the full conversation history or start a new conversation.",
+            error_type="invalid_request_error",
+        ),
+        local_pre_dispatch_refusal=True,
+    )
+
+
+def _response_create_frame_requires_http(frame: str) -> bool:
+    """Whether ``ResponsesTransport`` carries this create frame over HTTP.
+
+    Frames beyond the upstream websocket frame limit cannot cross the socket.
+    """
+    return utf8_size(frame) > _facade()._UPSTREAM_RESPONSE_CREATE_MAX_BYTES
+
+
+def _withdraw_anchor_for_http_frame(request_state: "_WebSocketRequestState", *, surface: str) -> str | None:
+    """Install the verified full-history body of an anchored request bound for HTTP.
+
+    The Codex backend resolves a ``store=false`` ``previous_response_id`` only
+    on the websocket connection that produced it and rejects the parameter
+    over HTTP, so a frame the transport must send over HTTP cannot keep its
+    anchor. The request is dispatched on its already selected account, so a
+    client-supplied anchor keeps its owner pin and only a proxy-injected one
+    releases it. Returns ``None`` when no verified full-history body exists:
+    the request relied on the anchor for its context and fails closed before
+    dispatch.
+    """
+    anchor_response_id = request_state.previous_response_id
+    fresh_request_text = request_state.fresh_upstream_request_text
+    withdrawn_text = None
+    if request_state.fresh_upstream_request_is_retry_safe and fresh_request_text:
+        withdrawn_text = _install_fresh_replay_body(
+            request_state,
+            fresh_request_text,
+            account_neutral=_request_body_is_account_neutral_fresh_replay(request_state, fresh_request_text),
+            release_owner_pin=request_state.proxy_injected_previous_response_id,
+        )
+    _facade().logger.info(
+        "response_create_anchor_withdrawn surface=%s request_id=%s response_id=%s reason=http_frame outcome=%s",
+        surface,
+        request_state.request_id,
+        anchor_response_id,
+        "fail_closed" if withdrawn_text is None else "full_history_resend",
+    )
+    return withdrawn_text
+
+
+def _websocket_anchor_http_frame_error() -> ProxyResponseError:
+    """Error for a delta-only request too large for a websocket frame.
+
+    Raised before dispatch: HTTP, the only transport that can carry the
+    frame, cannot resolve the anchor the request relies on for its context.
+    """
+    return ProxyResponseError(
+        404,
+        openai_error(
+            "previous_response_not_found",
+            "This request exceeds the upstream websocket frame limit and must be sent over HTTP, "
+            "which cannot resolve previous_response_id; resend the full conversation history.",
             error_type="invalid_request_error",
         ),
         local_pre_dispatch_refusal=True,

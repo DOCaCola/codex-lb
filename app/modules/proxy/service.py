@@ -678,6 +678,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _record_websocket_continuity_completion,  # noqa: F401
     _record_websocket_responses_lite_acceptance,  # noqa: F401
     _release_websocket_response_create_gate,  # noqa: F401
+    _response_create_frame_requires_http,  # noqa: F401
     _rewrite_websocket_continuity_corruption_event,  # noqa: F401
     _rewrite_websocket_downstream_response_id,  # noqa: F401
     _rewrite_websocket_previous_response_owner_unavailable_event,  # noqa: F401
@@ -709,6 +710,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_receive_timeout_for_pending_requests,  # noqa: F401
     _websocket_response_id,  # noqa: F401
     _websocket_top_level_error_payload,  # noqa: F401
+    _withdraw_anchor_for_http_frame,  # noqa: F401
     _wrapped_websocket_error_event,  # noqa: F401
 )
 from app.modules.proxy.affinity import (

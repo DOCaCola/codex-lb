@@ -1608,6 +1608,52 @@ async def test_http_bridge_send_started_callback_runs_after_exact_frame_prefligh
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_full_history", [True, False])
+async def test_http_bridge_send_withdraws_anchor_from_frame_bound_for_http(
+    monkeypatch: pytest.MonkeyPatch,
+    has_full_history: bool,
+) -> None:
+    """A frame beyond the websocket limit goes over HTTP, which rejects anchors."""
+    request_state = _make_eventless_http_bridge_owner()
+    session = _make_bridge_session()
+    send_text = AsyncMock()
+    session.upstream = cast(UpstreamWebSocket, SimpleNamespace(send_text=send_text, close=AsyncMock()))
+    full_input = [{"role": "user", "content": "earlier"}, {"role": "user", "content": "x" * 512}]
+    request_state.previous_response_id = "resp_anchor"
+    request_state.proxy_injected_previous_response_id = True
+    request_state.proxy_injected_anchor_connection_id = session.connection_id
+    request_state.fresh_upstream_request_text = json.dumps({"type": "response.create", "input": full_input})
+    request_state.fresh_upstream_request_is_retry_safe = has_full_history
+    anchored_text = json.dumps(
+        {"type": "response.create", "previous_response_id": "resp_anchor", "input": full_input[1:]}
+    )
+    monkeypatch.setattr(proxy_service, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 256)
+    monkeypatch.setattr(
+        http_bridge_request_submit_module,
+        "_enforce_http_bridge_response_create_text_size",
+        lambda _request_state, _text_data: None,
+    )
+
+    if not has_full_history:
+        with pytest.raises(proxy_service.ProxyResponseError) as exc_info:
+            await http_bridge_request_submit_module._send_http_bridge_request_text_with_archive_id(
+                session, request_state, anchored_text
+            )
+        assert exc_info.value.payload["error"]["code"] == "bridge_previous_response_not_found"
+        send_text.assert_not_awaited()
+        return
+
+    await http_bridge_request_submit_module._send_http_bridge_request_text_with_archive_id(
+        session, request_state, anchored_text
+    )
+
+    sent = json.loads(send_text.await_args.args[0])
+    assert "previous_response_id" not in sent
+    assert sent["input"] == full_input
+    assert request_state.previous_response_id is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("anchor_on_current_connection", "has_fresh_replay"),
     [

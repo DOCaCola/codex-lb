@@ -9881,6 +9881,160 @@ def test_backend_responses_websocket_oversized_turn_preserves_socket_and_account
     assert [call["previous_response_id"] for call in owner_calls] == ["resp_small"]
 
 
+@pytest.mark.parametrize("follow_up_session", ["same_socket", "reconnect", "unrelated"])
+def test_backend_responses_websocket_oversized_anchored_turn_never_reaches_http_with_anchor(
+    app_instance,
+    monkeypatch,
+    tmp_path,
+    follow_up_session,
+):
+    """An anchored frame the transport must send over HTTP drops its anchor.
+
+    The Codex backend rejects ``previous_response_id`` over HTTP. With the
+    anchor's history known to the session (also after a downstream
+    reconnect), the full-history body goes upstream instead; without it, the
+    request fails closed before dispatch.
+    """
+    import app.core.clients.proxy as core_proxy
+    from app.core.clients.proxy_websocket import UpstreamWebSocketMessage
+    from app.core.clients.responses_transport import ResponsesTransport
+    from app.core.openai.requests import ResponsesRequest
+    from app.core.utils.encoded_json import decode_json_object
+    from app.core.utils.sse import format_sse_event
+    from app.modules.proxy.replay_store import HTTPFallbackReplayStore
+    from app.modules.request_logs.repository import PreviousResponseOwnerRecord, RequestLogsRepository
+
+    limit = 2048
+    http_bodies: list[dict[str, Any]] = []
+    ws_bodies: list[dict[str, Any]] = []
+    log_calls: list[dict[str, Any]] = []
+    tool_call = {
+        "type": "function_call",
+        "id": "fc_small",
+        "call_id": "call_small",
+        "name": "view_image",
+        "arguments": "{}",
+        "status": "completed",
+    }
+
+    class Socket:
+        def __init__(self):
+            self.events: asyncio.Queue[UpstreamWebSocketMessage] = asyncio.Queue()
+
+        async def send_text(self, text):
+            ws_bodies.append(json.loads(text))
+            for kind in ("created", "completed"):
+                await self.events.put(
+                    UpstreamWebSocketMessage(
+                        kind="text",
+                        text=json.dumps(
+                            {
+                                "type": "response." + kind,
+                                "response": {
+                                    "id": "resp_small",
+                                    "status": "completed" if kind == "completed" else "in_progress",
+                                    "output": [tool_call] if kind == "completed" else [],
+                                    "usage": {"input_tokens": 3, "output_tokens": 2},
+                                },
+                            }
+                        ),
+                    )
+                )
+
+        async def receive(self):
+            return await self.events.get()
+
+        def response_header(self, name):
+            return None
+
+        async def close(self, code=1000, reason=""):
+            return None
+
+    async def connect():
+        return Socket()
+
+    async def stream_http(text):
+        source = decode_json_object(text)
+        payload = dict(source.values)
+        payload.pop("type")
+        http_bodies.append(payload)
+        ResponsesRequest.model_validate(payload)
+        for kind in ("created", "completed"):
+            yield format_sse_event(
+                {
+                    "type": "response." + kind,
+                    "response": {
+                        "id": "resp_large",
+                        "status": "completed" if kind == "completed" else "in_progress",
+                        "output": [],
+                        "usage": {"input_tokens": 5, "output_tokens": 4},
+                    },
+                }
+            )
+
+    monkeypatch.setattr(core_proxy, "discover_native_egress_client", lambda: None)
+
+    async def select_account(self, headers, **kwargs):
+        return account_fixture(id="acct_size", codex_installation_id="installation"), ResponsesTransport(
+            None, connect=connect, stream_http=stream_http, max_frame_bytes=limit
+        )
+
+    async def write_log(self, **kwargs):
+        log_calls.append(kwargs)
+
+    owner_lookup = AsyncMock(
+        return_value=PreviousResponseOwnerRecord("acct_size", datetime.now(timezone.utc), "anchor-http", "websocket")
+    )
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", AsyncMock(return_value=None))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        proxy_module, "get_settings_cache", lambda: SimpleNamespace(get=AsyncMock(return_value=_websocket_settings()))
+    )
+    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", limit)
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", select_account)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", write_log)
+    monkeypatch.setattr(proxy_module.ProxyService, "_http_fallback_replay_store", HTTPFallbackReplayStore(tmp_path))
+    monkeypatch.setattr(RequestLogsRepository, "find_latest_owner_record_for_response_id", owner_lookup)
+
+    first_input = [{"role": "user", "content": [{"type": "input_text", "text": "show the screenshot"}]}]
+    image = {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 4096}
+    delta = [{"type": "function_call_output", "call_id": "call_small", "output": [image]}]
+    follow_up = {"type": "response.create", "model": "gpt-5.4", "previous_response_id": "resp_small", "input": delta}
+    with TestClient(app_instance) as client:
+        with client.websocket_connect(
+            "/backend-api/codex/responses", headers={"session_id": "anchor-http"}
+        ) as websocket:
+            websocket.send_json({"type": "response.create", "model": "gpt-5.4", "input": first_input})
+            assert json.loads(websocket.receive_text())["type"] == "response.created"
+            assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            if follow_up_session == "same_socket":
+                websocket.send_json(follow_up)
+                assert json.loads(websocket.receive_text())["type"] == "response.created"
+                assert json.loads(websocket.receive_text())["type"] == "response.completed"
+        if follow_up_session != "same_socket":
+            session_id = "anchor-http" if follow_up_session == "reconnect" else "anchor-http-unrelated"
+            with client.websocket_connect(
+                "/backend-api/codex/responses", headers={"session_id": session_id}
+            ) as websocket:
+                websocket.send_json(follow_up)
+                event = json.loads(websocket.receive_text())
+                if follow_up_session == "reconnect":
+                    assert event["type"] == "response.created"
+                    assert json.loads(websocket.receive_text())["type"] == "response.completed"
+            if follow_up_session == "unrelated":
+                assert event["type"] == "response.failed"
+                assert event["response"]["error"]["code"] == "previous_response_not_found"
+
+    assert len(ws_bodies) == 1
+    if follow_up_session == "unrelated":
+        assert http_bodies == []
+        return
+    assert len(http_bodies) == 1
+    assert "previous_response_id" not in http_bodies[0]
+    normalized_call = {key: value for key, value in tool_call.items() if key != "id"}
+    assert http_bodies[0]["input"] == [*first_input, normalized_call, *delta]
+
+
 @pytest.mark.parametrize(
     ("endpoint", "expected_code"),
     [("/backend-api/codex/responses", "previous_response_not_found"), ("/v1/responses", "stream_incomplete")],

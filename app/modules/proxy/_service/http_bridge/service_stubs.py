@@ -348,6 +348,14 @@ def _install_verified_fresh_replay(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_install_verified_fresh_replay")(*args, **kwargs)
 
 
+def _response_create_frame_requires_http(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_response_create_frame_requires_http")(*args, **kwargs)
+
+
+def _withdraw_anchor_for_http_frame(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_withdraw_anchor_for_http_frame")(*args, **kwargs)
+
+
 def _prepare_websocket_request_state_for_auth_replay(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_prepare_websocket_request_state_for_auth_replay")(*args, **kwargs)
 

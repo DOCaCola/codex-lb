@@ -445,6 +445,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _record_websocket_responses_lite_acceptance,
     _record_websocket_stale_anchor_failure,
     _release_websocket_response_create_gate,
+    _response_create_frame_requires_http,
     _rewrite_websocket_continuity_corruption_event,
     _rewrite_websocket_downstream_response_id,
     _rewrite_websocket_previous_response_owner_unavailable_event,
@@ -458,6 +459,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_accepted_replay_can_switch_account,
     _websocket_accepted_replay_may_exclude_account,
     _websocket_anchor_connection_retired_error,
+    _websocket_anchor_http_frame_error,
     _websocket_auth_failure_requires_reauth,
     _websocket_capability_metadata_values,
     _websocket_client_previous_response_full_resend_is_retry_safe,
@@ -480,6 +482,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_precreated_retry_error_code,
     _websocket_receive_timeout_for_pending_requests,
     _websocket_response_id,
+    _withdraw_anchor_for_http_frame,
     _wrapped_websocket_error_event,
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
@@ -2936,6 +2939,13 @@ class _WebSocketMixin:
                             account_stamp.codex_installation_id,
                         )
                         _facade()._enforce_response_create_size_limit(request_state)
+                        if request_state.previous_response_id is not None and _response_create_frame_requires_http(
+                            text_data
+                        ):
+                            withdrawn_text = _withdraw_anchor_for_http_frame(request_state, surface="websocket")
+                            if withdrawn_text is None:
+                                raise _websocket_anchor_http_frame_error()
+                            text_data = withdrawn_text
                     if (
                         text_data is not None
                         and request_state is not None

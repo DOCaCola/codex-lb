@@ -513,6 +513,23 @@ def _http_bridge_anchor_connection_retired_error() -> ProxyResponseError:
     )
 
 
+def _http_bridge_anchor_http_frame_error() -> ProxyResponseError:
+    """Error for a delta-only request too large for a websocket frame.
+
+    It is always raised before anything reaches upstream: HTTP, the only
+    transport that can carry the frame, cannot resolve the anchor.
+    """
+    return ProxyResponseError(
+        404,
+        openai_error(
+            "bridge_previous_response_not_found",
+            "This request exceeds the upstream websocket frame limit and must be sent over HTTP, "
+            "which cannot resolve the conversation state it relies on; resend the full conversation history.",
+        ),
+        local_pre_dispatch_refusal=True,
+    )
+
+
 def _forget_http_bridge_denied_anchor_fence(
     service: Any,
     response_id: str,

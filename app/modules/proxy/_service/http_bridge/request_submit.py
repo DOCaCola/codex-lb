@@ -100,6 +100,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _build_http_bridge_prewarm_text,
     _http_bridge_abandonment_may_settle_circuit,
     _http_bridge_anchor_connection_retired_error,
+    _http_bridge_anchor_http_frame_error,
     _http_bridge_client_full_history_recovery_error,
     _http_bridge_denied_anchor_fence_advanced,
     _http_bridge_durable_lease_ttl_seconds,
@@ -146,6 +147,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _prewarm_response_timeout_seconds,
     _release_websocket_response_create_gate,
     _response_create_client_metadata,
+    _response_create_frame_requires_http,
     _security_work_advisory_event,
     _service_as_image_fetch_session,
     _service_get_settings,
@@ -154,6 +156,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _service_lease_http_session,
     _websocket_auth_failure_permanent_code,
     _websocket_auth_failure_requires_reauth,
+    _withdraw_anchor_for_http_frame,
 )
 from app.modules.proxy._service.http_bridge.upstream_events import (
     _abandon_durable_http_bridge_continuity,
@@ -475,8 +478,19 @@ async def _send_http_bridge_request_text_with_archive_id(
         and request_state.proxy_injected_anchor_connection_id != session.connection_id
     ):
         text_data = _withdraw_http_bridge_retired_anchor(session, request_state)
-    text_data = _text_with_operation_id(text_data, request_state.operation_id)
-    text_data = _text_with_thread_cache_identity(text_data, _bridge_thread_cache_identity(session))
+    thread_cache_identity = _bridge_thread_cache_identity(session)
+
+    def egress_frame(body: str) -> str:
+        return _text_with_thread_cache_identity(
+            _text_with_operation_id(body, request_state.operation_id), thread_cache_identity
+        )
+
+    text_data = egress_frame(text_data)
+    if request_state.previous_response_id is not None and _response_create_frame_requires_http(text_data):
+        withdrawn_text = _withdraw_anchor_for_http_frame(request_state, surface="http_bridge")
+        if withdrawn_text is None:
+            raise _http_bridge_anchor_http_frame_error()
+        text_data = egress_frame(withdrawn_text)
     # Operation metadata is added after the initial payload sizing pass. Check
     # the exact frame that will cross the websocket so the metadata cannot
     # push an otherwise-valid response.create over the upstream limit.
