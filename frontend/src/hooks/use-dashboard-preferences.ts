@@ -10,6 +10,7 @@ const QUOTA_PROVIDER_STORAGE_KEY = "codex-lb-dashboard-quota-provider";
 const RECENT_USAGE_STORAGE_KEY = "codex-lb-dashboard-recent-usage";
 const RECENT_SHORT_MINUTES_STORAGE_KEY = "codex-lb-dashboard-recent-short-minutes";
 const RECENT_LONG_PERIOD_STORAGE_KEY = "codex-lb-dashboard-recent-long-period";
+const UPCOMING_HORIZON_STORAGE_KEY = "codex-lb-dashboard-upcoming-horizon";
 
 export type DashboardRefreshSeconds = 5 | 15 | 30 | 60;
 
@@ -22,6 +23,10 @@ export type RecentShortMinutes = (typeof RECENT_SHORT_MINUTES)[number];
 export const RECENT_LONG_PERIODS = [60, 120, 240, 360, 720, 1440, "today"] as const;
 export type RecentLongPeriod = (typeof RECENT_LONG_PERIODS)[number];
 
+/** How far ahead the dashboard's "Coming up" section looks. */
+export const UPCOMING_HORIZONS = ["24h", "7d"] as const;
+export type UpcomingHorizon = (typeof UPCOMING_HORIZONS)[number];
+
 export type RecentLookbacks = { recentShortMinutes: RecentShortMinutes; recentLongPeriod: RecentLongPeriod };
 
 type DashboardPreferencesState = {
@@ -32,6 +37,7 @@ type DashboardPreferencesState = {
   recentUsageEnabled: boolean;
   recentShortMinutes: RecentShortMinutes;
   recentLongPeriod: RecentLongPeriod;
+  upcomingHorizon: UpcomingHorizon;
   initialized: boolean;
   initializePreferences: () => void;
   setAccountBurnrateEnabled: (enabled: boolean) => void;
@@ -41,6 +47,7 @@ type DashboardPreferencesState = {
   setRecentUsageEnabled: (enabled: boolean) => void;
   setRecentShortMinutes: (minutes: RecentShortMinutes) => void;
   setRecentLongPeriod: (period: RecentLongPeriod) => void;
+  setUpcomingHorizon: (horizon: UpcomingHorizon) => void;
 };
 
 function readStoredAccountBurnrateEnabled(): boolean | null {
@@ -155,6 +162,7 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
   recentUsageEnabled: true,
   recentShortMinutes: 60,
   recentLongPeriod: 1440,
+  upcomingHorizon: "24h",
   initialized: false,
   initializePreferences: () => {
     const accountBurnrateEnabled = readStoredAccountBurnrateEnabled() ?? true;
@@ -164,6 +172,7 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
     const recentUsageEnabled = readStoredRecentUsageEnabled() ?? true;
     const recentShortMinutes = readStoredPeriod(RECENT_SHORT_MINUTES_STORAGE_KEY, RECENT_SHORT_MINUTES) ?? 60;
     const recentLongPeriod = readStoredPeriod(RECENT_LONG_PERIOD_STORAGE_KEY, RECENT_LONG_PERIODS) ?? 1440;
+    const upcomingHorizon = readStoredPeriod(UPCOMING_HORIZON_STORAGE_KEY, UPCOMING_HORIZONS) ?? "24h";
     persistAccountBurnrateEnabled(accountBurnrateEnabled);
     persistAccountViewMode(accountViewMode);
     persistRefreshSeconds(refreshSeconds);
@@ -171,6 +180,7 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
     persistRecentUsageEnabled(recentUsageEnabled);
     persistPeriod(RECENT_SHORT_MINUTES_STORAGE_KEY, recentShortMinutes);
     persistPeriod(RECENT_LONG_PERIOD_STORAGE_KEY, recentLongPeriod);
+    persistPeriod(UPCOMING_HORIZON_STORAGE_KEY, upcomingHorizon);
     set({
       accountBurnrateEnabled,
       accountViewMode,
@@ -179,6 +189,7 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
       recentUsageEnabled,
       recentShortMinutes,
       recentLongPeriod,
+      upcomingHorizon,
       initialized: true,
     });
   },
@@ -209,6 +220,10 @@ export const useDashboardPreferencesStore = create<DashboardPreferencesState>((s
   setRecentLongPeriod: (period) => {
     persistPeriod(RECENT_LONG_PERIOD_STORAGE_KEY, period);
     set({ recentLongPeriod: period, initialized: true });
+  },
+  setUpcomingHorizon: (horizon) => {
+    persistPeriod(UPCOMING_HORIZON_STORAGE_KEY, horizon);
+    set({ upcomingHorizon: horizon, initialized: true });
   },
 }));
 

@@ -13,6 +13,7 @@ import type {
   TrendPoint,
   UsageWindow,
   WeeklyCreditPaceStatus,
+  WeeklyCreditPaceUnit,
   WeeklyCreditRunwayStatus,
 } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
@@ -87,6 +88,16 @@ const smallProUnitsFormatter = new Intl.NumberFormat("en-US", { maximumFractionD
 /** Pro units are fractional: one decimal, two below one unit so hourly burn stays legible. */
 export function formatProUnits(value: number): string {
   return (Math.abs(value) < 1 ? smallProUnitsFormatter : proUnitsFormatter).format(value);
+}
+
+/** A pace amount as a bare number: compact credits, or fractional Pro units. */
+export function formatUnitValue(value: number, unit: WeeklyCreditPaceUnit): string {
+  return unit === "credits" ? formatCompactNumber(value) : formatProUnits(value);
+}
+
+/** A pace amount with its unit, for example "36.8k credits" or "0.9 Pro units". */
+export function formatUnitAmount(value: number, unit: WeeklyCreditPaceUnit): string {
+  return t(`dashboard.weeklyPace.amount.${unit}`, { value: formatUnitValue(value, unit) });
 }
 
 export type ClaudeQuotaWindow = "five_hour" | "seven_day";

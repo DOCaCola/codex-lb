@@ -642,3 +642,14 @@ export function noticeClass(tone: SummaryTone): string {
   return NOTICE_TEXT[tone];
 }
 
+const TONE_DOT: Record<SummaryTone, string> = {
+  ok: "bg-emerald-500",
+  warn: "bg-amber-500",
+  bad: "bg-red-500",
+  off: "bg-muted-foreground",
+};
+
+/** Background colour of a status dot in a summary tone. */
+export function toneDotClass(tone: SummaryTone): string {
+  return TONE_DOT[tone];
+}

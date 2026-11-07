@@ -30,11 +30,14 @@ import { DashboardSkeleton } from "@/features/dashboard/components/dashboard-ske
 import { DashboardStatusLine } from "@/features/dashboard/components/dashboard-status-line";
 import { PageHeader } from "@/components/layout/page-header";
 import { QuotaSection } from "@/features/dashboard/components/quota-section";
+import { SectionHeader } from "@/features/dashboard/components/section-header";
+import { UpcomingEventsSection } from "@/features/dashboard/components/upcoming-events";
 import { usePermission } from "@/features/auth/hooks/use-auth";
 import {
   useDashboard,
   useDashboardProjections,
 } from "@/features/dashboard/hooks/use-dashboard";
+import { upcomingPools } from "@/features/dashboard/upcoming-events";
 import { buildDashboardView } from "@/features/dashboard/utils";
 import {
   DEFAULT_OVERVIEW_TIMEFRAME,
@@ -55,17 +58,6 @@ type ResetCreditDialogTarget = {
   accountId: string;
   availableResetCredits: number;
 };
-
-function SectionHeader({ title, hint, children }: { title: string; hint?: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex min-h-[30px] flex-wrap items-center gap-2.5">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
-      <span className="flex-1" />
-      {children}
-    </div>
-  );
-}
 
 export function DashboardPage() {
   const { t, i18n } = useTranslation();
@@ -203,6 +195,8 @@ export function DashboardPage() {
     projectionsQuery.data,
     resolvedLanguage,
   ]);
+
+  const pools = useMemo(() => (view ? upcomingPools(view) : []), [view]);
 
   const dashboardLoadError = getErrorMessageOrNull(dashboardQuery.error);
   if (
@@ -361,6 +355,12 @@ export function DashboardPage() {
                 </p>
               ))}
             </section>
+
+            <UpcomingEventsSection
+              summaries={summaries}
+              subscriptionEnds={summaryContext.subscriptionEnds}
+              pools={pools}
+            />
 
             <section className="flex flex-col gap-2.5" data-testid="activity-section">
               <SectionHeader title={t("dashboard.activity.title")}>

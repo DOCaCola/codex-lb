@@ -3,16 +3,14 @@ import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  formatProUnits,
+  formatUnitAmount,
+  formatUnitValue,
   type WeeklyCreditPace,
-  type WeeklyCreditPaceUnit,
   type WeeklyCreditRunwayStatus,
 } from "@/features/dashboard/utils";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 import { cn } from "@/lib/utils";
 import { formatCompactNumber, formatDateTimeInline } from "@/utils/formatters";
-
-type Translate = ReturnType<typeof useTranslation>["t"];
 
 /** One independently limited pool shown under the main pace, e.g. an Antigravity model family. */
 export type PaceBreakdownRow = {
@@ -28,14 +26,6 @@ export type WeeklyCreditsPaceCardProps = {
   subtitle: string;
   breakdown?: PaceBreakdownRow[];
 };
-
-function formatUnitValue(value: number, unit: WeeklyCreditPaceUnit): string {
-  return unit === "credits" ? formatCompactNumber(value) : formatProUnits(value);
-}
-
-function formatUnitAmount(value: number, unit: WeeklyCreditPaceUnit, t: Translate): string {
-  return t(`dashboard.weeklyPace.amount.${unit}`, { value: formatUnitValue(value, unit) });
-}
 
 function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
@@ -67,7 +57,7 @@ function scheduleGapLine(pace: WeeklyCreditPace, t: ReturnType<typeof useTransla
   const smoothingMinutes = pace.paceGapSmoothingMinutes ?? 0;
   const window = smoothingMinutes > 0 ? formatDurationHours(smoothingMinutes / 60, t) : null;
   if (scheduleGapCredits > 0) {
-    const amount = formatUnitAmount(scheduleGapCredits, pace.unit, t);
+    const amount = formatUnitAmount(scheduleGapCredits, pace.unit);
     return window
       ? t("dashboard.weeklyPace.lines.overPlannedWindow", { amount, window })
       : t("dashboard.weeklyPace.lines.overPlannedNow", { amount });
@@ -399,14 +389,14 @@ function RunwayWeeklyCreditsPaceCard({
               {formatHeadroomPercent(headroomPercent)}
             </p>
             <p className="text-xs tabular-nums text-muted-foreground">
-              {t("dashboard.weeklyPace.heroLeft", { amount: formatUnitAmount(Math.max(0, headroomCredits), unit, t) })}
+              {t("dashboard.weeklyPace.heroLeft", { amount: formatUnitAmount(Math.max(0, headroomCredits), unit) })}
             </p>
           </div>
           <p className="mt-1 text-xs tabular-nums text-muted-foreground">
             {lapse != null ? (
               <span className="font-medium text-sky-700 dark:text-sky-300" data-testid="weekly-lapse">
                 {t("dashboard.weeklyPace.lapsesIn", {
-                  amount: formatUnitAmount(lapse.credits, unit, t),
+                  amount: formatUnitAmount(lapse.credits, unit),
                   duration: formatDurationHours(lapse.inHours, t),
                 })}
               </span>
@@ -441,13 +431,13 @@ function RunwayWeeklyCreditsPaceCard({
             </p>
           ) : lapse?.useUpRate != null ? (
             <p className="tabular-nums text-muted-foreground">
-              {t("dashboard.weeklyPace.useUpRate", { amount: formatUnitAmount(lapse.useUpRate, unit, t) })}
+              {t("dashboard.weeklyPace.useUpRate", { amount: formatUnitAmount(lapse.useUpRate, unit) })}
             </p>
           ) : reliefHours != null ? (
             <p className="tabular-nums text-muted-foreground">
               {t("dashboard.weeklyPace.reliefLine", {
                 duration: formatDurationHours(reliefHours, t),
-                amount: formatUnitAmount(Math.max(0, reliefCredits ?? 0), unit, t),
+                amount: formatUnitAmount(Math.max(0, reliefCredits ?? 0), unit),
               })}
             </p>
           ) : endTicks.length > 0 ? (
@@ -468,7 +458,7 @@ function RunwayWeeklyCreditsPaceCard({
                 key={`reset-${index}`}
                 data-testid="runway-reset-tick"
                 title={t("dashboard.weeklyPace.resetTickTooltip", {
-                  amount: formatUnitAmount(tick.credits, unit, t),
+                  amount: formatUnitAmount(tick.credits, unit),
                   time: tick.atLabel,
                 })}
                 className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-foreground/50"
@@ -480,7 +470,7 @@ function RunwayWeeklyCreditsPaceCard({
                 key={`end-${index}`}
                 data-testid="runway-subscription-end-tick"
                 title={t("dashboard.weeklyPace.subscriptionEndTickTooltip", {
-                  amount: formatUnitAmount(tick.credits, unit, t),
+                  amount: formatUnitAmount(tick.credits, unit),
                   time: tick.atLabel,
                 })}
                 className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-amber-500"

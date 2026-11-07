@@ -32,7 +32,8 @@ vi.mock("@/features/dashboard/hooks/use-dashboard", () => ({
   useDashboardProjections: vi.fn(),
 }));
 
-vi.mock("@/features/dashboard/utils", () => ({
+vi.mock("@/features/dashboard/utils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/dashboard/utils")>()),
   buildDashboardView: vi.fn(),
 }));
 
@@ -171,6 +172,16 @@ describe("DashboardPage", () => {
     expect(screen.getByTestId("account-list")).toHaveTextContent("List for 2 accounts");
     expect(screen.queryByTestId("account-cards")).not.toBeInTheDocument();
     expect(useDashboardPreferencesStore.getState().accountViewMode).toBe("list");
+  });
+
+  it("places Coming up between the Accounts and Activity sections", () => {
+    mockReadyDashboard();
+
+    renderWithProviders(<DashboardPage />);
+
+    const sections = screen.getAllByTestId(/-section$/).map((section) => section.dataset.testid);
+    expect(sections).toEqual(["quota-section", "accounts-section", "upcoming-section", "activity-section"]);
+    expect(screen.getByRole("heading", { name: "Coming up" })).toBeInTheDocument();
   });
 
   it("selects the overview timeframe from the Activity section", async () => {

@@ -32,6 +32,8 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 const dateFormatters = new Map<string, Intl.DateTimeFormat>();
 const timeFormatters = new Map<string, Intl.DateTimeFormat>();
 const chartDateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const shortTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const weekdayDateFormatters = new Map<string, Intl.DateTimeFormat>();
 
 function getCachedFormatter<TFormatter>(
   cache: Map<string, TFormatter>,
@@ -328,6 +330,42 @@ function formatISOTime(date: Date): string {
 
 function padTwo(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+/** Hours and minutes, for example "20:52" or "08:52 PM", in the chosen date display format and clock. */
+export function formatShortTime(
+  epochMs: number,
+  displayFormat: DateDisplayFormat = getDateDisplayFormat(),
+): string {
+  const date = new Date(epochMs);
+  if (displayFormat === "iso8601") {
+    return `${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+  }
+  const locale = getIntlLocale();
+  const preference = getTimeFormatPreference();
+  return getCachedFormatter(shortTimeFormatters, `${locale}:${preference}`, () => new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: preference === "12h" ? "h12" : "h23",
+  })).format(date);
+}
+
+/** A day with its weekday, for example "Mon, Nov 9" or "Mon 2026-11-09". */
+export function formatWeekdayDate(
+  epochMs: number,
+  displayFormat: DateDisplayFormat = getDateDisplayFormat(),
+): string {
+  const date = new Date(epochMs);
+  const locale = getIntlLocale();
+  if (displayFormat === "iso8601") {
+    const weekday = getCachedFormatter(weekdayDateFormatters, `${locale}:weekday`, () =>
+      new Intl.DateTimeFormat(locale, { weekday: "short" }),
+    ).format(date);
+    return `${weekday} ${formatISODate(date)}`;
+  }
+  return getCachedFormatter(weekdayDateFormatters, locale, () =>
+    new Intl.DateTimeFormat(locale, { weekday: "short", month: "short", day: "numeric" }),
+  ).format(date);
 }
 
 export function formatChartDateTime(iso: string | null | undefined): string {

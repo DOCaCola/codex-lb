@@ -432,6 +432,114 @@ test("dashboard quota section switches between Codex and Claude", async ({ page 
   expect(errors).toEqual([]);
 });
 
+test("dashboard Coming up lists capacity events", async ({ page }, testInfo) => {
+  const hour = 3_600_000;
+  const at = (hours: number) => new Date(Date.now() + hours * hour).toISOString();
+  const pace = (overrides: Partial<WeeklyCreditPace>): WeeklyCreditPace => ({
+    unit: "credits",
+    totalFullCredits: 80_000,
+    totalActualRemainingCredits: 25_600,
+    totalExpectedRemainingCredits: 40_000,
+    actualUsedPercent: 68,
+    scheduledUsedPercent: 50,
+    deltaPercent: 18,
+    scheduleGapCredits: 14_400,
+    overPlanCredits: 14_400,
+    projectedShortfallCredits: 0,
+    pauseForBreakEvenHours: null,
+    paceMultiplier: null,
+    throttleToPercent: null,
+    reduceByPercent: null,
+    proAccountEquivalentToCoverOverPlan: null,
+    proAccountsToCoverOverPlan: null,
+    projectedDepletionHours: null,
+    projectedMinimumRemainingCredits: null,
+    forecastBurnRateCreditsPerHour: null,
+    scheduledBurnRateCreditsPerHour: 500,
+    status: "on_track",
+    accountCount: 3,
+    staleAccountCount: 0,
+    inactiveAccountCount: 0,
+    confidence: "high",
+    runwayStatus: "safe",
+    ...overrides,
+  });
+  const codexAccounts = [
+    createAccountSummary({
+      accountId: "acc_plus_1", email: "plus1@example.com", alias: "Plus 1", displayName: "Plus 1", status: "rate_limited",
+      usage: { primaryRemainingPercent: 70, secondaryRemainingPercent: 0, monthlyRemainingPercent: null },
+      resetAtPrimary: at(2.5), resetAtSecondary: at(7.6),
+    }),
+    createAccountSummary({
+      accountId: "acc_plus_2", email: "plus2@example.com", alias: "Plus 2", displayName: "Plus 2", status: "rate_limited",
+      usage: { primaryRemainingPercent: 0, secondaryRemainingPercent: 30, monthlyRemainingPercent: null },
+      resetAtPrimary: at(3.2), resetAtSecondary: at(52),
+    }),
+    createAccountSummary({
+      accountId: "acc_pro", email: "pro@example.com", alias: "Pro", displayName: "Pro", planType: "pro",
+      usage: { primaryRemainingPercent: 14, secondaryRemainingPercent: 64, monthlyRemainingPercent: null },
+      resetAtPrimary: at(1.4), resetAtSecondary: at(100),
+    }),
+  ];
+  const claudeAccounts = [
+    createClaudeAccount({
+      id: "claude-max",
+      name: "DOCa Claude",
+      planType: "max",
+      quota: {
+        observedAt: null,
+        models: [],
+        windows: [
+          createClaudeQuotaWindow({ name: "five_hour", utilization: 98, resetsAt: at(0.4) }),
+          createClaudeQuotaWindow({ name: "seven_day", utilization: 90, resetsAt: at(9.75) }),
+        ],
+      },
+    }),
+  ];
+  await interceptApi(page, authSession, codexAccounts);
+  await page.route("**/health/ready", (route) => fulfill(route, { status: "ok" }));
+  await page.route("**/api/account-subscriptions", (route) =>
+    fulfill(route, { ends: [{ accountId: "acc_pro", modelSourceId: null, endsAt: at(70) }] }),
+  );
+  await page.route("**/api/dashboard/overview**", (route) =>
+    fulfill(route, {
+      ...overview,
+      accounts: codexAccounts,
+      weeklyCreditPace: pace({
+        resetEvents: [
+          { at: at(7.6), creditsReturned: 36_800 },
+          { at: at(52), creditsReturned: 5_300 },
+          { at: at(100), creditsReturned: 18_100 },
+        ],
+        subscriptionEnds: [{ at: at(70), weeklyCredits: 50_400 }],
+      }),
+      claudeWeeklyPace: pace({
+        unit: "pro_units",
+        totalFullCredits: 1,
+        accountCount: 1,
+        runwayStatus: "runs_dry",
+        depletionEtaHours: 5,
+        resetEvents: [{ at: at(9.75), creditsReturned: 0.9 }],
+      }),
+    }),
+  );
+  await page.route("**/api/claude-accounts**", (route) => fulfill(route, { accounts: claudeAccounts }));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const theme of ["light", "dark"] as const) {
+    await applyTheme(page, theme);
+    await page.goto(BASE_URL);
+    const section = page.getByTestId("upcoming-section");
+    const horizon = section.getByRole("group", { name: "Coming up horizon" });
+    await horizon.getByRole("button", { name: "24h" }).click();
+    await expect(section.getByTestId("upcoming-event")).toHaveCount(6);
+    await expect(section.getByTestId("upcoming-event").filter({ hasText: "Plus 1" })).toContainText("back · Weekly resets");
+    await section.screenshot({ path: testInfo.outputPath(`coming-up-24h-${theme}.png`), animations: "disabled" });
+    await horizon.getByRole("button", { name: "7d" }).click();
+    await expect(section.getByTestId("upcoming-event").filter({ hasText: "subscription ends" })).toHaveCount(1);
+    await section.screenshot({ path: testInfo.outputPath(`coming-up-7d-${theme}.png`), animations: "disabled" });
+  }
+});
+
 test("Codex and OpenRouter shared model controls", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));

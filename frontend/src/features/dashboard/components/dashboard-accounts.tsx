@@ -15,12 +15,12 @@ import {
   PROVIDER_LABELS,
   accountHref,
   noticeClass,
+  toneDotClass,
   noticeHeadline,
   type LimitSummary,
   type ProviderNotice,
   type ProviderSummary,
   summaryColor,
-  type SummaryTone,
 } from "@/features/accounts/provider-summary";
 import { ExtraUsageBadge } from "@/features/claude/account-display";
 import { accountSubscriptionCredits } from "@/features/dashboard/account-credit-display";
@@ -53,13 +53,6 @@ export type DashboardAccountsProps = {
   /** False when the user cannot read activity, so no daily cost is shown. */
   activityAvailable: boolean;
   actions: DashboardAccountActions;
-};
-
-const DOT: Record<SummaryTone, string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
-  bad: "bg-red-500",
-  off: "bg-muted-foreground",
 };
 
 const STRIP: Record<ProviderNotice["tone"], string> = {
@@ -157,7 +150,7 @@ function AccountLogo({ summary, color }: { summary: ProviderSummary; color: stri
       <ProviderLogo provider={summary.kind} color={color} size="md" />
       <span
         aria-hidden
-        className={cn("absolute -right-[3px] -bottom-[3px] size-[9px] rounded-full border-[1.5px] border-card", DOT[summary.tone])}
+        className={cn("absolute -right-[3px] -bottom-[3px] size-[9px] rounded-full border-[1.5px] border-card", toneDotClass(summary.tone))}
       />
     </span>
   );
