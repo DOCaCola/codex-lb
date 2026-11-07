@@ -65,6 +65,58 @@ def test_claude_code_one_token_probe_meets_the_codex_backend_minimum():
     assert upstream["max_output_tokens"] == 16
 
 
+def _tool_search_output(content: list) -> object:
+    translated = _translate(
+        {
+            "tools": [
+                {"name": "ToolSearch", "input_schema": {"type": "object"}},
+                {"name": "Read", "input_schema": {"type": "object"}, "defer_loading": True},
+                {"name": LONG_NAME, "input_schema": {"type": "object"}, "defer_loading": True},
+            ],
+            "messages": [
+                {"role": "user", "content": "Find tools"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "toolu_1", "name": "ToolSearch", "input": {"q": "read"}}],
+                },
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": content}]},
+            ],
+        }
+    )
+    assert all("defer_loading" not in tool for tool in translated.payload["tools"])
+    (output,) = [item for item in translated.payload["input"] if item["type"] == "function_call_output"]
+    return output["output"]
+
+
+def test_tool_search_references_become_loaded_tool_markers():
+    assert _tool_search_output(
+        [{"type": "tool_reference", "tool_name": "Read"}, {"type": "tool_reference", "tool_name": LONG_NAME}]
+    ) == [
+        {"type": "input_text", "text": "Tool loaded: Read\n"},
+        {"type": "input_text", "text": f"Tool loaded: {tool_alias(LONG_NAME)}\n"},
+    ]
+
+
+def test_tool_reference_markers_keep_order_and_line_separation_with_text():
+    assert _tool_search_output(
+        [
+            {"type": "text", "text": "Found:"},
+            {"type": "tool_reference", "tool_name": "Read"},
+            {"type": "text", "text": "Done"},
+        ]
+    ) == [
+        {"type": "input_text", "text": "Found:"},
+        {"type": "input_text", "text": "\nTool loaded: Read\n"},
+        {"type": "input_text", "text": "Done"},
+    ]
+
+
+@pytest.mark.parametrize("reference", [{"type": "tool_reference"}, {"type": "tool_reference", "tool_name": ""}])
+def test_tool_reference_without_a_name_is_rejected(reference):
+    with pytest.raises(MessagesRequestError, match="tool_reference blocks require a tool_name"):
+        _tool_search_output([reference])
+
+
 def _forged_signature() -> str:
     encoded = _signature()[5:]
     body = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))

@@ -597,7 +597,7 @@ class _MessagesInput:
         elif isinstance(content, str):
             output = content
         elif isinstance(content, list):
-            output = [_tool_result_part(part) for part in content]
+            output = _tool_result_parts(content)
         else:
             raise MessagesRequestError("tool_result content must be text or an array of content blocks")
         return {"type": "function_call_output", "call_id": tool_alias(call_id), "output": output}
@@ -615,6 +615,36 @@ class _MessagesInput:
         if self._deferred_developer and not self._pending_tool_calls:
             self._items.extend(self._deferred_developer)
             self._deferred_developer = []
+
+
+def _tool_result_parts(content: list[JsonValue]) -> list[JsonValue]:
+    parts: list[JsonValue] = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "tool_reference":
+            parts.append(_tool_reference_marker(part, parts[-1] if parts else None))
+        else:
+            parts.append(_tool_result_part(part))
+    return parts
+
+
+def _tool_reference_marker(part: dict[str, JsonValue], previous: JsonValue) -> JsonValue:
+    """Claude Code's ToolSearch result, which Responses cannot carry, as text naming the loaded tool.
+
+    Deferred tools are already declared as ordinary functions, so the reference grants nothing; it
+    only tells the model the search succeeded (opencodex #6647). The marker names the tool as the
+    model sees it and carries its own line breaks, because some adapters join text parts unseparated.
+    """
+    name = part.get("tool_name")
+    if not isinstance(name, str) or not name:
+        raise MessagesRequestError("tool_reference blocks require a tool_name")
+    lead = (
+        "\n"
+        if isinstance(previous, dict)
+        and previous.get("type") == "input_text"
+        and not str(previous.get("text")).endswith("\n")
+        else ""
+    )
+    return {"type": "input_text", "text": f"{lead}Tool loaded: {tool_alias(name)}\n"}
 
 
 def _tool_result_part(part: JsonValue) -> JsonValue:
