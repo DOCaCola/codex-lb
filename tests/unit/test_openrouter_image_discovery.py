@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.modules.openrouter.catalog import project_models
-from app.modules.openrouter.client import OpenRouterClient
+from app.modules.openrouter.client import OpenRouterClient, OpenRouterError
 from app.modules.openrouter.schemas import (
     AccountState,
     CatalogResponse,
@@ -51,3 +51,17 @@ async def test_image_catalog_merges_without_erasing_text_capabilities(monkeypatc
     assert images.context_window is None
     assert images.input_per_1m is None
     assert not images.supports_tools
+
+
+@pytest.mark.asyncio
+async def test_empty_text_catalog_fails_before_image_discovery(monkeypatch):
+    calls = []
+
+    async def get(self, path, key, schema):
+        calls.append(path)
+        return schema.model_validate({"data": []})
+
+    monkeypatch.setattr(OpenRouterClient, "_get", get)
+    with pytest.raises(OpenRouterError, match="empty model catalog"):
+        await OpenRouterClient().catalog("secret")
+    assert calls == ["/models/user"]

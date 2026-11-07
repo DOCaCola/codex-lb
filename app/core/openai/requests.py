@@ -860,6 +860,12 @@ _UNSUPPORTED_UPSTREAM_FIELDS = {
     "user",
 }
 
+# The ChatGPT Codex backend rejects an integer output limit below 16 ("integer below minimum
+# value"), which other protocols accept (Anthropic allows 1). Like CLIProxyAPI (bfac8586), a
+# positive integer limit below it is raised to the minimum on the backend wire; any other value
+# reaches the backend unchanged for it to judge.
+_CODEX_MIN_OUTPUT_TOKENS = 16
+
 
 def responses_request_has_explicit_prompt_cache_controls(payload: ResponsesRequest) -> bool:
     extra = payload.model_extra
@@ -953,6 +959,9 @@ def _strip_unsupported_fields(
     # cache-affinity/observability-only; see ``canonicalized_tools``.
     for key in _UNSUPPORTED_UPSTREAM_FIELDS:
         payload.pop(key, None)
+    limit = payload.get("max_output_tokens")
+    if isinstance(limit, int) and not isinstance(limit, bool) and 0 < limit < _CODEX_MIN_OUTPUT_TOKENS:
+        payload["max_output_tokens"] = _CODEX_MIN_OUTPUT_TOKENS
     return payload
 
 

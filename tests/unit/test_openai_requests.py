@@ -138,6 +138,25 @@ def test_client_output_limit_is_forwarded_upstream():
     assert chat.to_responses_request().to_payload()["max_output_tokens"] == 32000
 
 
+@pytest.mark.parametrize(("requested", "sent"), [(1, 16), (15, 16), (16, 16), (17, 17), (0, 0), (-1, -1), (1.5, 1.5)])
+def test_small_output_limit_meets_the_codex_backend_minimum(requested, sent):
+    responses = ResponsesRequest.model_validate(
+        {"model": "gpt-5.1", "instructions": "hi", "input": [], "max_output_tokens": requested}
+    )
+
+    assert responses.to_payload()["max_output_tokens"] == sent
+    # Model sources forward the client's own limit; only the Codex backend wire is raised.
+    assert responses.model_dump_for_forwarding()["max_output_tokens"] == requested
+
+
+def test_small_chat_output_limit_meets_the_codex_backend_minimum():
+    chat = ChatCompletionsRequest.model_validate(
+        {"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}], "max_completion_tokens": 1}
+    )
+
+    assert chat.to_responses_request().to_payload()["max_output_tokens"] == 16
+
+
 @given(json_arrays)
 @settings(deadline=None)
 def test_sanitize_input_items_is_idempotent_for_json(input_items):

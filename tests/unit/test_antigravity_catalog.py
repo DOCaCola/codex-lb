@@ -102,6 +102,12 @@ def test_missing_catalog_is_an_upstream_error() -> None:
     assert raised.value.status_code == 502
 
 
+def test_empty_catalog_is_an_upstream_error() -> None:
+    with pytest.raises(AntigravityError, match="empty model catalog") as raised:
+        parse_catalog({"models": {}})
+    assert raised.value.status_code == 502
+
+
 @pytest.mark.parametrize(
     ("effort", "wire", "level"),
     [

@@ -51,6 +51,10 @@ class OpenRouterClient:
     async def catalog(self, key: str) -> CatalogResponse:
         # No pagination parameters: OpenRouter returns the full filtered catalog.
         catalog = await self._get("/models/user", key, CatalogResponse)
+        # An empty reply is not evidence that every model went away (OmniRoute 29f1b71ea);
+        # failing the sync keeps the served catalog until discovery answers again.
+        if not catalog.data:
+            raise OpenRouterError("OpenRouter /models/user returned an empty model catalog")
         images = await self._get("/images/models", key, ImageCatalogResponse)
         text_models = {model.id: model for model in catalog.data}
         for image in images.data:

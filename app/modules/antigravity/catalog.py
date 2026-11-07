@@ -72,6 +72,10 @@ def parse_catalog(data: dict[str, JsonValue]) -> tuple[list[CatalogFamily], str 
     raw_models = data.get("models")
     if not isinstance(raw_models, dict):
         raise AntigravityError("Antigravity returned no model catalog", status_code=502)
+    if not raw_models:
+        # Failing the sync keeps the served catalog (OmniRoute 29f1b71ea); models the plan gates
+        # off below are a real answer and still replace it.
+        raise AntigravityError("Antigravity returned an empty model catalog", status_code=502)
     entries: dict[str, CatalogEntry] = {}
     for model_id, raw in raw_models.items():
         try:

@@ -57,6 +57,14 @@ def test_claude_code_output_limit_reaches_the_upstream_payload():
     assert upstream["max_output_tokens"] == 4096
 
 
+def test_claude_code_one_token_probe_meets_the_codex_backend_minimum():
+    translated = _translate({"messages": [{"role": "user", "content": "quota"}], "max_tokens": 1})
+
+    upstream = V1ResponsesRequest.model_validate(translated.payload).to_responses_request().to_payload()
+
+    assert upstream["max_output_tokens"] == 16
+
+
 def _forged_signature() -> str:
     encoded = _signature()[5:]
     body = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))

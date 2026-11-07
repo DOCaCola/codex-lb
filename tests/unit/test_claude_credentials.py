@@ -62,6 +62,10 @@ def test_pkce_state_and_verifier_are_independent_and_bound():
     query = parse_qs(urlparse(flow.authorization_url).query)
     assert query["code_challenge_method"] == ["S256"]
     assert query["state"] == [flow.state]
+    assert len(flow.state) == 43
+    assert query["scope"] == [
+        "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+    ]
     assert flow.verifier not in flow.authorization_url
     assert flow.exchange_body(f"code#{flow.state}")["code"] == "code"
     with pytest.raises(ClaudeError, match="state"):

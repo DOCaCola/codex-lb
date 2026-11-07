@@ -15,7 +15,10 @@ CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
 TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 REDIRECT_URI = "https://platform.claude.com/oauth/code/callback"
-SCOPES = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+# Claude Code authorizes a new login with the Console scope first (2.1.285, Jqr()); claude.ai
+# rejects an authorize URL without it since about 2026-11-06 (CLIProxyAPI #7316). Token refresh
+# sends no scope, so existing grants are unaffected.
+SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 
 
 class ClaudeError(ValueError):

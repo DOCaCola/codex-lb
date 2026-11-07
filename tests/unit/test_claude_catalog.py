@@ -30,6 +30,7 @@ async def test_catalog_pagination_uses_cursor_without_exposing_credentials():
     [
         [CatalogPage(data=[], has_more=True)],
         [CatalogPage(data=[], has_more=True, last_id="same")] * 2,
+        [CatalogPage(data=[], has_more=False)],
         [
             CatalogPage(
                 data=[

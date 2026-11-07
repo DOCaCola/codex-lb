@@ -126,6 +126,9 @@ class ClaudeClient:
             page = await self._get("/v1/models?" + urlencode(params), token, version, CatalogPage)
             models.extend(page.data)
             if not page.has_more:
+                if not models:
+                    # Failing the sync keeps the served catalog (OmniRoute 29f1b71ea).
+                    raise ClaudeError("Claude catalog returned no models")
                 if len({model.id for model in models}) != len(models):
                     raise ClaudeError("Claude catalog returned duplicate models")
                 return models
