@@ -25,7 +25,7 @@ from app.db.models import ClaudeAccount, ClaudeCooldown, ModelSource, ModelSourc
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.capabilities import reasoning_spec
 from app.modules.claude.credentials import ClaudeError
-from app.modules.claude.quota import model_quota, quota_status
+from app.modules.claude.quota import HEADER_WINDOWS, model_quota, quota_status
 from app.modules.claude.quota_evidence import read_evidence
 from app.modules.claude.scheduling import choose
 from app.modules.claude.schemas import AccountState
@@ -36,11 +36,20 @@ from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 class ClaudePoolUnavailable(ClaudeError):
     status_code = 503
 
-    def __init__(self, code: str, message: str, *, status_code: int = 503, retry_at: datetime | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 503,
+        retry_at: datetime | None = None,
+        resets_at: datetime | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
         self.retry_at = retry_at
+        self.resets_at = resets_at
 
     @property
     def response_headers(self) -> dict[str, str]:
@@ -55,9 +64,9 @@ class ClaudePoolUnavailable(ClaudeError):
     @property
     def error_detail(self) -> OpenAIErrorDetail:
         detail = super().error_detail
-        if self.retry_at is not None:
-            detail["resets_at"] = math.ceil(self.retry_at.timestamp())
-            detail["resets_in_seconds"] = int(self.response_headers["Retry-After"])
+        if self.resets_at is not None:
+            detail["resets_at"] = math.ceil(self.resets_at.timestamp())
+            detail["resets_in_seconds"] = max(1, math.ceil((self.resets_at - datetime.now(UTC)).total_seconds()))
         return detail
 
     @property
@@ -87,6 +96,7 @@ class Eligibility:
     ]
     retry_at: datetime | None = None
     quota_windows: tuple[str, ...] = ()
+    resets_at: datetime | None = None
 
 
 def eligibility(
@@ -116,8 +126,15 @@ def eligibility(
         state.reasoning_restrictions.get(upstream_model), reasoning_effort, spec.default if spec else None
     ):
         return Eligibility(False, "reasoning")
-    quota = model_quota(model, quota_status(state, now=now).windows)
+    observed_windows = quota_status(state, now=now).windows
+    quota = model_quota(model, observed_windows)
     restrictions = [item for row in cooldowns for item in read_evidence(row).restrictions if item.until > now]
+    quota_restrictions = [item for item in restrictions if item.window in HEADER_WINDOWS]
+    transient_until = max((item.until for item in restrictions if item.window not in HEADER_WINDOWS), default=None)
+    quota_until = max(
+        [item.until for item in quota_restrictions] + ([quota.retry_at] if quota.retry_at is not None else []),
+        default=None,
+    )
     deadlines = [item.until for item in restrictions]
     if quota.retry_at is not None:
         deadlines.append(quota.retry_at)
@@ -127,13 +144,22 @@ def eligibility(
     retry_at = max(deadlines) if deadlines else None
     if quota.blocked and quota.retry_at is None:
         retry_at = None
+        quota_until = None
     if refresh_at is not None and refresh_at > now:
         return Eligibility(False, "refresh_backoff", retry_at)
-    if any(item.window not in {"five_hour", "seven_day", "seven_day_overage_included"} for item in restrictions):
+    # The hold that lasts longest controls presentation (OpenCodex #6995).
+    # Ties and unknown quota horizons cannot prove a transient retry futile.
+    if transient_until is not None and (quota_until is None or transient_until >= quota_until):
         return Eligibility(False, "cooldown", retry_at)
-    if quota.blocked or restrictions:
-        windows = tuple(sorted({*quota.blocking_windows, *(item.window for item in restrictions)}))
-        return Eligibility(False, "quota", retry_at, windows)
+    if quota.blocked or quota_restrictions:
+        windows = tuple(sorted({*quota.blocking_windows, *(item.window for item in quota_restrictions)}))
+        resets = {
+            window.name: window.resets_at
+            for window in observed_windows
+            if window.name in windows and window.resets_at is not None and window.resets_at > now
+        }
+        resets_at = max(resets.values()) if len(resets) == len(windows) else None
+        return Eligibility(False, "quota", retry_at, windows, resets_at)
     # Expiry alone is not permanent ineligibility: dispatch owns the durable
     # refresh claim. It must never send the expired token itself.
     return Eligibility(True, "ready")
@@ -219,6 +245,8 @@ async def select_account(
             (diagnostic.retry_at for _, diagnostic in candidates if diagnostic.retry_at is not None), default=None
         )
         quota_only = bool(reasons) and all(reason == "quota" for reason in reasons)
+        resets = [diagnostic.resets_at for _, diagnostic in candidates if diagnostic.resets_at is not None]
+        resets_at = min(resets) if quota_only and resets and len(resets) == len(candidates) else None
         # These exclusions cannot recover by waiting. A retryable 503 traps
         # model-switch compaction on the unavailable previous model instead of
         # letting the client recover using its selected model. A temporary,
@@ -250,6 +278,7 @@ async def select_account(
                 ),
                 status_code=429 if quota_only else unavailable_status,
                 retry_at=retry_at,
+                resets_at=resets_at,
             )
         if reasons and all(reason == "reasoning" for reason in reasons):
             raise ClaudePoolUnavailable(

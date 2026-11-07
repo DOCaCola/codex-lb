@@ -638,7 +638,7 @@ Confirmed reset results and cleared windows SHALL persist atomically with local 
 - **THEN** older five-hour evidence is invalidated while weekly, unrelated and newer restrictions remain effective
 
 ### Requirement: Claude pool exhaustion diagnostics
-Selection SHALL distinguish quota-only exhaustion from other unavailability within the authorized model/owner scope. Quota-only exhaustion SHALL return429, including a required continuation owner; permanent exclusions SHALL follow the terminal availability contract; temporary mixed or unknown unavailability SHALL retain503. Known candidate recovery SHALL account for every applicable temporary barrier, using the latest deadline per candidate and earliest across fully known candidates. Unknown deadlines MUST NOT be fabricated. Hard owner errors SHALL retain their code and scope. Quota refusals SHALL identify observed blocking windows without exposing account identities or history. HTTP errors SHALL include a ceil-rounded positive Retry-After when justified. Known recovery SHALL include resets_at as integer Unix seconds rounded up and resets_in_seconds in public error details; downstream Responses WebSocket errors SHALL preserve those details, status and safe Retry-After. Quota-only refusals SHALL use error type `usage_limit_reached` on OpenAI-envelope surfaces, which Codex presents as a usage limit with its reset time, and `rate_limit_error` on native Anthropic Messages surfaces. They MUST NOT carry `plan_type`. Actual exhausted upstream errors and local admission contracts SHALL remain unchanged.
+Selection SHALL apply binding-hold classification within the authorized model and owner scope. Quota-only refusal SHALL return 429 usage_limit_reached for Responses and rate_limit_error for native Messages, without plan_type. Other exclusions retain their terminal or retryable contract. Retry-After SHALL reflect admission recovery; reset fields require observed quota evidence. HTTP and WebSocket SHALL preserve status, ownership, blocking windows and timing without exposing account identities.
 
 #### Scenario: Multiple restrictions
 - **WHEN** one candidate has quota reset in two hours and model cooldown in five, and another recovers in three
@@ -658,7 +658,7 @@ Selection SHALL distinguish quota-only exhaustion from other unavailability with
 - **THEN** it receives an Anthropic error envelope with429 rate_limit_error and the same reset fields
 
 #### Scenario: Non-quota continuation owner
-- **WHEN** the required owner is refreshing or blocked by unknown cooldown evidence
+- **WHEN** the required owner is refreshing or its binding hold is an unknown cooldown
 - **THEN** the owner error remains503 without becoming a quota-only refusal
 
 #### Scenario: Terminal continuation owner
@@ -2014,3 +2014,35 @@ changed parameter in cache-miss attribution.
 
 - **WHEN** a response reports `cache_miss_reason` of type `tools_changed` with 1234 missed tokens
 - **THEN** the service logs `claude_cache_diagnosis` with that type, the token count, the conversation and the account
+
+### Requirement: Claude sign-in requests the Claude Code scope set
+The Claude authorize URL SHALL request exactly the scopes Claude Code requests:
+`org:create_api_key user:profile user:inference user:sessions:claude_code
+user:mcp_servers user:file_upload`. Token refresh SHALL NOT send a scope.
+
+#### Scenario: Operator starts Claude sign-in
+- **WHEN** an operator starts browser sign-in or reauthorization for a Claude account
+- **THEN** the authorize URL carries that scope set, including `org:create_api_key`
+
+### Requirement: Binding Claude cooldown classification
+For an otherwise eligible account, quota SHALL determine the refusal when its known admission horizon exceeds every transient cooldown. A tie or unknown quota horizon with an active transient hold SHALL remain transient. Credential and refresh exclusions SHALL retain precedence. Evidence MUST remain intact. The pool SHALL report usage exhaustion only when every candidate is quota-blocked.
+
+#### Scenario: Short throttle overlaps exhausted quota
+- **WHEN** a model throttle ends at 12:22 and five-hour quota admission resumes at 12:40
+- **THEN** Responses HTTP and WebSocket refusals report 429 usage_limit_reached with the observed reset
+- **AND** native Messages uses rate_limit_error and no upstream request is dispatched
+
+#### Scenario: Transient candidate remains
+- **WHEN** a transient hold equals or exceeds the quota horizon, or a pool sibling is transiently blocked
+- **THEN** the refusal remains retryable
+
+### Requirement: Claude quota resets require window evidence
+Quota resets SHALL derive from observed blocking-window reset times independently of Retry-After. Every blocking quota window must have a known future reset to report an account reset. Every quota-blocked candidate must have a known reset to report the earliest pool reset. Admission cooldowns MUST NOT fabricate reset timestamps. Non-quota refusals SHALL omit quota-reset fields.
+
+#### Scenario: Retry deadline differs from reset
+- **WHEN** a named quota cooldown outlasts its observed window reset
+- **THEN** Retry-After reflects admission and resets_at reflects only the observed window reset
+
+#### Scenario: Unknown reset
+- **WHEN** any relevant quota reset is unknown
+- **THEN** resets_at and resets_in_seconds are omitted

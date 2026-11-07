@@ -71,7 +71,8 @@ async def test_latest_per_account_earliest_across_pool_and_owner(pool):
     assert caught.value.retry_at == now + timedelta(hours=5)
     assert "five_hour" in str(caught.value)
     assert "seven_day_overage_included" in str(caught.value)
-    assert caught.value.error_detail["resets_at"] == math.ceil((now + timedelta(hours=5)).timestamp())
+    # A cooldown deadline alone does not establish the model window's reset.
+    assert "resets_at" not in caught.value.error_detail
     scoped = key(source_assignment_scope_enabled=True, assigned_source_ids=[pool[0]])
     with pytest.raises(ClaudePoolUnavailable) as caught:
         await choose(api_key=scoped, now=now)
@@ -131,6 +132,7 @@ async def test_pool_error_at_http_boundary(async_client, pool, path):
     now = datetime.now(UTC)
     for source in pool:
         await exhaust(source, now + timedelta(minutes=5))
+        await record_refusals(source, MODEL, (Refusal("model", now + timedelta(seconds=60), "default", "unknown"),))
     body = {"model": MODEL}
     if "/messages" in path:
         body.update(messages=[{"role": "user", "content": "Hello"}], max_tokens=100)
@@ -146,6 +148,81 @@ async def test_pool_error_at_http_boundary(async_client, pool, path):
     assert response.json()["error"]["resets_at"] == math.ceil((now + timedelta(minutes=5)).timestamp())
     assert 290 <= response.json()["error"]["resets_in_seconds"] <= 300
     assert "five_hour" in response.json()["error"]["message"]
+    assert "unknown" not in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("transient_minutes,expected_status", [(1, 429), (5, 503), (6, 503)])
+async def test_binding_hold_classifies_owner_and_pool(pool, transient_minutes, expected_status):
+    now = datetime.now(UTC)
+    reset = now + timedelta(minutes=5)
+    for source in pool:
+        await exhaust(source, reset)
+        await record_refusals(
+            source,
+            MODEL,
+            (Refusal("model", now + timedelta(minutes=transient_minutes), "default", "unknown"),),
+        )
+    for owner in (None, pool[0]):
+        with pytest.raises(ClaudePoolUnavailable) as caught:
+            await choose(now=now, owner_source_id=owner)
+        assert caught.value.status_code == expected_status
+        assert caught.value.retry_at == max(reset, now + timedelta(minutes=transient_minutes))
+        if expected_status == 429:
+            assert caught.value.responses_error_detail["type"] == "usage_limit_reached"
+            assert caught.value.error_detail["resets_at"] == math.ceil(reset.timestamp())
+        else:
+            assert "resets_at" not in caught.value.error_detail
+    async with SessionLocal() as session:
+        # Classification must not erase even a shorter hold.
+        for source in pool:
+            assert await session.get(ClaudeCooldown, (source, MODEL)) is not None
+
+
+async def test_quota_and_transient_pool_stays_retryable(pool):
+    now = datetime.now(UTC)
+    await exhaust(pool[0], now + timedelta(minutes=5))
+    await record_refusals(pool[1], MODEL, (Refusal("model", now + timedelta(minutes=1), "default", "unknown"),))
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(now=now)
+    assert caught.value.status_code == 503
+    assert caught.value.retry_at == now + timedelta(minutes=1)
+    assert "resets_at" not in caught.value.error_detail
+
+
+async def test_unknown_quota_horizon_with_transient_hold_stays_retryable(pool):
+    now = datetime.now(UTC)
+    await exhaust(pool[0], None)
+    await record_refusals(pool[0], MODEL, (Refusal("model", now + timedelta(minutes=1), "default", "unknown"),))
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(now=now, owner_source_id=pool[0])
+    assert caught.value.status_code == 503
+    assert caught.value.response_headers == {}
+    assert "resets_at" not in caught.value.error_detail
+
+
+async def test_pool_unknown_reset_does_not_borrow_siblings_reset(pool):
+    now = datetime.now(UTC)
+    await exhaust(pool[0], None)
+    await exhaust(pool[1], now + timedelta(minutes=5))
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(now=now)
+    assert caught.value.status_code == 429
+    assert "resets_at" not in caught.value.error_detail
+
+
+async def test_retry_admission_and_observed_reset_are_independent(pool):
+    now = datetime.now(UTC)
+    reset = now + timedelta(minutes=5)
+    admission = now + timedelta(minutes=10)
+    await exhaust(pool[0], reset)
+    await record_refusals(pool[0], MODEL, (Refusal("account", admission, "retry_after", "five_hour"),))
+    with pytest.raises(ClaudePoolUnavailable) as caught:
+        await choose(now=now, owner_source_id=pool[0])
+    assert caught.value.status_code == 429
+    assert caught.value.retry_at == admission
+    assert caught.value.error_detail["resets_at"] == math.ceil(reset.timestamp())
+    assert 290 <= caught.value.error_detail["resets_in_seconds"] <= 300
+    assert 590 <= int(caught.value.response_headers["Retry-After"]) <= 600
 
 
 @pytest.mark.parametrize("barrier", ["paused", "credentials", "refreshing", "refresh_backoff", "unknown"])

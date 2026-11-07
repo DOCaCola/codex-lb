@@ -10,6 +10,7 @@ from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.db.models import ClaudeAccount
 from app.db.session import SessionLocal
+from app.modules.claude.failover import Refusal, record_refusals
 from app.modules.claude.opaque import ClaudeOpaqueState, OpaqueScope
 from app.modules.claude.resources import ResourceScope, record_origins, resolve_origins
 from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
@@ -93,10 +94,12 @@ async def test_http_owned_quota_preserves_history_without_dispatch(
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/backend-api/codex/responses"])
-@pytest.mark.parametrize("barrier", ["quota_unknown", "quota_known", "owner_credentials", "pool_credentials"])
+@pytest.mark.parametrize(
+    "barrier", ["quota_unknown", "quota_known", "quota_short_throttle", "owner_credentials", "pool_credentials"]
+)
 async def test_websocket_unavailability_preserves_recovery_contract(async_client, pool, monkeypatch, path, barrier):
     captured, _ = install_upstream(monkeypatch)
-    deadline = datetime.now(UTC) + timedelta(minutes=5) if barrier == "quota_known" else None
+    deadline = datetime.now(UTC) + timedelta(minutes=5) if barrier in {"quota_known", "quota_short_throttle"} else None
     terminal = barrier.endswith("credentials")
     if terminal:
         async with SessionLocal() as session:
@@ -107,6 +110,12 @@ async def test_websocket_unavailability_preserves_recovery_contract(async_client
             await session.commit()
     else:
         await exhaust(pool[0], deadline)
+        if barrier == "quota_short_throttle":
+            await record_refusals(
+                pool[0],
+                MODEL,
+                (Refusal("model", datetime.now(UTC) + timedelta(seconds=60), "default", "unknown"),),
+            )
     history = (
         [{"role": "user", "content": "Work"}, {"type": "compaction_trigger"}]
         if barrier == "pool_credentials"

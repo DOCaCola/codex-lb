@@ -21,7 +21,7 @@ def test_reset_details_share_ceil_rounded_retry_timing(monkeypatch, seconds, exp
     monkeypatch.setattr(routing, "datetime", FixedDateTime)
     deadline = NOW + timedelta(seconds=seconds)
     error = ClaudePoolUnavailable(
-        "previous_response_owner_unavailable", "quota blocked", status_code=429, retry_at=deadline
+        "previous_response_owner_unavailable", "quota blocked", status_code=429, retry_at=deadline, resets_at=deadline
     )
     assert error.response_headers == {"Retry-After": str(expected)}
     assert error.error_detail == {

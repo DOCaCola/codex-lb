@@ -11784,14 +11784,21 @@ message. Owner-only exhaustion MUST NOT be reported as pool-wide
 - **THEN** the generic "Previous response owner account is unavailable; retry later." failure is returned
 
 ### Requirement: Client output limits reach the Codex backend
-Requests to the Codex backend SHALL carry the client's output limit unchanged
-as `max_output_tokens`, converted from Chat and Messages limits. Compact
-requests SHALL omit it. The limit SHALL NOT make a request account-bound for
-replay classification. The service MUST NOT raise, lower or invent a limit.
+Requests to the Codex backend SHALL carry the client's output limit as
+`max_output_tokens`, converted from Chat and Messages limits. A positive limit
+below 16, the backend minimum, SHALL be raised to 16; other limits SHALL pass
+unchanged and model sources SHALL receive the client's value. Compact requests
+SHALL omit it. The limit SHALL NOT make a request account-bound for replay
+classification. The service MUST NOT invent a limit.
 
 #### Scenario: Responses client sets an output limit
-- **WHEN** a Responses or `/v1/responses` request carries `max_output_tokens`
+- **WHEN** a Responses or `/v1/responses` request carries `max_output_tokens` of 16 or more
 - **THEN** the upstream request carries the same `max_output_tokens`
+
+#### Scenario: Limit below the backend minimum
+- **WHEN** a Responses, Chat or Claude Code request carries a positive limit below 16
+- **THEN** the Codex backend request carries `max_output_tokens` 16
+- **AND** a model-source request carries the client's value
 
 #### Scenario: Chat and Claude Code limits are converted
 - **WHEN** a Chat request carries `max_completion_tokens` or `max_tokens`, or a Messages request carries `max_tokens`
@@ -11809,3 +11816,48 @@ replay classification. The service MUST NOT raise, lower or invent a limit.
 - **WHEN** a cache isolation probe response ends `incomplete` with reason `max_output_tokens`
 - **THEN** the probe records its input and cached token counts as a successful measurement
 - **AND** an incomplete response with any other reason remains a failed probe
+
+### Requirement: Anchored WebSocket turns sent over HTTP carry their full history
+When a WebSocket or HTTP bridge `response.create` that carries
+`previous_response_id` exceeds the upstream frame budget and is therefore sent
+over HTTP, the service SHALL send the turn's verified full-history body without
+`previous_response_id` instead. When no verified full history exists, the
+service MUST refuse the turn locally before dispatch with
+`previous_response_not_found`. The service MUST NOT send
+`previous_response_id` to the HTTP backend from this path.
+
+#### Scenario: Oversized follow-up with known history
+- **GIVEN** a WebSocket follow-up carries `previous_response_id` and its frame exceeds the upstream frame budget
+- **AND** the service holds the verified history of the anchored response
+- **WHEN** the turn is sent
+- **THEN** the HTTP request carries the full history and no `previous_response_id`
+
+#### Scenario: Oversized follow-up after a reconnect
+- **GIVEN** the client reconnects within the same session and sends an oversized anchored follow-up
+- **WHEN** the turn is sent
+- **THEN** the HTTP request carries the session's verified full history and no `previous_response_id`
+
+#### Scenario: Oversized follow-up with unknown history
+- **GIVEN** an oversized anchored follow-up whose anchor the service cannot verify
+- **WHEN** the turn is sent
+- **THEN** the client receives `previous_response_not_found`
+- **AND** no upstream HTTP request is made
+
+### Requirement: Native HTTP transport failures are attributed on the request log
+When a native HTTP upstream exchange fails before a terminal event, the
+service SHALL record `failure_phase` and a `failure_detail` naming the
+error by kind or variant only on that turn's request log. A WebSocket turn sent
+over HTTP MUST be logged with `upstream_transport` `http`, and its client
+frame MUST NOT carry the internal synthetic-failure marker.
+
+#### Scenario: Origin closes before the response
+- **GIVEN** the native helper's HTTP origin closes the connection before sending a response
+- **WHEN** the helper reports the failure
+- **THEN** its error event names phase `request` and detail `hyper_incomplete_message`
+
+#### Scenario: Oversized WebSocket turn fails over HTTP
+- **GIVEN** a WebSocket turn larger than the frame budget is sent over HTTP
+- **AND** the HTTP exchange fails with a named transport error
+- **WHEN** the client receives `response.failed`
+- **THEN** the frame carries no internal synthetic-failure marker
+- **AND** the request log records `upstream_transport` `http` with the failure's phase and detail
