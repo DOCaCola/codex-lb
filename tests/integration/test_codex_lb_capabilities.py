@@ -25,10 +25,13 @@ def _native_slugs() -> list[str]:
     )
 
 
+def _capability(document: dict, capability_id: str) -> list[str]:
+    (models,) = [capability["models"] for capability in document["capabilities"] if capability["id"] == capability_id]
+    return models
+
+
 def _prediction_models(document: dict) -> list[str]:
-    (capability,) = document["capabilities"]
-    assert capability["id"] == "composer_predictions"
-    return capability["models"]
+    return _capability(document, "composer_predictions")
 
 
 async def _enable_api_key_auth() -> None:
@@ -47,7 +50,10 @@ async def test_capabilities_identify_codex_lb(async_client, path):
     assert response.json() == {
         "object": "codex_lb.capabilities",
         "service": "codex-lb",
-        "capabilities": [{"id": "composer_predictions", "models": _native_slugs()}],
+        "capabilities": [
+            {"id": "composer_predictions", "models": _native_slugs()},
+            {"id": "usage", "models": sorted(get_model_registry().get_models_with_fallback())},
+        ],
     }
 
 
@@ -64,6 +70,14 @@ async def test_predictions_exclude_routed_source_models(async_client, opus_pool,
     models = _prediction_models(response.json())
     assert models == _native_slugs()
     assert not source_slugs & set(models)
+
+
+@pytest.mark.parametrize("path", PATHS)
+async def test_usage_covers_routed_source_models(async_client, opus_pool, path):
+    response = await async_client.get(path)
+
+    assert response.status_code == 200
+    assert "anthropic/claude-opus-5-5" in _capability(response.json(), "usage")
 
 
 @pytest.mark.parametrize("path", PATHS)

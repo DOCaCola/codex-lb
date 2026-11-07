@@ -9,7 +9,7 @@ import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, TypeVar, cast
@@ -30,13 +30,14 @@ from fastapi import (
     Depends,
     HTTPException,
     Path,
+    Query,
     Request,
     Response,
     Security,
     WebSocket,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.convertors import Convertor, register_url_convertor
@@ -224,6 +225,7 @@ from app.core.utils.sse import (
     inject_sse_keepalives,
     parse_sse_data_json,
 )
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, ModelSource
 from app.db.session import detach_session_objects, get_background_session
 from app.dependencies import ProxyContext, get_proxy_context, get_proxy_websocket_context
@@ -376,6 +378,7 @@ from app.modules.proxy.schemas import (
     AccountPoolUsageResponse,
     CodexLbCapabilitiesResponse,
     CodexLbCapability,
+    CodexLbUsageResponse,
     CodexModelEntry,
     CodexModelsResponse,
     CodexTruncationPolicy,
@@ -423,6 +426,7 @@ from app.modules.proxy.types import (
     RateLimitStatusPayloadData,
     RateLimitWindowSnapshotData,
 )
+from app.modules.proxy.usage_snapshot import USAGE_SOURCE_KINDS, UsageScope, build_usage_snapshot
 from app.modules.rate_limit_reset_credits.api import serialize_reset_credit_redeem
 from app.modules.rate_limit_reset_credits.redeem_coordination import RedeemClaimTimeoutError
 from app.modules.rate_limit_reset_credits.store import get_rate_limit_reset_credits_store
@@ -1874,8 +1878,51 @@ async def codex_lb_capabilities(
         for slug, model in native_models.items()
         if _is_codex_backend_catalog_model(model) and (allowed_models is None or slug in allowed_models)
     )
-    return CodexLbCapabilitiesResponse(
-        capabilities=[CodexLbCapability(id="composer_predictions", models=prediction_models)]
+    capabilities = [CodexLbCapability(id="composer_predictions", models=prediction_models)]
+    # Usage covers every model a quota pool serves, so a client can tell a thread's pool from its model.
+    if not await _hide_upstream_quota_for_api_key_clients(api_key):
+        scope = await _usage_scope(api_key, native_models)
+        usage_models = [*scope.native_models, *(model.slug for model in scope.source_models)]
+        capabilities.append(CodexLbCapability(id="usage", models=sorted(usage_models)))
+    return CodexLbCapabilitiesResponse(capabilities=capabilities)
+
+
+# The client's day began at most one calendar day ago; the day daylight saving time ends has 25 hours.
+_USAGE_SINCE_MAX_AGE = timedelta(hours=25)
+
+
+@router.get("/codex-lb/usage", response_model=CodexLbUsageResponse)
+@v1_router.get("/codex-lb/usage", response_model=CodexLbUsageResponse)
+async def codex_lb_usage(
+    since: AwareDatetime = Query(description="Start of the client's day; the server does not know its time zone"),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> CodexLbUsageResponse:
+    # Reads stored quota readings only, so desktop clients may poll it.
+    if await _hide_upstream_quota_for_api_key_clients(api_key):
+        raise HTTPException(status_code=403, detail="Upstream quota is hidden from API-key clients")
+    if not timedelta(0) <= utcnow() - to_utc_naive(since) <= _USAGE_SINCE_MAX_AGE:
+        raise HTTPException(status_code=400, detail="since must lie within the last 25 hours")
+    native_models = await _operator_available_native_models(get_model_registry().get_models_with_fallback(), api_key)
+    return await build_usage_snapshot(await _usage_scope(api_key, native_models), api_key=api_key, since=since)
+
+
+async def _usage_scope(api_key: ApiKeyData | None, native_models: Mapping[str, UpstreamModel]) -> UsageScope:
+    """The accounts and pool models a key's usage snapshot covers, after its model allowlist."""
+    allowed_models = _allowed_models_for_api_key(api_key)
+    allowed_source_models = _exact_source_allowed_models_for_api_key(api_key)
+    return UsageScope(
+        account_ids=(
+            frozenset(api_key.assigned_account_ids)
+            if api_key is not None and api_key.account_assignment_scope_enabled
+            else None
+        ),
+        native_models=sorted(slug for slug in native_models if allowed_models is None or slug in allowed_models),
+        source_models=[
+            model
+            for model in await _list_enabled_source_catalog_models(api_key)
+            if model.source_kind in USAGE_SOURCE_KINDS
+            and (allowed_source_models is None or model.slug in allowed_source_models)
+        ],
     )
 
 

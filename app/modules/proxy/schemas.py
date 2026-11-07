@@ -255,7 +255,7 @@ class CodexLbCapability(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: Literal["composer_predictions"]
+    id: Literal["composer_predictions", "usage"]
     models: list[str]
 
 
@@ -267,6 +267,85 @@ class CodexLbCapabilitiesResponse(BaseModel):
     object: Literal["codex_lb.capabilities"] = "codex_lb.capabilities"
     service: Literal["codex-lb"] = "codex-lb"
     capabilities: list[CodexLbCapability]
+
+
+class CodexLbUsageRelief(BaseModel):
+    """The soonest reset that returns quota to the pool, and how much is left after it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: datetime
+    left_percent: float
+
+
+CodexLbUsageWindowId = Literal["five_hour", "weekly", "monthly"]
+
+
+class CodexLbUsageWindow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: CodexLbUsageWindowId
+    window_seconds: int
+    left_percent: float
+    # The soonest reset of an account with usage in this window; None while the window is unused.
+    resets_at: datetime | None
+    # Set when the recent burn spends the pool before relief arrives (weekly windows only).
+    exhausts_at: datetime | None = None
+    relief: CodexLbUsageRelief | None = None
+
+
+class CodexLbUsageAccounts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total: int
+    # Accounts no quota window currently blocks.
+    ready: int
+
+
+class CodexLbUsageCredits(BaseModel):
+    """Prepaid credits that do not reset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_usd: float
+    used_usd: float
+
+
+class CodexLbUsagePool(BaseModel):
+    """One independently limited quota pool and the models it serves."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["chatgpt", "claude", "antigravity", "openrouter"]
+    label: str
+    models: list[str]
+    accounts: CodexLbUsageAccounts
+    windows: list[CodexLbUsageWindow]
+    credits: CodexLbUsageCredits | None = None
+    # When the newest stored reading was taken; stale readings come from failed or missed polls.
+    updated_at: datetime | None
+    stale: bool
+
+
+class CodexLbUsageToday(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    since: datetime
+    requests: int
+    cost_usd: float
+
+
+class CodexLbUsageResponse(BaseModel):
+    """Quota pools and the requesting key's usage since the client's day began, from stored readings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    object: Literal["codex_lb.usage"] = "codex_lb.usage"
+    generated_at: datetime
+    pools: list[CodexLbUsagePool]
+    # None when proxy API-key authentication is off and requests carry no key.
+    today: CodexLbUsageToday | None
 
 
 class V1UsageLimitResponse(BaseModel):

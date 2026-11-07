@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
@@ -90,6 +92,15 @@ def _parse_weekly_pace_working_days(value: str) -> set[int]:
     if days == set(range(7)):
         return set()
     return days
+
+
+@dataclass(frozen=True, slots=True)
+class WeeklyPaces:
+    """The weekly pace of each provider pool; Antigravity limits each model family separately."""
+
+    codex: WeeklyCreditPaceResponse | None
+    claude: WeeklyCreditPaceResponse | None
+    antigravity: list[AntigravityFamilyPace]
 
 
 class DashboardService:
@@ -307,16 +318,74 @@ class DashboardService:
             top_consumers=await _top_consumers(self._repo, now),
         )
 
+    async def get_weekly_paces(
+        self,
+        *,
+        account_ids: Collection[str] | None,
+        source_ids: Collection[str] | None,
+    ) -> WeeklyPaces:
+        """Weekly pace over the given Codex accounts and model sources; None stands for all of them."""
+        now = utcnow()
+        accounts = [
+            account for account in await self._repo.list_accounts() if account_ids is None or account.id in account_ids
+        ]
+        ids = {account.id for account in accounts}
+        latest = {
+            window: {
+                account_id: entry
+                for account_id, entry in (await self._repo.latest_usage_by_account(window)).items()
+                if account_id in ids
+            }
+            for window in ("primary", "secondary", "monthly")
+        }
+        primary_usage, secondary_usage = latest["primary"], latest["secondary"]
+        dashboard_settings = await self._repo.get_settings()
+        _, secondary_history = await _load_projection_histories(
+            self._repo,
+            primary_usage,
+            secondary_usage,
+            now,
+            smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
+            include_primary=False,
+        )
+        codex = build_weekly_credit_pace(
+            accounts=accounts,
+            account_summaries=build_account_summaries(
+                accounts=accounts,
+                primary_usage=primary_usage,
+                secondary_usage=secondary_usage,
+                monthly_usage=latest["monthly"],
+                encryptor=self._encryptor,
+                include_auth=False,
+            ),
+            secondary_history=secondary_history,
+            now=now,
+            usage_refresh_interval_seconds=USAGE_REFRESH_INTERVAL_SECONDS,
+            working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
+            smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
+        )
+        return WeeklyPaces(
+            codex=codex,
+            claude=await _claude_weekly_pace(self._repo, now, dashboard_settings, source_ids=source_ids),
+            antigravity=await _antigravity_weekly_pace(self._repo, now, dashboard_settings, source_ids=source_ids),
+        )
+
 
 async def _claude_weekly_pace(
     repo: DashboardRepository,
     now: datetime,
     dashboard_settings: DashboardSettings,
+    *,
+    source_ids: Collection[str] | None = None,
 ) -> WeeklyCreditPaceResponse | None:
     # The usage-API poll is the regular, consistently quantized stream; header
     # observations interleave one point apart and would read as burn.
     return build_claude_weekly_pace(
-        accounts=await repo.list_claude_accounts(),
+        accounts=[
+            account
+            for account in await repo.list_claude_accounts()
+            if source_ids is None or account.source_id in source_ids
+        ],
         seven_day_history=await repo.claude_quota_history_since(
             "seven_day", now - DEMAND_WINDOW, provenance="usage_api"
         ),
@@ -330,9 +399,15 @@ async def _antigravity_weekly_pace(
     repo: DashboardRepository,
     now: datetime,
     dashboard_settings: DashboardSettings,
+    *,
+    source_ids: Collection[str] | None = None,
 ) -> list[AntigravityFamilyPace]:
     return build_antigravity_weekly_pace(
-        accounts=await repo.list_antigravity_accounts(),
+        accounts=[
+            account
+            for account in await repo.list_antigravity_accounts()
+            if source_ids is None or account.source_id in source_ids
+        ],
         weekly_history=await repo.antigravity_weekly_history_since(now - DEMAND_WINDOW),
         now=now,
         working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
