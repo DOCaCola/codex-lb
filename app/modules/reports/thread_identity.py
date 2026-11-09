@@ -42,8 +42,8 @@ from app.modules.accounts.usage_time_rollup import (
 )
 from app.modules.reports.filters import _normal_traffic_clause
 
-# Raw per-request scans cost roughly 100k rows per production day; seven days
-# is the same ceiling the speed medians already use (MAX_SPEED_REPORT_DAYS).
+# Per-conversation sequencing scans raw request logs with window functions;
+# seven days bounds that work independently of the speed medians.
 MAX_THREAD_IDENTITY_DAYS = 7
 # Conversations shorter than this are mostly one-shot probes whose account
 # spread is uninformative; the baseline measurements used the same floor.

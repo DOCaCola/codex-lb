@@ -139,8 +139,8 @@ class ReportsOptionsResponse(DashboardModel):
 
 class ReportsResponse(DashboardModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    speed_metrics_available: bool = True
-    speed_metrics_max_days: int = 7
+    speed_metrics_available: bool
+    speed_metrics_max_days: int
     summary: ReportSummary
     comparison: ReportComparison
     daily: list[DailyReportRow] = Field(default_factory=list)

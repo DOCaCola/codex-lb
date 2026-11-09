@@ -49,9 +49,9 @@ export function PerformanceCard({ report, styles }: PerformanceCardProps) {
 
   return (
     <ReportSection title={t("reports.sections.perf")} hint={t("reports.perf.hint")} testId="reports-perf">
-      {report.speedMetricsAvailable === false ? (
+      {!report.speedMetricsAvailable ? (
         <p className="px-4 pb-4 pt-2 text-sm text-muted-foreground">
-          {t("reports.speedUnavailable", { days: report.speedMetricsMaxDays ?? 7 })}
+          {t("reports.speedUnavailable", { days: report.speedMetricsMaxDays })}
         </p>
       ) : days.length === 0 ? (
         <ReportEmptyState />

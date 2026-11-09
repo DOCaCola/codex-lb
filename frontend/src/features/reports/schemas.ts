@@ -116,8 +116,8 @@ export const ReportsOptionsResponseSchema = z.object({
 
 export const ReportsResponseSchema = z.object({
   generatedAt: z.string().optional(),
-  speedMetricsAvailable: z.boolean().optional(),
-  speedMetricsMaxDays: z.number().optional(),
+  speedMetricsAvailable: z.boolean(),
+  speedMetricsMaxDays: z.number(),
   summary: ReportSummarySchema,
   comparison: ReportComparisonSchema,
   daily: z.array(DailyReportRowSchema),

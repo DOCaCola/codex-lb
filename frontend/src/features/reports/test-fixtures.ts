@@ -11,6 +11,8 @@ export const NO_COVERAGE_GAPS = {
 };
 
 export const EMPTY_REPORT: ReportsResponse = {
+  speedMetricsAvailable: true,
+  speedMetricsMaxDays: 90,
   summary: {
     ...NO_COVERAGE_GAPS,
     totalCostUsd: 0,

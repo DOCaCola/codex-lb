@@ -77,15 +77,22 @@ async def test_long_report_skips_speed_and_reuses_successful_cache(async_client,
     import app.modules.reports.repository as module
 
     monkeypatch.setattr(module, "_daily_speed_medians_stmt", lambda *_: pytest.fail("long report executed median SQL"))
-    query = {"start_date": "2026-06-01", "end_date": "2026-08-29"}
+    query = {"start_date": "2026-06-01", "end_date": "2026-08-30"}
     first = await async_client.get("/api/reports", params=query)
     assert first.status_code == 200
     assert first.json()["speedMetricsAvailable"] is False
-    assert first.json()["speedMetricsMaxDays"] == 7
+    assert first.json()["speedMetricsMaxDays"] == 90
     monkeypatch.setattr(ReportsRepository, "aggregate_summary", AsyncMock(side_effect=AssertionError("cache miss")))
     second = await async_client.get("/api/reports", params=query)
     assert second.status_code == 200
     assert second.json() == first.json()
+
+
+async def test_ninety_day_report_computes_speed_medians(async_client, db_setup):
+    response = await async_client.get("/api/reports", params={"start_date": "2026-06-01", "end_date": "2026-08-29"})
+    assert response.status_code == 200
+    assert response.json()["speedMetricsAvailable"] is True
+    assert response.json()["speedMetricsMaxDays"] == 90
 
 
 async def test_options_validate_dates_and_require_dashboard_auth(async_client, app_instance):

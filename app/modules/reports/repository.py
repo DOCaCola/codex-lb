@@ -28,7 +28,10 @@ from app.modules.reports.thread_identity import ThreadIdentityFacetRow, aggregat
 
 _SQLITE_COMPOUND_SELECT_LIMIT = 500
 MAX_DAILY_REPORT_DAYS = 730
-MAX_SPEED_REPORT_DAYS = 7
+# Exact medians scan raw request logs. Measured on production (≈7.5k requests
+# per day, Nov 2026): 7 days 0.4 s, 30 days 1.8 s, 90 days 2.5 s. Ninety days
+# covers the longest report preset; longer custom ranges omit speed metrics.
+MAX_SPEED_REPORT_DAYS = 90
 _NO_FILTERS = ReportFilters()
 _COVERAGE = ("priced_requests", "unpriced_requests", "unmetered_requests", "coverage_unknown")
 

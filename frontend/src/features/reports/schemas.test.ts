@@ -4,6 +4,8 @@ import { ReportsOptionsResponseSchema, ReportsResponseSchema } from "./schemas";
 
 function validReportsPayload() {
   return {
+    speedMetricsAvailable: true,
+    speedMetricsMaxDays: 90,
     summary: {
       totalCostUsd: 12.5, totalInputTokens: 300, totalOutputTokens: 200,
       totalReasoningTokens: 70, reasoningUsageKnownRequests: 3,
@@ -54,6 +56,8 @@ describe("ReportsResponseSchema", () => {
 
   it("preserves conversation, cancellation, and reasoning totals from the reports payload", () => {
     const parsed = ReportsResponseSchema.parse({
+      speedMetricsAvailable: true,
+      speedMetricsMaxDays: 90,
       summary: {
         totalCostUsd: 12.5, totalInputTokens: 300, totalOutputTokens: 200,
         totalReasoningTokens: 70, reasoningUsageKnownRequests: 3,
@@ -144,6 +148,8 @@ describe("ReportsResponseSchema", () => {
 
   it("parses the required comparison block", () => {
     const parsed = ReportsResponseSchema.parse({
+      speedMetricsAvailable: true,
+      speedMetricsMaxDays: 90,
       summary: {
         totalCostUsd: 12.5,
         totalInputTokens: 300,
