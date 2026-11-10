@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.claude.cache_lineage import CACHE_LINEAGE, report_cache_diagnosis
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.dispatch import PreparedClaudeRequest
+from app.modules.claude.failover import classify_refusals
 from app.modules.claude.identity import require_current_identity
 from app.modules.claude.native import NativeObserver, usage_totals
 from app.modules.claude.observations import record_headers
@@ -130,7 +132,7 @@ async def _open_responses(
             payload=cast(
                 dict[str, JsonValue],
                 _redact_json_value(
-                    {**exc.payload, "type": "error"} if projection is None else _responses_error(exc.payload), secret
+                    {**exc.payload, "type": "error"} if projection is None else _responses_error(exc), secret
                 ),
             ),
             upstream_status_code=exc.upstream_status_code,
@@ -351,9 +353,23 @@ def public_headers(headers: Mapping[str, str]) -> dict[str, str]:
     }
 
 
-def _responses_error(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    """Anthropic reports input overflow by message only; Responses clients recover from it by error code."""
+def _responses_error(error: ModelSourceForwardingError) -> dict[str, JsonValue]:
+    """Project provider errors into the Responses client's recovery contract."""
+    payload = error.payload
     detail = payload.get("error")
+    now = datetime.now(UTC)
+    quota = [
+        refusal
+        for refusal in classify_refusals(error, now=now)
+        if refusal.window in {"five_hour", "seven_day", "seven_day_overage_included"}
+    ]
+    if quota and isinstance(detail, dict):
+        projected: dict[str, JsonValue] = {**detail, "type": "usage_limit_reached"}
+        if all(refusal.reason != "default" for refusal in quota):
+            reset = max(refusal.until for refusal in quota)
+            projected["resets_at"] = math.ceil(reset.timestamp())
+            projected["resets_in_seconds"] = max(1, math.ceil((reset - now).total_seconds()))
+        return {**payload, "error": projected}
     if not isinstance(detail, dict) or detail.get("type") != "invalid_request_error" or "code" in detail:
         return payload
     message = detail.get("message")
