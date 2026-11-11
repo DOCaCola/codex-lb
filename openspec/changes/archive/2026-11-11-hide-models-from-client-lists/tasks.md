@@ -16,5 +16,5 @@
 ## Wrap-up
 
 - [x] Run backend and frontend checks and `openspec validate hide-models-from-client-lists --strict`.
-- [ ] Archive.
+- [x] Archive.
 
