@@ -13,6 +13,7 @@ function renderDetail(account: AccountSummary, props: Partial<AccountDetailProps
     onPause: vi.fn(),
     onResume: vi.fn(),
     onProbe: vi.fn(),
+    onRefresh: vi.fn(),
     onResetUsage: vi.fn(),
     onSetAlias: vi.fn().mockResolvedValue(undefined),
     onDelete: vi.fn(),
@@ -126,7 +127,7 @@ describe("AccountDetail", () => {
       resetCredits: { availableCount: 1 },
     });
 
-    for (const name of ["Edit alias", "Reset usage", "Pause", "Force probe", "Re-authenticate"])
+    for (const name of ["Edit alias", "Reset usage", "Pause", "Refresh", "Re-authenticate"])
       expect(screen.getByRole("button", { name })).toBeDisabled();
     await openSettings();
     const toggle = screen.getByRole("switch", { name: "Window warm-up for Personal" });
@@ -163,16 +164,31 @@ describe("AccountDetail", () => {
     expect(onResume).toHaveBeenCalledWith("acc_deactivated");
   });
 
-  it("probes active accounts immediately", async () => {
+  it.each(["active", "paused"] as const)("refreshes %s accounts without probing", async (status) => {
+    const account = createAccountSummary({ status });
+    const { onRefresh, onProbe } = renderDetail(account);
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(onRefresh).toHaveBeenCalledExactlyOnceWith(account.accountId);
+    expect(onProbe).not.toHaveBeenCalled();
+  });
+
+  it.each(["reauth_required", "deactivated"] as const)("disables refresh for %s accounts", (status) => {
+    renderDetail(createAccountSummary({ status }));
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+  });
+
+  it("probes active accounts from the account menu", async () => {
     const account = createAccountSummary();
     const { onProbe } = renderDetail(account);
-    await userEvent.click(screen.getByRole("button", { name: "Force probe" }));
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Force probe" }));
     expect(onProbe).toHaveBeenCalledExactlyOnceWith(account.accountId);
   });
 
-  it.each(["paused", "deactivated"] as const)("disables force probe for %s accounts", (status) => {
+  it.each(["paused", "deactivated"] as const)("disables force probe for %s accounts", async (status) => {
     renderDetail(createAccountSummary({ status }));
-    expect(screen.getByRole("button", { name: "Force probe" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Force probe" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("offers a reset credit with its nearest expiry", async () => {

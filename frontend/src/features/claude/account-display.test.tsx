@@ -362,7 +362,7 @@ describe("Claude shared account surfaces", () => {
     ).toBeDisabled();
     for (const name of [
       "Pause",
-      "Check limits",
+      "Refresh",
       "Models (0)",
     ])
       expect(screen.getByRole("button", { name })).toBeDisabled();

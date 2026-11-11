@@ -22,6 +22,7 @@ import {
   AccountTrendsResponseSchema,
   AccountProbeRequestSchema,
   AccountProbeResponseSchema,
+  AccountRefreshResponseSchema,
   ConsumeRateLimitResetCreditResponseSchema,
   ManualOauthCallbackRequestSchema,
   ManualOauthCallbackResponseSchema,
@@ -163,6 +164,11 @@ export function probeAccount(accountId: string, payload?: unknown) {
     AccountProbeResponseSchema,
     validated ? { body: validated } : undefined,
   );
+}
+
+/** Fetches the account's usage, limits and plan now; sends no model request. */
+export function refreshAccount(accountId: string) {
+  return post(`${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/refresh`, AccountRefreshResponseSchema);
 }
 
 export function exportAccountAuth(accountId: string) {

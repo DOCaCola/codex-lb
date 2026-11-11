@@ -1380,6 +1380,17 @@ export const handlers = [
     });
   }),
 
+  http.post("/api/accounts/:accountId/refresh", ({ params }) => {
+    const accountId = String(params.accountId);
+    if (!findAccount(accountId)) {
+      return HttpResponse.json(
+        { error: { code: "account_not_found", message: "Account not found" } },
+        { status: 404 },
+      );
+    }
+    return HttpResponse.json({ status: "refreshed", accountId });
+  }),
+
   http.post("/api/accounts/:accountId/probe", ({ params }) => {
     const accountId = String(params.accountId);
     const account = findAccount(accountId);

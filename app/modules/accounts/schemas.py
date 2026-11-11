@@ -268,6 +268,11 @@ class AccountProbeResponse(DashboardModel):
         return self._usage_refresh_fetch_succeeded is True
 
 
+class AccountRefreshResponse(DashboardModel):
+    status: str
+    account_id: str
+
+
 class AccountUsageResetConsumeRequest(DashboardModel):
     redeem_request_id: str | None = None
 

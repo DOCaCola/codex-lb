@@ -58,6 +58,7 @@ from app.modules.accounts.schemas import (
     AccountModelSettings,
     AccountOpenCodeAuthExportAccount,
     AccountProbeResponse,
+    AccountRefreshResponse,
     AccountRequestUsage,
     AccountSummary,
     AccountTrendsResponse,
@@ -105,6 +106,14 @@ class InvalidAuthJsonError(Exception):
 
 class AccountNotProbableError(Exception):
     """Raised when an account is in a status that disallows probing."""
+
+
+class AccountNotRefreshableError(Exception):
+    """Raised when an account's credentials cannot read upstream usage."""
+
+
+class AccountUsageRefreshFailedError(Exception):
+    """Raised when a forced usage refresh did not complete its upstream fetch."""
 
 
 class AccountStateTransitionError(Exception):
@@ -858,6 +867,22 @@ class AccountsService:
         )
         response._usage_refresh_fetch_succeeded = usage_refresh_fetch_succeeded
         return response
+
+    async def refresh_account(self, account_id: str) -> AccountRefreshResponse | None:
+        """Fetch one account's usage, limits and plan now, without sending a model request."""
+        account = await self._get_visible_account(account_id)
+        if account is None:
+            return None
+        if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+            raise AccountNotRefreshableError(f"Account is {account.status.value} and cannot be refreshed")
+        assert self._usage_updater is not None
+        result = await self._usage_updater.force_refresh_result(account)
+        # A forced refresh can persist renewed OAuth credentials even when the usage
+        # fetch then fails; cached selection rows carry the old encrypted tokens.
+        get_account_selection_cache().invalidate()
+        if not result.fetch_succeeded:
+            raise AccountUsageRefreshFailedError("Usage could not be fetched from upstream")
+        return AccountRefreshResponse(status="refreshed", account_id=account_id)
 
     async def _latest_usage_percents(self, account_id: str) -> tuple[float | None, float | None]:
         if self._usage_repo is None:

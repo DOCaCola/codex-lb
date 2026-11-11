@@ -16,6 +16,7 @@ import {
   pauseAccount,
   probeAccount,
   reactivateAccount,
+  refreshAccount,
   setAccountAlias,
   updateAccount,
   updateAccountCreditPolicy,
@@ -151,6 +152,16 @@ export function useAccountMutations() {
     },
   });
 
+  const refreshMutation = useMutation({
+    mutationFn: (accountId: string) => refreshAccount(accountId),
+    onSuccess: (_data, accountId) => {
+      void invalidateAccountRelatedQueries(queryClient, accountId);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t("accounts.toasts.refreshFailed"));
+    },
+  });
+
   const usageResetMutation = useMutation({
     mutationFn: ({ accountId }: { accountId: string }) => {
       if (usageResetRedeemRequestRef.current?.accountId !== accountId) {
@@ -269,6 +280,7 @@ export function useAccountMutations() {
     setAliasMutation,
     deleteMutation,
     probeMutation,
+    refreshMutation,
     usageResetMutation,
     exportAuthMutation,
     limitWarmupMutation,

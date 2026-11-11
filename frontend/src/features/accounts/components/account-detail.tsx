@@ -62,6 +62,7 @@ export type AccountDetailProps = {
   onPause: (accountId: string) => void;
   onResume: (accountId: string) => void;
   onProbe: (accountId: string) => void;
+  onRefresh: (accountId: string) => void;
   onResetUsage: (accountId: string) => void;
   onSetAlias: (accountId: string, alias: string | null) => Promise<unknown>;
   onDelete: (accountId: string) => void;
@@ -91,6 +92,7 @@ export function AccountDetail({
   onPause,
   onResume,
   onProbe,
+  onRefresh,
   onResetUsage,
   onSetAlias,
   onDelete,
@@ -184,6 +186,13 @@ export function AccountDetail({
   ) : null;
 
   const menu: DetailMenuItem[] = [
+    {
+      key: "probe",
+      label: t("accounts.actions.forceProbe"),
+      icon: <Activity />,
+      disabled: disabled || paused || recovery,
+      onSelect: () => onProbe(account.accountId),
+    },
     ...(canExport
       ? [
           {
@@ -271,11 +280,11 @@ export function AccountDetail({
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs"
-            onClick={() => onProbe(account.accountId)}
-            disabled={disabled || paused || recovery}
+            onClick={() => onRefresh(account.accountId)}
+            disabled={disabled || recovery}
           >
-            <Activity className="h-3.5 w-3.5" />
-            {t("accounts.actions.forceProbe")}
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t("providers.detail.refresh")}
           </Button>
           {limitReached && !recovery && !paused ? null : resetButton}
         </>

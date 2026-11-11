@@ -115,6 +115,7 @@ function mockAccountsQuery(accounts: AccountSummary[], mutations: Record<string,
     pauseMutation: idleMutation(),
     resumeMutation: idleMutation(),
     probeMutation: idleMutation(),
+    refreshMutation: idleMutation(),
     usageResetMutation: idleMutation(),
     deleteMutation: idleMutation(),
     exportAuthMutation: idleMutation(),
@@ -224,7 +225,7 @@ describe("ProvidersPage", () => {
     openRouterMocks.accounts = [createOpenRouterAccount()];
     mockAccountsQuery([]);
     await renderPage("/providers/src_research");
-    for (const name of ["API keys", "Rename account", "Refresh balance", "Pause"])
+    for (const name of ["API keys", "Rename account", "Refresh", "Pause"])
       expect(screen.getByRole("button", { name })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("button", { name: "Models (0)" })).toBeDisabled();
@@ -361,7 +362,8 @@ describe("ProvidersPage", () => {
     );
 
     await renderPage("/providers/acc-probe");
-    await user.click(screen.getByRole("button", { name: "Force probe" }));
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Force probe" }));
     expect(probe).toHaveBeenCalledWith({ accountId: "acc-probe" });
     expect(screen.queryByRole("alertdialog", { name: "Reset usage" })).not.toBeInTheDocument();
   });

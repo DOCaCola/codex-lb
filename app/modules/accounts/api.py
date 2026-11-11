@@ -42,6 +42,7 @@ from app.modules.accounts.schemas import (
     AccountProbeRequest,
     AccountProbeResponse,
     AccountReactivateResponse,
+    AccountRefreshResponse,
     AccountRoutingPolicyUpdateRequest,
     AccountRoutingPolicyUpdateResponse,
     AccountsResponse,
@@ -54,7 +55,9 @@ from app.modules.accounts.schemas import (
 )
 from app.modules.accounts.service import (
     AccountNotProbableError,
+    AccountNotRefreshableError,
     AccountStateTransitionError,
+    AccountUsageRefreshFailedError,
     AccountUsageResetConsumeUnavailableError,
     AccountUsageResetCreditsUnavailableError,
     InvalidAuthJsonError,
@@ -346,6 +349,31 @@ async def probe_account(
             "probe_status_code": result.probe_status_code,
             "model": requested_model,
         },
+    )
+    return result
+
+
+@router.post("/{account_id}/refresh", response_model=AccountRefreshResponse)
+async def refresh_account(
+    request: Request,
+    account_id: str,
+    principal: DashboardPrincipal = Depends(require_dashboard_permission(Permission.ACCOUNTS_WRITE)),
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountRefreshResponse:
+    try:
+        result = await context.service.refresh_account(account_id)
+    except AccountNotRefreshableError as exc:
+        raise DashboardConflictError(str(exc), code="account_not_refreshable") from exc
+    except AccountUsageRefreshFailedError as exc:
+        raise DashboardUpstreamError(str(exc), code="account_usage_refresh_failed") from exc
+    if result is None:
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    AuditService.log_async(
+        "account_refreshed",
+        actor_ip=request.client.host if request.client else None,
+        actor=AuditActor.from_principal(principal),
+        target=AuditTarget("account", result.account_id),
+        details={"account_id": result.account_id},
     )
     return result
 

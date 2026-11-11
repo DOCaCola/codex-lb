@@ -108,7 +108,7 @@ export function OpenRouterAccountDetail({
           <AccountPauseButton paused={!account.isEnabled} disabled={disabled} onClick={() => onToggle(!account.isEnabled)} />
           <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={disabled} onClick={onRefresh}>
             <RefreshCw className="h-3.5 w-3.5" />
-            {t("providers.detail.refreshBalance")}
+            {t("providers.detail.refresh")}
           </Button>
         </>
       }

@@ -256,7 +256,7 @@ function AntigravityDetail({
             onClick={() => void run(() => api.refresh.mutateAsync(account.id))}
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            {t("providers.detail.checkLimits")}
+            {t("providers.detail.refresh")}
           </Button>
         </>
       }

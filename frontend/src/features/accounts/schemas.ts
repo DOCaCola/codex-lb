@@ -229,6 +229,11 @@ export const AccountUsageResetConsumeRequestSchema = z.object({
   redeemRequestId: z.string().trim().min(1).optional(),
 });
 
+export const AccountRefreshResponseSchema = z.object({
+  status: z.literal("refreshed"),
+  accountId: z.string(),
+});
+
 export const AccountUsageResetConsumeResponseSchema = z.object({
   status: z.string(),
   accountId: z.string(),

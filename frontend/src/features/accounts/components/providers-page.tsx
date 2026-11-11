@@ -80,6 +80,7 @@ export function ProvidersPage() {
     resumeMutation,
     setAliasMutation,
     probeMutation,
+    refreshMutation,
     usageResetMutation,
     limitWarmupMutation,
     updateMutation,
@@ -178,6 +179,7 @@ export function ProvidersPage() {
     resumeMutation.isPending ||
     setAliasMutation.isPending ||
     probeMutation.isPending ||
+    refreshMutation.isPending ||
     usageResetMutation.isPending ||
     limitWarmupMutation.isPending ||
     deleteMutation.isPending ||
@@ -194,6 +196,7 @@ export function ProvidersPage() {
     getErrorMessageOrNull(resumeMutation.error) ||
     getErrorMessageOrNull(setAliasMutation.error) ||
     getErrorMessageOrNull(probeMutation.error) ||
+    getErrorMessageOrNull(refreshMutation.error) ||
     getErrorMessageOrNull(usageResetMutation.error) ||
     getErrorMessageOrNull(limitWarmupMutation.error) ||
     getErrorMessageOrNull(deleteMutation.error) ||
@@ -379,6 +382,7 @@ export function ProvidersPage() {
                               onProbe={(accountId) =>
                                 void probeMutation.mutateAsync({ accountId })
                               }
+                              onRefresh={(accountId) => void refreshMutation.mutateAsync(accountId)}
                               onResetUsage={(accountId) =>
                                 usageResetDialog.show(accountId)
                               }

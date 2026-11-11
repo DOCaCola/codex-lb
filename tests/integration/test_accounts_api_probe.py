@@ -759,3 +759,43 @@ async def test_probe_uses_default_model_when_body_omitted(async_client, monkeypa
     # *some* model string rather than coupling the test to the constant.
     assert isinstance(captured["model"], str)
     assert captured["model"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_missing_account_returns_404(async_client):
+    response = await async_client.post("/api/accounts/missing/refresh")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "account_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetch_succeeded, expected_status", [(True, 200), (False, 502)])
+async def test_refresh_forces_usage_refresh_without_probing(
+    async_client, monkeypatch, fetch_succeeded, expected_status
+):
+    calls: list[str] = []
+
+    async def _probe(self, **kwargs):  # noqa: ARG001 - signature match only
+        raise AssertionError("refresh must not send a model request")
+
+    async def _force_refresh(self, account, **kwargs):  # noqa: ARG001 - signature match only
+        calls.append(account.id)
+        return AccountRefreshResult(usage_written=fetch_succeeded, fetch_succeeded=fetch_succeeded)
+
+    monkeypatch.setattr(AccountsService, "_send_probe_request", _probe)
+    monkeypatch.setattr(UsageUpdater, "force_refresh_result", _force_refresh)
+    account_id = await _import_test_account(
+        async_client, email="refresh@example.com", account_id="acc_refresh_" + str(fetch_succeeded).lower()
+    )
+    pause_resp = await async_client.post(f"/api/accounts/{account_id}/pause")
+    assert pause_resp.status_code == 200
+    calls.clear()
+
+    response = await async_client.post(f"/api/accounts/{account_id}/refresh")
+
+    assert response.status_code == expected_status, response.text
+    assert calls == [account_id]
+    if fetch_succeeded:
+        assert response.json() == {"status": "refreshed", "accountId": account_id}
+    else:
+        assert response.json()["error"]["code"] == "account_usage_refresh_failed"
