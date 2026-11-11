@@ -1780,6 +1780,19 @@ class ModelContextWindowOverride(Base):
     )
 
 
+class HiddenModel(Base):
+    """A model the operator hid from client model lists.
+
+    Clients still receive its catalog metadata (Codex marks it ``hide``) and may
+    use it by name; only the pickers omit it.
+    """
+
+    __tablename__ = "hidden_models"
+
+    slug: Mapped[str] = mapped_column(String, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class ModelCompactionRoute(Base):
     """Native compaction requests on ``slug`` run on ``compaction_model``.
 

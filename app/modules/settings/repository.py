@@ -16,6 +16,7 @@ from app.core.upstream_proxy.cache import get_upstream_route_cache
 from app.db.models import (
     DashboardSettings,
     DashboardUser,
+    HiddenModel,
     LocalLoginPolicy,
     ModelCompactionRoute,
     ModelContextWindowOverride,
@@ -603,6 +604,33 @@ class ModelContextWindowOverridesRepository:
 
     async def delete(self, slug: str) -> bool:
         row = await self._session.get(ModelContextWindowOverride, slug)
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.commit()
+        return True
+
+
+class HiddenModelsRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def slugs(self) -> frozenset[str]:
+        result = await self._session.execute(select(HiddenModel.slug))
+        return frozenset(result.scalars().all())
+
+    async def hide(self, slug: str) -> None:
+        """Hide ``slug``; hiding an already hidden slug is a no-op, also under concurrency."""
+        dialect = self._session.get_bind().dialect.name
+        insert_fn = _UPSERT_INSERT_FNS.get(dialect)
+        if insert_fn is None:
+            raise RuntimeError(f"hidden_models insert unsupported for dialect={dialect!r}")
+        statement = insert_fn(HiddenModel).values(slug=slug)
+        await self._session.execute(statement.on_conflict_do_nothing(index_elements=[HiddenModel.slug]))
+        await self._session.commit()
+
+    async def delete(self, slug: str) -> bool:
+        row = await self._session.get(HiddenModel, slug)
         if row is None:
             return False
         await self._session.delete(row)

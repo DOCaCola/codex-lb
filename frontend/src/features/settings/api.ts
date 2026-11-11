@@ -21,6 +21,7 @@ const SETTINGS_PATH = "/api/settings";
 const UPSTREAM_PROXY_PATH = `${SETTINGS_PATH}/upstream-proxy`;
 const MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = `${SETTINGS_PATH}/model-context-window-overrides`;
 const MODEL_COMPACTION_ROUTES_PATH = `${SETTINGS_PATH}/model-compaction-routes`;
+const HIDDEN_MODELS_PATH = `${SETTINGS_PATH}/hidden-models`;
 
 export function getSettings() {
   return get(SETTINGS_PATH, DashboardSettingsSchema);
@@ -86,6 +87,15 @@ export function putModelContextWindowOverride(slug: string, payload: unknown) {
 
 export function deleteModelContextWindowOverride(slug: string) {
   return del(`${MODEL_CONTEXT_WINDOW_OVERRIDES_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema);
+}
+
+// Models hidden from client model lists; they stay usable by name.
+export function putHiddenModel(slug: string) {
+  return put(`${HIDDEN_MODELS_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema);
+}
+
+export function deleteHiddenModel(slug: string) {
+  return del(`${HIDDEN_MODELS_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema);
 }
 
 // Native compaction model routes (one dashboard row per coding model).

@@ -8,6 +8,7 @@ import {
   createUpstreamProxyEndpoint,
   createUpstreamProxyPool,
   deleteModelCompactionRoute,
+  deleteHiddenModel,
   deleteModelContextWindowOverride,
   getModelCompactionRoutes,
   getModelContextWindowOverrides,
@@ -15,6 +16,7 @@ import {
   getUpstreamProxyAdmin,
   putAccountProxyBinding,
   putModelCompactionRoute,
+  putHiddenModel,
   putModelContextWindowOverride,
   testUpstreamProxyEndpoint,
   updateSettings,
@@ -199,7 +201,21 @@ export function useModelContextWindowOverrides() {
     },
   });
 
-  return { overridesQuery, upsertMutation, deleteMutation };
+  // Hiding only changes client model lists; compaction routes mark hidden models too.
+  const visibilityMutation = useMutation({
+    mutationFn: ({ slug, listed }: { slug: string; listed: boolean }) =>
+      listed ? deleteHiddenModel(slug) : putHiddenModel(slug),
+    onSuccess: (catalogue, { listed }) => {
+      toast.success(t(listed ? "settings.modelCatalogue.toasts.listed" : "settings.modelCatalogue.toasts.hidden"));
+      queryClient.setQueryData(queryKey, catalogue);
+      void queryClient.invalidateQueries({ queryKey: ["settings", "model-compaction-routes"] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t("settings.modelCatalogue.toasts.visibilityFailed"));
+    },
+  });
+
+  return { overridesQuery, upsertMutation, deleteMutation, visibilityMutation };
 }
 
 // Native compaction model routes. The backend validates every write against

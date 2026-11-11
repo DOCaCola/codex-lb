@@ -14,12 +14,14 @@ vi.mock("@/features/settings/hooks/use-settings", () => ({
 function mockHook(overrides = createModelContextWindowOverrides()) {
   const upsert = vi.fn().mockResolvedValue(overrides);
   const remove = vi.fn().mockResolvedValue(overrides);
+  const setVisibility = vi.fn();
   useModelContextWindowOverridesMock.mockReturnValue({
     overridesQuery: { data: overrides, error: null, isLoading: false },
     upsertMutation: { mutateAsync: upsert, isPending: false, error: null },
     deleteMutation: { mutateAsync: remove, isPending: false, error: null },
+    visibilityMutation: { mutate: setVisibility, isPending: false, error: null },
   });
-  return { upsert, remove };
+  return { upsert, remove, setVisibility };
 }
 
 function row(slug: string): HTMLElement {
@@ -129,5 +131,62 @@ describe("ModelCatalogueSettings", () => {
     for (const button of screen.getAllByRole("button", { name: "Override" })) {
       expect(button).toBeDisabled();
     }
+    for (const toggle of screen.getAllByRole("switch")) {
+      expect(toggle).toBeDisabled();
+    }
+  });
+
+  it("groups models by provider and shows whether clients list them", () => {
+    mockHook();
+    render(<ModelCatalogueSettings />);
+
+    const groupHeaders = screen.getAllByRole("row").map((element) => element.textContent);
+    expect(groupHeaders).toContain("OpenAI1 hidden");
+    expect(groupHeaders).toContain("Claude");
+    expect(within(row("gpt-5.4")).getByRole("switch", { name: "Show gpt-5.4 in client model lists" })).toBeChecked();
+    expect(within(row("gpt-5.4")).getByText("Listed")).toBeInTheDocument();
+    expect(within(row("gpt-5.5")).getByRole("switch")).not.toBeChecked();
+    expect(within(row("gpt-5.5")).getByText("Hidden")).toBeInTheDocument();
+    expect(screen.getByText(/resets each open conversation's prompt cache once/)).toBeInTheDocument();
+  });
+
+  it("hides and lists models with the switch", async () => {
+    const user = userEvent.setup();
+    const { setVisibility } = mockHook();
+    render(<ModelCatalogueSettings />);
+
+    await user.click(within(row("gpt-5.4")).getByRole("switch"));
+    expect(setVisibility).toHaveBeenCalledWith({ slug: "gpt-5.4", listed: false });
+    await user.click(within(row("gpt-5.5")).getByRole("switch"));
+    expect(setVisibility).toHaveBeenCalledWith({ slug: "gpt-5.5", listed: true });
+  });
+
+  it("filters by client list visibility", async () => {
+    const user = userEvent.setup();
+    mockHook();
+    render(<ModelCatalogueSettings />);
+
+    expect(screen.getByRole("radio", { name: "All 3" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Hidden 1" }));
+    expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
+    expect(screen.queryByText("gpt-5.4")).not.toBeInTheDocument();
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "Listed 2" }));
+    expect(screen.queryByText("gpt-5.5")).not.toBeInTheDocument();
+    expect(screen.getByText("gpt-5.4")).toBeInTheDocument();
+  });
+
+  it("explains an empty filter", async () => {
+    const user = userEvent.setup();
+    mockHook(
+      createModelContextWindowOverrides({
+        models: createModelContextWindowOverrides().models.map((model) => ({ ...model, listed: true })),
+      }),
+    );
+    render(<ModelCatalogueSettings />);
+
+    await user.click(screen.getByRole("radio", { name: "Hidden 0" }));
+    expect(screen.getByText("No models match this filter.")).toBeInTheDocument();
   });
 });

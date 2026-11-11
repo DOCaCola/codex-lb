@@ -510,12 +510,14 @@ export const ModelContextWindowOverrideSchema = z.object({
 
 // A text model currently offered to clients. `maxContextWindow` is the largest
 // override the backend accepts for it (null when its provider declares none).
+// `listed` is false when it is hidden from client model lists.
 export const ModelCatalogueEntrySchema = z.object({
   slug: z.string().min(1),
   displayName: z.string(),
   provider: z.string(),
   defaultContextWindow: z.number().int().positive(),
   maxContextWindow: z.number().int().positive().nullable(),
+  listed: z.boolean(),
 });
 
 export const ModelContextWindowOverridesSchema = z.object({
@@ -535,6 +537,7 @@ export const CompactionRouteModelSchema = z.object({
   slug: z.string().min(1),
   displayName: z.string(),
   reasoningEfforts: z.array(z.string()),
+  listed: z.boolean(),
 });
 
 export const CompactionRouteSchema = z.object({

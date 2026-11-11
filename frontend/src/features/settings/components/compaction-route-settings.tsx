@@ -87,7 +87,7 @@ export function CompactionRouteSettings({ disabled = false }: CompactionRouteSet
       <SelectContent>
         {options.map((model) => (
           <SelectItem key={model.slug} value={model.slug} className="text-xs">
-            {model.displayName}
+            {model.listed ? model.displayName : t("settings.compactionRoutes.hiddenModel", { model: model.displayName })}
           </SelectItem>
         ))}
       </SelectContent>

@@ -57,6 +57,7 @@ from app.core.openai.compaction_routes import (
     get_model_compaction_routes_cache,
     native_route_model,
 )
+from app.core.openai.hidden_models import get_hidden_models_cache
 from app.core.openai.model_registry import get_model_registry
 from app.core.resilience.toggles import RESILIENCE_TOGGLE_SETTINGS
 from app.core.timeout_invariants import find_timeout_invariant_violations
@@ -79,7 +80,11 @@ from app.modules.proxy.account_cache import (
     propagate_account_routing_change,
 )
 from app.modules.proxy.api import context_window_ceiling, list_model_catalogue
-from app.modules.settings.repository import ModelCompactionRoutesRepository, ModelContextWindowOverridesRepository
+from app.modules.settings.repository import (
+    HiddenModelsRepository,
+    ModelCompactionRoutesRepository,
+    ModelContextWindowOverridesRepository,
+)
 from app.modules.settings.schemas import (
     SECURITY_SETTINGS_FIELDS,
     AccountProxyBindingRequest,
@@ -788,6 +793,7 @@ def _validate_model_slug(slug: str) -> str:
 async def _model_context_window_overrides_response(context: SettingsContext) -> ModelContextWindowOverridesResponse:
     dashboard = await ModelContextWindowOverridesRepository(context.session).by_slug()
     resolved = resolve_context_window_overrides(dashboard, get_app_settings().model_context_window_overrides)
+    hidden = await HiddenModelsRepository(context.session).slugs()
     return ModelContextWindowOverridesResponse(
         models=[
             ModelCatalogueEntryResponse(
@@ -796,6 +802,7 @@ async def _model_context_window_overrides_response(context: SettingsContext) -> 
                 provider=model.source_kind,
                 default_context_window=model.context_window,
                 max_context_window=context_window_ceiling(model),
+                listed=model.slug not in hidden,
             )
             for model in await list_model_catalogue()
         ],
@@ -874,6 +881,52 @@ async def delete_model_context_window_override(
     return await _model_context_window_overrides_response(context)
 
 
+# Models hidden from client model lists (hidden_models). They stay usable by name.
+HIDDEN_MODELS_PATH = "/hidden-models"
+
+
+@router.put(HIDDEN_MODELS_PATH + "/{slug:path}", response_model=ModelContextWindowOverridesResponse)
+async def put_hidden_model(
+    request: Request,
+    slug: str,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    normalized = _validate_model_slug(slug)
+    if not any(model.slug == normalized for model in await list_model_catalogue()):
+        raise DashboardBadRequestError(
+            "Model is not offered to clients; enable it before hiding it",
+            code="model_not_in_catalogue",
+        )
+    await HiddenModelsRepository(context.session).hide(normalized)
+    await get_hidden_models_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["hidden_models"], "slug": normalized},
+    )
+    return await _model_context_window_overrides_response(context)
+
+
+@router.delete(HIDDEN_MODELS_PATH + "/{slug:path}", response_model=ModelContextWindowOverridesResponse)
+async def delete_hidden_model(
+    request: Request,
+    slug: str,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    normalized = _validate_model_slug(slug)
+    if not await HiddenModelsRepository(context.session).delete(normalized):
+        raise DashboardNotFoundError("Model is not hidden", code="hidden_model_not_found")
+    await get_hidden_models_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["hidden_models"], "slug": normalized},
+    )
+    return await _model_context_window_overrides_response(context)
+
+
 # Native compaction model routes (model_compaction_routes).
 MODEL_COMPACTION_ROUTES_PATH = "/model-compaction-routes"
 
@@ -905,6 +958,7 @@ def _compaction_route_rows(rows: list[ModelCompactionRoute]) -> dict[str, Compac
 async def _compaction_routes_response(context: SettingsContext) -> CompactionRoutesResponse:
     registry = get_model_registry()
     routes = _compaction_route_rows(await ModelCompactionRoutesRepository(context.session).list_all())
+    hidden = await HiddenModelsRepository(context.session).slugs()
     client_windows = await effective_client_windows()
     models = [
         native
@@ -931,6 +985,7 @@ async def _compaction_routes_response(context: SettingsContext) -> CompactionRou
                 slug=model.slug,
                 display_name=model.display_name,
                 reasoning_efforts=[level.effort for level in model.supported_reasoning_levels],
+                listed=model.slug not in hidden,
             )
             for model in models
         ],

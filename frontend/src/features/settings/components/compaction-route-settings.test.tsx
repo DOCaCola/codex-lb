@@ -110,4 +110,19 @@ describe("CompactionRouteSettings", () => {
 
     expect(screen.getByText("No compaction routes. Every model compacts on itself.")).toBeInTheDocument();
   });
+
+  it("keeps models hidden from client lists selectable and marks them", async () => {
+    const user = userEvent.setup();
+    const routes = createCompactionRoutes();
+    mockHook({
+      ...routes,
+      models: routes.models.map((model) => (model.slug === "gpt-6-luna" ? { ...model, listed: false } : model)),
+    });
+    render(<CompactionRouteSettings />);
+
+    await user.click(screen.getByRole("button", { name: "Add route" }));
+    await user.click(screen.getByRole("combobox", { name: "Compaction model" }));
+    expect(await screen.findByRole("option", { name: "GPT-6-Luna · hidden" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "GPT-6.1-Sol" })).toBeInTheDocument();
+  });
 });

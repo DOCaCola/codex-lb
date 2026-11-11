@@ -1949,6 +1949,40 @@ export const handlers = [
     return HttpResponse.json(state.compactionRoutes);
   }),
 
+  http.put("/api/settings/hidden-models/:slug*", ({ params }) => {
+    const slug = decodeURIComponent(String(params.slug));
+    if (!state.modelContextWindowOverrides.models.some((entry) => entry.slug === slug)) {
+      return HttpResponse.json(
+        { error: { code: "model_not_in_catalogue", message: "Model is not offered to clients" } },
+        { status: 400 },
+      );
+    }
+    state.modelContextWindowOverrides = {
+      ...state.modelContextWindowOverrides,
+      models: state.modelContextWindowOverrides.models.map((entry) =>
+        entry.slug === slug ? { ...entry, listed: false } : entry,
+      ),
+    };
+    return HttpResponse.json(state.modelContextWindowOverrides);
+  }),
+
+  http.delete("/api/settings/hidden-models/:slug*", ({ params }) => {
+    const slug = decodeURIComponent(String(params.slug));
+    if (!state.modelContextWindowOverrides.models.some((entry) => entry.slug === slug && !entry.listed)) {
+      return HttpResponse.json(
+        { error: { code: "hidden_model_not_found", message: "Model is not hidden" } },
+        { status: 404 },
+      );
+    }
+    state.modelContextWindowOverrides = {
+      ...state.modelContextWindowOverrides,
+      models: state.modelContextWindowOverrides.models.map((entry) =>
+        entry.slug === slug ? { ...entry, listed: true } : entry,
+      ),
+    };
+    return HttpResponse.json(state.modelContextWindowOverrides);
+  }),
+
   http.put("/api/settings/model-compaction-routes/:slug*", async ({ params, request }) => {
     const slug = decodeURIComponent(String(params.slug));
     const payload = await parseJsonBody(

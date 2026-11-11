@@ -157,6 +157,7 @@ from app.core.openai.compaction import (
 )
 from app.core.openai.compaction_routes import compaction_routes_for
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.hidden_models import get_hidden_models_cache
 from app.core.openai.model_registry import (
     MODEL_SOURCE_KIND_SUBSCRIPTION,
     UpstreamModel,
@@ -3460,6 +3461,7 @@ async def _build_codex_models_response_body(
     exact_source_allowed_models = _exact_source_allowed_models_for_api_key(api_key)
     visibility_allowed_models = _codex_model_visibility_allowed_models(api_key)
     context_window_overrides = await _effective_context_window_overrides()
+    hidden_models = await get_hidden_models_cache().get()
 
     registry = get_model_registry()
     models = await _operator_available_native_models(registry.get_models_with_fallback(), api_key)
@@ -3525,7 +3527,11 @@ async def _build_codex_models_response_body(
         if visibility_allowed_models is None:
             if allowed_models is not None and slug not in allowed_models:
                 continue
-            entry = _to_codex_model_entry(model, context_window_overrides=context_window_overrides)
+            entry = _to_codex_model_entry(
+                model,
+                context_window_overrides=context_window_overrides,
+                visibility="hide" if slug in hidden_models else None,
+            )
             entries.append(entry)
             seen_slugs.add(slug)
             if model.supported_in_api and entry.visibility == "list":
@@ -3541,7 +3547,7 @@ async def _build_codex_models_response_body(
         entry = _to_codex_model_entry(
             model,
             context_window_overrides=context_window_overrides,
-            visibility="list" if slug in visibility_allowed_models else "hide",
+            visibility="list" if slug in visibility_allowed_models and slug not in hidden_models else "hide",
         )
         entries.append(entry)
         seen_slugs.add(slug)
@@ -3572,6 +3578,7 @@ async def _build_codex_models_response_body(
             entry = _to_codex_model_entry(
                 model,
                 context_window_overrides=context_window_overrides,
+                visibility="hide" if model.slug in hidden_models else None,
                 base_instructions=source_base_instructions(model, routed_instructions),
             )
             entries.append(entry)
@@ -3589,10 +3596,14 @@ async def _build_codex_models_response_body(
         entry = _to_codex_model_entry(
             model,
             context_window_overrides=context_window_overrides,
-            visibility=_effective_source_codex_visibility(
-                model,
-                visibility_allowed_models=visibility_allowed_models,
-                exact_source_allowed_models=exact_source_allowed_models,
+            visibility=(
+                "hide"
+                if model.slug in hidden_models
+                else _effective_source_codex_visibility(
+                    model,
+                    visibility_allowed_models=visibility_allowed_models,
+                    exact_source_allowed_models=exact_source_allowed_models,
+                )
             ),
             base_instructions=source_base_instructions(model, routed_instructions),
         )
@@ -3644,6 +3655,7 @@ async def _build_models_response_body(
     exact_source_allowed_models = _exact_source_allowed_models_for_api_key(api_key)
     created = int(now)
     context_window_overrides = await _effective_context_window_overrides()
+    hidden_models = await get_hidden_models_cache().get()
 
     registry = get_model_registry()
     models = await _operator_available_native_models(registry.get_models_with_fallback(), api_key)
@@ -3655,14 +3667,14 @@ async def _build_models_response_body(
     items: list[ModelListItem] = []
     seen_slugs: set[str] = set()
     for slug, model in models.items():
-        if not is_public_model(model, allowed_models):
+        if slug in hidden_models or not is_public_model(model, allowed_models):
             continue
         items.append(
             _to_model_list_item(slug, model, created=created, context_window_overrides=context_window_overrides)
         )
         seen_slugs.add(slug)
     for model in source_models:
-        if model.slug in seen_slugs:
+        if model.slug in seen_slugs or model.slug in hidden_models:
             continue
         if exact_source_allowed_models is not None:
             if model.slug not in exact_source_allowed_models:
@@ -3710,6 +3722,7 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
     allowed_models = _allowed_models_for_api_key(api_key)
     exact_source_allowed_models = _exact_source_allowed_models_for_api_key(api_key)
     context_window_overrides = await _effective_context_window_overrides()
+    hidden_models = await get_hidden_models_cache().get()
     created_at = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     native_models = await _operator_available_native_models(get_model_registry().get_models_with_fallback(), api_key)
@@ -3731,8 +3744,9 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
             key=lambda model: _SOURCE_KIND_ORDER.get(model.source_kind or "", len(_SOURCE_KIND_ORDER)),
         )
     )
-    # Claude Code has no visibility field; the list is its picker, so catalog-hidden models stay out.
-    listed = [model for model in listed if _model_visibility(model) == "list"]
+    # Claude Code has no visibility field; the list is its picker, so catalog-hidden
+    # and operator-hidden models stay out.
+    listed = [model for model in listed if _model_visibility(model) == "list" and model.slug not in hidden_models]
     # Claude Code can only pick a model, so Fast is a sibling row; it is omitted where it would have no effect.
     fast_rows = not await _prohibit_fast_mode_enabled() and (api_key is None or api_key.enforced_service_tier is None)
 

@@ -585,6 +585,7 @@ async def lifespan(app: FastAPI):
     from app.core.config.context_window_overrides import get_model_context_window_overrides_cache
     from app.core.middleware.firewall_cache import get_firewall_ip_cache
     from app.core.openai.compaction_routes import get_model_compaction_routes_cache
+    from app.core.openai.hidden_models import get_hidden_models_cache
     from app.core.upstream_proxy.cache import get_upstream_route_cache
     from app.modules.proxy.account_cache import get_account_selection_cache, get_routing_availability_cache
     from app.modules.rate_limit_reset_credits.store import get_rate_limit_reset_credits_store
@@ -627,8 +628,9 @@ async def lifespan(app: FastAPI):
     # The route resolver also reads the dashboard settings row (routing enabled
     # + default pool id), so settings bumps clear resolved routes as well.
     cache_poller.on_invalidation(NAMESPACE_SETTINGS, get_upstream_route_cache().clear)
-    # M4 model catalogue: the per-model context window override rows and the
-    # compaction model routes are invalidated through the settings namespace.
+    # M4 model catalogue: the per-model context window override rows, the
+    # compaction model routes and the hidden models are invalidated through the
+    # settings namespace.
     cache_poller.on_invalidation(
         NAMESPACE_SETTINGS,
         lambda: get_model_context_window_overrides_cache().invalidate(propagate=False),
@@ -636,6 +638,10 @@ async def lifespan(app: FastAPI):
     cache_poller.on_invalidation(
         NAMESPACE_SETTINGS,
         lambda: get_model_compaction_routes_cache().invalidate(propagate=False),
+    )
+    cache_poller.on_invalidation(
+        NAMESPACE_SETTINGS,
+        lambda: get_hidden_models_cache().invalidate(propagate=False),
     )
     # The bus carries no payload, so a peer redeem clears this replica's whole
     # reset-credits store; the refresh scheduler repopulates it on its next tick.

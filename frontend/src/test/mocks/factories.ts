@@ -1141,6 +1141,7 @@ export function createModelContextWindowOverrides(
 				provider: "subscription",
 				defaultContextWindow: 272000,
 				maxContextWindow: 1000000,
+				listed: true,
 			},
 			{
 				slug: "gpt-5.5",
@@ -1148,6 +1149,7 @@ export function createModelContextWindowOverrides(
 				provider: "subscription",
 				defaultContextWindow: 272000,
 				maxContextWindow: null,
+				listed: false,
 			},
 			{
 				slug: "anthropic/claude-opus-5-5",
@@ -1155,6 +1157,7 @@ export function createModelContextWindowOverrides(
 				provider: "claude",
 				defaultContextWindow: 1000000,
 				maxContextWindow: 1000000,
+				listed: true,
 			},
 		],
 		overrides: [
@@ -1172,9 +1175,10 @@ export function createCompactionRoutes(overrides: Partial<CompactionRoutes> = {}
 				slug: "gpt-6-astra",
 				displayName: "GPT-6-Astra",
 				reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+				listed: true,
 			},
-			{ slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-			{ slug: "gpt-6-luna", displayName: "GPT-6-Luna", reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] },
+			{ slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"], listed: true },
+			{ slug: "gpt-6-luna", displayName: "GPT-6-Luna", reasoningEfforts: ["low", "medium", "high", "xhigh", "max"], listed: true },
 		],
 		routes: [
 			{ slug: "gpt-6-astra", compactionModel: "gpt-6-luna", reasoningEffort: "low", status: "active", reason: null },

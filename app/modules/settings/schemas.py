@@ -412,12 +412,14 @@ class ModelContextWindowOverrideResponse(DashboardModel):
 # A text model currently offered to clients. ``default_context_window`` is the
 # window it reports without an override; ``max_context_window`` is the largest
 # override it accepts (``None`` when its provider declares no ceiling).
+# ``listed`` is false when the operator hid it from client model lists.
 class ModelCatalogueEntryResponse(DashboardModel):
     slug: str
     display_name: str
     provider: str
     default_context_window: int
     max_context_window: int | None
+    listed: bool
 
 
 class ModelContextWindowOverridesResponse(DashboardModel):
@@ -444,6 +446,7 @@ class CompactionRouteModelResponse(DashboardModel):
     slug: str
     display_name: str
     reasoning_efforts: list[str]
+    listed: bool
 
 
 class CompactionRouteResponse(DashboardModel):
