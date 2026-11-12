@@ -93,6 +93,11 @@ def test_missing_fields_use_only_exact_maintained_models():
     assert not project_models(state)[0].is_enabled
 
 
+def test_fable_5_2_has_maintained_limits():
+    model = CatalogModel(id="claude-fable-5-2", display_name="Fable 5.2")
+    assert model.max_input_tokens == 1_000_000 and model.max_tokens == 128_000
+
+
 def test_haiku_budget_reasoning_is_advertised_with_dated_api_price():
     model = CatalogModel(id="claude-haiku-4-5-20251001", display_name="Haiku")
     projected = project_models(AccountState(catalog=[model], selections=[ModelSelection(model=model.id)]))[0]

@@ -2,7 +2,7 @@
 
 Discovery wins. Maintained metadata only fills missing fields for exact known
 models (including their dated snapshots), never inferred future family members.
-Sources: authenticated Models API observed 2026-09-29; OpenCodex 8a005dd98.
+Sources: authenticated Models API observed 2026-09-29; OpenCodex 8a005dd98; Fable 5.2 from CLIProxyAPI 19a0a85.
 """
 
 import re
@@ -19,6 +19,7 @@ _KNOWN_LIMITS = {
     "claude-sonnet-5-5": (1_000_000, 128_000),
     "claude-opus-5-5": (1_000_000, 128_000),
     "claude-fable-5-1": (1_000_000, 128_000),
+    "claude-fable-5-2": (1_000_000, 128_000),
     "claude-opus-5": (1_000_000, 128_000),
     "claude-sonnet-5": (1_000_000, 128_000),
     "claude-opus-4-6": (1_000_000, 128_000),

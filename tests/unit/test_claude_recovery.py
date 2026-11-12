@@ -129,6 +129,8 @@ def test_empty_message_and_server_state_refuse_recovery():
         ("claude-opus-5-5", {"type": "adaptive"}, True),
         ("claude-opus-5-5-20260901", {"type": "enabled", "budget_tokens": 4096}, True),
         ("claude-fable-5-1", {"type": "adaptive"}, True),
+        ("claude-fable-5-2", {"type": "adaptive"}, True),
+        ("claude-fable-5-2-20261109", {"type": "enabled", "budget_tokens": 4096}, True),
         ("claude-haiku-5-5", {"type": "adaptive"}, True),
         ("claude-haiku-5-5", {"type": "enabled", "budget_tokens": 4096}, False),
         ("claude-sonnet-5-5", {"type": "disabled"}, False),

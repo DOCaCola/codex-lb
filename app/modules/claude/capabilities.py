@@ -65,14 +65,24 @@ _LEGACY_SYSTEM_REMINDER_MODELS = frozenset(
 )
 
 # Models whose signed thinking Anthropic binds to the conversation prefix and
-# tool list it was created under (CLIProxyAPI isClaudePreservedThinkingModel).
-_PRESERVED_THINKING_MODELS = frozenset({"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"})
+# tool list it was created under (CLIProxyAPI isClaudePreservedThinkingModel, 6db7d4b).
+_PRESERVED_THINKING_MODELS = frozenset(
+    {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-fable-5-2"}
+)
 # These accept a block binding only with adaptive thinking; the others also with manual budgets.
 _ADAPTIVE_ONLY_BINDING_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-5"})
 # Models Claude Code asks for progress updates with ``thinking.display: "updates"`` when no display
-# was chosen (CLIProxyAPI claudeModelUsesProgressDisplay, measured on Claude Code 2.1.280).
+# was chosen (CLIProxyAPI claudeModelUsesProgressDisplay, measured on Claude Code 2.1.321 in b4e7dbd).
 _PROGRESS_DISPLAY_MODELS = frozenset(
-    {"claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-sonnet-5", "claude-sonnet-5-5"}
+    {
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-fable-5-2",
+        "claude-mythos-5-1",
+        "claude-sonnet-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+    }
 )
 # Models that reject forced tool use (``tool_choice`` ``any`` or ``tool``) with HTTP 400; ``auto`` and ``none``
 # remain valid (Anthropic's Claude 5.5 migration notes; CLIProxyAPI NormalizeClaudeToolChoice, issue #7000).

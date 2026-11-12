@@ -1575,9 +1575,11 @@ def _thinking(model, reasoning):
         "anthropic/claude-opus-5-5",
         "anthropic/claude-opus-5-5-20260901",
         "anthropic/claude-fable-5-1",
+        "anthropic/claude-fable-5-2",
         "anthropic/claude-mythos-5-1",
         "anthropic/claude-sonnet-5",
         "anthropic/claude-sonnet-5-5",
+        "anthropic/claude-haiku-5-5",
     ],
 )
 def test_progress_display_models_ask_for_updates_without_a_caller_display(model):
@@ -1587,7 +1589,6 @@ def test_progress_display_models_ask_for_updates_without_a_caller_display(model)
 @pytest.mark.parametrize(
     "model,reasoning,thinking",
     [
-        ("anthropic/claude-haiku-5-5", {"effort": "high"}, {"type": "adaptive"}),
         ("anthropic/claude-opus-5", {"effort": "high"}, {"type": "adaptive"}),
         (
             "anthropic/claude-opus-5-5",
@@ -1597,7 +1598,7 @@ def test_progress_display_models_ask_for_updates_without_a_caller_display(model)
         ("anthropic/claude-opus-5-5", {"effort": "high", "display": "omitted"}, {"type": "adaptive"}),
         ("anthropic/claude-opus-5-5", {"effort": "none"}, None),
     ],
-    ids=["haiku-5-5", "opus-5", "summarized", "omitted", "no-reasoning"],
+    ids=["opus-5", "summarized", "omitted", "no-reasoning"],
 )
 def test_progress_display_is_not_added_otherwise(model, reasoning, thinking):
     assert _thinking(model, reasoning) == thinking
@@ -1610,9 +1611,9 @@ def test_progress_display_is_not_added_otherwise(model, reasoning, thinking):
         ("anthropic/claude-opus-5-5", "none", {"type": "adaptive", "display": "updates"}),
         ("anthropic/claude-opus-5-5", "concise", {"type": "adaptive", "display": "summarized"}),
         ("anthropic/claude-opus-5-5", "detailed", {"type": "adaptive", "display": "summarized"}),
-        ("anthropic/claude-haiku-5-5", "auto", {"type": "adaptive", "display": "summarized"}),
-        ("anthropic/claude-haiku-5-5", "detailed", {"type": "adaptive", "display": "summarized"}),
-        ("anthropic/claude-haiku-5-5", "none", {"type": "adaptive"}),
+        ("anthropic/claude-opus-5", "auto", {"type": "adaptive", "display": "summarized"}),
+        ("anthropic/claude-opus-5", "detailed", {"type": "adaptive", "display": "summarized"}),
+        ("anthropic/claude-opus-5", "none", {"type": "adaptive"}),
     ],
 )
 def test_requested_summary_selects_the_thinking_display(model, summary, thinking):
