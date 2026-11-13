@@ -167,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         ssl_certfile=args.ssl_certfile,
         ssl_keyfile=args.ssl_keyfile,
         timeout_keep_alive=timeout_keep_alive,
+        ws=_load_websocket_protocol_class(),
         ws_max_size=ws_max_size,
         proxy_headers=False,
         log_config=_build_log_config(),
@@ -197,6 +198,12 @@ def _load_http_protocol_class() -> Any:
     from app.core.http_protocol import load_http_protocol_class
 
     return load_http_protocol_class()
+
+
+def _load_websocket_protocol_class() -> Any:
+    from app.core.websocket_protocol import InboundLivenessWebSocketProtocol
+
+    return InboundLivenessWebSocketProtocol
 
 
 def _load_shutdown_drain_timeout_seconds() -> int:

@@ -12,6 +12,7 @@ import pytest
 
 from app import cli
 from app.core.runtime_logging import UtcDefaultFormatter
+from app.core.websocket_protocol import InboundLivenessWebSocketProtocol
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +37,7 @@ def test_main_passes_timestamped_log_config(monkeypatch):
     assert formatters["default"]["fmt"].startswith("%(asctime)s ")
     assert formatters["access"]["fmt"].startswith("%(asctime)s ")
     assert kwargs["timeout_keep_alive"] == 300
+    assert kwargs["ws"] is InboundLivenessWebSocketProtocol
     assert kwargs["ws_max_size"] == 128 * 1024 * 1024
     assert "workers" not in kwargs
     assert kwargs["proxy_headers"] is False
