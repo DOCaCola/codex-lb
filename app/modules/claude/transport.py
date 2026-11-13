@@ -42,6 +42,7 @@ from app.modules.model_sources.forwarding import (
     SourceUsage,
     SourceUsageHolder,
     _open_source_stream,
+    _read_error_body,
     _redact_json_value,
     _response_json,
     _source_client_timeout,
@@ -349,7 +350,8 @@ def public_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {
         key: value
         for key, value in headers.items()
-        if key.lower().startswith("anthropic-ratelimit-") or key.lower() in {"retry-after", "request-id"}
+        if key.lower().startswith("anthropic-ratelimit-")
+        or key.lower() in {"retry-after", "request-id", "x-should-retry"}
     }
 
 
@@ -422,18 +424,19 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                 await record_headers(
                     prepared.source.id, prepared.credential_generation, response.headers, requested_at=requested_at
                 )
-                data = await _response_json(response)
-                if data is None:
-                    raise _failure("invalid_upstream_response", "Claude returned invalid JSON")
                 if response.status >= 400:
+                    data = await _read_error_body(response, source=prepared.source, scheduler=REAL_SCHEDULER)
                     error = ModelSourceForwardingError(
                         status_code=response.status,
-                        payload=cast(dict[str, JsonValue], _redact_json_value(data, secret)),
+                        payload=cast(dict[str, JsonValue], _redact_json_value({**data, "type": "error"}, secret)),
                         upstream_status_code=response.status,
                         retry_after=response.headers.get("Retry-After"),
                         upstream_headers=public_headers(response.headers),
                     )
                     raise normalize_thread_error(prepared.body, error)
+                data = await _response_json(response)
+                if data is None:
+                    raise _failure("invalid_upstream_response", "Claude returned invalid JSON")
                 if count_tokens:
                     count = data.get("input_tokens")
                     if not isinstance(count, int) or isinstance(count, bool) or count < 0:

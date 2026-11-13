@@ -1,7 +1,7 @@
-"""Same-account replay policy for refusals that prove no generation started.
+"""Same-account replay policy for failures that prove no generation started.
 
-Explicit overload refusals and pre-dispatch connection failures qualify; replay
-safety is never inferred from ambiguous network errors.
+Transient upstream refusals and pre-dispatch connection failures qualify; replay
+safety is never inferred from timeouts or connections that broke after dispatch.
 """
 
 import math
@@ -14,16 +14,26 @@ from starlette.requests import Request
 from app.core.clock import Clock, Scheduler
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
-
-def is_overload(error: ModelSourceForwardingError) -> bool:
-    detail = error.payload.get("error")
-    return error.upstream_status_code == 529 or (
-        error.upstream_status_code == 503 and isinstance(detail, dict) and detail.get("type") == "overloaded_error"
-    )
+# Claude Code's own retryable statuses besides 5xx; 429 and 401 have their own recovery.
+_TRANSIENT_STATUSES = frozenset({408, 409})
 
 
-def retry_delay(error: ModelSourceForwardingError, *, now: datetime, available: float) -> float | None:
-    delay = random.uniform(0.25, 0.5)
+def upstream_header(error: ModelSourceForwardingError, name: str) -> str | None:
+    return next((value for key, value in error.upstream_headers.items() if key.lower() == name), None)
+
+
+def is_transient_refusal(error: ModelSourceForwardingError) -> bool:
+    """A refusal Claude Code retries: 408, 409 or any 5xx status, unless Anthropic sends ``x-should-retry: false``."""
+    status = error.upstream_status_code
+    if status is None or not (status in _TRANSIENT_STATUSES or status >= 500):
+        return False
+    return (upstream_header(error, "x-should-retry") or "").strip().lower() != "false"
+
+
+def retry_delay(error: ModelSourceForwardingError, attempt: int, *, now: datetime, available: float) -> float | None:
+    """Jittered wait before the ``attempt``-th (zero-based) retry, doubling per retry; Retry-After is a minimum."""
+
+    delay = random.uniform(0.25, 0.5) * 2**attempt
     hint = error.retry_after
     if hint:
         try:
@@ -36,13 +46,6 @@ def retry_delay(error: ModelSourceForwardingError, *, now: datetime, available: 
         if not math.isfinite(seconds):
             return None
         delay = max(delay, seconds)
-    return delay if delay < available else None
-
-
-def connect_retry_delay(attempt: int, *, available: float) -> float | None:
-    """Jittered backoff for the ``attempt``-th (zero-based) pre-dispatch retry, doubling per retry."""
-
-    delay = random.uniform(0.25, 0.5) * 2**attempt
     return delay if delay < available else None
 
 

@@ -3,27 +3,12 @@
 import json
 import re
 
-import aiohttp
-
 from app.core.runtime_logging import redact_rendered_log_text
 from app.core.types import JsonValue
 
 MAX_ERROR_BYTES = 64 * 1024
 MAX_ERROR_MESSAGE = 2048
 _KEY_TOKEN = re.compile(r"(?i)\bsk[-_][a-z0-9_.*…+/=~-]+")
-
-
-async def read_error(response: aiohttp.ClientResponse) -> dict[str, JsonValue] | None:
-    body = bytearray()
-    try:
-        async for chunk in response.content.iter_chunked(8192):
-            if len(body) + len(chunk) > MAX_ERROR_BYTES:
-                return None
-            body.extend(chunk)
-        data = json.loads(body)
-    except (ValueError, RecursionError, aiohttp.ClientError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _safe_text(value: JsonValue, secret: str, limit: int) -> str:

@@ -5278,7 +5278,7 @@ async def _dispatch_source_responses_response(
         record_refusals,
         recover_authentication,
     )
-    from app.modules.claude.overload import connect_retry_delay, is_overload, retry_delay, wait_for_retry
+    from app.modules.claude.overload import is_transient_refusal, retry_delay, upstream_header, wait_for_retry
 
     if source.kind == "antigravity":
         return await _dispatch_antigravity_responses_response(
@@ -5333,40 +5333,28 @@ async def _dispatch_source_responses_response(
         except ModelSourceForwardingError as exc:
             if recovery is None or recovery.stream_opened or recovery.budget.remaining == remaining:
                 raise
-            if exc.pre_dispatch:
+            if exc.pre_dispatch or is_transient_refusal(exc):
                 if recovery.budget.remaining == 0:
                     raise
-                delay = connect_retry_delay(
-                    recovery.connect_retries, available=recovery_deadline - recovery_clock.monotonic()
+                delay = retry_delay(
+                    exc,
+                    recovery.transient_retries,
+                    now=recovery_clock.now(),
+                    available=recovery_deadline - recovery_clock.monotonic(),
                 )
                 if delay is None:
                     raise
-                recovery.connect_retries += 1
+                recovery.transient_retries += 1
                 recovery.last_error = exc
                 recovery.retry_source_id = recovery.source_id
                 logger.info(
-                    "claude_connect_retry source_id=%s attempt=%d delay_ms=%d",
+                    "claude_transient_retry source_id=%s status=%s attempt=%d delay_ms=%d request_id=%s",
                     recovery.source_id,
-                    recovery.connect_retries,
+                    exc.upstream_status_code or "connect",
+                    recovery.transient_retries,
                     int(delay * 1000),
+                    upstream_header(exc, "request-id"),
                 )
-                if not await wait_for_retry(request, delay, clock=recovery_clock, scheduler=recovery_scheduler):
-                    return Response()
-                if recovery_clock.monotonic() >= recovery_deadline:
-                    raise
-                continue
-            if is_overload(exc):
-                if recovery.overload_retried or recovery.budget.remaining == 0:
-                    raise
-                delay = retry_delay(
-                    exc, now=recovery_clock.now(), available=recovery_deadline - recovery_clock.monotonic()
-                )
-                if delay is None:
-                    raise
-                recovery.overload_retried = True
-                recovery.last_error = exc
-                recovery.retry_source_id = recovery.source_id
-                logger.info("claude_overload_retry source_id=%s delay_ms=%d", recovery.source_id, int(delay * 1000))
                 if not await wait_for_retry(request, delay, clock=recovery_clock, scheduler=recovery_scheduler):
                     return Response()
                 if recovery_clock.monotonic() >= recovery_deadline:

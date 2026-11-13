@@ -14,6 +14,23 @@ pool = routing_fixtures.pool
 pytestmark = pytest.mark.integration
 
 
+class _JsonContent:
+    def __init__(self, data: JsonValue) -> None:
+        self._body = json.dumps(data).encode()
+
+    async def iter_chunked(self, size: int):
+        yield self._body
+
+
+def native_json_response(status: int, headers: dict[str, str], data: JsonValue) -> SimpleNamespace:
+    """A fake native Claude JSON reply: success bodies are read with ``json()``, error bodies streamed."""
+
+    async def read_json(*, content_type: str | None = "application/json"):
+        return data
+
+    return SimpleNamespace(status=status, headers=headers, json=read_json, content=_JsonContent(data))
+
+
 @pytest.mark.parametrize(
     "path", ["/v1/messages", "/v1/chat/completions", "/v1/responses", "/backend-api/codex/responses"]
 )
@@ -1168,7 +1185,6 @@ async def test_native_thinking_after_idle_expiry(async_client, pool, monkeypatch
 async def test_native_json_signature_recovery(async_client, pool, monkeypatch, caplog, rejections):
     import logging
     from contextlib import asynccontextmanager
-    from unittest.mock import AsyncMock
 
     from app.modules.claude import transport
 
@@ -1196,7 +1212,7 @@ async def test_native_json_signature_recovery(async_client, pool, monkeypatch, c
             }
         )
         try:
-            yield SimpleNamespace(status=400 if rejected else 200, headers={}, json=AsyncMock(return_value=data))
+            yield native_json_response(400 if rejected else 200, {}, data)
         finally:
             closed.append(True)
 

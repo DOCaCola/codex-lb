@@ -23,11 +23,11 @@ from app.core.utils.shared_future import _await_cleanup_deferring_cancellation
 from app.db.models import ModelSource
 from app.db.session import detach_session_objects, get_background_session
 from app.modules.api_keys.service import ApiKeyData
-from app.modules.model_sources.forwarding import SourceStreamTransport, SourceUsage
+from app.modules.model_sources.forwarding import SourceStreamTransport, SourceUsage, _read_error_body
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 from app.modules.openrouter import routing
-from app.modules.openrouter.errors import normalize_error, read_error
+from app.modules.openrouter.errors import normalize_error
 from app.modules.openrouter.schemas import ImageEndpoint, ImageModel
 
 MAX_IMAGE_RESPONSE_BYTES = 100 * 1024 * 1024
@@ -316,8 +316,8 @@ async def image_response(
         )
         upstream_status = response.status
         if not 200 <= response.status < 300:
-            data = await read_error(response)
-            normalized = normalize_error(data or {}, response.status, secret=token)
+            data = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
+            normalized = normalize_error(data, response.status, secret=token)
             error = normalized.get("error")
             if not is_json_mapping(error):
                 error = {"code": str(response.status), "message": "OpenRouter image request failed"}

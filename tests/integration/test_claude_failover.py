@@ -8,7 +8,7 @@ from app.db.session import SessionLocal
 from app.modules.claude.failover import Refusal, record_refusals
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 from tests.claude_quota_helpers import overage_headers
-from tests.integration.test_claude_inference import MODEL, install_upstream
+from tests.integration.test_claude_inference import MODEL, install_upstream, native_json_response
 from tests.integration.test_claude_routing import choose
 from tests.integration.test_claude_routing import pool as pool
 
@@ -179,10 +179,10 @@ async def test_native_json_reprepares_and_closes(async_client, pool, monkeypatch
             }
         )
         try:
-            yield SimpleNamespace(
-                status=status if failed else 200,
-                headers=overage_headers() if status == 429 else {"Retry-After": "0" if status == 529 else "120"},
-                json=AsyncMock(return_value=data),
+            yield native_json_response(
+                status if failed else 200,
+                overage_headers() if status == 429 else {"Retry-After": "0" if status == 529 else "120"},
+                data,
             )
         finally:
             closed.append(True)

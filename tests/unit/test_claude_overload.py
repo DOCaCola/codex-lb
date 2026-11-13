@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.modules.claude.overload import connect_retry_delay, retry_delay, wait_for_retry
+from app.modules.claude.overload import is_transient_refusal, retry_delay, wait_for_retry
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 
@@ -15,17 +15,40 @@ from app.modules.model_sources.forwarding import ModelSourceForwardingError
 def test_delay(monkeypatch, hint, expected):
     monkeypatch.setattr("app.modules.claude.overload.random.uniform", lambda a, b: 0.3)
     error = ModelSourceForwardingError(status_code=529, payload={}, retry_after=hint)
-    assert retry_delay(error, now=datetime(2026, 9, 28, 12, tzinfo=UTC), available=10) == expected
+    assert retry_delay(error, 0, now=datetime(2026, 9, 28, 12, tzinfo=UTC), available=10) == expected
 
 
 @pytest.mark.parametrize("attempt,available,expected", [(0, 10, 0.3), (1, 10, 0.6), (2, 10, 1.2), (2, 1.2, None)])
-def test_connect_retry_delay_doubles_within_window(monkeypatch, attempt, available, expected):
+def test_retry_delay_doubles_within_window(monkeypatch, attempt, available, expected):
     monkeypatch.setattr("app.modules.claude.overload.random.uniform", lambda a, b: 0.3)
-    delay = connect_retry_delay(attempt, available=available)
+    error = ModelSourceForwardingError(status_code=503, payload={})
+    delay = retry_delay(error, attempt, now=datetime(2026, 9, 28, 12, tzinfo=UTC), available=available)
     if expected is None:
         assert delay is None
     else:
         assert delay == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "status,headers,expected",
+    [
+        (503, {}, True),
+        (500, {}, True),
+        (529, {}, True),
+        (408, {}, True),
+        (409, {}, True),
+        (503, {"X-Should-Retry": "false"}, False),
+        (503, {"x-should-retry": "true"}, True),
+        (429, {}, False),
+        (400, {}, False),
+        (None, {}, False),
+    ],
+)
+def test_transient_refusal(status, headers, expected):
+    error = ModelSourceForwardingError(
+        status_code=status or 504, payload={}, upstream_status_code=status, upstream_headers=headers
+    )
+    assert is_transient_refusal(error) is expected
 
 
 async def test_disconnected_wait():

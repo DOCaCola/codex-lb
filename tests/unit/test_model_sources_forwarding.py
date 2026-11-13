@@ -234,6 +234,43 @@ def test_audio_error_payload_preserves_text_body() -> None:
     assert error["message"] == "missing required field: file"
 
 
+@pytest.mark.parametrize(
+    "body,content_type,message",
+    [
+        (
+            b"<!DOCTYPE html><html><head><title>503 Service\n Unavailable &amp; more</title></head></html>",
+            None,
+            "503 Service Unavailable & more",
+        ),
+        (
+            b"<p>upstream connect error</p>",
+            "text/html; charset=utf-8",
+            "OpenAI-compatible model source returned an error",
+        ),
+        (
+            b"  upstream connect error or\n disconnect/reset  ",
+            "text/plain",
+            "upstream connect error or disconnect/reset",
+        ),
+        (b"x" * 2000, None, "x" * 1000),
+        (b"y" * (64 * 1024 + 1), None, "OpenAI-compatible model source returned an error"),
+        (b'{"detail": "busy"}', "application/json", "OpenAI-compatible model source returned an error"),
+        (b"", None, "OpenAI-compatible model source returned an error"),
+        (b"\xff\xfe", None, "OpenAI-compatible model source returned an error"),
+    ],
+    ids=["html_title", "html_without_title", "text", "long_text", "oversized", "json_without_error", "empty", "binary"],
+)
+def test_error_payload_excerpt(body: bytes, content_type: str | None, message: str) -> None:
+    error = cast(dict[str, object], _error_payload_from_body(_responses_source(), body, content_type)["error"])
+    assert error == {"message": message, "type": "upstream_error", "code": "model_source_error"}
+
+
+def test_error_payload_excerpt_redacts_credentials() -> None:
+    body = b"proxy said: Authorization: Basic dXNlcjpwYXNzd29yZA== rejected"
+    error = cast(dict[str, object], _error_payload_from_body(_responses_source(), body, "text/plain")["error"])
+    assert "dXNlcjpwYXNzd29yZA==" not in cast(str, error["message"])
+
+
 def test_source_error_payload_redacts_configured_api_key() -> None:
     source = ModelSource(
         id="src_redact",
@@ -417,6 +454,7 @@ class _FakeContent:
         self._first_gate = first_gate
         self._stall_after_rest = stall_after_rest
         self.readany_calls = 0
+        self.body_reads = 0
 
     async def readany(self) -> bytes:
         self.readany_calls += 1
@@ -425,6 +463,8 @@ class _FakeContent:
         return self._first
 
     def iter_chunked(self, _size: int) -> AsyncIterator[bytes]:
+        self.body_reads += 1
+
         async def gen() -> AsyncIterator[bytes]:
             if self.readany_calls == 0:
                 if self._first_gate is not None:
@@ -453,15 +493,17 @@ class _FakeResponse:
         json_gate: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
         self.status = status
-        self.content = content if content is not None else _FakeContent(b"")
+        if content is None:
+            # An error body is read as bytes; its JSON form serves the same document.
+            body = b"" if json_body is None else json.dumps(json_body).encode()
+            content = _FakeContent(body, first_gate=json_gate)
+        self.content = content
         self.headers = headers or {}
         self._json_body = json_body
         self._json_gate = json_gate
-        self.json_calls = 0
 
     async def json(self, content_type: str | None = None) -> object:
         del content_type
-        self.json_calls += 1
         if self._json_gate is not None:
             await self._json_gate()
         return self._json_body
@@ -1592,7 +1634,7 @@ async def test_stream_responses_passes_429_through_with_retry_after(monkeypatch:
     assert error.retry_after == "7"
     assert error.timeout_phase is None
     assert error.payload == payload
-    assert response.json_calls == 1
+    assert response.content.body_reads == 1
     assert context.exited == 1
     assert lease.released == 1
 
@@ -1680,7 +1722,7 @@ async def test_stream_responses_recodes_credential_rejection_without_reading_or_
     for fragment in (masked_key, "source-secret-token", "Incorrect API key", "invalid_api_key"):
         assert fragment not in serialized
         assert all(fragment not in record.getMessage() for record in caplog.records)
-    assert response.json_calls == 0
+    assert response.content.body_reads == 0
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "src_reject" in warnings[0].getMessage()
@@ -1719,7 +1761,7 @@ async def test_stream_chat_completion_keeps_the_source_401_envelope(monkeypatch:
 
     assert excinfo.value.status_code == 401
     assert excinfo.value.payload == payload
-    assert response.json_calls == 1
+    assert response.content.body_reads == 1
     # Chat streams share the hardened open: same connect bounds, no socket read timer.
     timeout = cast(aiohttp.ClientTimeout, session.calls[0]["timeout"])
     assert timeout.connect is None
@@ -1885,7 +1927,7 @@ async def test_forward_responses_recodes_401_and_never_reads_the_body(
     assert excinfo.value.status_code == 502
     assert excinfo.value.upstream_status_code == 401
     assert cast(dict[str, object], excinfo.value.payload["error"])["code"] == "model_source_credentials_error"
-    assert response.json_calls == 0
+    assert response.content.body_reads == 0
     assert all("sk-****abcd" not in record.getMessage() for record in caplog.records)
 
 

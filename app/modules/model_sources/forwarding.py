@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import html
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -21,6 +23,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.openai.additional_tools import merge_additional_tools
 from app.core.openai.parsing import classify_event_type
 from app.core.resilience.network_recovery import is_pre_dispatch_connection_failure
+from app.core.runtime_logging import redact_rendered_log_text
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.shared_future import (
@@ -61,6 +64,9 @@ SOURCE_STREAM_IDLE_CAP_SECONDS = 300.0
 # this bound trips, while a source that only ever produces bookkeeping frames
 # cannot grow the withheld buffer for its whole total budget.
 SOURCE_STREAM_WITHHELD_CAP_BYTES = 2 * 1_048_576
+# Source error bodies: larger ones keep the generic message; excerpts are cut to the message cap.
+SOURCE_ERROR_BODY_LIMIT_BYTES = 64 * 1024
+SOURCE_ERROR_MESSAGE_LIMIT = 1000
 
 TimeoutPhase = Literal["connect", "header", "first_frame", "idle"]
 FrameKind = Literal["non_content", "content", "success_terminal", "failure_terminal"]
@@ -345,15 +351,10 @@ async def forward_chat_completion(
                 timeout=_source_client_timeout(source),
             )
         )
-        data = (
-            await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
-            if response.status >= 400
-            else await _response_json(response)
-        )
         if response.status >= 400:
-            raise _upstream_status_error(
-                response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
-            )
+            error_payload = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
+            raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=error_payload)
+        data = await _response_json(response)
         if data is None:
             raise _invalid_upstream_response_error(source, response.status)
         result = SourceChatCompletion(
@@ -467,10 +468,8 @@ async def forward_responses(
                 if response.status >= 400:
                     if recode_credential_failures and _recode_credentials(source, response.status):
                         raise _credentials_rejected_error(response, source)
-                    data = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
-                    raise _upstream_status_error(
-                        response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
-                    )
+                    error_payload = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
+                    raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=error_payload)
                 data = await _response_json(response)
                 if data is None:
                     raise _invalid_upstream_response_error(source, response.status)
@@ -554,11 +553,10 @@ async def forward_embeddings(
                 json=payload,
                 timeout=_source_client_timeout(source),
             ) as response:
-                data = await _response_json(response)
                 if response.status >= 400:
-                    raise _upstream_status_error(
-                        response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
-                    )
+                    error_payload = await _read_error_body(response, source=source, scheduler=REAL_SCHEDULER)
+                    raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=error_payload)
+                data = await _response_json(response)
                 if data is None:
                     raise _invalid_upstream_response_error(source, response.status)
                 return SourceEmbeddings(
@@ -866,10 +864,8 @@ async def _open_source_stream(
         if response.status >= 400:
             if recode_credential_failures and _recode_credentials(source, response.status):
                 raise _credentials_rejected_error(response, source)
-            data = await _read_error_body(response, source=source, scheduler=scheduler)
-            raise _upstream_status_error(
-                response, source, encryptor=encryptor, error_payload=_error_payload(source, data)
-            )
+            error_payload = await _read_error_body(response, source=source, scheduler=scheduler)
+            raise _upstream_status_error(response, source, encryptor=encryptor, error_payload=error_payload)
         if first_frame_deadline_seconds is None:
             return stack, response, None
         try:
@@ -936,18 +932,22 @@ def _source_client_timeout(source: ModelSource) -> aiohttp.ClientTimeout:
 
 async def _read_error_body(
     response: aiohttp.ClientResponse, *, source: ModelSource, scheduler: Scheduler
-) -> dict[str, JsonValue] | None:
-    """Read an error body under the first-frame deadline; ``None`` keeps the honest status with a generic envelope."""
+) -> dict[str, JsonValue]:
+    """The error envelope of a source 4xx/5xx, read under the first-frame deadline and the body limit.
 
+    A body that stalls, breaks or exceeds the limit keeps the honest status with the generic envelope.
+    """
+
+    body = bytearray()
     try:
         with scheduler.fail_after(SOURCE_FIRST_FRAME_DEADLINE_SECONDS):
-            if source.kind == "openrouter":
-                from app.modules.openrouter.errors import read_error
-
-                return await read_error(response)
-            return await _response_json(response)
-    except TimeoutError:
-        return None
+            async for chunk in response.content.iter_chunked(8192):
+                body.extend(chunk)
+                if len(body) > SOURCE_ERROR_BODY_LIMIT_BYTES:
+                    break
+    except (TimeoutError, aiohttp.ClientError):
+        return _generic_error_payload(source)
+    return _error_payload_from_body(source, bytes(body), response.headers.get("Content-Type"))
 
 
 def _retry_after_header(response: aiohttp.ClientResponse) -> str | None:
@@ -981,7 +981,7 @@ def _upstream_status_error(
             key: value
             for key, value in response.headers.items()
             if source.kind == "claude"
-            and (key.lower().startswith("anthropic-ratelimit-") or key.lower() == "request-id")
+            and (key.lower().startswith("anthropic-ratelimit-") or key.lower() in {"request-id", "x-should-retry"})
         },
     )
 
@@ -1212,13 +1212,10 @@ def _invalid_upstream_response_error(source: ModelSource, response_status: int) 
     )
 
 
-def _error_payload(source: ModelSource, data: Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
-    error = data.get("error") if data is not None else None
-    if is_json_mapping(error):
-        return {"error": dict(error)}
+def _generic_error_payload(source: ModelSource, message: str | None = None) -> dict[str, JsonValue]:
     return {
         "error": {
-            "message": f"{source_label(source)} returned an error",
+            "message": message or f"{source_label(source)} returned an error",
             "type": "upstream_error",
             "code": "model_source_error",
         }
@@ -1226,31 +1223,47 @@ def _error_payload(source: ModelSource, data: Mapping[str, JsonValue] | None) ->
 
 
 def _error_payload_from_body(source: ModelSource, body: bytes, content_type: str | None) -> dict[str, JsonValue]:
-    if _is_json_content_type(content_type):
-        try:
-            parsed = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, JSONDecodeError):
-            parsed = None
-        if isinstance(parsed, Mapping):
-            return _error_payload(source, parsed)
-    upstream_message = _text_error_message(body)
-    return {
-        "error": {
-            "message": upstream_message or f"{source_label(source)} returned an error",
-            "type": "upstream_error",
-            "code": "model_source_error",
-        }
-    }
+    """A source error body's own ``error`` object, or the generic envelope carrying a non-JSON body's excerpt.
 
+    JSON without an ``error`` object, JSON nested too deeply to parse and oversized bodies keep the generic
+    message: their content is unstructured provider data, not an error description.
+    """
 
-def _text_error_message(body: bytes) -> str | None:
+    if len(body) > SOURCE_ERROR_BODY_LIMIT_BYTES:
+        return _generic_error_payload(source)
     try:
-        text = body.decode("utf-8").strip()
+        parsed = json.loads(body)
+    except RecursionError:
+        return _generic_error_payload(source)
+    except ValueError:
+        return _generic_error_payload(source, _text_error_message(body, content_type))
+    error = parsed.get("error") if isinstance(parsed, Mapping) else None
+    if is_json_mapping(error):
+        return {"error": dict(error)}
+    return _generic_error_payload(source)
+
+
+_HTML_TITLE = re.compile(rb"<title[^>]*>(.*?)</title\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def _text_error_message(body: bytes, content_type: str | None) -> str | None:
+    """A non-JSON error body as a message: an HTML page's title, otherwise its text, redacted and bounded."""
+
+    head = body.lstrip()[:16].lower()
+    is_html = "text/html" in (content_type or "").lower() or head.startswith((b"<!doctype html", b"<html"))
+    if is_html:
+        title = _HTML_TITLE.search(body)
+        if title is None:
+            return None
+        body = title.group(1)
+    try:
+        text = body.decode("utf-8")
     except UnicodeDecodeError:
         return None
-    if not text:
-        return None
-    return text[:1000]
+    if is_html:
+        text = html.unescape(text)
+    message = redact_rendered_log_text(" ".join(text.split()))
+    return message[:SOURCE_ERROR_MESSAGE_LIMIT] or None
 
 
 def _usage_from_chat_payload(payload: Mapping[str, JsonValue]) -> SourceUsage | None:

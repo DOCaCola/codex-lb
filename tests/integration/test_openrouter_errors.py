@@ -76,7 +76,7 @@ async def test_provider_reason_reaches_client_and_log(async_client, provider, st
             assert secret not in log.error_message
 
 
-@pytest.mark.parametrize("body", [b"not JSON private data", b"x" * 70000, b"[" * 10000 + b"]" * 10000])
+@pytest.mark.parametrize("body", [b"x" * 70000, b"[" * 10000 + b"]" * 10000, b'{"detail": "private data"}'])
 async def test_unusable_body_preserves_status_without_raw_data(async_client, provider, body):
     async def upstream(request):
         return web.Response(status=403, body=body)
@@ -99,3 +99,28 @@ async def test_unusable_body_preserves_status_without_raw_data(async_client, pro
         assert len(response.content) < 1024
         assert "private data" not in response.text
         assert "credentials" not in response.text
+
+
+async def test_error_page_keeps_its_title(async_client, provider):
+    page = b"<!DOCTYPE html><html><head><title>Edge &amp; Gateway Error</title></head><body>private data</body></html>"
+
+    async def upstream(request):
+        return web.Response(status=503, body=page, content_type="text/html")
+
+    async with stub_source_upstreams() as start:
+        url = await start(upstream)
+        created = await async_client.post("/api/openrouter-accounts", json={"name": "Page", "apiKey": "synthetic"})
+        account_id = created.json()["id"]
+        await async_client.patch(
+            f"/api/openrouter-accounts/{account_id}", json={"selections": [{"model": "vendor/test"}]}
+        )
+        async with SessionLocal() as session:
+            source = await session.get(ModelSource, account_id)
+            source.base_url = url
+            await session.commit()
+        response = await async_client.post(
+            "/v1/responses", json={"model": "openrouter/vendor/test", "input": "Hi", "stream": True}
+        )
+        assert response.status_code == 503, response.text
+        assert response.json()["error"]["message"] == "Edge & Gateway Error"
+        assert "private data" not in response.text

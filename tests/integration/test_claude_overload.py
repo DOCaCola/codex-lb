@@ -19,18 +19,25 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.parametrize(
-    "status,kind,hint,repeat,sends",
+    "status,kind,hint,headers,failures,sends",
     [
-        (529, "overloaded_error", "0", False, 2),
-        (503, "overloaded_error", "0", False, 2),
-        (503, "api_error", "0", False, 1),
-        (529, "overloaded_error", "120", False, 1),
-        (529, "overloaded_error", "0", True, 2),
+        (529, "overloaded_error", "0", {}, 1, 2),
+        (503, "overloaded_error", "0", {}, 1, 2),
+        (503, "api_error", "0", {}, 1, 2),
+        (500, "api_error", None, {}, 2, 3),
+        (503, "api_error", "0", {"x-should-retry": "false"}, 1, 1),
+        (400, "invalid_request_error", None, {}, 1, 1),
+        (529, "overloaded_error", "120", {}, 1, 1),
+        (529, "overloaded_error", "0", {}, 9, 4),
     ],
+    ids=["529", "503_overloaded", "503_generic", "500_twice", "declined", "400", "hint_exceeds_window", "exhausted"],
 )
 @pytest.mark.parametrize("path", ["/v1/messages", "/v1/responses", "/backend-api/codex/responses"])
-async def test_http_overload_policy(async_client, pool, monkeypatch, status, kind, hint, repeat, sends, path):
+async def test_http_transient_refusal_policy(
+    async_client, pool, monkeypatch, status, kind, hint, headers, failures, sends, path
+):
     captured, closed = install_upstream(monkeypatch)
+    monkeypatch.setattr("app.modules.claude.overload.random.uniform", lambda a, b: 0.001)
     original = transport._open_source_stream
     finish = SourceDispatch.finish_with_forwarding_error
     attempts, settled = [], []
@@ -42,14 +49,15 @@ async def test_http_overload_policy(async_client, pool, monkeypatch, status, kin
 
     async def send(source, *args, **kwargs):
         if attempts:
-            assert settled == [attempts[0]]
+            assert settled == attempts
         attempts.append(source.id)
-        if len(attempts) == 1 or repeat:
+        if len(attempts) <= failures:
             raise ModelSourceForwardingError(
                 status_code=status,
                 upstream_status_code=status,
                 payload={"error": {"type": kind, "message": "busy"}},
                 retry_after=hint,
+                upstream_headers=headers,
             )
         return await original(source, *args, **kwargs)
 
@@ -65,13 +73,13 @@ async def test_http_overload_policy(async_client, pool, monkeypatch, status, kin
     assert len(attempts) == sends
     assert len(set(attempts)) == 1
     assert len(captured) == len(closed)
-    assert response.status_code == (200 if sends == 2 and not repeat else status)
-    if response.status_code != 200:
+    assert response.status_code == (200 if sends > failures else status)
+    if response.status_code != 200 and hint is not None:
         assert response.headers["retry-after"] == hint
     async with SessionLocal() as session:
         assert list(await session.scalars(select(ClaudeCooldown))) == []
         refused = list(await session.scalars(select(RequestLog).where(RequestLog.status == "error")))
-    assert [log.error_code for log in refused] == [kind] * (sends if repeat or sends == 1 else 1)
+    assert [log.error_code for log in refused] == [kind] * min(failures, sends)
 
 
 _KEY = ConnectionKey("api.anthropic.com", 443, True, True, None, None, None)
