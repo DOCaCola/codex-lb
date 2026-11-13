@@ -100,6 +100,93 @@ def test_newer_native_patch_preserved_not_learned():
     assert snapshot.version == "2.1.282"
 
 
+def native_headers(**overrides):
+    return {
+        "user-agent": "claude-cli/2.1.290 (external, cli)",
+        "x-app": "cli",
+        "x-stainless-lang": "js",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+    } | overrides
+
+
+@pytest.mark.parametrize(
+    "user_agent",
+    [
+        "claude-cli/2.1.290 (external, sdk-cli)",
+        "claude-cli/2.1.290 (external, sdk-ts)",
+        "claude-cli/2.1.290 (external, claude-vscode)",
+        "claude-cli/2.1.290 (external, cli, workload/cron)",
+        "claude-cli/2.1.290 (external, sdk-cli, agent-sdk/0.2.133)",
+        "claude-cli/2.1.290 (external, sdk-ts, agent-sdk/0.3.10, client-app/lab-app)",
+        "claude-cli/2.1.290 (external, cli, future-field/opaque-value)",
+    ],
+)
+def test_native_user_agent_fields_are_recognized(user_agent):
+    assert recognize_native(native_headers(**{"user-agent": user_agent}), version="2.1.282", has_identity=True)
+
+
+@pytest.mark.parametrize(
+    "user_agent",
+    [
+        "claude-cli/2.1.290 (external, cli, foo)",
+        "claude-cli/2.1.290 (external, cli, /cron)",
+        "claude-cli/2.1.290 (external, cli, workload/)",
+        "claude-cli/2.1.290 (external, cli, bad name/value)",
+        "claude-cli/2.1.290 (external, cli, workload/(cron))",
+        "claude-cli/2.1.290 (external, cli, workload/a, Workload/b)",
+        "claude-cli/2.1.290 (external, sdk-cli, agent-sdk/dev)",
+        "claude-cli/2.1.290 (external, cli) trailing",
+        "claude-cli/2.1.290(external, cli)",
+        "claude-cli/2.1.290 (external, desktop)",
+        "claude-cli/2.1.290 (internal, cli)",
+        "claude-cli/2.1 (external, cli)",
+        "claude-cli/2.1.290 (external, cli, workload/\tcron)",
+    ],
+)
+def test_malformed_native_user_agents_are_not_recognized(user_agent):
+    assert not recognize_native(native_headers(**{"user-agent": user_agent}), version="2.1.282", has_identity=True)
+
+
+@pytest.mark.parametrize("x_app,native", [("cli", True), ("cli-bg", True), ("desktop", False), ("", False)])
+def test_background_sessions_are_native(x_app, native):
+    assert recognize_native(native_headers(**{"x-app": x_app}), version="2.1.282", has_identity=True) is native
+
+
+@pytest.mark.parametrize(
+    "betas,native",
+    [
+        # Subscription mode, and its markerless helpers that send only the OAuth beta.
+        ("claude-code-20250219,oauth-2025-04-20", True),
+        ("oauth-2025-04-20", True),
+        # API-key mode (ANTHROPIC_AUTH_TOKEN) omits the OAuth beta.
+        ("claude-code-20250219,interleaved-thinking-2025-05-14", True),
+        ("interleaved-thinking-2025-05-14", False),
+        ("", False),
+    ],
+)
+def test_both_claude_code_token_modes_are_native(betas, native):
+    headers = native_headers(**{"anthropic-beta": betas})
+    assert recognize_native(headers, version="2.1.282", has_identity=True) is native
+
+
+def test_native_profile_keeps_client_signals_and_adds_oauth_beta():
+    incoming = native_headers(
+        **{
+            "user-agent": "claude-cli/2.1.290 (external, sdk-cli, agent-sdk/0.3.10, client-app/lab-app)",
+            "x-app": "cli-bg",
+            "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+        }
+    )
+    output = profile(native=True).headers("token", endpoint="messages", incoming=incoming)
+    assert output["user-agent"] == incoming["user-agent"]
+    assert output["x-app"] == "cli-bg"
+    assert output["anthropic-beta"].split(",") == [
+        "claude-code-20250219",
+        "interleaved-thinking-2025-05-14",
+        "oauth-2025-04-20",
+    ]
+
+
 def logical(model="claude-sonnet-5"):
     return {
         "model": model,

@@ -51,6 +51,49 @@ def test_unknown_reset_is_not_invented():
 def test_non_quota_pool_error_keeps_its_type_in_both_dialects():
     error = ClaudePoolUnavailable("claude_pool_unavailable", "unavailable")
     assert error.error_detail["type"] == error.responses_error_detail["type"] == "server_error"
+    assert error.messages_response_headers == error.response_headers == {}
+
+
+@pytest.mark.parametrize(
+    "claim,window",
+    [("five_hour", "5h"), ("seven_day", "7d"), ("seven_day_overage_included", "7d_oi"), ("seven_day_opus", None)],
+)
+def test_local_quota_refusal_carries_unified_headers(monkeypatch, claim, window):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    monkeypatch.setattr(routing, "datetime", FixedDateTime)
+    reset = NOW + timedelta(seconds=7200.5)
+    error = ClaudePoolUnavailable(
+        "claude_pool_rate_limited", "quota", status_code=429, retry_at=reset, resets_at=reset, quota_claim=claim
+    )
+    epoch = str(math.ceil(reset.timestamp()))
+    expected = {
+        "Retry-After": "7201",
+        "anthropic-ratelimit-unified-status": "rejected",
+        "anthropic-ratelimit-unified-representative-claim": claim,
+        "anthropic-ratelimit-unified-reset": epoch,
+    }
+    if window is not None:
+        expected |= {
+            f"anthropic-ratelimit-unified-{window}-status": "rejected",
+            f"anthropic-ratelimit-unified-{window}-reset": epoch,
+            f"anthropic-ratelimit-unified-{window}-utilization": "1",
+        }
+    assert error.messages_response_headers == expected
+    # The Responses dialect keeps its own contract.
+    assert error.response_headers == {"Retry-After": "7201"}
+
+
+def test_local_quota_refusal_without_known_reset_claims_nothing():
+    error = ClaudePoolUnavailable("claude_pool_rate_limited", "quota", status_code=429)
+    assert error.messages_response_headers == {"anthropic-ratelimit-unified-status": "rejected"}
+
+
+def test_ordinary_claude_error_has_no_quota_headers():
+    assert ClaudeError("invalid request").messages_response_headers == {}
 
 
 def test_ordinary_claude_error_retains_its_public_shape():

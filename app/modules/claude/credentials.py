@@ -32,6 +32,11 @@ class ClaudeError(ValueError):
         return {}
 
     @property
+    def messages_response_headers(self) -> dict[str, str]:
+        """Headers for the native Anthropic Messages dialect."""
+        return self.response_headers
+
+    @property
     def error_type(self) -> str:
         return "invalid_request_error" if self.status_code == 400 else "server_error"
 

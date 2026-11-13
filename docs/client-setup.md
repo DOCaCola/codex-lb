@@ -385,7 +385,25 @@ hermes
 
 ## Claude Code
 
-Claude Code speaks the Anthropic Messages API. Point it at codex-lb and choose a model per family:
+Claude Code speaks the Anthropic Messages API. Point it at codex-lb with your codex-lb key in one of two token
+modes. codex-lb forwards genuine Claude Code natively in both, including `claude -p`, background sessions, the Agent
+SDK and the VS Code extension.
+
+Subscription mode is recommended for Claude models. Claude Code behaves as with a Claude subscription: it keeps the
+one-hour prompt cache and reports exhausted accounts as "You've hit your 5-hour limit · resets …":
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:2455"
+export CLAUDE_CODE_OAUTH_TOKEN="sk-clb-..."   # key from dashboard; any value if API key auth is disabled
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1   # required, see below
+claude
+```
+
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` is required in this mode: otherwise Claude Code sends your codex-lb key
+to `api.anthropic.com` for bootstrap, feature flags and telemetry.
+
+API-key mode is needed to choose codex-lb's other models from `/model`, because Claude Code only runs gateway model
+discovery in this mode. It uses five-minute prompt caching and shows usage limits as a plain error:
 
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:2455"
@@ -396,6 +414,8 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="gpt-5.6-luna"
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1   # list codex-lb models in /model
 claude
 ```
+
+Do not set both tokens; `ANTHROPIC_AUTH_TOKEN` takes precedence and also overrides a `/login` session.
 
 Model names decide the route:
 
@@ -427,6 +447,17 @@ Limits of the translation:
   rejected. Web search is supported; other Anthropic server tools are rejected.
 - `/v1/messages/count_tokens` returns a local estimate for these models.
 - When the conversation exceeds the model's window, codex-lb answers "prompt is too long" so Claude Code compacts.
+
+## Anthropic SDK
+
+Other Messages clients use the same endpoint. Pass the key in code rather than exporting `ANTHROPIC_AUTH_TOKEN` or
+`ANTHROPIC_API_KEY`: Claude Code reads those variables too and would switch to API-key mode.
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="http://127.0.0.1:2455", auth_token="sk-clb-...")
+```
 
 ## OpenAI Python SDK
 

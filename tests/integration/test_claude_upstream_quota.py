@@ -15,7 +15,7 @@ pool = fixtures.pool
 pytestmark = pytest.mark.integration
 
 
-def install_rejection(monkeypatch, *, quota=True, deadline=True):
+def install_rejection(monkeypatch, *, quota=True, deadline=True, utilization=False):
     reset = math.ceil((datetime.now(UTC) + timedelta(hours=2)).timestamp())
     headers = {"anthropic-ratelimit-requests-remaining": "0"}
     if quota:
@@ -28,6 +28,8 @@ def install_rejection(monkeypatch, *, quota=True, deadline=True):
         )
         if deadline:
             headers["anthropic-ratelimit-unified-5h-reset"] = str(reset)
+        if utilization:
+            headers["anthropic-ratelimit-unified-5h-utilization"] = "1.0"
 
     async def reject(*args, **kwargs):
         raise ModelSourceForwardingError(
@@ -126,3 +128,21 @@ async def test_upstream_quota_websocket_contract(async_client, pool, monkeypatch
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_local_quota_refusal_reports_unified_headers_to_native_clients(async_client, pool, monkeypatch):
+    reset = install_rejection(monkeypatch, utilization=True)
+    body = {"model": MODEL, "stream": True, "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 100}
+    first = await async_client.post("/v1/messages", json=body)
+    assert first.status_code == 429, first.text
+    # The recorded 5h rejection now blocks the pool before any upstream request.
+    response = await async_client.post("/v1/messages", json=body)
+    assert response.status_code == 429, response.text
+    assert response.json()["error"]["code"] == "claude_pool_rate_limited"
+    headers = response.headers
+    assert headers["anthropic-ratelimit-unified-status"] == "rejected"
+    assert "anthropic-ratelimit-unified-overage-status" not in headers
+    assert headers["anthropic-ratelimit-unified-representative-claim"] == "five_hour"
+    assert headers["anthropic-ratelimit-unified-reset"] == headers["anthropic-ratelimit-unified-5h-reset"] == str(reset)
+    assert headers["anthropic-ratelimit-unified-5h-status"] == "rejected"
+    assert int(headers["retry-after"]) > 0

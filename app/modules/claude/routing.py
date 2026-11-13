@@ -32,6 +32,9 @@ from app.modules.claude.schemas import AccountState
 from app.modules.claude.session import NativeSessionOwnership
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
 
+# Claude Code's per-window unified header prefixes; model-scoped windows have only a claim.
+_UNIFIED_PREFIXES = {"five_hour": "5h", "seven_day": "7d", "seven_day_overage_included": "7d_oi"}
+
 
 class ClaudePoolUnavailable(ClaudeError):
     status_code = 503
@@ -44,18 +47,45 @@ class ClaudePoolUnavailable(ClaudeError):
         status_code: int = 503,
         retry_at: datetime | None = None,
         resets_at: datetime | None = None,
+        quota_claim: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
         self.retry_at = retry_at
         self.resets_at = resets_at
+        self.quota_claim = quota_claim
 
     @property
     def response_headers(self) -> dict[str, str]:
         if self.retry_at is None:
             return {}
         return {"Retry-After": str(max(1, math.ceil((self.retry_at - datetime.now(UTC)).total_seconds())))}
+
+    @property
+    def messages_response_headers(self) -> dict[str, str]:
+        """Anthropic's unified quota headers, which Claude Code renders as a usage limit (CLIProxyAPI #7417).
+
+        Overage status is omitted: codex-lb doesn't know the account's extra-usage setup, and Claude Code
+        2.1.316 names the blocking window only when overage isn't reported rejected without a reason.
+        """
+        headers = self.response_headers
+        if self.status_code != 429:
+            return headers
+        prefix = "anthropic-ratelimit-unified"
+        headers[f"{prefix}-status"] = "rejected"
+        if self.quota_claim is None or self.resets_at is None:
+            return headers
+        reset = str(math.ceil(self.resets_at.timestamp()))
+        headers |= {f"{prefix}-representative-claim": self.quota_claim, f"{prefix}-reset": reset}
+        window = _UNIFIED_PREFIXES.get(self.quota_claim)
+        if window is not None:
+            headers |= {
+                f"{prefix}-{window}-status": "rejected",
+                f"{prefix}-{window}-reset": reset,
+                f"{prefix}-{window}-utilization": "1",
+            }
+        return headers
 
     @property
     def error_type(self) -> str:
@@ -97,6 +127,8 @@ class Eligibility:
     retry_at: datetime | None = None
     quota_windows: tuple[str, ...] = ()
     resets_at: datetime | None = None
+    # The blocking window that resets last, when every blocking window's reset is known.
+    claim: str | None = None
 
 
 def eligibility(
@@ -158,8 +190,10 @@ def eligibility(
             for window in observed_windows
             if window.name in windows and window.resets_at is not None and window.resets_at > now
         }
-        resets_at = max(resets.values()) if len(resets) == len(windows) else None
-        return Eligibility(False, "quota", retry_at, windows, resets_at)
+        if len(resets) != len(windows):
+            return Eligibility(False, "quota", retry_at, windows)
+        claim = max(resets, key=resets.__getitem__)
+        return Eligibility(False, "quota", retry_at, windows, resets[claim], claim)
     # Expiry alone is not permanent ineligibility: dispatch owns the durable
     # refresh claim. It must never send the expired token itself.
     return Eligibility(True, "ready")
@@ -245,8 +279,9 @@ async def select_account(
             (diagnostic.retry_at for _, diagnostic in candidates if diagnostic.retry_at is not None), default=None
         )
         quota_only = bool(reasons) and all(reason == "quota" for reason in reasons)
-        resets = [diagnostic.resets_at for _, diagnostic in candidates if diagnostic.resets_at is not None]
-        resets_at = min(resets) if quota_only and resets and len(resets) == len(candidates) else None
+        # The account that frees up first represents the pool, provided every reset is known.
+        resets = [(item.resets_at, item) for _, item in candidates if item.resets_at is not None]
+        first = min(resets, key=lambda item: item[0])[1] if quota_only and len(resets) == len(candidates) else None
         # These exclusions cannot recover by waiting. A retryable 503 traps
         # model-switch compaction on the unavailable previous model instead of
         # letting the client recover using its selected model. A temporary,
@@ -278,7 +313,8 @@ async def select_account(
                 ),
                 status_code=429 if quota_only else unavailable_status,
                 retry_at=retry_at,
-                resets_at=resets_at,
+                resets_at=first.resets_at if first is not None else None,
+                quota_claim=first.claim if first is not None else None,
             )
         if reasons and all(reason == "reasoning" for reason in reasons):
             raise ClaudePoolUnavailable(

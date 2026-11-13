@@ -2035,7 +2035,7 @@ async def claude_messages(
                 "error": detail,
             },
             status_code=exc.status_code,
-            headers=exc.response_headers,
+            headers=exc.messages_response_headers,
         )
     except ModelSourceForwardingError as exc:
         return JSONResponse(

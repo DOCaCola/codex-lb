@@ -145,8 +145,13 @@ resend portable context. Do not move signed thinking across accounts or models.
 
 ## Supported boundaries
 
-Native Claude feature negotiation and reviewed SDK/helper/agent headers are
-preserved. Session headers and structured JSON `metadata.user_id` session fields
+Genuine Claude Code is forwarded natively in subscription and API-key token
+modes, from the CLI, `claude -p`, background sessions, the Agent SDK and VS Code;
+see [client setup](client-setup.md#claude-code). Native Claude feature negotiation
+and reviewed SDK/helper/agent headers are preserved. When every account is
+quota-blocked, native Messages clients receive Anthropic's unified rate-limit
+headers for the blocking window, so Claude Code shows its usage limit and reset.
+Session headers and structured JSON `metadata.user_id` session fields
 are projected together into the selected account/client scope; logical history
 is unchanged. Conflicting session identifiers, malformed metadata and opaque or
 legacy concatenated user IDs fail explicitly. Omit optional user metadata or

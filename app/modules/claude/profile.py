@@ -20,7 +20,13 @@ CLI_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 OAUTH_BETA = "oauth-2025-04-20"
 CLI_BETA = "claude-code-20250219"
 MID_SYSTEM_BETA = "mid-conversation-system-2026-04-07"
-_NATIVE_UA = re.compile(r"^claude-cli/(\d+)\.(\d+)\.(\d+) \(external, cli\)$")
+# Claude Code surfaces whose request shape has been captured (CLIProxyAPI's native set).
+_NATIVE_ENTRYPOINTS = frozenset({"cli", "sdk-cli", "sdk-ts", "claude-vscode"})
+# `cli-bg` marks `claude --bg` background sessions (CLIProxyAPI #7412).
+_NATIVE_X_APPS = frozenset({"cli", "cli-bg"})
+_UA_PRODUCT = re.compile(r"^claude-cli/(\d+)\.(\d+)\.(\d+)$")
+_UA_FIELD_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_PACKAGE_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _BETA = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 _NATIVE_HEADERS = frozenset(
     {
@@ -70,17 +76,51 @@ def management_headers(token: str, version: str) -> dict[str, str]:
     }
 
 
+def _native_client_version(user_agent: str) -> tuple[int, int, int] | None:
+    """Version of a native Claude Code user agent.
+
+    Claude Code appends ``name/value`` fields after its entrypoint (``agent-sdk/``,
+    ``client-app/``, ``workload/cron``); their values are opaque request context
+    (CLIProxyAPI #7373).
+    """
+    product, separator, comment = user_agent.partition(" (")
+    match = _UA_PRODUCT.fullmatch(product)
+    if match is None or not separator or not comment.endswith(")") or not user_agent.isprintable():
+        return None
+    inner = comment[:-1]
+    if "(" in inner or ")" in inner:
+        return None
+    fields = [field.strip() for field in inner.split(",")]
+    if len(fields) < 2 or fields[0] != "external" or fields[1] not in _NATIVE_ENTRYPOINTS:
+        return None
+    names: set[str] = set()
+    for field in fields[2:]:
+        name, slash, value = field.partition("/")
+        if not slash or not value or not _UA_FIELD_NAME.fullmatch(name) or name.lower() in names:
+            return None
+        if name.lower() == "agent-sdk" and not _PACKAGE_VERSION.fullmatch(value):
+            return None
+        names.add(name.lower())
+    return int(match[1]), int(match[2]), int(match[3])
+
+
 def recognize_native(headers: Mapping[str, str], *, version: str, has_identity: bool) -> bool:
-    """Accept newer native patch releases without learning their global profile."""
+    """Recognize genuine Claude Code in either token mode; newer patches keep their own profile.
+
+    Claude Code sends ``claude-code-20250219`` whether it holds an OAuth token or an
+    API key; only its subscription mode adds the OAuth beta, which its markerless
+    helpers carry alone.
+    """
     values = {key.lower(): value for key, value in headers.items()}
-    match = _NATIVE_UA.fullmatch(values.get("user-agent", ""))
-    if match is None or not has_identity or values.get("x-app") != "cli":
+    client = _native_client_version(values.get("user-agent", ""))
+    if client is None or not has_identity or values.get("x-app") not in _NATIVE_X_APPS:
         return False
     major, minor, patch = map(int, version.split("."))
+    betas = _betas(values.get("anthropic-beta", ""))
     return (
-        (int(match[1]), int(match[2])) == (major, minor)
-        and int(match[3]) >= patch
-        and OAUTH_BETA in _betas(values.get("anthropic-beta", ""))
+        client[:2] == (major, minor)
+        and client[2] >= patch
+        and (CLI_BETA in betas or OAUTH_BETA in betas)
         and values.get("x-stainless-lang") == "js"
     )
 
