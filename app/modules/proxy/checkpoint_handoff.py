@@ -5,8 +5,13 @@ ciphertext only that key's client history carries, so forked conversations,
 which replay the same checkpoint under a new conversation ID, share them.
 
 Native checkpoints are readable by every OpenAI account, as ordinary native
-turns that move between accounts show. Provenance therefore records the
-producing model and account, but generation uses ordinary account selection.
+turns that move between accounts show. Generation therefore uses ordinary
+account selection, and needs only the OpenAI model that summarizes the
+checkpoint: the producing model when provenance recorded it, otherwise the
+newest model that successfully served this key's conversation natively. Such a
+turn carried the conversation's checkpoints, so that model has read them.
+Checkpoints older than provenance, or whose provenance expired, stay
+recoverable that way; without either record the request fails explicitly.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import anyio
@@ -47,12 +53,13 @@ HANDOFF_TIMEOUT_SECONDS = 300.0
 @dataclass(frozen=True)
 class NativeCheckpointOrigin:
     model: str
-    account_id: str
     item: dict[str, JsonValue]
+    model_evidence: Literal["provenance", "conversation_log"]
 
 
 type HandoffGenerator = Callable[[NativeCheckpointOrigin, dict[str, JsonValue]], Awaitable[dict[str, JsonValue]]]
 type CheckpointResolver = Callable[[ApiKeyScope, dict[str, JsonValue]], Awaitable[list[JsonValue] | None]]
+type ConversationModelLookup = Callable[[ApiKeyScope], Awaitable[str | None]]
 
 
 def checkpoint_digest(ciphertext: str) -> str:
@@ -151,9 +158,12 @@ class HandoffClaims:
 
 
 class CheckpointHandoff:
-    def __init__(self, api_key: ApiKeyData | None, generate: HandoffGenerator) -> None:
+    def __init__(
+        self, api_key: ApiKeyData | None, generate: HandoffGenerator, conversation_model: ConversationModelLookup
+    ) -> None:
         self.api_key = api_key
         self.generate = generate
+        self.conversation_model = conversation_model
 
     def _validate_access(self, scope: ApiKeyScope, model: str) -> None:
         validate_model_access(self.api_key, model)
@@ -172,10 +182,9 @@ class CheckpointHandoff:
         if cached is not None:
             self._validate_access(scope, cached.model)
             return cached.input
-        provenance = await origin_store().load(scope, digest)
-        if provenance is None or len(provenance.output) != 1 or not isinstance(provenance.output[0], dict):
+        origin = await self._origin(scope, digest, item)
+        if origin is None:
             return None
-        origin = NativeCheckpointOrigin(provenance.model, provenance.account_id, provenance.output[0])
         self._validate_access(scope, origin.model)
         claims = HandoffClaims(summaries.directory)
         claim = await claims.acquire(scope, digest)
@@ -192,7 +201,12 @@ class CheckpointHandoff:
             if cached is not None:
                 self._validate_access(scope, cached.model)
                 return cached.input
-            logger.info("compaction_handoff_started request_id=%s", get_request_id())
+            logger.info(
+                "compaction_handoff_started request_id=%s model=%s provenance=%s",
+                get_request_id(),
+                origin.model,
+                origin.model_evidence,
+            )
             result = await self.generate(origin, {**origin.item, "encrypted_content": ciphertext})
             try:
                 summary = extract_completed_source_compaction_summary(result)
@@ -216,9 +230,8 @@ class CheckpointHandoff:
             )
             assert projected is not None
             items: list[JsonValue] = [projected]
-            await summaries.remember(
-                scope, digest, json.dumps({"model": origin.model, "input": items}), [], origin.account_id
-            )
+            # Summaries are account-neutral; the record format keeps an account field.
+            await summaries.remember(scope, digest, json.dumps({"model": origin.model, "input": items}), [], "")
             cached = await summaries.load(scope, digest)
             if cached is None:
                 raise ProxyResponseError(
@@ -228,3 +241,16 @@ class CheckpointHandoff:
             return items
         finally:
             await claims.release(claim)
+
+    async def _origin(
+        self, scope: ApiKeyScope, digest: str, item: dict[str, JsonValue]
+    ) -> NativeCheckpointOrigin | None:
+        provenance = await origin_store().load(scope, digest)
+        if provenance is not None:
+            if len(provenance.output) != 1 or not isinstance(provenance.output[0], dict):
+                return None
+            return NativeCheckpointOrigin(provenance.model, provenance.output[0], "provenance")
+        model = await self.conversation_model(scope)
+        if model is None:
+            return None
+        return NativeCheckpointOrigin(model, item, "conversation_log")

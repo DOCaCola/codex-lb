@@ -443,6 +443,33 @@ async def test_unknown_or_cross_key_checkpoint_never_generates(async_client, han
     assert not generated and not captured
 
 
+async def test_unrecorded_checkpoint_hands_off_with_the_conversations_native_model(async_client, handoff_env):
+    """A checkpoint compacted before provenance existed (or whose provenance expired)."""
+    headers, generated, finished, captured, directory, outcome = handoff_env
+    thread = {**headers, "user-agent": "codex_cli_rs/0.169.0", "thread-id": "legacy-thread"}
+    await observe_compact(async_client, thread, directory)
+    legacy = {**checkpoint(), "encrypted_content": "LEGACY_UNRECORDED"}
+    body = {"model": MODEL, "input": [legacy, {"role": "user", "content": "Continue"}], "stream": False}
+    other = await async_client.post("/api/api-keys/", json={"name": "other-legacy-client"})
+    assert other.status_code == 200, other.text
+    # Neither another thread of the key nor another key's same thread has native evidence.
+    for request_headers in (
+        {**thread, "thread-id": "unrelated-thread"},
+        {**thread, "authorization": "Bearer " + other.json()["key"]},
+    ):
+        response = await async_client.post(PATHS[1], headers=request_headers, json=body)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "compaction_history_unavailable"
+    assert not generated and not captured
+
+    response = await async_client.post(PATHS[1], headers=thread, json=body)
+    assert response.status_code == 200, response.text
+    native_payload = generated[0][0]
+    assert native_payload["model"] == "gpt-5.1"
+    assert "LEGACY_UNRECORDED" in json.dumps(native_payload["input"])
+    assert outcome["text"] in json.dumps(captured[0]) and "LEGACY_UNRECORDED" not in json.dumps(captured[0])
+
+
 async def test_forked_conversation_shares_one_handoff(async_client, handoff_env):
     headers, generated, finished, captured, directory, outcome = handoff_env
     await observe_compact(async_client, headers, directory)

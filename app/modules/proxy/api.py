@@ -353,6 +353,7 @@ from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
 from app.modules.proxy.rate_limit_events import (
     hide_upstream_quota_for_api_key_clients as _hide_upstream_quota_for_api_key_clients,
 )
+from app.modules.proxy.replay_store import ApiKeyScope
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     apply_api_key_enforcement_to_chat_payload,
@@ -7433,6 +7434,16 @@ async def _http_bridge_active_for_request(
 def _source_checkpoint_resolver(
     request: Request, api_key: ApiKeyData | None, context: ProxyContext | None
 ) -> CheckpointResolver:
+    _, _, conversation_id = _request_log_client_fields(request.headers)
+
+    async def conversation_model(scope: ApiKeyScope) -> str | None:
+        if conversation_id is None:
+            return None
+        async with get_background_session() as session:
+            return await RequestLogsRepository(session).latest_native_model_for_conversation(
+                conversation_id, api_key_id=scope.api_key_id
+            )
+
     async def generate(origin: NativeCheckpointOrigin, checkpoint: dict[str, JsonValue]) -> dict[str, JsonValue]:
         from app.core.openai.compaction import COMPACTION_PROMPT
         from app.core.utils.request_id import reset_request_id, set_request_id
@@ -7444,7 +7455,6 @@ def _source_checkpoint_resolver(
         native_request = Request(
             {**request.scope, "headers": [(b"content-type", b"application/json")]}, receive=request.receive
         )
-        _, _, conversation_id = _request_log_client_fields(request.headers)
         native_payload = ResponsesRequest.model_validate(
             {
                 "model": origin.model,
@@ -7498,7 +7508,7 @@ def _source_checkpoint_resolver(
             reset_request_operation(operation_token)
             reset_request_id(token)
 
-    return CheckpointHandoff(api_key, generate).resolve
+    return CheckpointHandoff(api_key, generate, conversation_model).resolve
 
 
 async def _collect_responses(

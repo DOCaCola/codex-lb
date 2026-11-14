@@ -90,12 +90,12 @@ def test_validator_rejects_nonterminal_marker_before_refinement():
     ],
 )
 async def test_auxiliary_handoff_restores_parent_on_every_exit(monkeypatch, outcome, parent):
-    origin = NativeCheckpointOrigin("gpt-6.1-sol", "owner", {})
+    origin = NativeCheckpointOrigin("gpt-6.1-sol", {}, "provenance")
     seen = []
     active = asyncio.Event()
 
     class Handoff:
-        def __init__(self, api_key, generate):
+        def __init__(self, api_key, generate, conversation_model):
             self.generate = generate
 
         async def resolve(self, scope, checkpoint):

@@ -1296,6 +1296,23 @@ class RequestLogsRepository:
         )
         return await self._session.scalar(stmt)
 
+    async def latest_native_model_for_conversation(self, conversation_id: str, *, api_key_id: str) -> str | None:
+        """Return the newest model that successfully served this key's conversation on an OpenAI account."""
+
+        stmt = (
+            select(RequestLog.model)
+            .where(
+                RequestLog.conversation_id == _normalize_conversation_id(conversation_id),
+                RequestLog.api_key_id == api_key_id,
+                RequestLog.account_id.is_not(None),
+                RequestLog.model_source_id.is_(None),
+                RequestLog.status == "success",
+            )
+            .order_by(RequestLog.requested_at.desc(), RequestLog.id.desc())
+            .limit(1)
+        )
+        return await self._session.scalar(stmt)
+
     async def list_recent(
         self,
         limit: int = 50,

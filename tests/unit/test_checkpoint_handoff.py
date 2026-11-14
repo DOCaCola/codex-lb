@@ -48,6 +48,19 @@ def result(text="Portable task state"):
     }
 
 
+async def unlogged(scope):
+    return None
+
+
+def logged(model, lookups=None):
+    async def lookup(scope):
+        if lookups is not None:
+            lookups.append(scope)
+        return model
+
+    return lookup
+
+
 @pytest.fixture
 async def env(monkeypatch, tmp_path):
     origins = HTTPFallbackReplayStore(tmp_path / "origins")
@@ -87,18 +100,20 @@ async def test_provenance_capture_over_opaque_history_never_copies_input(monkeyp
 
 async def test_restart_cache_and_scope_isolation(env, monkeypatch):
     scope, origins, summaries, calls, generate = env
-    resolver = handoff.CheckpointHandoff(api_key(), generate)
+    resolver = handoff.CheckpointHandoff(api_key(), generate, unlogged)
     first = await resolver.resolve(scope, checkpoint())
     assert "Portable task state" in json.dumps(first)
     monkeypatch.setattr(handoff, "handoff_store", lambda: HTTPFallbackReplayStore(summaries.directory))
-    assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint()) == first
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint()) == first
     assert await resolver.resolve(ApiKeyScope("other"), checkpoint()) is None
-    assert len(calls) == 1 and calls[0][0].account_id == "owner" and calls[0][1] == checkpoint()
+    origin, item = calls[0]
+    assert len(calls) == 1 and (origin.model, origin.model_evidence) == ("gpt-5.1", "provenance")
+    assert item == checkpoint()
 
 
 async def test_materialization_preserves_tail_and_original_index(env, tmp_path):
     scope, origins, summaries, calls, generate = env
-    resolver = handoff.CheckpointHandoff(api_key(), generate)
+    resolver = handoff.CheckpointHandoff(api_key(), generate, unlogged)
     service = CheckpointHistory(HTTPFallbackReplayStore(tmp_path / "old-snapshots"), scope)
     tail = [
         {"type": "function_call", "name": "read", "call_id": "call_tail", "arguments": "{}"},
@@ -125,11 +140,11 @@ async def test_cross_worker_claim_prevents_duplicate_generation(env):
         await finish.wait()
         return result()
 
-    first = asyncio.create_task(handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint()))
+    first = asyncio.create_task(handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint()))
     await started.wait()
     try:
         with pytest.raises(ProxyResponseError) as error:
-            await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+            await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
         assert error.value.status_code == 503 and "in_progress" in json.dumps(error.value.payload)
     finally:
         finish.set()
@@ -147,17 +162,17 @@ async def test_generation_failure_releases_claim(env, failure):
         raise ProxyResponseError(503, {"error": {"message": "Unavailable"}})
 
     with pytest.raises(asyncio.CancelledError if failure == "cancel" else ProxyResponseError):
-        await handoff.CheckpointHandoff(api_key(), fail).resolve(scope, checkpoint())
+        await handoff.CheckpointHandoff(api_key(), fail, unlogged).resolve(scope, checkpoint())
     assert not list(summaries.directory.glob("*.replay"))
-    assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
 
 
 async def test_cached_handoff_rechecks_model_permission(env):
     scope, origins, summaries, calls, generate = env
-    await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
     key = replace(api_key(), allowed_models=["anthropic/claude-opus-5-5"])
     with pytest.raises(Exception) as error:
-        await handoff.CheckpointHandoff(key, generate).resolve(scope, checkpoint())
+        await handoff.CheckpointHandoff(key, generate, unlogged).resolve(scope, checkpoint())
     assert "access" in str(error.value).lower()
     assert len(calls) == 1
 
@@ -166,19 +181,19 @@ async def test_account_scope_never_blocks_handoff_from_another_producer(env):
     # Checkpoints are readable by every OpenAI account: an account-scoped key
     # reuses the summary and regenerates through its own permitted accounts.
     scope, origins, summaries, calls, generate = env
-    first = await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    first = await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
     scoped = replace(api_key(), account_assignment_scope_enabled=True, assigned_account_ids=["other-owner"])
-    assert await handoff.CheckpointHandoff(scoped, generate).resolve(scope, checkpoint()) == first
+    assert await handoff.CheckpointHandoff(scoped, generate, unlogged).resolve(scope, checkpoint()) == first
     for path in summaries.directory.glob("*.replay"):
         path.unlink()
-    assert await handoff.CheckpointHandoff(scoped, generate).resolve(scope, checkpoint()) == first
+    assert await handoff.CheckpointHandoff(scoped, generate, unlogged).resolve(scope, checkpoint()) == first
     assert len(calls) == 2
 
 
 @pytest.mark.parametrize("state", ["expired", "corrupt", "oversize"])
 async def test_summary_cache_miss_regenerates_from_provenance(env, monkeypatch, state):
     scope, origins, summaries, calls, generate = env
-    await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
     path = next(summaries.directory.glob("*.replay"))
     if state == "expired":
         stamp = path.stat().st_mtime - 3601
@@ -190,15 +205,15 @@ async def test_summary_cache_miss_regenerates_from_provenance(env, monkeypatch, 
             handoff, "handoff_store", lambda: HTTPFallbackReplayStore(summaries.directory, max_entry_bytes=100)
         )
         with pytest.raises(ProxyResponseError):
-            await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+            await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
         return
-    assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
     assert len(calls) == 2
 
 
 async def test_summary_survives_origin_expiry_and_still_checks_access(env):
     scope, origins, summaries, calls, generate = env
-    resolver = handoff.CheckpointHandoff(api_key(), generate)
+    resolver = handoff.CheckpointHandoff(api_key(), generate, unlogged)
     first = await resolver.resolve(scope, checkpoint())
     path = next(origins.directory.glob("*.replay"))
     stamp = path.stat().st_mtime - 3601
@@ -207,7 +222,7 @@ async def test_summary_survives_origin_expiry_and_still_checks_access(env):
     assert await resolver.resolve(scope, checkpoint()) == first
     restricted = replace(api_key(), allowed_models=["anthropic/claude-opus-5-5"])
     with pytest.raises(ProxyModelNotAllowed):
-        await handoff.CheckpointHandoff(restricted, generate).resolve(scope, checkpoint())
+        await handoff.CheckpointHandoff(restricted, generate, unlogged).resolve(scope, checkpoint())
     assert len(calls) == 1
 
 
@@ -223,14 +238,14 @@ async def test_task_cancellation_releases_claim(env):
         finally:
             finished.set()
 
-    task = asyncio.create_task(handoff.CheckpointHandoff(api_key(), blocked).resolve(scope, checkpoint()))
+    task = asyncio.create_task(handoff.CheckpointHandoff(api_key(), blocked, unlogged).resolve(scope, checkpoint()))
     await started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert finished.is_set()
     assert not list(summaries.directory.glob("*.replay"))
-    assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
 
 
 async def test_claim_storage_error_never_generates(env, monkeypatch):
@@ -241,7 +256,7 @@ async def test_claim_storage_error_never_generates(env, monkeypatch):
 
     monkeypatch.setattr(handoff.HandoffClaims, "_change", fail)
     with pytest.raises(ProxyResponseError) as error:
-        await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+        await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
     assert error.value.status_code == 503 and "PRIVATE" not in json.dumps(error.value.payload)
     assert not calls
 
@@ -260,14 +275,14 @@ async def test_cancellation_during_claim_acquisition_releases_committed_claim(en
         return changed
 
     monkeypatch.setattr(handoff.HandoffClaims, "_change", slow_acquire)
-    task = asyncio.create_task(handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint()))
+    task = asyncio.create_task(handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint()))
     await acquired.wait()
     task.cancel()
     finish.set()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not calls
-    assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
 
 
 async def test_abandoned_claim_expires_and_old_release_cannot_remove_new_claim(tmp_path):
@@ -301,7 +316,40 @@ async def test_unavailable_provenance_cannot_generate(env, monkeypatch, state):
         monkeypatch.setattr(
             handoff, "origin_store", lambda: HTTPFallbackReplayStore(origins.directory, max_entry_bytes=100)
         )
-    assert await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint()) is None
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint()) is None
+    assert not calls
+
+
+async def test_unrecorded_checkpoint_hands_off_with_conversation_model(env):
+    # Checkpoints compacted before provenance existed, or whose provenance
+    # expired, use the model that last served this key's conversation natively.
+    scope, origins, summaries, calls, generate = env
+    legacy = checkpoint("LEGACY_NATIVE")
+    lookups = []
+    items = await handoff.CheckpointHandoff(api_key(), generate, logged("gpt-6-astra", lookups)).resolve(scope, legacy)
+    assert "Portable task state" in json.dumps(items)
+    origin, item = calls[0]
+    assert (origin.model, origin.model_evidence) == ("gpt-6-astra", "conversation_log")
+    assert item == legacy and lookups == [scope]
+    # The summary is cached like any other handoff, also for forks without that log.
+    assert await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, legacy) == items
+    assert len(calls) == 1
+
+
+async def test_recorded_provenance_takes_precedence_over_conversation_model(env):
+    scope, origins, summaries, calls, generate = env
+    lookups = []
+    await handoff.CheckpointHandoff(api_key(), generate, logged("gpt-6-astra", lookups)).resolve(scope, checkpoint())
+    assert calls[0][0].model == "gpt-5.1" and not lookups
+
+
+async def test_conversation_model_is_subject_to_key_model_access(env):
+    scope, origins, summaries, calls, generate = env
+    restricted = replace(api_key(), allowed_models=["anthropic/claude-opus-5-5"])
+    with pytest.raises(ProxyModelNotAllowed):
+        await handoff.CheckpointHandoff(restricted, generate, logged("gpt-6-astra")).resolve(
+            scope, checkpoint("LEGACY_NATIVE")
+        )
     assert not calls
 
 
@@ -309,7 +357,7 @@ async def test_periodic_maintenance_sweeps_new_namespaces(env, monkeypatch, tmp_
     from app.modules.proxy._service.websocket import mixin
 
     scope, origins, summaries, calls, generate = env
-    await handoff.CheckpointHandoff(api_key(), generate).resolve(scope, checkpoint())
+    await handoff.CheckpointHandoff(api_key(), generate, unlogged).resolve(scope, checkpoint())
     for store in (origins, summaries):
         path = next(store.directory.glob("*.replay"))
         stamp = path.stat().st_mtime - 3601
