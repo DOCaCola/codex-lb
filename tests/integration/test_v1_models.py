@@ -794,17 +794,6 @@ async def test_backend_codex_models_logs_source_rows_without_native_prompt(async
     assert "codex_catalog_routed_instructions_unavailable" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_backend_codex_models_logs_catalog_over_client_limit(async_client, caplog, monkeypatch):
-    monkeypatch.setattr(proxy_api, "CODEX_MODEL_CATALOG_MAX_BYTES", 10)
-
-    with caplog.at_level("ERROR", logger="app.modules.proxy.api"):
-        response = await async_client.get("/backend-api/codex/models")
-
-    assert response.status_code == 200
-    assert "codex_catalog_exceeds_client_limit" in caplog.text
-
-
 @pytest.mark.parametrize(
     "path",
     [

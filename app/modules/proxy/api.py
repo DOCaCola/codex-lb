@@ -3622,15 +3622,7 @@ async def _build_codex_models_response_body(
     # Codex sorts by priority, not response order. Keep native priorities intact.
     for priority, entry in enumerate(entries[source_entries_start:], start=source_priority_start):
         entry.priority = priority
-    response = JSONResponse(content=CodexModelsResponse(models=entries, data=data).model_dump(mode="json"))
-    if len(response.body) > CODEX_MODEL_CATALOG_MAX_BYTES:
-        logger.error(
-            "codex_catalog_exceeds_client_limit bytes=%d limit=%d models=%d",
-            len(response.body),
-            CODEX_MODEL_CATALOG_MAX_BYTES,
-            len(entries),
-        )
-    return response
+    return JSONResponse(content=CodexModelsResponse(models=entries, data=data).model_dump(mode="json"))
 
 
 async def _build_models_response(api_key: ApiKeyData | None, *, now: float) -> Response:
@@ -3946,11 +3938,6 @@ def _is_codex_backend_catalog_model(model: UpstreamModel) -> bool:
 
 
 _CODEX_WIRE_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
-
-# Codex rejects a ``model_catalog_url`` body above 1 MiB and falls back to its
-# bundled catalog (codex-rs/model-provider/src/models_endpoint.rs,
-# ``MAX_MODEL_CATALOG_BYTES``).
-CODEX_MODEL_CATALOG_MAX_BYTES = 1024 * 1024
 
 
 def _codex_model_truncation_policy(model: UpstreamModel) -> CodexTruncationPolicy:
