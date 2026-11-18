@@ -78,12 +78,17 @@ def test_quota_wording_needs_no_transient_hint() -> None:
     assert classify(429, _error("RESOURCE_EXHAUSTED", "You have exhausted your capacity"), now=NOW).kind == "quota"
     assert (
         classify(429, _error("RESOURCE_EXHAUSTED", "Quota exceeded for requests per minute"), now=NOW).kind
-        == "unexplained_429"
+        == "rate_limit"
     )
 
 
 def test_bare_resource_exhausted_is_not_quota() -> None:
     assert classify(429, _error("RESOURCE_EXHAUSTED", "Resource has been exhausted"), now=NOW).kind == "unexplained_429"
+
+
+@pytest.mark.parametrize("message", ["Too many requests, slow down", "Please try again later"])
+def test_bare_429_with_retry_wording_is_a_rate_limit(message: str) -> None:
+    assert classify(429, _error("RESOURCE_EXHAUSTED", message), now=NOW).kind == "rate_limit"
 
 
 def test_ban_requires_the_exact_sentence() -> None:

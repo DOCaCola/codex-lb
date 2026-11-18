@@ -154,6 +154,7 @@ def install_upstream(
     rejections: int = 0,
     rejection: dict[str, Any] = QUOTA_EXHAUSTED,
     rejection_status: int = 429,
+    rejection_retry_after: str | None = None,
     rounds: list[list[dict[str, Any]]] | None = None,
 ):
     """Fake streamGenerateContent; each accepted request answers with the next of rounds."""
@@ -169,7 +170,10 @@ def install_upstream(
         captured.append((source.id, payload, kwargs["prepared_headers"]))
         if len(captured) <= rejections:
             raise ModelSourceForwardingError(
-                status_code=rejection_status, payload=rejection, upstream_status_code=rejection_status
+                status_code=rejection_status,
+                payload=rejection,
+                upstream_status_code=rejection_status,
+                retry_after=rejection_retry_after,
             )
         lines = answers[min(len(captured) - rejections, len(answers)) - 1]
 
@@ -320,20 +324,23 @@ async def test_repeated_empty_completion_bills_both_attempts(async_client, pool,
     ],
     ids=["codex", "messages"],
 )
-async def test_refused_content_is_reported_final(async_client, pool, monkeypatch, path, body, headers):
+@pytest.mark.parametrize(("retry_after", "sends"), [(None, 1), ("0", 2)], ids=["bare", "retry-after"])
+async def test_refused_content_is_reported_final(
+    async_client, pool, monkeypatch, path, body, headers, retry_after, sends
+):
     from app.modules.antigravity import recovery
 
     monkeypatch.setattr(recovery, "_jitter", lambda: 0.0)
     bare = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Resource has been exhausted"}}
-    captured = install_upstream(monkeypatch, rejections=2, rejection=bare)
+    captured = install_upstream(monkeypatch, rejections=2, rejection=bare, rejection_retry_after=retry_after)
 
     response = await async_client.post(path, json={"model": GEMINI, **body}, headers=headers)
 
     assert response.status_code == 429, response.text
     assert response.headers["x-should-retry"] == "false"
     assert "retry-after" not in response.headers
-    # One same-account retry, never the pool.
-    assert [source_id for source_id, _, _ in captured] == [captured[0][0]] * 2
+    # Only Google's Retry-After earns one same-account retry; never the pool.
+    assert [source_id for source_id, _, _ in captured] == [captured[0][0]] * sends
 
 
 @pytest.mark.parametrize(

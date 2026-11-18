@@ -69,12 +69,25 @@ async def test_short_rate_limit_waits_once_in_place(recorded: list[UpstreamFailu
     assert recorded
 
 
+def _unexplained(retry_after: str | None) -> AntigravityUpstreamError:
+    return AntigravityUpstreamError(
+        UpstreamFailure("unexplained_429", 429, "m"), secret="token-1", retry_after=retry_after
+    )
+
+
+async def test_unexplained_429_without_retry_after_is_reported(recorded: list[UpstreamFailure]) -> None:
+    state = _state()
+    assert await plan_retry(state, _unexplained(None)) is None
+    assert not state.excluded
+    assert not recorded
+
+
 async def test_unexplained_429_never_walks_the_pool(recorded: list[UpstreamFailure]) -> None:
     state = _state()
-    assert await plan_retry(state, _error("unexplained_429")) == 0.5
+    assert await plan_retry(state, _unexplained("0")) == 0.5
     assert state.retry_source_id == "src-1"
     state.bind("src-1", 3, "token-1", "gemini", "gemini-3.8-flash")
-    assert await plan_retry(state, _error("unexplained_429")) is None
+    assert await plan_retry(state, _unexplained("0")) is None
     assert not state.excluded
     assert not recorded
 
@@ -82,7 +95,7 @@ async def test_unexplained_429_never_walks_the_pool(recorded: list[UpstreamFailu
 async def test_unexplained_429_waits_for_the_upstream_hint_and_reports_itself_final(
     recorded: list[UpstreamFailure],
 ) -> None:
-    error = AntigravityUpstreamError(UpstreamFailure("unexplained_429", 429, "m"), secret="token-1", retry_after="7")
+    error = _unexplained("7")
     assert error.retry_after is None
     assert error.upstream_headers == {"x-should-retry": "false"}
     assert await plan_retry(_state(), error) == 7.0

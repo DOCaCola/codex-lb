@@ -217,13 +217,14 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
                 state.excluded.add(source_id)
                 delay = 0.0
         case "unexplained_429":
-            # A content rejection fails identically on every account: never walk the pool.
-            if state.same_account_retried:
+            # A content rejection fails identically on every account: never walk the pool. The same bytes are
+            # refused again in place too, so only Google's own Retry-After earns one replay (opencodex #8897).
+            hinted = error.upstream_retry_after
+            if state.same_account_retried or hinted is None or not hinted.isdecimal():
                 return None
             state.same_account_retried = True
             state.retry_source_id = source_id
-            hinted = error.upstream_retry_after
-            delay = max(float(hinted) if hinted is not None and hinted.isdecimal() else 0.0, _jitter())
+            delay = max(float(hinted), _jitter())
         case "overloaded" | "transient":
             if state.overload_retried:
                 return None

@@ -50,7 +50,21 @@ _QUOTA_WORDS = (
     "weekly limit reached",
     "daily limit reached",
 )
-_TRANSIENT_WORDS = ("per minute", "per-minute", "requests per minute", "rate limit", "concurrent request limit")
+# Transient-limit wording keeps a message out of quota exhaustion (opencodex GOOGLE_TRANSIENT_RATE_LIMIT_PATTERNS).
+_TRANSIENT_WORDS = (
+    "per minute",
+    "per-minute",
+    "per min",
+    "rpm",
+    "requests per minute",
+    "too many requests",
+    "rate limit",
+    "retry after",
+    "retry-after",
+    "concurrent request limit",
+)
+# Wording that, like transient-limit wording, is evidence a replay can succeed (opencodex #8897).
+_RETRY_WORDS = ("try again later",)
 _GO_DURATION = re.compile(r"(\d+(?:\.\d+)?)(h|ms|m|s)")
 
 
@@ -165,8 +179,9 @@ def classify(status: int, body: JsonValue, *, now: datetime | None = None) -> Up
             if reset_at is None and retry_after is not None:
                 reset_at = now + retry_after
             return failure("quota", reset_at=reset_at)
-        if reason is None and not details:
-            # A bare RESOURCE_EXHAUSTED may be content-gated (CLIProxyAPI #5751, #6280); it is not quota.
+        if reason is None and not details and not any(word in lower for word in (*_TRANSIENT_WORDS, *_RETRY_WORDS)):
+            # A bare RESOURCE_EXHAUSTED may be content-gated (CLIProxyAPI #5751, #6280); it is not quota, and
+            # nothing in it says a replay can succeed (opencodex #8897).
             return failure("unexplained_429")
         return failure("rate_limit")
     if status == 400 or rpc_status in ("INVALID_ARGUMENT", "FAILED_PRECONDITION"):
