@@ -86,7 +86,10 @@ _PROGRESS_DISPLAY_MODELS = frozenset(
 )
 # Models that reject forced tool use (``tool_choice`` ``any`` or ``tool``) with HTTP 400; ``auto`` and ``none``
 # remain valid (Anthropic's Claude 5.5 migration notes; CLIProxyAPI NormalizeClaudeToolChoice, issue #7000).
-_UNFORCED_TOOL_CHOICE_MODELS = frozenset({"claude-opus-5-5", "claude-sonnet-5-5"})
+# Fable 5.1 and 5.2 reject it as well, Fable 5 accepts it (CLIProxyAPI PR #7623, live API 2026-11-17).
+_UNFORCED_TOOL_CHOICE_MODELS = frozenset(
+    {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-fable-5-2"}
+)
 
 
 def _base_model(model: str) -> str:
