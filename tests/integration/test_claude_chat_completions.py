@@ -39,6 +39,27 @@ async def test_claude_chat_text_uses_owned_responses_dispatch(async_client, pool
         assert completion["usage"]["total_tokens"] == 17
 
 
+async def test_claude_chat_system_messages_reach_claude(async_client, pool, monkeypatch):
+    captured, _ = install_upstream(monkeypatch)
+    response = await async_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": "Answer in French."},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Bonjour"},
+                {"role": "developer", "content": "Keep it short."},
+                {"role": "user", "content": "Again"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    upstream_body = json.dumps(captured[0][2])
+    assert "Answer in French." in upstream_body
+    assert "Keep it short." in upstream_body
+
+
 @pytest.mark.parametrize("stream", [False, True])
 async def test_claude_chat_limit_and_stops_reach_messages(async_client, pool, monkeypatch, stream):
     captured, _ = install_upstream(monkeypatch, stop="max_tokens")

@@ -167,7 +167,6 @@ class ChatCompletionsRequest(BaseModel):
         stream_options = data.pop("stream_options", None)
         raw_tools = self.tools
         raw_tool_choice = data.pop("tool_choice", None)
-        preserve_instruction_roles = _is_json_object_response_format(response_format)
         normalize_reasoning_aliases(data)
         if response_format is not None:
             _apply_response_format(data, response_format)
@@ -197,7 +196,6 @@ class ChatCompletionsRequest(BaseModel):
         instructions, input_items = coerce_messages(
             str(existing_instructions),
             cast(list[JsonValue], messages),
-            preserve_instruction_roles=preserve_instruction_roles,
             allow_nontext_tool_content=allow_nontext_tool_content,
         )
         data["instructions"] = instructions

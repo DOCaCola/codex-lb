@@ -189,7 +189,7 @@ def test_system_tools_and_history_translation():
         }
     )
     payload = translated.payload
-    assert payload["instructions"] == "You are Claude Code.\n\nProject rules."
+    assert payload["instructions"] == ""
     assert payload["store"] is False and payload["stream"] is True
     assert payload["include"] == ["reasoning.encrypted_content"]
     assert payload["max_output_tokens"] == 4096 and payload["temperature"] == 1
@@ -208,6 +208,14 @@ def test_system_tools_and_history_translation():
     assert payload["tool_choice"] == "auto" and payload["parallel_tool_calls"] is True
     call_id = tool_alias("toolu_" + "x" * 70)
     assert payload["input"] == [
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [
+                {"type": "input_text", "text": "You are Claude Code."},
+                {"type": "input_text", "text": "Project rules."},
+            ],
+        },
         {
             "type": "message",
             "role": "user",

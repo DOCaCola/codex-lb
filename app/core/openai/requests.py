@@ -351,7 +351,6 @@ def _normalize_responses_input_instructions(data: JsonValue) -> JsonValue:
     if responses_input_uses_lite_tools(input_value):
         return data
 
-    instruction_parts: list[str] = []
     input_items: list[JsonValue] = []
     changed = False
     for item in input_value:
@@ -359,11 +358,11 @@ def _normalize_responses_input_instructions(data: JsonValue) -> JsonValue:
         if item_mapping is None:
             input_items.append(item)
             continue
-        # Only hoist actual message items (type omitted or "message"). Non-message
+        # Only rewrite actual message items (type omitted or "message"). Non-message
         # typed system/developer items (e.g. the Codex responses-lite
         # {"type": "additional_tools", "role": "developer", "tools": [...]} bundle, or
-        # any future typed item) carry no instruction content; hoisting used to drop
-        # them entirely, so pass them through untouched regardless of role.
+        # any future typed item) carry no instruction content, so pass them through
+        # untouched regardless of role.
         if _is_preserved_non_message_directive(item_mapping):
             input_items.append(item)
             # Still counts as a normalization outcome: directive-only inputs
@@ -372,37 +371,28 @@ def _normalize_responses_input_instructions(data: JsonValue) -> JsonValue:
             changed = True
             continue
         role = item_mapping.get("role")
-        if role == "developer":
-            # Upstream accepts developer messages in ``input``, and
+        if role == "system":
+            # The Codex backend rejects ``system`` input messages but accepts
+            # ``developer`` ones (CLIProxyAPI rewrites the role the same way).
+            # The message keeps its position: from GPT-6.2 on, top-level
+            # ``instructions`` follow the input and are never prompt-cached,
+            # while a leading developer message is the cacheable placement, and
             # ``previous_response_id`` carries ``input`` forward but not
-            # ``instructions``; hoisting would drop them from chained responses.
-            input_items.append(item)
-            # A developer-only input still needs ``instructions`` to default to "".
+            # ``instructions``.
+            input_items.append({**item_mapping, "role": "developer"})
             changed = True
             continue
-        if role != "system":
-            input_items.append(item)
-            continue
-        instruction_text, preserved_content = _split_responses_instruction_item_content(item_mapping)
-        if instruction_text:
-            instruction_parts.append(instruction_text)
-        if preserved_content is not None:
-            preserved_item = dict(item_mapping)
-            preserved_item["role"] = "user"
-            preserved_item["content"] = preserved_content
-            input_items.append(preserved_item)
-        changed = True
+        input_items.append(item)
+        if role == "developer":
+            # An instruction-only input still needs ``instructions`` to default to "".
+            changed = True
 
     if not changed:
         return data
 
     normalized: MutableJsonObject = dict(data)
     existing_instructions = normalized.get("instructions")
-    merged_instructions = _merge_responses_instructions(
-        existing_instructions if isinstance(existing_instructions, str) else "",
-        instruction_parts,
-    )
-    normalized["instructions"] = merged_instructions
+    normalized["instructions"] = existing_instructions if isinstance(existing_instructions, str) else ""
     normalized["input"] = input_items
     return normalized
 
@@ -421,49 +411,6 @@ def _is_responses_lite_input(input_value: list[JsonValue]) -> bool:
 
 def responses_input_uses_lite_tools(input_value: JsonValue) -> bool:
     return is_json_list(input_value) and _is_responses_lite_input(input_value)
-
-
-def _merge_responses_instructions(existing: str, extra_parts: list[str]) -> str:
-    extra = "\n".join(part for part in extra_parts if part)
-    if not extra:
-        return existing
-    if existing:
-        return f"{existing}\n{extra}"
-    return extra
-
-
-def _split_responses_instruction_item_content(item: Mapping[str, JsonValue]) -> tuple[str, JsonValue | None]:
-    content = item.get("content")
-    if content is None:
-        return "", None
-    if isinstance(content, str):
-        return content, None
-    if is_json_list(content):
-        instruction_parts: list[str] = []
-        preserved_parts: list[JsonValue] = []
-        for part in _json_parts(content):
-            text = _responses_instruction_content_text(part)
-            if text is not None:
-                if text:
-                    instruction_parts.append(text)
-                continue
-            preserved_parts.append(part)
-        preserved_content: JsonValue | None = preserved_parts if preserved_parts else None
-        return "\n".join(instruction_parts), preserved_content
-    text = _responses_instruction_content_text(content)
-    if text is not None:
-        return text, None
-    return "", content
-
-
-def _responses_instruction_content_text(content: JsonValue) -> str | None:
-    if isinstance(content, str):
-        return content
-    content_mapping = _json_mapping_or_none(content)
-    if content_mapping is None:
-        return None
-    text = content_mapping.get("text")
-    return text if isinstance(text, str) else None
 
 
 def _sanitize_interleaved_reasoning_input_item(item: JsonValue) -> JsonValue | None:

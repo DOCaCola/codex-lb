@@ -842,7 +842,7 @@ def test_v1_messages_convert_to_responses_input():
     assert request.input == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
 
 
-def test_v1_system_message_moves_to_instructions():
+def test_v1_system_message_becomes_developer_input():
     payload = {
         "model": "gpt-5.1",
         "messages": [
@@ -852,11 +852,14 @@ def test_v1_system_message_moves_to_instructions():
     }
     request = V1ResponsesRequest.model_validate(payload).to_responses_request()
 
-    assert request.instructions == "sys"
-    assert request.input == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    assert request.instructions == ""
+    assert request.input == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
 
 
-def test_responses_input_system_message_moves_to_instructions():
+def test_responses_input_system_message_becomes_developer_in_place():
     payload = {
         "model": "gpt-5.1",
         "instructions": "primary",
@@ -864,14 +867,17 @@ def test_responses_input_system_message_moves_to_instructions():
             {"type": "message", "role": "system", "content": [{"type": "input_text", "text": "sys"}]},
             {"type": "message", "role": "developer", "content": "dev"},
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            {"type": "message", "role": "system", "content": "late"},
         ],
     }
     request = ResponsesRequest.model_validate(payload)
 
-    assert request.instructions == "primary\nsys"
+    assert request.instructions == "primary"
     assert request.input == [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
         {"type": "message", "role": "developer", "content": "dev"},
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        {"type": "message", "role": "developer", "content": "late"},
     ]
 
 
@@ -1054,42 +1060,7 @@ def test_responses_input_directive_only_request_defaults_instructions(request_ty
     assert request.to_payload()["input"] == request.input
 
 
-def test_responses_input_system_message_keeps_user_text_parts():
-    payload = {
-        "model": "gpt-5.1",
-        "instructions": "primary",
-        "input": [
-            {
-                "type": "message",
-                "role": "system",
-                "content": [{"type": "input_text", "text": "sys"}],
-            },
-            {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "hello"},
-                    {"type": "input_file", "file_id": "file_123"},
-                ],
-            },
-        ],
-    }
-    request = ResponsesRequest.model_validate(payload)
-
-    assert request.instructions == "primary\nsys"
-    assert request.input == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": "hello"},
-                {"type": "input_file", "file_id": "file_123"},
-            ],
-        }
-    ]
-
-
-def test_responses_input_system_message_preserves_non_text_parts():
+def test_responses_input_system_message_keeps_its_non_text_parts():
     payload = {
         "model": "gpt-5.1",
         "instructions": "primary",
@@ -1108,12 +1079,13 @@ def test_responses_input_system_message_preserves_non_text_parts():
     }
     request = ResponsesRequest.model_validate(payload)
 
-    assert request.instructions == "primary\nsys"
+    assert request.instructions == "primary"
     assert request.input == [
         {
             "type": "message",
-            "role": "user",
+            "role": "developer",
             "content": [
+                {"type": "input_text", "text": "sys"},
                 {"type": "input_file", "file_id": "file_123"},
                 {"type": "input_image", "image_url": "sediment://file_456"},
             ],
@@ -1149,7 +1121,7 @@ def test_responses_input_developer_message_keeps_single_non_text_part():
     assert extract_input_file_ids(request.input) == {"file_123"}
 
 
-def test_responses_compact_input_system_message_moves_to_instructions():
+def test_responses_compact_input_system_message_becomes_developer():
     payload = {
         "model": "gpt-5.1",
         "instructions": "primary",
@@ -1160,11 +1132,11 @@ def test_responses_compact_input_system_message_moves_to_instructions():
     }
     request = ResponsesCompactRequest.model_validate(payload)
 
-    assert request.instructions == "primary\nsys"
-    assert request.input == [{"role": "user", "content": "compact me"}]
+    assert request.instructions == "primary"
+    assert request.input == [{"role": "developer", "content": "sys"}, {"role": "user", "content": "compact me"}]
 
 
-def test_responses_compact_to_payload_strips_late_system_message():
+def test_responses_compact_to_payload_rewrites_late_system_message():
     request = ResponsesCompactRequest.model_validate(
         {
             "model": "gpt-5.1",
@@ -1179,11 +1151,11 @@ def test_responses_compact_to_payload_strips_late_system_message():
 
     dumped = request.to_payload()
 
-    assert dumped["instructions"] == "primary\nlate sys"
-    assert dumped["input"] == [{"role": "user", "content": "compact me"}]
+    assert dumped["instructions"] == "primary"
+    assert dumped["input"] == [{"role": "developer", "content": "late sys"}, {"role": "user", "content": "compact me"}]
 
 
-def test_v1_instructions_merge():
+def test_v1_instructions_stay_separate_from_developer_messages():
     payload = {
         "model": "gpt-5.1",
         "instructions": "primary",
@@ -1191,7 +1163,8 @@ def test_v1_instructions_merge():
     }
     request = V1ResponsesRequest.model_validate(payload).to_responses_request()
 
-    assert request.instructions == "primary\nsecondary"
+    assert request.instructions == "primary"
+    assert request.input == [{"role": "developer", "content": [{"type": "input_text", "text": "secondary"}]}]
 
 
 def test_v1_messages_and_input_conflict():

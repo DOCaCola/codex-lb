@@ -52,12 +52,6 @@ class ChatHistory:
         seen_calls: set[str] = set()
         for index, message in enumerate(_sanitize_user_messages(messages)):
             role = message.get("role")
-            if role in ("system", "developer"):
-                if pending is not None:
-                    raise ClientPayloadError(
-                        "Tool results are required before another message", param=f"messages[{index}]"
-                    )
-                continue
             if role == "tool":
                 if pending is None:
                     raise ClientPayloadError("No matching Claude tool call for this result", param=f"messages[{index}]")

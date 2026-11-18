@@ -103,22 +103,27 @@ def translate_messages_request(
     if not isinstance(tools_value, list):
         raise MessagesRequestError("tools must be an array")
     catalog = _ToolCatalog(tools_value)
-    instructions = _instructions(body.get("system"))
+    system_texts = _system_texts(body.get("system"))
     input_items = _MessagesInput(model=model, envelope_key=envelope_key, catalog=catalog).translate(
         body.get("messages")
     )
+    if system_texts:
+        # From GPT-6.2 on, top-level instructions follow the input and are never
+        # prompt-cached; a leading developer message is the cacheable placement
+        # Codex itself uses (CLIProxyAPI translates Claude system blocks the same way).
+        input_items = [_developer_message(system_texts), *input_items]
     declarations = catalog.declarations()
     tools, web_search_names, has_web_search = _translate_tools(declarations, model)
 
     payload: dict[str, JsonValue] = {
         "model": model,
-        "instructions": instructions,
+        "instructions": "",
         "input": input_items,
         "store": False,
         "stream": True,
         "include": ["reasoning.encrypted_content", *(["web_search_call.action.sources"] if has_web_search else [])],
         "parallel_tool_calls": not _disable_parallel_tool_use(body.get("tool_choice")),
-        "prompt_cache_key": _prompt_cache_key(model, identity, instructions, tools),
+        "prompt_cache_key": _prompt_cache_key(model, identity, "\n\n".join(system_texts), tools),
     }
     if tools:
         payload["tools"] = tools
@@ -187,9 +192,9 @@ def _prompt_cache_key(model: str, identity: MessagesIdentity, instructions: str,
     return hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()
 
 
-def _instructions(system: JsonValue) -> str:
+def _system_texts(system: JsonValue) -> list[str]:
     if system is None:
-        return ""
+        return []
     if isinstance(system, str):
         texts = [system]
     elif isinstance(system, list):
@@ -201,7 +206,15 @@ def _instructions(system: JsonValue) -> str:
             texts.append(text)
     else:
         raise MessagesRequestError("system must be text or an array of text blocks")
-    return "\n\n".join(text for text in texts if text and not text.startswith(_BILLING_ATTRIBUTION_PREFIX))
+    return [text for text in texts if text and not text.startswith(_BILLING_ATTRIBUTION_PREFIX)]
+
+
+def _developer_message(texts: list[str]) -> dict[str, JsonValue]:
+    return {
+        "type": "message",
+        "role": "developer",
+        "content": [{"type": "input_text", "text": text} for text in texts],
+    }
 
 
 def _declared_tool_names(tools: list[JsonValue]) -> list[str]:
@@ -493,15 +506,11 @@ class _MessagesInput:
                 for block in changes:
                     self._catalog.change(block)
                 content = [block for block in content if not any(block is change for change in changes)]
-        text = _instructions(content)
+        texts = _system_texts(content)
         # Anthropic stops rendering a turn-scoped message once any later user message exists.
-        if not text or (turn_scoped and followed_by_user):
+        if not texts or (turn_scoped and followed_by_user):
             return
-        item: dict[str, JsonValue] = {
-            "type": "message",
-            "role": "developer",
-            "content": [{"type": "input_text", "text": text}],
-        }
+        item = _developer_message(texts)
         if self._pending_tool_calls:
             self._deferred_developer.append(item)
         else:

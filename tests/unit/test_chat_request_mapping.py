@@ -64,8 +64,34 @@ def test_chat_messages_to_responses_mapping():
     }
     req = ChatCompletionsRequest.model_validate(payload)
     responses = req.to_responses_request()
-    assert responses.instructions == "sys"
-    assert responses.input == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    assert responses.instructions == ""
+    assert responses.input == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
+
+
+def test_chat_instruction_messages_keep_their_position():
+    payload = {
+        "model": "gpt-5.2",
+        "instructions": "client instructions",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "again"},
+        ],
+    }
+    responses = ChatCompletionsRequest.model_validate(payload).to_responses_request()
+
+    assert responses.instructions == "client instructions"
+    assert isinstance(responses.input, list)
+    assert [item["role"] for item in responses.input if isinstance(item, dict)] == [
+        "user",
+        "assistant",
+        "developer",
+        "user",
+    ]
 
 
 def test_chat_endpoint_accepts_responses_style_input_payload():
@@ -156,8 +182,11 @@ def test_chat_messages_accept_responses_style_text_parts():
     req = ChatCompletionsRequest.model_validate(payload)
     responses = req.to_responses_request()
 
-    assert responses.instructions == "sys"
-    assert responses.input == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    assert responses.instructions == ""
+    assert responses.input == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
 
 
 def test_chat_messages_require_objects():
@@ -476,7 +505,7 @@ def test_chat_response_format_json_object_maps_to_text_format():
     assert text.get("format") == {"type": "json_object"}
 
 
-def test_chat_response_format_json_object_preserves_instruction_roles_in_input():
+def test_chat_response_format_json_object_keeps_instructions_in_input():
     payload = {
         "model": "gpt-5.2",
         "messages": [
@@ -490,8 +519,9 @@ def test_chat_response_format_json_object_preserves_instruction_roles_in_input()
     responses = req.to_responses_request()
     dumped = responses.to_payload()
 
-    assert dumped["instructions"] == "Return JSON."
+    assert dumped["instructions"] == ""
     assert dumped["input"] == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "Return JSON."}]},
         {"role": "developer", "content": [{"type": "input_text", "text": "Keep it short."}]},
         {"role": "user", "content": [{"type": "input_text", "text": "Say hello."}]},
     ]
@@ -522,29 +552,6 @@ def test_chat_response_format_json_schema_maps_schema_fields():
     assert fmt.get("name") == "output"
     assert fmt.get("schema") == {"type": "object", "properties": {"ok": {"type": "boolean"}}}
     assert fmt.get("strict") is True
-
-
-def test_chat_response_format_json_schema_keeps_system_in_instructions():
-    payload = {
-        "model": "gpt-5.2",
-        "messages": [
-            {"role": "system", "content": "Return JSON."},
-            {"role": "user", "content": "hi"},
-        ],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "output",
-                "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
-                "strict": True,
-            },
-        },
-    }
-    req = ChatCompletionsRequest.model_validate(payload)
-    responses = req.to_responses_request()
-
-    assert responses.instructions == "Return JSON."
-    assert responses.input == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
 
 
 def test_chat_stream_options_include_obfuscation_passthrough():

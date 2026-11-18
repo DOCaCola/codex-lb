@@ -35,10 +35,16 @@ def coerce_messages(
     existing_instructions: str,
     messages: Sequence[JsonValue],
     *,
-    preserve_instruction_roles: bool = False,
     allow_nontext_tool_content: bool = False,
 ) -> tuple[str, list[JsonValue]]:
-    instruction_parts: list[str] = []
+    """Map Chat messages to Responses input; ``existing_instructions`` pass through unchanged.
+
+    System and developer messages become developer input messages in their
+    original position: the Codex backend rejects ``system`` input messages,
+    and from GPT-6.2 on only input (not top-level ``instructions``) is
+    prompt-cached. This also keeps JSON-mode instructions in the conversation
+    context that ``json_object`` validation inspects.
+    """
     input_messages: list[JsonValue] = []
     for message in messages:
         message_dict = _json_dict_or_none(message)
@@ -52,12 +58,8 @@ def coerce_messages(
             raise ClientPayloadError(f"Unsupported message role: {role}", param="messages")
         if role in ("system", "developer"):
             _ensure_text_only_content(message_dict.get("content"), role)
-            if preserve_instruction_roles:
-                input_messages.append(cast(JsonValue, _normalize_message_content(cast(OpenAIMessage, message_dict))))
-                continue
-            content_text = _content_to_text(message_dict.get("content"))
-            if content_text:
-                instruction_parts.append(content_text)
+            developer_message = cast(OpenAIMessage, {**message_dict, "role": "developer"})
+            input_messages.append(cast(JsonValue, _normalize_message_content(developer_message)))
             continue
         if role == "tool":
             input_messages.append(
@@ -78,46 +80,7 @@ def coerce_messages(
                 input_messages.append(cast(JsonValue, _normalize_message_content(cast(OpenAIMessage, message_dict))))
             continue
         input_messages.append(cast(JsonValue, _normalize_message_content(cast(OpenAIMessage, message_dict))))
-    merged = _merge_instructions(existing_instructions, instruction_parts)
-    return merged, input_messages
-
-
-def _merge_instructions(existing: str, extra_parts: list[str]) -> str:
-    if not extra_parts:
-        return existing
-    extra = "\n".join([part for part in extra_parts if part])
-    if not extra:
-        return existing
-    if existing:
-        return f"{existing}\n{extra}"
-    return extra
-
-
-def _content_to_text(content: JsonValue) -> str | None:
-    if content is None:
-        return None
-    if isinstance(content, str):
-        return content
-    if is_json_list(content):
-        parts: list[str] = []
-        for part in _content_parts(content):
-            if isinstance(part, str):
-                parts.append(part)
-            else:
-                part_dict = _json_dict_or_none(part)
-                if part_dict is None:
-                    continue
-                text = part_dict.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "\n".join([part for part in parts if part])
-    content_dict = _json_dict_or_none(content)
-    if content_dict is not None:
-        text = content_dict.get("text")
-        if isinstance(text, str):
-            return text
-        return None
-    return None
+    return existing_instructions, input_messages
 
 
 def _ensure_text_only_content(content: JsonValue, role: str) -> None:

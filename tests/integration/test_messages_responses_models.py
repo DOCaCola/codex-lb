@@ -174,7 +174,12 @@ async def test_claude_code_turns_served_by_native_account(async_client, monkeypa
     assert events[8]["usage"]["input_tokens"] == 400
     assert events[8]["usage"]["cache_read_input_tokens"] == 600
     upstream = seen[0]
-    assert upstream["instructions"] == "Rules"
+    assert upstream["instructions"] == ""
+    assert upstream["input"][0] == {
+        "type": "message",
+        "role": "developer",
+        "content": [{"type": "input_text", "text": "Rules"}],
+    }
     assert upstream["reasoning"]["effort"] == "high"
     assert upstream["include"] == ["reasoning.encrypted_content"]
     first_cache_key = upstream["prompt_cache_key"]
