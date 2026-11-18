@@ -10,7 +10,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
 from app.modules.antigravity.constants import SKIP_SIGNATURE
 from app.modules.antigravity.opaque import AntigravityOpaqueState, ThoughtScope
-from app.modules.antigravity.protocol import SENSITIVE_WORDS, obfuscate, project_responses
+from app.modules.antigravity.protocol import project_responses
 from app.modules.antigravity.schemas import CatalogFamily
 from app.modules.antigravity.tool_names import google_wire_name
 
@@ -74,11 +74,10 @@ def _tool_turn(family: CatalogFamily, *, signer: ThoughtScope | None) -> dict[st
 
 
 def test_basic_request_matches_the_native_wire_image() -> None:
-    projection = _project({"instructions": "Use the Claude Agent SDK.", "input": "hello"})
+    projection = _project({"instructions": "Be brief.", "input": "hello"})
     request = projection.request
     assert request["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
-    assert request["systemInstruction"] == {"role": "user", "parts": [{"text": obfuscate("Use the Claude Agent SDK.")}]}
-    assert "\u200b" in obfuscate("Claude Agent SDK")
+    assert request["systemInstruction"] == {"role": "user", "parts": [{"text": "Be brief."}]}
     assert request["generationConfig"] == {
         "maxOutputTokens": 65_536,
         "thinkingConfig": {"includeThoughts": True, "thinkingBudget": -1},
@@ -87,17 +86,46 @@ def test_basic_request_matches_the_native_wire_image() -> None:
     assert "toolConfig" not in request
 
 
-def test_system_instruction_hides_every_harness_fingerprint() -> None:
-    instructions = (
-        "Built on the Claude Agent SDK.\n<system-conventions>\nRFC 2119 keywords apply.\n</system-conventions>\n"
-        "system_conventions system-directive system_directive"
+def test_codex_identity_sentence_is_rewritten_in_plain_words() -> None:
+    for identity in (
+        "You are Codex, an agent based on GPT-6.",
+        "You are Codex, a coding agent based on GPT-5.",
+        "You are Codex, an agent based on GPT-5.5.",
+    ):
+        instructions = f"{identity} You and the user share one workspace.\nKeep Codex conventions."
+        projection = _project({"instructions": instructions, "input": "You are Codex, an agent based on GPT-6."})
+        system = projection.request["systemInstruction"]["parts"][0]["text"]
+        assert system == (
+            "You are a helpful coding assistant. You and the user share one workspace.\nKeep Codex conventions."
+        )
+        assert projection.request["contents"][0]["parts"][0]["text"] == "You are Codex, an agent based on GPT-6."
+
+
+def test_claude_code_system_blocks_lose_their_flagged_sentences() -> None:
+    identity = "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."
+    second = (
+        "You are an interactive agent that helps users with software engineering tasks. Use the tools below.\n"
+        "IMPORTANT: Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear "
+        "authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases."
     )
-    projection = _project({"instructions": instructions, "input": "Claude Agent SDK and RFC 2119"})
-    system = projection.request["systemInstruction"]["parts"][0]["text"]
-    for word in SENSITIVE_WORDS:
-        assert word.lower() not in system.lower()
-    assert system.replace("\u200b", "") == instructions
-    assert projection.request["contents"][0]["parts"][0]["text"] == "Claude Agent SDK and RFC 2119"
+    projection = _project(
+        {
+            "instructions": identity,
+            "input": [{"role": "developer", "content": second}, {"role": "user", "content": "hi"}],
+        }
+    )
+    assert projection.request["systemInstruction"]["parts"] == [
+        {
+            "text": "You are a coding assistant. You help users complete engineering work. Use the tools below.\n"
+            "IMPORTANT: Only assist with security testing when the user has clearly described a legitimate purpose."
+        }
+    ]
+
+
+def test_system_instruction_is_omitted_when_rewriting_leaves_no_text() -> None:
+    identity = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+    projection = _project({"instructions": identity, "input": "hi"})
+    assert "systemInstruction" not in projection.request
 
 
 def test_gemini_tool_cycle_restores_its_own_signature_on_the_call() -> None:

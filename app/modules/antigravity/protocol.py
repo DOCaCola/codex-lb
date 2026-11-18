@@ -46,18 +46,31 @@ from app.modules.claude.tool_names import ToolIdentity
 logger = logging.getLogger(__name__)
 
 _IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"})
-# Phrases that make Cloud Code answer a bare 429 despite remaining quota (CLIProxyAPI #5695, #5751);
-# CLIProxyAPI PR #6280 obfuscates them in the system instruction by default.
-SENSITIVE_WORDS = (
-    "Claude Agent SDK",
-    "system-conventions",
-    "system_conventions",
-    "system-directive",
-    "system_directive",
-    "RFC 2119",
+# System-instruction sentences that Cloud Code answers with a bare 429 RESOURCE_EXHAUSTED despite
+# remaining quota; each was isolated in controlled tests, and the same text in user messages or tool
+# descriptions passes. Invisible-character obfuscation is recognized upstream (CLIProxyAPI #7428,
+# #7545), so flagged text is rewritten in plain words: competing-agent identity sentences are removed
+# (OmniRoute #10420), the rest keep their meaning in neutral wording that returned 200.
+SYSTEM_REWRITES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    # CLIProxyAPI #7428, #7545: "You are Codex, an agent based on GPT-6." and its variants.
+    ("codex_identity", re.compile(r"\bYou are Codex\b[^\n]*?\.(?=\s|$)"), "You are a helpful coding assistant."),
+    # OmniRoute #10420, CLIProxyAPI #7553: Claude Code and Agent SDK identity lines.
+    ("claude_code_identity", re.compile(r"\byou are claude code\b[^\n]*", re.I), ""),
+    ("claude_agent_identity", re.compile(r"\byou are a claude agent\b[^\n]*", re.I), ""),
+    ("claude_agent_sdk_identity", re.compile(r"\bbuilt on anthropic's claude agent sdk\b[^\n]*", re.I), ""),
+    ("anthropic_identity", re.compile(r"\byou are an ai assistant created by anthropic\b[^\n]*", re.I), ""),
+    # CLIProxyAPI #7627: Claude Code's second system block.
+    (
+        "claude_code_role",
+        re.compile(r"You are an interactive agent that helps users with software engineering tasks\.", re.I),
+        "You are a coding assistant. You help users complete engineering work.",
+    ),
+    (
+        "dual_use_security",
+        re.compile(r"Dual-use security tools\s*\([^)]*\)\s*require clear authorization context[^.]*\.", re.I),
+        "Only assist with security testing when the user has clearly described a legitimate purpose.",
+    ),
 )
-_SENSITIVE = re.compile("|".join(re.escape(word) for word in sorted(SENSITIVE_WORDS, key=len, reverse=True)), re.I)
-_ZERO_WIDTH_SPACE = "\u200b"
 _TOOL_OUTPUTS = frozenset({"function_call_output", "custom_tool_call_output", "tool_search_output"})
 SEARCH_IDENTITY = ToolIdentity(SEARCH_TOOL_NAME, None, False, hosted=True)
 
@@ -66,9 +79,18 @@ def invalid(message: str, param: str = "input") -> ClientPayloadError:
     return ClientPayloadError(message, param=param, code="unsupported_parameter")
 
 
-def obfuscate(text: str) -> str:
-    """Insert a zero-width space after the first character of each sensitive phrase (CLIProxyAPI cloak)."""
-    return _SENSITIVE.sub(lambda match: match.group(0)[0] + _ZERO_WIDTH_SPACE + match.group(0)[1:], text)
+def rewrite_system(texts: list[str]) -> tuple[list[str], list[str]]:
+    """Apply SYSTEM_REWRITES; parts left blank by a removal are dropped. Returns the parts and fired rules."""
+    fired: list[str] = []
+    rewritten: list[str] = []
+    for text in texts:
+        for name, pattern, replacement in SYSTEM_REWRITES:
+            text, count = pattern.subn(replacement, text)
+            if count and name not in fired:
+                fired.append(name)
+        if text.strip():
+            rewritten.append(text)
+    return rewritten, fired
 
 
 @dataclass
@@ -536,11 +558,11 @@ def project_responses(
         contents.append({"role": "user", "parts": [{"text": "(continue)"}]})
         logger.info("antigravity_continuation_projected request_id=%s reason=model_tail", get_request_id())
     request: dict[str, JsonValue] = {"contents": cast(JsonValue, contents)}
-    if system:
-        request["systemInstruction"] = {
-            "role": "user",
-            "parts": [{"text": obfuscate(str(part["text"]))} for part in system],
-        }
+    system_texts, rewrites = rewrite_system([str(part["text"]) for part in system])
+    if rewrites:
+        logger.info("antigravity_system_rewritten request_id=%s rules=%s", get_request_id(), ",".join(rewrites))
+    if system_texts:
+        request["systemInstruction"] = {"role": "user", "parts": [{"text": text} for text in system_texts]}
     choice = payload.get("tool_choice", "auto")
     if isinstance(choice, dict) and choice.get("type") in ("auto", "none", "required") and len(choice) == 1:
         choice = choice["type"]
