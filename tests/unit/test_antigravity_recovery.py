@@ -48,6 +48,16 @@ async def test_quota_moves_to_another_account(recorded: list[UpstreamFailure]) -
     assert [failure.kind for failure in recorded] == ["quota"]
 
 
+async def test_ban_is_recorded_and_ends_the_request(recorded: list[UpstreamFailure]) -> None:
+    state = _state()
+    error = _error("banned")
+    assert error.status_code == 403
+    assert error.upstream_headers == {"x-should-retry": "false"}
+    assert error.retry_after is None
+    assert await plan_retry(state, error) is None
+    assert [failure.kind for failure in recorded] == ["banned"]
+
+
 async def test_short_rate_limit_waits_once_in_place(recorded: list[UpstreamFailure]) -> None:
     state = _state()
     assert await plan_retry(state, _error("rate_limit", retry_after=timedelta(seconds=2))) == 2.0

@@ -27,9 +27,11 @@ MAX_SENDS = 4
 # Upstream 429 answers one request may absorb before reporting (OmniRoute #18140).
 MAX_UPSTREAM_429 = 2
 # Claude Code and the OpenAI and Anthropic SDKs do not resend a response carrying this header; Codex does not
-# resend a 429 without a retry delay. A refusal that follows the request content is reported this way, so no
-# client loop sends the refused content to Google again.
+# resend a 429 without a retry delay or any 4xx other than 429. A refusal that follows the request content is
+# reported this way, so no client loop sends the refused content to Google again.
 _FINAL = {"x-should-retry": "false"}
+# Failures that follow the content of the request, not one account's state.
+_CONTENT_FINAL = frozenset({"unexplained_429", "banned"})
 
 
 def _error(kind: str, code: str, message: str) -> dict[str, JsonValue]:
@@ -60,7 +62,7 @@ def client_error(failure: UpstreamFailure) -> tuple[int, dict[str, JsonValue]]:
         case "auth":
             return 502, _error("upstream_error", "antigravity_unauthenticated", "Antigravity rejected the credentials")
         case "banned":
-            return 503, _error("server_error", "antigravity_account_banned", message)
+            return 403, _error("permission_error", "antigravity_account_banned", message)
         case "verification":
             # The message may carry the verification link and its continuation token.
             return 503, _error(
@@ -103,7 +105,7 @@ class AntigravityUpstreamError(ModelSourceForwardingError):
         self.upstream_retry_after = retry_after
         if retry_after is None and failure.retry_after is not None:
             retry_after = str(max(1, math.ceil(failure.retry_after.total_seconds())))
-        if failure.kind == "unexplained_429":
+        if failure.kind in _CONTENT_FINAL:
             retry_after = None
             upstream_headers = {**(upstream_headers or {}), **_FINAL}
         super().__init__(
@@ -195,7 +197,12 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
             return None
     delay: float | None
     match kind:
-        case "quota" | "banned" | "verification" | "not_found" | "permission":
+        case "banned":
+            # Google bans the account that submitted this content; replaying it from the next account
+            # would submit it again and can take out the pool (CLIProxyAPI #7636, opencodex #8826).
+            await _record(state, failure)
+            return None
+        case "quota" | "verification" | "not_found" | "permission":
             await _record(state, failure)
             state.excluded.add(source_id)
             delay = 0.0

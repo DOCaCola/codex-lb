@@ -153,6 +153,7 @@ def install_upstream(
     *,
     rejections: int = 0,
     rejection: dict[str, Any] = QUOTA_EXHAUSTED,
+    rejection_status: int = 429,
     rounds: list[list[dict[str, Any]]] | None = None,
 ):
     """Fake streamGenerateContent; each accepted request answers with the next of rounds."""
@@ -167,7 +168,9 @@ def install_upstream(
         assert kwargs["skip_auto_headers"] is GO_SKIP_AUTO_HEADERS
         captured.append((source.id, payload, kwargs["prepared_headers"]))
         if len(captured) <= rejections:
-            raise ModelSourceForwardingError(status_code=429, payload=rejection, upstream_status_code=429)
+            raise ModelSourceForwardingError(
+                status_code=rejection_status, payload=rejection, upstream_status_code=rejection_status
+            )
         lines = answers[min(len(captured) - rejections, len(answers)) - 1]
 
         async def chunks(_size):
@@ -223,6 +226,32 @@ async def test_quota_exhaustion_fails_over_to_the_next_account(async_client, poo
     assert [source_id for source_id, _, _ in captured] in ([pool[0], pool[1]], [pool[1], pool[0]])
     # The conversation keeps one cascade across accounts; only the project and token change.
     assert captured[0][1]["request"]["labels"]["cascade_id"] == captured[1][1]["request"]["labels"]["cascade_id"]
+
+
+async def test_ban_ends_the_request_without_walking_the_pool(async_client, pool, monkeypatch):
+    ban = {
+        "error": {
+            "code": 403,
+            "status": "PERMISSION_DENIED",
+            "message": "This service has been disabled in this account for violation of Terms of Service.",
+        }
+    }
+    captured = install_upstream(monkeypatch, rejections=1, rejection=ban, rejection_status=403)
+
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={"model": GEMINI, "input": "Hi", "stream": False, "prompt_cache_key": "conversation-ban"},
+        headers={"session_id": "conversation-ban"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "antigravity_account_banned"
+    assert response.headers["x-should-retry"] == "false"
+    assert len(captured) == 1
+    accounts = (await async_client.get("/api/antigravity-accounts")).json()["accounts"]
+    holds = {account["id"]: account["hold"] for account in accounts}
+    assert holds[captured[0][0]] == "banned"
+    assert [hold for source_id, hold in holds.items() if source_id != captured[0][0]] == [None]
 
 
 EMPTY: list[dict[str, Any]] = [
