@@ -32,7 +32,7 @@ from app.modules.antigravity.protocol import project_responses
 from app.modules.antigravity.quota import plan_type
 from app.modules.antigravity.recovery import RecoveryState
 from app.modules.antigravity.repository import AntigravityRepository
-from app.modules.antigravity.responses import GeminiProjection, Usage
+from app.modules.antigravity.responses import GeminiProjection
 from app.modules.antigravity.routing import catalog_family, claim_session, select_account
 from app.modules.antigravity.schemas import AccountState, CatalogFamily, Effort
 from app.modules.antigravity.search import SearchContext
@@ -80,11 +80,8 @@ class PreparedAntigravityRequest:
     def headers(self) -> dict[str, str]:
         return native_headers(self.access_token, self.identity)
 
-    def projection(self, opaque: AntigravityOpaqueState, *, prior: Usage | None = None) -> GeminiProjection:
-        carried = prior or Usage()
-        return GeminiProjection(
-            self.model, self.scope, self.tools, opaque, self.show_summary, usage=carried, prior=carried
-        )
+    def projection(self, opaque: AntigravityOpaqueState) -> GeminiProjection:
+        return GeminiProjection(self.model, self.scope, self.tools, opaque, self.show_summary)
 
 
 @dataclass(frozen=True)

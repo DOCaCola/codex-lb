@@ -3,7 +3,8 @@
 Generated events are held until the response shows visible text or a call. A
 generation that finishes without either is resent once on the same account
 before anything reached the client; the client receives keepalive comments
-meanwhile, and both attempts' usage is billed with the response.
+meanwhile. The client's usage is the final attempt's, the context it continues
+from; the response is billed for both attempts.
 
 A round that only called search_web is answered by the gateway on the same
 account; the response then continues with the next upstream round.
@@ -30,7 +31,7 @@ from app.modules.antigravity.constants import GO_SKIP_AUTO_HEADERS
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.inference import AntigravityAttempt
 from app.modules.antigravity.recovery import AntigravityUpstreamError
-from app.modules.antigravity.responses import EmptyCompletion
+from app.modules.antigravity.responses import EmptyCompletion, Usage
 from app.modules.antigravity.search import SearchOutcome, run_search
 from app.modules.claude.credentials import ClaudeError
 from app.modules.model_sources.forwarding import (
@@ -41,6 +42,7 @@ from app.modules.model_sources.forwarding import (
     SourceStreamUsageParser,
     SourceUsageHolder,
     _open_source_stream,
+    _usage_from_responses_mapping,
     source_stream_idle_seconds,
 )
 
@@ -163,6 +165,8 @@ async def open_responses(
     async def frames() -> AsyncIterator[bytes]:
         nonlocal events
         projection = prepared.projection(attempt.opaque)
+        # Usage of the discarded empty attempt: billed, never reported to the client.
+        discarded: Usage | None = None
         held: list[bytes] = []
         released = False
         resent = False
@@ -223,11 +227,11 @@ async def open_responses(
                         "antigravity_empty_completion_retry source_id=%s model=%s", prepared.source.id, prepared.model
                     )
                     held.clear()
-                    prior = projection.usage
+                    discarded = projection.usage
                     await upstream.aclose()
                     events = await upstream.open()
                     opening = None
-                    projection = prepared.projection(attempt.opaque, prior=prior)
+                    projection = prepared.projection(attempt.opaque)
         except ModelSourceForwardingError:
             if released:
                 for converted in projection.interrupt():
@@ -251,6 +255,8 @@ async def open_responses(
                 "model_source_unreachable", f"Antigravity transport failed before completion: {type(exc).__name__}"
             ) from exc
         finally:
+            if discarded is not None:
+                holder.usage = _usage_from_responses_mapping(discarded.plus(projection.usage).responses())
             observer.end_timing()
             await transport.aclose()
 

@@ -111,7 +111,7 @@ def test_reasoning_only_completion_is_empty() -> None:
         _run(projection, _line({"text": "hmm", "thought": True}, finish="STOP"))
 
 
-def test_retry_usage_carries_the_earlier_attempt() -> None:
+def test_continued_round_usage_carries_the_earlier_rounds() -> None:
     projection = _projection()
     projection.prior = Usage(prompt=100, cached=0, candidates=0, thoughts=7)
     events = _run(

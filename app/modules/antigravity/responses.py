@@ -57,6 +57,14 @@ class Usage:
     candidates: int = 0
     thoughts: int = 0
 
+    def plus(self, other: Usage) -> Usage:
+        return Usage(
+            prompt=self.prompt + other.prompt,
+            cached=self.cached + other.cached,
+            candidates=self.candidates + other.candidates,
+            thoughts=self.thoughts + other.thoughts,
+        )
+
     def responses(self) -> dict[str, JsonValue]:
         output = self.candidates + self.thoughts
         return {
@@ -87,7 +95,7 @@ class GeminiProjection:
     sequence: int = 0
     outputs: dict[int, dict[str, JsonValue]] = field(default_factory=dict)
     usage: Usage = field(default_factory=Usage)
-    # Usage of an earlier attempt of this same response (the empty-completion retry), billed with it.
+    # Usage of the response's earlier upstream rounds (a search continuation), reported with it.
     prior: Usage = field(default_factory=Usage)
     # The open reasoning item (output index, accumulated thought) or assistant message.
     thought: tuple[int, str] | None = None
@@ -155,11 +163,13 @@ class GeminiProjection:
         events = [] if self.started else self._start(chunk)
         metadata = chunk.get("usageMetadata")
         if isinstance(metadata, dict):
-            self.usage = Usage(
-                prompt=self.prior.prompt + _count(metadata, "promptTokenCount"),
-                cached=self.prior.cached + _count(metadata, "cachedContentTokenCount"),
-                candidates=self.prior.candidates + _count(metadata, "candidatesTokenCount"),
-                thoughts=self.prior.thoughts + _count(metadata, "thoughtsTokenCount"),
+            self.usage = self.prior.plus(
+                Usage(
+                    prompt=_count(metadata, "promptTokenCount"),
+                    cached=_count(metadata, "cachedContentTokenCount"),
+                    candidates=_count(metadata, "candidatesTokenCount"),
+                    thoughts=_count(metadata, "thoughtsTokenCount"),
+                )
             )
         feedback = chunk.get("promptFeedback")
         if isinstance(feedback, dict) and isinstance(feedback.get("blockReason"), str):

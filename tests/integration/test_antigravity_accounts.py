@@ -225,6 +225,60 @@ async def test_quota_exhaustion_fails_over_to_the_next_account(async_client, poo
     assert captured[0][1]["request"]["labels"]["cascade_id"] == captured[1][1]["request"]["labels"]["cascade_id"]
 
 
+EMPTY: list[dict[str, Any]] = [
+    {
+        "response": {
+            "candidates": [
+                {"content": {"role": "model", "parts": [{"text": "hmm", "thought": True}]}, "finishReason": "STOP"}
+            ],
+            "usageMetadata": {"promptTokenCount": 12, "thoughtsTokenCount": 5},
+            "responseId": "fixture",
+        }
+    }
+]
+
+
+async def _latest_log(model: str):
+    from sqlalchemy import select
+
+    from app.db.models import RequestLog
+
+    async with SessionLocal() as session:
+        row = (
+            await session.scalars(select(RequestLog).where(RequestLog.model == model).order_by(RequestLog.id.desc()))
+        ).first()
+    assert row is not None
+    return row
+
+
+async def test_empty_completion_retry_reports_the_final_attempt_and_bills_both(async_client, pool, monkeypatch):
+    captured = install_upstream(monkeypatch, rounds=[EMPTY, HELLO])
+
+    body = await ask(async_client, GEMINI)
+
+    assert len(captured) == 2
+    assert body["output"][-1]["content"][0]["text"] == "Hello there"
+    # The client reads input tokens as its context size: only the attempt it continues from counts.
+    assert (body["usage"]["input_tokens"], body["usage"]["output_tokens"]) == (12, 3)
+    row = await _latest_log(GEMINI)
+    assert (row.input_tokens, row.output_tokens, row.reasoning_tokens) == (24, 8, 5)
+
+
+async def test_repeated_empty_completion_bills_both_attempts(async_client, pool, monkeypatch):
+    captured = install_upstream(monkeypatch, rounds=[EMPTY, EMPTY])
+
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={"model": GEMINI, "input": "Hi", "stream": True, "prompt_cache_key": "conversation-empty"},
+        headers={"session_id": "conversation-empty"},
+    )
+
+    assert len(captured) == 2
+    assert "empty_completion" in response.text
+    row = await _latest_log(GEMINI)
+    assert (row.input_tokens, row.output_tokens, row.reasoning_tokens) == (24, 10, 10)
+
+
 @pytest.mark.parametrize(
     ("path", "body", "headers"),
     [
