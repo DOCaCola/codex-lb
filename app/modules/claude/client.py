@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import TypeVar
 
 import aiohttp
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from app.core.clients.http import lease_model_source_session
 from app.modules.claude.credentials import CLIENT_ID, PKCE, TOKEN_URL, ClaudeError
@@ -53,7 +53,7 @@ def retry_seconds(value: str | None) -> int:
 
 
 class ClaudeClient:
-    async def _token(self, body: dict[str, str]) -> Credentials:
+    async def _token(self, body: dict[str, str], current_refresh_token: SecretStr | None) -> Credentials:
         # Record durable intent in the caller before entering this method. A
         # transport/parse failure cannot prove that a rotating grant survived.
         try:
@@ -79,14 +79,14 @@ class ClaudeClient:
                             terminal=terminal,
                             retry_seconds=retry_seconds(response.headers.get("Retry-After")),
                         )
-                    return TokenResponse.model_validate_json(raw).credentials(datetime.now(UTC))
+                    return TokenResponse.model_validate_json(raw).credentials(datetime.now(UTC), current_refresh_token)
         except TokenRejected:
             raise
         except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             raise TokenOutcomeUncertain("Claude token exchange outcome is uncertain; sign in again") from exc
 
     async def exchange(self, flow: PKCE, code: str) -> Credentials:
-        return await self._token(flow.exchange_body(code))
+        return await self._token(flow.exchange_body(code), None)
 
     async def refresh(self, credentials: Credentials) -> Credentials:
         return await self._token(
@@ -94,7 +94,8 @@ class ClaudeClient:
                 "grant_type": "refresh_token",
                 "client_id": CLIENT_ID,
                 "refresh_token": credentials.refresh_token.get_secret_value(),
-            }
+            },
+            credentials.refresh_token,
         )
 
     async def _get(self, path: str, token: str, version: str, schema: type[T]) -> T:

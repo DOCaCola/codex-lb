@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from cryptography.fernet import Fernet
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from app.core.crypto import TokenEncryptor
 from app.modules.claude.credentials import PKCE, ClaudeError, decrypt_credentials, encrypt_credentials
@@ -52,7 +52,33 @@ def test_token_response_uses_seconds_not_milliseconds():
             "scope": "user:inference",
         }
     )
-    assert token.credentials(datetime(2026, 1, 1, tzinfo=UTC)).expires_at == datetime(2026, 1, 1, 1, tzinfo=UTC)
+    assert token.credentials(datetime(2026, 1, 1, tzinfo=UTC), None).expires_at == datetime(2026, 1, 1, 1, tzinfo=UTC)
+
+
+def test_token_response_without_refresh_token_keeps_the_current_one():
+    token = TokenResponse.model_validate(
+        {"access_token": "a2", "token_type": "Bearer", "expires_in": 3600, "scope": "user:inference"}
+    )
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    credentials = token.credentials(now, SecretStr("r1"))
+    assert credentials.access_token.get_secret_value() == "a2"
+    assert credentials.refresh_token.get_secret_value() == "r1"
+    with pytest.raises(ValueError, match="no refresh token"):
+        token.credentials(now, None)
+
+
+def test_token_response_applies_a_rotated_refresh_token():
+    token = TokenResponse.model_validate(
+        {
+            "access_token": "a2",
+            "refresh_token": "r2",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "user:inference",
+        }
+    )
+    credentials = token.credentials(datetime(2026, 1, 1, tzinfo=UTC), SecretStr("r1"))
+    assert credentials.refresh_token.get_secret_value() == "r2"
 
 
 def test_pkce_state_and_verifier_are_independent_and_bound():

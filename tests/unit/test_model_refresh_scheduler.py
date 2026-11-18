@@ -180,6 +180,35 @@ async def test_refresh_access_token_network_body_read_failure_is_not_replay_safe
     assert exc_info.value.failed_session is session
 
 
+class _TokenResponse:
+    status = 200
+
+    def __init__(self, body: dict[str, str]) -> None:
+        self.body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def json(self, *, content_type=None):
+        del content_type
+        return self.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("issued", "kept"), [({}, "refresh-token"), ({"refresh_token": "rotated"}, "rotated")])
+async def test_refresh_access_token_keeps_the_refresh_token_unless_rotated(issued: dict[str, str], kept: str) -> None:
+    session = MagicMock()
+    session.post.return_value = _TokenResponse({"access_token": "access-new", "id_token": "id-new", **issued})
+
+    result = await refresh_module.refresh_access_token("refresh-token", session=session, allow_direct_egress=True)
+
+    assert result.access_token == "access-new"
+    assert result.refresh_token == kept
+
+
 @pytest.mark.asyncio
 async def test_fetch_with_failover_refreshes_http_client_after_transport_error(
     monkeypatch: pytest.MonkeyPatch,

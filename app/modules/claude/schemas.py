@@ -118,18 +118,22 @@ class CredentialFile(BaseModel):
 class TokenResponse(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
     access_token: SecretStr = Field(min_length=1)
-    refresh_token: SecretStr = Field(min_length=1)
+    refresh_token: SecretStr | None = Field(default=None, min_length=1)
     expires_in: int = Field(strict=True, gt=0, le=31_536_000)
     token_type: Literal["Bearer", "bearer"]
     scope: str
 
-    def credentials(self, now: datetime) -> Credentials:
+    def credentials(self, now: datetime, current_refresh_token: SecretStr | None) -> Credentials:
+        """A refresh response may omit the refresh token, which keeps the current one (RFC 6749 section 6)."""
         scopes = self.scope.split()
         if "user:inference" not in scopes:
             raise ValueError("A user:inference grant is required")
+        refresh_token = self.refresh_token or current_refresh_token
+        if refresh_token is None:
+            raise ValueError("The token response carries no refresh token")
         return Credentials(
             access_token=self.access_token,
-            refresh_token=self.refresh_token,
+            refresh_token=refresh_token,
             expires_at=now + timedelta(seconds=self.expires_in),
             scopes=scopes,
         )

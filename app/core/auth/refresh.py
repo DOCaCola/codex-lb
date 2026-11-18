@@ -308,7 +308,7 @@ async def refresh_access_token(
             failed_session=failed_session if route is None else None,
         ) from exc
 
-    if not payload_data.access_token or not payload_data.refresh_token or not payload_data.id_token:
+    if not payload_data.access_token or not payload_data.id_token:
         raise RefreshError("invalid_response", "Refresh response missing tokens", False)
 
     claims = extract_id_token_claims(payload_data.id_token)
@@ -323,7 +323,8 @@ async def refresh_access_token(
 
     return TokenRefreshResult(
         access_token=payload_data.access_token,
-        refresh_token=payload_data.refresh_token,
+        # RFC 6749 section 6: a response without a new refresh token keeps the current one, as the Codex client does.
+        refresh_token=payload_data.refresh_token or refresh_token,
         id_token=payload_data.id_token,
         account_id=account_id,
         plan_type=plan_type,
