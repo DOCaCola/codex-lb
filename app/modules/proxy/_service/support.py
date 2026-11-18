@@ -1151,6 +1151,11 @@ class _WebSocketRequestState:
     # explicit turn-state header guarantees continuity for stale recovery.
     hard_continuity_anchor: bool = False
     proxy_injected_previous_response_id: bool = False
+    # Whether this request's input restates the whole context its response
+    # builds on: no client anchor, or a client full resend proven against stored
+    # context. A client-anchored delta does not, so its completion must not
+    # later prove an anchorless replay (Soju06 #2730).
+    input_covers_anchor_context: bool = False
     # Upstream WebSocket connection that completed a proxy-injected anchor.
     # Responses with ``store=false`` live only in that connection's memory, so
     # the anchor is valid on that connection alone. ``None`` means no live
@@ -1660,6 +1665,10 @@ class _WebSocketContinuityState:
     # optimization for this selector, not provider-neutral conversation state.
     last_completed_model_selector: str | None = None
     last_completed_input_prefix_fingerprint: str | None = None
+    # The stored count/fingerprint describe the completed response's whole
+    # context only when its request input covered it
+    # (``_WebSocketRequestState.input_covers_anchor_context``).
+    last_completed_input_covers_context: bool = False
     last_pending_function_call_ids: list[str] = field(default_factory=list)
     last_pending_tool_call_types: dict[str, str] = field(default_factory=dict)
     responses_lite_model: str | None = None
@@ -1670,6 +1679,7 @@ class _WebSocketContinuityState:
     empty_prewarm_response_id: str | None = None
     empty_prewarm_input_count: int = 0
     empty_prewarm_input_fingerprint: str | None = None
+    empty_prewarm_input_covers_context: bool = False
     # Logical conversation (input followed by output) of
     # ``last_completed_response_id`` / ``empty_prewarm_response_id``. A client
     # delta anchored to one expands to the self-contained full resend Codex

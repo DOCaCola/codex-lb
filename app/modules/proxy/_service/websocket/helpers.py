@@ -810,6 +810,7 @@ def _retire_websocket_continuity_anchor(continuity_state: _WebSocketContinuitySt
     continuity_state.last_completed_model_selector = None
     continuity_state.last_completed_input_count = 0
     continuity_state.last_completed_input_prefix_fingerprint = None
+    continuity_state.last_completed_input_covers_context = False
     continuity_state.last_completed_history = None
     continuity_state.last_pending_function_call_ids = []
     continuity_state.last_pending_tool_call_types = {}
@@ -920,31 +921,41 @@ def _websocket_client_previous_response_full_resend_is_retry_safe(
         return False
     if not _websocket_input_items_are_self_contained_fresh_replay(input_items):
         return False
-    if continuity_state is not None and continuity_state.empty_prewarm_response_id == previous_response_id:
+    # Only a client input proven to restate the stored context of an anchor
+    # this connection recorded may be replayed without the anchor. Codex sends
+    # ``previous_response_id`` with only the incremental delta, so for any other
+    # anchor (an earlier connection or process, or a completion recorded from a
+    # delta) the delta is indistinguishable from a full history, and replaying it
+    # anchorless would silently drop the earlier context (Soju06 #2730). Failing
+    # closed surfaces ``previous_response_not_found``, which Codex answers with
+    # its complete history.
+    if continuity_state is None:
+        return False
+    if continuity_state.empty_prewarm_response_id == previous_response_id:
         # Codex chains its first turn to an empty prewarm and sends only the
         # new items, so dropping the anchor would drop the tools and developer
         # context that only the prewarm carried.
-        return _facade()._input_prefix_matches_stored_context(
+        return continuity_state.empty_prewarm_input_covers_context and _facade()._input_prefix_matches_stored_context(
             input_value,
             stored_count=continuity_state.empty_prewarm_input_count,
             stored_fingerprint=continuity_state.empty_prewarm_input_fingerprint,
             fingerprints=input_fingerprints,
         )
     if (
-        continuity_state is not None
-        and continuity_state.last_completed_response_id == previous_response_id
-        and (
-            continuity_state.last_completed_input_count > 0
-            or continuity_state.last_completed_input_prefix_fingerprint is not None
+        continuity_state.last_completed_response_id != previous_response_id
+        or not continuity_state.last_completed_input_covers_context
+        or (
+            continuity_state.last_completed_input_count <= 0
+            and continuity_state.last_completed_input_prefix_fingerprint is None
         )
     ):
-        return _facade()._input_prefix_matches_stored_context(
-            input_value,
-            stored_count=continuity_state.last_completed_input_count,
-            stored_fingerprint=continuity_state.last_completed_input_prefix_fingerprint,
-            fingerprints=input_fingerprints,
-        )
-    return True
+        return False
+    return _facade()._input_prefix_matches_stored_context(
+        input_value,
+        stored_count=continuity_state.last_completed_input_count,
+        stored_fingerprint=continuity_state.last_completed_input_prefix_fingerprint,
+        fingerprints=input_fingerprints,
+    )
 
 
 def _record_websocket_continuity_completion(
@@ -966,6 +977,7 @@ def _record_websocket_continuity_completion(
     # is cleared rather than left stale when the completed turn cannot
     # provide one.
     continuity_state.last_completed_response_id = response_id
+    continuity_state.last_completed_input_covers_context = request_state.input_covers_anchor_context
     continuity_state.last_completed_client_response_id = request_state.replay_downstream_response_id or response_id
     continuity_state.last_completed_upstream_connection_id = request_state.upstream_connection_id
     continuity_state.last_completed_response_transport = upstream_transport
@@ -996,6 +1008,7 @@ def _record_websocket_empty_prewarm_completion(
     # turn chained to it references that id, never the hidden upstream one.
     continuity_state.empty_prewarm_response_id = request_state.replay_downstream_response_id or response_id
     continuity_state.empty_prewarm_history = request_state.materialized_input
+    continuity_state.empty_prewarm_input_covers_context = request_state.input_covers_anchor_context
     if request_state.input_item_count > 0 and request_state.input_full_fingerprint is not None:
         continuity_state.empty_prewarm_input_count = request_state.input_item_count
         continuity_state.empty_prewarm_input_fingerprint = request_state.input_full_fingerprint

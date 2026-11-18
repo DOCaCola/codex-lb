@@ -3405,7 +3405,7 @@ def test_backend_responses_websocket_lite_marker_requires_previous_response_link
     assert sent_payloads[4]["previous_response_id"] == "resp_ws_lite_2"
 
 
-def test_backend_responses_websocket_lite_fresh_replay_drops_marker_after_previous_response_miss(
+def test_backend_responses_websocket_lite_previous_response_miss_replays_retained_history(
     app_instance,
     monkeypatch,
 ):
@@ -3541,9 +3541,10 @@ def test_backend_responses_websocket_lite_fresh_replay_drops_marker_after_previo
             "client_metadata": {marker: "true"},
             "stream": True,
         },
-        # Trusted marker-only incremental with a multi-item self-contained
-        # input: a fresh full-resend replay is prepared for it, and the
-        # upstream previous_response_not_found miss triggers that replay.
+        # Restates the previous delta plus new items, but not the tool bundle
+        # and "hi" from the first turn. After previous_response_not_found the
+        # client's input alone must not be replayed anchorless; the retained
+        # connection history is replayed instead.
         {
             "type": "response.create",
             "model": "gpt-5.6-sol",
@@ -3553,8 +3554,8 @@ def test_backend_responses_websocket_lite_fresh_replay_drops_marker_after_previo
             "client_metadata": {marker: "true"},
             "stream": True,
         },
-        # The marker-stripped replay was accepted as a non-Lite request, so a
-        # later frame referencing the replay's response id must NOT be trusted.
+        # The replay was accepted as a Lite body, so a later marker-only frame
+        # referencing the replay's response id is trusted as Lite.
         {
             "type": "response.create",
             "model": "gpt-5.6-sol",
@@ -3597,13 +3598,22 @@ def test_backend_responses_websocket_lite_fresh_replay_drops_marker_after_previo
     assert len(recovered_payloads) == 2
     replay_payload = recovered_payloads[0]
     assert "previous_response_id" not in replay_payload
-    assert replay_payload["input"] == [user_continue, assistant_ok, user_more]
-    assert marker not in cast(dict[str, object], replay_payload.get("client_metadata", {}))
-    assert "reasoning" not in replay_payload
+    assert replay_payload["input"] == [
+        requests[0]["input"][0],
+        requests[0]["input"][1],
+        user_continue,
+        user_continue,
+        assistant_ok,
+        user_more,
+    ]
+    # The retained history starts with the first turn's tool bundle, so the replay is a Lite body.
+    assert cast(dict[str, object], replay_payload["client_metadata"])[marker] == "true"
+    assert replay_payload["reasoning"] == {"context": "all_turns"}
     after_replay_payload = recovered_payloads[1]
     assert after_replay_payload["previous_response_id"] == "resp_ws_lite_replay"
-    assert marker not in cast(dict[str, object], after_replay_payload.get("client_metadata", {}))
-    assert "reasoning" not in after_replay_payload
+    # The accepted Lite replay keeps the conversation's Lite continuity.
+    assert cast(dict[str, object], after_replay_payload["client_metadata"])[marker] == "true"
+    assert after_replay_payload["reasoning"] == {"context": "all_turns"}
 
 
 def test_backend_responses_websocket_body_lite_fresh_replay_keeps_marker_and_continuity(
@@ -12582,8 +12592,10 @@ def test_backend_responses_websocket_connect_failure_logs_client_supplied_stale_
             headers,
         )
         assert request_state.previous_response_id == "resp_ws_prev_anchor_client"
-        assert request_state.fresh_upstream_request_is_retry_safe is True
-        assert request_state.fresh_upstream_request_text is not None
+        # This connection never completed the client's anchor, so the input
+        # cannot be proven to restate its context and is not replayed anchorless.
+        assert request_state.fresh_upstream_request_is_retry_safe is False
+        assert request_state.fresh_upstream_request_text is None
         request_state.previous_response_owner_lookup_source = "request_logs"
         request_state.previous_response_owner_lookup_outcome = "hit"
         request_state.previous_response_owner_requested_at = owner_requested_at
@@ -12678,7 +12690,7 @@ def test_backend_responses_websocket_connect_failure_logs_client_supplied_stale_
     assert isinstance(failure_detail, str)
     assert failure_detail.startswith("previous_response_not_found ")
     assert "previous_response_source=client_supplied" in failure_detail
-    assert "fresh_replay_available=true" in failure_detail
+    assert "fresh_replay_available=false" in failure_detail
     assert "owner_lookup_source=request_logs" in failure_detail
     assert "owner_lookup_outcome=hit" in failure_detail
     assert "previous_response_age_seconds=" in failure_detail
@@ -12686,7 +12698,7 @@ def test_backend_responses_websocket_connect_failure_logs_client_supplied_stale_
     assert "resp_ws_prev_anchor_client" not in failure_detail
     assert "continuity_fail_closed surface=websocket_connect reason=previous_response_not_found" in caplog.text
     assert "previous_response_source=client_supplied" in caplog.text
-    assert "fresh_replay_available=true" in caplog.text
+    assert "fresh_replay_available=false" in caplog.text
     assert "owner_lookup_source=request_logs" in caplog.text
     assert "owner_lookup_outcome=hit" in caplog.text
     assert "previous_response_age_seconds=" in caplog.text

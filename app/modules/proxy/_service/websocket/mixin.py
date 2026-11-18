@@ -3594,6 +3594,7 @@ class _WebSocketMixin:
             if isinstance(responses_payload.input, list)
             else None
         )
+        client_previous_response_id = responses_payload.previous_response_id
         if responses_payload.previous_response_id is not None and isinstance(responses_payload.input, list):
             previous_response_input_items = cast(list[JsonValue], responses_payload.input)
             client_full_resend_input_items = previous_response_input_items
@@ -3777,6 +3778,17 @@ class _WebSocketMixin:
         request_state.durable_capability_lineage_required = capability_route.require_security_work_authorized
         original_full_resend_input: JsonValue | None = None
         if session_anchor is not None:
+            # An injected anchor's context is only as complete as the input it
+            # was recorded from; injection must not make a delta's completion
+            # provable.
+            request_state.input_covers_anchor_context = bool(
+                continuity_state is not None and continuity_state.last_completed_input_covers_context
+            )
+        else:
+            request_state.input_covers_anchor_context = (
+                client_previous_response_id is None or client_full_resend_retry_safe
+            )
+        if session_anchor is not None:
             request_state.proxy_injected_previous_response_id = True
             request_state.proxy_injected_anchor_connection_id = session_anchor.upstream_connection_id
             request_state.input_item_count = original_input_item_count or request_state.input_item_count
@@ -3867,22 +3879,26 @@ class _WebSocketMixin:
         elif client_anchor_history is not None:
             materialized_input = [*client_anchor_history, *cast(list[JsonValue], responses_payload.input)]
             request_state.materialized_input = materialized_input
+            # The recorded history can begin with the first turn's tool bundle, which makes
+            # the replay a Responses Lite body like that turn; it is serialized as one.
+            history_payload = responses_payload.model_copy(
+                update={"previous_response_id": None, "input": materialized_input, "client_metadata": None}
+            )
+            history_body = history_payload.to_payload()
+            history_metadata = _facade()._response_create_client_metadata(
+                {**history_body, "client_metadata": full_resend_client_metadata},
+                headers=headers,
+            )
             request_state.fresh_upstream_request_text = _facade()._response_create_text_with_size_guard(
-                responses_payload.model_copy(
-                    update={
-                        "previous_response_id": None,
-                        "input": materialized_input,
-                        "client_metadata": full_resend_client_metadata,
-                    }
-                ),
+                history_payload.model_copy(update={"client_metadata": history_metadata}),
                 include_type_field=True,
-                client_metadata=full_resend_client_metadata,
+                client_metadata=history_metadata,
                 request_state=request_state,
                 transport=_REQUEST_TRANSPORT_WEBSOCKET,
             )
             request_state.fresh_upstream_request_is_retry_safe = request_state.fresh_upstream_request_text is not None
             request_state.fresh_upstream_request_responses_lite_model = (
-                responses_payload.model if body_uses_responses_lite else None
+                responses_payload.model if _payload_uses_responses_lite(history_body) else None
             )
         affinity_policy = _sticky_key_for_responses_request(
             # Only the proven restart uses the pre-injection body. Ordinary
