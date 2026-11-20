@@ -848,8 +848,8 @@ def test_backend_responses_websocket_canonical_source_previous_response_requires
         owner_lookups.append(previous_response_id)
         return None
 
-    async def configured_source(source_model, api_key, *, raw_model=None):
-        del api_key, raw_model
+    async def configured_source(source_model, api_key, *, raw_model=None, model_redirect=None):
+        del api_key, raw_model, model_redirect
         source_checks.append(source_model)
         return source_model == model
 
@@ -933,8 +933,8 @@ def test_backend_responses_websocket_model_switch_does_not_inherit_native_anchor
         owner_lookups.append(previous_response_id)
         return account.id if previous_response_id == native_response_id else None
 
-    async def configured_source(model, api_key, *, raw_model=None):
-        del api_key, raw_model
+    async def configured_source(model, api_key, *, raw_model=None, model_redirect=None):
+        del api_key, raw_model, model_redirect
         return model == source_model
 
     async def select_native_account(self, *args, request_state, **kwargs):

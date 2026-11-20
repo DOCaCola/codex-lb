@@ -121,7 +121,6 @@ from app.modules.api_keys.service import (
     ApiKeysService,
 )
 from app.modules.model_sources.selection import (
-    effective_model_for_api_key,
     responses_model_is_source_owned,
 )
 from app.modules.model_sources.websocket import SourceWebSocketReceiver, handle_source_frame
@@ -546,13 +545,16 @@ from app.modules.proxy.rate_limit_events import RATE_LIMIT_EVENT_TYPE
 from app.modules.proxy.replay_safety import trim_replayed_previous_response_output
 from app.modules.proxy.replay_store import HTTPFallbackReplayStore, ReplayScope
 from app.modules.proxy.request_policy import (
+    ModelResolution,
     apply_api_key_enforcement,
     apply_enforced_service_tier_model_fallback,
+    log_model_redirect,
     model_alias_requests_fast_mode,
     normalize_responses_request_payload,
     openai_client_payload_error,
     openai_invalid_payload_error,
     openai_validation_error,
+    resolve_request_model,
     responses_source_route_excluded,
     strip_terminal_compaction_trigger_input,
     validate_model_access,
@@ -1929,19 +1931,28 @@ class _WebSocketMixin:
                                         )
                                     )
                                 continue
-                            if await handle_source_frame(
-                                websocket,
-                                source_receiver,
-                                payload,
-                                service=cast(Any, proxy),
-                                api_key=api_key,
-                                send_lock=client_send_lock,
-                                native_turn_pending=bool(pending_requests),
-                                native_codex=codex_session_affinity,
-                            ):
-                                downstream_activity.mark()
-                                continue
                             try:
+                                turn_api_key = await proxy._refresh_websocket_api_key_policy(api_key)
+                                requested = payload.get("model")
+                                resolution = (
+                                    await resolve_request_model(requested, turn_api_key)
+                                    if isinstance(requested, str)
+                                    else None
+                                )
+                                if await handle_source_frame(
+                                    websocket,
+                                    source_receiver,
+                                    payload,
+                                    service=cast(Any, proxy),
+                                    api_key=turn_api_key,
+                                    send_lock=client_send_lock,
+                                    native_turn_pending=bool(pending_requests),
+                                    native_codex=codex_session_affinity,
+                                    model_resolution=resolution,
+                                    prohibit_fast_mode=prohibit_fast_mode,
+                                ):
+                                    downstream_activity.mark()
+                                    continue
                                 prepared_request = await proxy._prepare_websocket_response_create_request(
                                     payload,
                                     headers=headers,
@@ -1950,7 +1961,8 @@ class _WebSocketMixin:
                                     sticky_threads_enabled=sticky_threads_enabled,
                                     openai_cache_affinity_max_age_seconds=openai_cache_affinity_max_age_seconds,
                                     prohibit_fast_mode=prohibit_fast_mode,
-                                    api_key=api_key,
+                                    api_key=turn_api_key,
+                                    model_resolution=resolution,
                                     continuity_state=continuity_state,
                                     upstream_connection_id=upstream_connection_id if upstream is not None else None,
                                     useragent=useragent,
@@ -1992,7 +2004,8 @@ class _WebSocketMixin:
                                         sticky_threads_enabled=sticky_threads_enabled,
                                         openai_cache_affinity_max_age_seconds=openai_cache_affinity_max_age_seconds,
                                         prohibit_fast_mode=prohibit_fast_mode,
-                                        api_key=api_key,
+                                        api_key=turn_api_key,
+                                        model_resolution=resolution,
                                         continuity_state=continuity_state,
                                         upstream_connection_id=(
                                             upstream_connection_id if upstream is not None else None
@@ -2005,6 +2018,10 @@ class _WebSocketMixin:
                                         capability_header_values=capability_header_values,
                                     )
                                 request_state = prepared_request.request_state
+                                if resolution is not None and (redirect := resolution.redirect) is not None:
+                                    log_model_redirect(
+                                        redirect, websocket.url.path, request_id=request_state.request_id
+                                    )
                                 request_affinity = prepared_request.affinity_policy
                                 text_data = prepared_request.text_data
                                 if request_state.previous_response_id is not None:
@@ -2056,6 +2073,7 @@ class _WebSocketMixin:
                                         # (``gpt-5-high``) is invisible in the
                                         # normalized ``request_state.model``.
                                         raw_model=request_state.raw_source_model,
+                                        model_redirect=request_state.model_redirect,
                                     )
                                 ):
                                     # Socket reuse bypasses connect-time selection, so a later
@@ -3416,11 +3434,17 @@ class _WebSocketMixin:
         client_ip: str | None = None,
         synthesized_turn_state: str | None = None,
         capability_header_values: tuple[str, ...] | None = None,
+        model_resolution: ModelResolution | None = None,
     ) -> _PreparedWebSocketRequest:
         """Validate a create frame, reserve usage, and prepare safe continuity metadata."""
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
-        refreshed_api_key = await proxy._refresh_websocket_api_key_policy(api_key)
+        refreshed_api_key = (
+            api_key if model_resolution is not None else await proxy._refresh_websocket_api_key_policy(api_key)
+        )
+        requested_model = payload.get("model")
+        if model_resolution is None and isinstance(requested_model, str):
+            model_resolution = await resolve_request_model(requested_model, refreshed_api_key)
         raw_client_metadata = payload.get("client_metadata")
         capability_intent = parse_routing_intent(
             headers,
@@ -3447,10 +3471,7 @@ class _WebSocketMixin:
                 if isinstance(delta, list):
                     payload = {**payload, "input": retained.expand(cast(list[JsonValue], delta))}
                     payload.pop("previous_response_id", None)
-                    requested_model = payload.get("model")
-                    if isinstance(requested_model, str) and retained.model == effective_model_for_api_key(
-                        refreshed_api_key, requested_model
-                    ):
+                    if model_resolution is not None and retained.model == model_resolution.model:
                         replay_account_id = retained.account_id
                     _facade().logger.info("websocket_http_history_expanded")
         if (
@@ -3520,7 +3541,8 @@ class _WebSocketMixin:
         # request via ``raw_source_model``. Mirrors ``api.py::responses``
         # exactly, including the enforced-model substitution here and the
         # fast-mode correction after enforcement below.
-        raw_source_model = effective_model_for_api_key(refreshed_api_key, responses_payload.model)
+        resolution = model_resolution or await resolve_request_model(responses_payload.model, refreshed_api_key)
+        raw_source_model = resolution.raw_source_model
         # The effort the normalizer replaced is discarded here on purpose: the
         # WebSocket transport never reaches a model source, so the rewrite that
         # works around the backend hang must stick.
@@ -3529,8 +3551,11 @@ class _WebSocketMixin:
             refreshed_api_key,
             prohibit_fast_mode=prohibit_fast_mode,
             compaction_routes=await compaction_routes_for(responses_payload),
+            model_resolution=resolution,
         ).service_tier_was_enforced
-        if prohibit_fast_mode and model_alias_requests_fast_mode(raw_source_model):
+        if responses_payload.model != resolution.model or (
+            prohibit_fast_mode and model_alias_requests_fast_mode(raw_source_model)
+        ):
             raw_source_model = responses_payload.model
         apply_enforced_service_tier_model_fallback(
             responses_payload,
@@ -3553,7 +3578,10 @@ class _WebSocketMixin:
         if has_provider_replay(responses_payload.input) and (
             source_route_excluded
             or not await responses_model_is_source_owned(
-                responses_payload.model, refreshed_api_key, raw_model=raw_source_model
+                responses_payload.model,
+                refreshed_api_key,
+                raw_model=raw_source_model,
+                model_redirect=resolution.redirect,
             )
         ):
             responses_payload = project_native_history(responses_payload, refreshed_api_key)
@@ -3638,7 +3666,9 @@ class _WebSocketMixin:
                     "client_metadata": full_resend_client_metadata,
                 }
             )
-        validate_model_access(refreshed_api_key, responses_payload.model)
+        validate_model_access(
+            refreshed_api_key, resolution.requested_model if resolution.redirect else responses_payload.model
+        )
         proxy._raise_for_unsupported_input_image_references(responses_payload)
         rewritten_file_account_id = await proxy._resolve_file_account_for_responses(responses_payload, headers)
         original_full_resend_payload: ResponsesRequest | None = None
@@ -3770,6 +3800,7 @@ class _WebSocketMixin:
         request_state.http_replay_input = replay_input
         request_state.client_ip = client_ip
         request_state.raw_source_model = raw_source_model
+        request_state.model_redirect = resolution.redirect
         request_state.source_route_excluded = source_route_excluded
         request_state.source_websocket_fallback_identities = source_websocket_fallback_identities(headers)
         request_state.responses_lite_model = next_responses_lite_model
@@ -4086,6 +4117,7 @@ class _WebSocketMixin:
                 # ``request_state.model``; the raw client alias captured at
                 # preparation is what an alias-only source is registered under.
                 raw_model=request_state.raw_source_model,
+                model_redirect=request_state.model_redirect,
             )
         ):
             source_model = request_state.raw_source_model or model
@@ -7316,6 +7348,9 @@ class _WebSocketMixin:
                     request_id=request_log_response_id,
                     archive_request_id=request_state.archive_request_id,
                     model=request_state.model or "",
+                    requested_model=request_state.model_redirect.requested_model
+                    if request_state.model_redirect
+                    else None,
                     latency_ms=latency_ms,
                     status=CANCELLED_STATUS if error_code == WEBSOCKET_CONNECTION_LIMIT_ERROR_CODE else status,
                     error_code=error_code,
@@ -7510,6 +7545,7 @@ class _WebSocketMixin:
             request_id=request_state.request_log_id or request_state.request_id,
             archive_request_id=request_state.archive_request_id,
             model=request_state.model or "",
+            requested_model=request_state.model_redirect.requested_model if request_state.model_redirect else None,
             latency_ms=int((clock_for(proxy).monotonic() - request_state.started_at) * 1000),
             status=status,
             error_code=error_code,
@@ -7891,6 +7927,9 @@ class _WebSocketMixin:
                     request_id=request_state.response_id or request_state.request_log_id or request_state.request_id,
                     archive_request_id=request_state.archive_request_id,
                     model=request_state.model or "",
+                    requested_model=request_state.model_redirect.requested_model
+                    if request_state.model_redirect
+                    else None,
                     latency_ms=latency_ms,
                     status=status,
                     error_code=request_error_code,

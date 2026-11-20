@@ -12,6 +12,7 @@ from starlette.websockets import WebSocket
 from app.db.models import ModelSource
 from app.modules.model_sources import websocket as bridge
 from app.modules.proxy import api
+from app.modules.proxy.request_policy import resolve_model_without_redirect
 from app.modules.proxy.service import ProxyService
 
 pytestmark = pytest.mark.unit
@@ -44,6 +45,8 @@ async def test_error_preserves_only_valid_retry_header(monkeypatch, native, hint
         send_lock=anyio.Lock(),
         native_turn_pending=False,
         native_codex=native,
+        model_resolution=resolve_model_without_redirect("test", None),
+        prohibit_fast_mode=False,
     )
     event = json.loads((await outgoing.get())["text"])
     assert event["status"] == 429 and event["error"]["code"] == "limited"
@@ -79,6 +82,8 @@ async def test_native_source_turn_opens_with_the_pool_usage_event(monkeypatch, n
         send_lock=anyio.Lock(),
         native_turn_pending=False,
         native_codex=native,
+        model_resolution=resolve_model_without_redirect("test", None),
+        prohibit_fast_mode=False,
     )
 
     events = [json.loads(outgoing.get_nowait()["text"]) for _ in range(outgoing.qsize())]
@@ -132,6 +137,8 @@ async def test_disconnect_closes_owned_stream_and_preserves_outer_cancellation(m
             send_lock=anyio.Lock(),
             native_turn_pending=False,
             native_codex=False,
+            model_resolution=resolve_model_without_redirect("test", None),
+            prohibit_fast_mode=False,
         )
     )
     try:

@@ -64,6 +64,7 @@ from app.core.metrics.prometheus import (
     model_source_timeout_total,
     model_source_usage_estimated_total,
 )
+from app.core.openai.model_redirects import ModelRedirectAttribution, get_request_model_redirect
 from app.core.openai.parsing import classify_event_type
 from app.core.request_locality import resolve_request_client_host
 from app.core.types import JsonValue
@@ -340,6 +341,7 @@ class SourceDispatch:
     upstream_thinking_budget_tokens: int | None = None
     count_tokens: bool = False
     request_operation: RequestOperation = field(default_factory=get_request_operation)
+    model_redirect: ModelRedirectAttribution | None = field(default_factory=get_request_model_redirect)
     cleanup_scheduler: CleanupScheduler | None = None
     scheduler: Scheduler = REAL_SCHEDULER
     clock: Clock = REAL_CLOCK
@@ -581,6 +583,7 @@ class SourceDispatch:
                     api_key_id=self.api_key.id if self.api_key is not None else None,
                     session_id=_owner_lookup_session_id_from_headers(headers),
                     model=self.model,
+                    requested_model=self.model_redirect.requested_model if self.model_redirect else None,
                     request_kind="count_tokens" if self.count_tokens else "normal",
                     request_operation=self.request_operation,
                     input_tokens=usage.input_tokens if usage is not None else None,

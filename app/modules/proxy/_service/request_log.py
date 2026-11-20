@@ -6,6 +6,7 @@ from typing import Protocol, cast
 
 from app.core.clock import clock_for, scheduler_for
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, proxy_phase_latency_seconds
+from app.core.openai.model_redirects import get_request_model_redirect
 from app.core.usage.request_operation import RequestOperation, get_request_operation
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy._load_balancer.throughput_cohort import record_tps_sample
@@ -148,7 +149,9 @@ class _RequestLogMixin:
         # routing sample on ``latency_ms``; such rows are error rows and are
         # not sampled.
         latency_upstream_terminal_ms: int | None = None,
+        requested_model: str | None = None,
     ) -> None:
+        redirect = get_request_model_redirect()
         task = scheduler_for(self).create_task(
             self._persist_request_log(
                 affinity_observation=affinity_observation,
@@ -157,6 +160,7 @@ class _RequestLogMixin:
                 request_id=request_id,
                 archive_request_id=archive_request_id,
                 model=model,
+                requested_model=requested_model or (redirect.requested_model if redirect is not None else None),
                 latency_ms=latency_ms,
                 status=status,
                 latency_first_token_ms=latency_first_token_ms,
@@ -370,6 +374,7 @@ class _RequestLogMixin:
         request_id: str,
         archive_request_id: str | None,
         model: str | None,
+        requested_model: str | None,
         latency_ms: int,
         status: str,
         latency_first_token_ms: int | None = None,
@@ -428,6 +433,7 @@ class _RequestLogMixin:
                     request_id=request_id,
                     archive_request_id=archive_request_id,
                     model=model or "",
+                    requested_model=requested_model,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cached_input_tokens=cached_input_tokens,

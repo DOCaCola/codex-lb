@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, false, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.core.auth.dashboard_session_ttl import DEFAULT_DASHBOARD_SESSION_TTL_SECONDS
 from app.core.exceptions import DashboardSettingsConflictError
 from app.core.upstream_proxy.cache import get_upstream_route_cache
+from app.db.account_identity_lock import advisory_lock_key
 from app.db.models import (
     DashboardSettings,
     DashboardUser,
@@ -20,6 +21,7 @@ from app.db.models import (
     LocalLoginPolicy,
     ModelCompactionRoute,
     ModelContextWindowOverride,
+    ModelRedirect,
 )
 from app.modules.dashboard_users.repository import DashboardUsersRepository
 
@@ -619,7 +621,7 @@ class HiddenModelsRepository:
         result = await self._session.execute(select(HiddenModel.slug))
         return frozenset(result.scalars().all())
 
-    async def hide(self, slug: str) -> None:
+    async def hide(self, slug: str, *, commit: bool = True) -> None:
         """Hide ``slug``; hiding an already hidden slug is a no-op, also under concurrency."""
         dialect = self._session.get_bind().dialect.name
         insert_fn = _UPSERT_INSERT_FNS.get(dialect)
@@ -627,7 +629,8 @@ class HiddenModelsRepository:
             raise RuntimeError(f"hidden_models insert unsupported for dialect={dialect!r}")
         statement = insert_fn(HiddenModel).values(slug=slug)
         await self._session.execute(statement.on_conflict_do_nothing(index_elements=[HiddenModel.slug]))
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
 
     async def delete(self, slug: str) -> bool:
         row = await self._session.get(HiddenModel, slug)
@@ -667,6 +670,51 @@ class ModelCompactionRoutesRepository:
         if row is None:
             return False
         await self._session.delete(row)
+        await self._session.commit()
+        return True
+
+
+class ModelRedirectsRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def acquire_model_route_write_intent(self) -> None:
+        """Serialize redirect and compaction route writes before validation."""
+        dialect = self._session.get_bind().dialect.name
+        if dialect == "postgresql":
+            await self._session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": advisory_lock_key("settings", "model-routing")},
+            )
+        else:
+            # An UPDATE takes SQLite's transaction write lock even when no rows match.
+            await self._session.execute(
+                update(ModelRedirect).where(false()).values(target_model=ModelRedirect.target_model)
+            )
+
+    async def list_all(self) -> dict[str, str]:
+        result = await self._session.execute(
+            select(ModelRedirect.source_model, ModelRedirect.target_model).order_by(ModelRedirect.source_model)
+        )
+        return {source: target for source, target in result}
+
+    async def upsert(self, source: str, target: str) -> None:
+        dialect = self._session.get_bind().dialect.name
+        statement = _UPSERT_INSERT_FNS[dialect](ModelRedirect).values(source_model=source, target_model=target)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[ModelRedirect.source_model],
+                set_={"target_model": target, "updated_at": func.now()},
+            )
+        )
+        await self._session.commit()
+
+    async def delete(self, source: str) -> bool:
+        result = await self._session.execute(
+            delete(ModelRedirect).where(ModelRedirect.source_model == source).returning(ModelRedirect.source_model)
+        )
+        if result.scalar_one_or_none() is None:
+            return False
         await self._session.commit()
         return True
 

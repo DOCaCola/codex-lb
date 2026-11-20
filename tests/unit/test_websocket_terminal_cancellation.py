@@ -2044,6 +2044,7 @@ async def test_scope_cancellation_finalizes_turn_when_connection_lease_release_f
     monkeypatch.setattr(service, "_connect_proxy_websocket", connect_upstream)
     monkeypatch.setattr(service, "_acquire_account_response_create_lease_or_overload", acquire_create_lease)
     monkeypatch.setattr(service, "_release_websocket_reservation", release_reservation)
+    monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
     monkeypatch.setattr(service, "_next_websocket_receive_timeout", AsyncMock(return_value=None))
     monkeypatch.setattr(service._load_balancer, "release_account_lease", release_lease)
     caplog.set_level(logging.WARNING)

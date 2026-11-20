@@ -31,6 +31,7 @@ from app.modules.claude.scheduling import choose
 from app.modules.claude.schemas import AccountState
 from app.modules.claude.session import NativeSessionOwnership
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
+from app.modules.proxy.request_policy import provider_model_allowed
 
 # Claude Code's per-window unified header prefixes; model-scoped windows have only a claim.
 _UNIFIED_PREFIXES = {"five_hour": "5h", "seven_day": "7d", "seven_day_overage_included": "7d_oi"}
@@ -213,10 +214,7 @@ async def select_account(
     now: datetime | None = None,
 ) -> ClaudeAccount:
     now = now or datetime.now(UTC)
-    if api_key is not None and (
-        (api_key.allowed_models and model not in api_key.allowed_models)
-        or (api_key.enforced_model is not None and api_key.enforced_model != model)
-    ):
+    if not provider_model_allowed(api_key, model):
         raise ClaudePoolUnavailable("model_not_allowed", "Claude model is not allowed for this API key")
     allowed = allowed_source_ids_for_api_key(api_key)
     settings = await get_settings_cache().get()

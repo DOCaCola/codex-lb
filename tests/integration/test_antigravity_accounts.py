@@ -14,6 +14,7 @@ from app.modules.antigravity import oauth
 from app.modules.antigravity.client import CloudCodeClient, LoadCodeAssist
 from app.modules.antigravity.constants import GO_SKIP_AUTO_HEADERS, SKIP_SIGNATURE
 from app.modules.antigravity.schemas import Credentials, UserInfo
+from tests.integration.model_source_helpers import _enable_api_key_auth
 
 pytestmark = pytest.mark.integration
 
@@ -219,6 +220,29 @@ async def test_responses_reach_antigravity_as_the_native_agent(async_client, poo
     assert labels["model_enum"] == f"MODEL_PLACEHOLDER_M{900 if envelope['model'].endswith('high') else 899}"
     assert labels["used_non_gemini_model"] == "true"
     assert not {"used_claude", "used_claude_conservative"} & set(labels)
+
+
+async def test_enforced_redirect_routes_to_antigravity(async_client, pool, monkeypatch):
+    captured = install_upstream(monkeypatch)
+    source = "retired-gemini"
+    redirect = await async_client.put(f"/api/settings/model-redirects/{source}", json={"targetModel": GEMINI})
+    assert redirect.status_code == 200, redirect.text
+    await _enable_api_key_auth(async_client)
+    result = await async_client.post(
+        "/api/api-keys/",
+        json={"name": "redirected key", "allowedModels": [source], "enforcedModel": source},
+    )
+    assert result.status_code == 200, result.text
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={"model": "ignored-by-key", "input": "Hi", "stream": False},
+        headers={"Authorization": f"Bearer {result.json()['key']}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["model"] == GEMINI
+    assert captured[0][0] in pool
+    rows = (await async_client.get("/api/request-logs", params={"model": source})).json()["requests"]
+    assert [(row["model"], row["requestedModel"]) for row in rows] == [(GEMINI, source)]
 
 
 async def test_quota_exhaustion_fails_over_to_the_next_account(async_client, pool, monkeypatch):

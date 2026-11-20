@@ -42,6 +42,7 @@ from app.modules.antigravity.quota import family_quota, plan_type, quota_weight
 from app.modules.antigravity.schemas import AccountState, CatalogFamily
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
+from app.modules.proxy.request_policy import provider_model_allowed
 
 SESSION_TTL = timedelta(hours=1)
 
@@ -146,10 +147,7 @@ async def select_account(
     now: datetime | None = None,
 ) -> AntigravityAccount:
     now = now or datetime.now(UTC)
-    if api_key is not None and (
-        (api_key.allowed_models and model not in api_key.allowed_models)
-        or (api_key.enforced_model is not None and api_key.enforced_model != model)
-    ):
+    if not provider_model_allowed(api_key, model):
         raise AntigravityPoolUnavailable(
             "model_not_allowed", "Antigravity model is not allowed for this API key", status_code=400
         )

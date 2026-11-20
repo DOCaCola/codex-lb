@@ -1086,6 +1086,7 @@ async def test_responses_model_is_source_owned_honors_enforced_model(async_clien
     source model would fall through to subscription-account selection.
     """
     from app.modules.model_sources.selection import responses_model_is_source_owned
+    from app.modules.proxy.request_policy import resolve_request_model
 
     model = "ws-guard-enforced-model"
     await _create_model_source(
@@ -1111,7 +1112,8 @@ async def test_responses_model_is_source_owned_honors_enforced_model(async_clien
     )
 
     # The client asked for a subscription model, but the key forces the source.
-    assert await responses_model_is_source_owned("gpt-5.6-sol", enforcing_key) is True
+    resolution = await resolve_request_model("gpt-5.6-sol", enforcing_key)
+    assert await responses_model_is_source_owned(resolution.model, enforcing_key) is True
 
 
 @pytest.mark.asyncio

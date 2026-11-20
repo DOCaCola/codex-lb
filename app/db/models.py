@@ -583,6 +583,7 @@ class RequestLog(Base):
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     model: Mapped[str] = mapped_column(String, nullable=False)
+    requested_model: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_type: Mapped[str | None] = mapped_column(String, nullable=True)
     source: Mapped[str | None] = mapped_column(String, nullable=True)
     useragent: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1805,6 +1806,20 @@ class ModelCompactionRoute(Base):
     slug: Mapped[str] = mapped_column(String, primary_key=True)
     compaction_model: Mapped[str] = mapped_column(String, nullable=False)
     reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class ModelRedirect(Base):
+    __tablename__ = "model_redirects"
+
+    source_model: Mapped[str] = mapped_column(String, primary_key=True)
+    target_model: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -3373,6 +3388,13 @@ Index(
     RequestLog.reasoning_effort,
     postgresql_where=text("deleted_at IS NULL"),
     sqlite_where=text("deleted_at IS NULL"),
+)
+Index(
+    "idx_logs_requested_model_effort",
+    RequestLog.requested_model,
+    RequestLog.reasoning_effort,
+    postgresql_where=RequestLog.requested_model.is_not(None),
+    sqlite_where=RequestLog.requested_model.is_not(None),
 )
 Index(
     "idx_logs_live_status_error",

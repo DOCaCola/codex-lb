@@ -18,14 +18,16 @@ from starlette.websockets import WebSocket
 
 from app.core.clients.proxy import _safe_retry_after_header
 from app.core.exceptions import AppError
+from app.core.openai.model_redirects import reset_request_model_redirect, set_request_model_redirect
 from app.core.openai.v1_requests import V1ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.request_id import reset_request_id, set_request_id
 from app.core.utils.shared_future import _await_result_deferring_cancellation
 from app.core.utils.sse import parse_sse_data_json
 from app.modules.api_keys.service import ApiKeyData
-from app.modules.model_sources.selection import effective_model_for_api_key, select_responses_model_source
+from app.modules.model_sources.selection import select_responses_model_source
 from app.modules.proxy.rate_limit_events import rate_limit_event_from_headers
+from app.modules.proxy.request_policy import ModelResolution, log_model_redirect, model_alias_requests_fast_mode
 from app.modules.proxy.source_dispatch import SourceStreamingResponse
 
 if TYPE_CHECKING:
@@ -68,25 +70,39 @@ async def handle_source_frame(
     send_lock: anyio.Lock,
     native_turn_pending: bool,
     native_codex: bool,
+    model_resolution: ModelResolution | None,
+    prohibit_fast_mode: bool,
 ) -> bool:
     # Import at the boundary: api.py owns the shared route policy and dispatch;
     # no second reservation/settlement implementation lives in this adapter.
     from app.dependencies import ProxyContext
     from app.modules.proxy import api
 
-    key = await service._refresh_websocket_api_key_policy(api_key)
-    requested = payload.get("model")
-    if not isinstance(requested, str):
+    if model_resolution is None:
         return False
-    model = effective_model_for_api_key(key, requested) or requested
+    model = model_resolution.model
+    raw_model = model_resolution.raw_source_model
+    if prohibit_fast_mode and model_alias_requests_fast_mode(raw_model):
+        raw_model = model
     selected = await select_responses_model_source(
-        model, key, raw_model=model, require_streaming=True, advance_rotation=False, enforce_reasoning=False
+        model,
+        api_key,
+        raw_model=raw_model,
+        require_streaming=True,
+        advance_rotation=False,
+        enforce_reasoning=False,
+        model_redirect=model_resolution.redirect,
     )
     disabled = (
         None
         if selected
         else await select_responses_model_source(
-            model, key, raw_model=model, require_streaming=True, only_disabled=True
+            model,
+            api_key,
+            raw_model=raw_model,
+            require_streaming=True,
+            only_disabled=True,
+            model_redirect=model_resolution.redirect,
         )
     )
     if selected is None and disabled is None:
@@ -120,7 +136,7 @@ async def handle_source_frame(
         **websocket.scope,
         "type": "http",
         "method": "POST",
-        "state": dict(websocket.scope.get("state", {})),
+        "state": {**websocket.scope.get("state", {}), "model_resolution": model_resolution},
         "source_websocket": True,
         "path": "/backend-api/codex/responses" if native_codex else "/v1/responses",
         # Replay identity must use client headers, not the connection-local
@@ -132,10 +148,14 @@ async def handle_source_frame(
     body["stream"] = True
 
     async def dispatch() -> None:
-        request_id_token = set_request_id(f"ws_src_{uuid4().hex}")
+        request_id = f"ws_src_{uuid4().hex}"
+        request_id_token = set_request_id(request_id)
+        model_redirect_token = set_request_model_redirect(None)
         try:
-            api.validate_model_access(key, model)
+            api.validate_model_access(api_key, model_resolution.requested_model)
             if payload.get("generate") is False and selected is not None:
+                if redirect := model_resolution.redirect:
+                    log_model_redirect(redirect, "websocket", request_id=request_id)
                 response: dict[str, JsonValue] = {
                     "id": "",
                     "object": "response",
@@ -154,10 +174,13 @@ async def handle_source_frame(
                 await send({"type": "response.completed", "sequence_number": 1, "response": response})
                 return
             if native_codex:
-                result = await api.responses(request, body, context=ProxyContext(service=service), api_key=key)
+                result = await api.responses(request, body, context=ProxyContext(service=service), api_key=api_key)
             else:
                 result = await api.v1_responses(
-                    request, V1ResponsesRequest.model_validate(body), context=ProxyContext(service=service), api_key=key
+                    request,
+                    V1ResponsesRequest.model_validate(body),
+                    context=ProxyContext(service=service),
+                    api_key=api_key,
                 )
             if isinstance(result, StreamingResponse):
                 try:
@@ -204,6 +227,7 @@ async def handle_source_frame(
                 }
             )
         finally:
+            reset_request_model_redirect(model_redirect_token)
             reset_request_id(request_id_token)
 
     turn = asyncio.create_task(dispatch())

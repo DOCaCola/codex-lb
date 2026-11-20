@@ -518,6 +518,9 @@ export const ModelCatalogueEntrySchema = z.object({
   defaultContextWindow: z.number().int().positive(),
   maxContextWindow: z.number().int().positive().nullable(),
   listed: z.boolean(),
+  redirectTargetModel: z.string().nullable(),
+  redirectTargetOverrideTokens: z.number().int().positive().nullable(),
+  retired: z.boolean(),
 });
 
 export const ModelContextWindowOverridesSchema = z.object({
@@ -557,6 +560,27 @@ export const CompactionRouteUpsertRequestSchema = z.object({
   compactionModel: z.string().min(1),
   reasoningEffort: z.string().min(1).nullable(),
 });
+
+export const ModelRedirectSchema = z.object({
+  sourceModel: z.string().min(1),
+  targetModel: z.string().min(1),
+  status: z.enum(["active", "inactive"]),
+  reason: z.string().nullable(),
+});
+
+export const ModelRedirectsSchema = z.object({
+  redirects: z.array(ModelRedirectSchema),
+  targets: z.array(z.object({
+    provider: z.string(),
+    models: z.array(z.object({
+      slug: z.string().min(1),
+      displayName: z.string(),
+      hidden: z.boolean(),
+    })),
+  })),
+});
+
+export const ModelRedirectUpsertRequestSchema = z.object({ targetModel: z.string().min(1) });
 // end M4 model catalogue
 
 export type UpstreamProxyEndpoint = z.infer<typeof UpstreamProxyEndpointSchema>;
@@ -576,3 +600,5 @@ export type CompactionRouteModel = z.infer<typeof CompactionRouteModelSchema>;
 export type CompactionRoute = z.infer<typeof CompactionRouteSchema>;
 export type CompactionRoutes = z.infer<typeof CompactionRoutesSchema>;
 export type CompactionRouteUpsertRequest = z.infer<typeof CompactionRouteUpsertRequestSchema>;
+export type ModelRedirect = z.infer<typeof ModelRedirectSchema>;
+export type ModelRedirects = z.infer<typeof ModelRedirectsSchema>;

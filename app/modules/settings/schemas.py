@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, StrictInt, field_validator
+from pydantic import ConfigDict, Field, StrictInt, field_validator
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -420,6 +420,9 @@ class ModelCatalogueEntryResponse(DashboardModel):
     default_context_window: int
     max_context_window: int | None
     listed: bool
+    redirect_target_model: str | None = None
+    redirect_target_override_tokens: int | None = None
+    retired: bool = False
 
 
 class ModelContextWindowOverridesResponse(DashboardModel):
@@ -465,6 +468,34 @@ class CompactionRoutesResponse(DashboardModel):
 class CompactionRouteUpsertRequest(DashboardModel):
     compaction_model: str = Field(min_length=1, max_length=256)
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class ModelRedirectResponse(DashboardModel):
+    source_model: str
+    target_model: str
+    status: Literal["active", "inactive"]
+    reason: str | None = None
+
+
+class ModelRedirectTargetResponse(DashboardModel):
+    slug: str
+    display_name: str
+    hidden: bool
+
+
+class ModelRedirectProviderResponse(DashboardModel):
+    provider: str
+    models: list[ModelRedirectTargetResponse]
+
+
+class ModelRedirectsResponse(DashboardModel):
+    redirects: list[ModelRedirectResponse]
+    targets: list[ModelRedirectProviderResponse]
+
+
+class ModelRedirectUpsertRequest(DashboardModel):
+    model_config = ConfigDict(validate_by_name=False, validate_by_alias=True)
+    target_model: str
 
 
 # end M4 model catalogue

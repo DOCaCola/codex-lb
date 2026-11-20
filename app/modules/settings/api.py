@@ -58,6 +58,7 @@ from app.core.openai.compaction_routes import (
     native_route_model,
 )
 from app.core.openai.hidden_models import get_hidden_models_cache
+from app.core.openai.model_redirects import get_model_redirects_cache, model_redirect_inactivity
 from app.core.openai.model_registry import get_model_registry
 from app.core.resilience.toggles import RESILIENCE_TOGGLE_SETTINGS
 from app.core.timeout_invariants import find_timeout_invariant_violations
@@ -74,6 +75,7 @@ from app.db.models import (
 )
 from app.dependencies import SettingsContext, get_proxy_service_for_app, get_settings_context
 from app.modules.dashboard_users.break_glass import BreakGlassRequiresTotpError
+from app.modules.model_sources.catalog import list_redirect_target_catalogue
 from app.modules.proxy.account_cache import (
     clear_account_routing_unavailable,
     get_account_selection_cache,
@@ -84,6 +86,7 @@ from app.modules.settings.repository import (
     HiddenModelsRepository,
     ModelCompactionRoutesRepository,
     ModelContextWindowOverridesRepository,
+    ModelRedirectsRepository,
 )
 from app.modules.settings.schemas import (
     SECURITY_SETTINGS_FIELDS,
@@ -101,6 +104,11 @@ from app.modules.settings.schemas import (
     ModelContextWindowOverrideResponse,
     ModelContextWindowOverridesResponse,
     ModelContextWindowOverrideUpsertRequest,
+    ModelRedirectProviderResponse,
+    ModelRedirectResponse,
+    ModelRedirectsResponse,
+    ModelRedirectTargetResponse,
+    ModelRedirectUpsertRequest,
     RuntimeConnectAddressResponse,
     SettingProvenance,
     UpstreamProxyAdminResponse,
@@ -774,7 +782,7 @@ MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = "/model-context-window-overrides"
 _MODEL_SLUG_MAX_LENGTH = 256
 
 
-def _validate_model_slug(slug: str) -> str:
+def _validate_model_slug(slug: str, *, code: str = "invalid_model_slug") -> str:
     # The raw segment is validated, never trimmed: silently storing " gpt-5.4 "
     # as "gpt-5.4" would make the row the operator sees disagree with the slug
     # they wrote, and the requirement rejects any slug containing whitespace.
@@ -785,7 +793,7 @@ def _validate_model_slug(slug: str) -> str:
     ):
         raise DashboardBadRequestError(
             f"Model slug must be 1-{_MODEL_SLUG_MAX_LENGTH} printable characters without whitespace",
-            code="invalid_model_slug",
+            code=code,
         )
     return slug
 
@@ -794,18 +802,50 @@ async def _model_context_window_overrides_response(context: SettingsContext) -> 
     dashboard = await ModelContextWindowOverridesRepository(context.session).by_slug()
     resolved = resolve_context_window_overrides(dashboard, get_app_settings().model_context_window_overrides)
     hidden = await HiddenModelsRepository(context.session).slugs()
-    return ModelContextWindowOverridesResponse(
-        models=[
+    redirects = await ModelRedirectsRepository(context.session).list_all()
+    catalogue = {model.slug: model for model in await list_model_catalogue()}
+    targets = await list_redirect_target_catalogue() if redirects else {}
+    models = [
+        ModelCatalogueEntryResponse(
+            slug=slug,
+            display_name=model.display_name,
+            provider=model.source_kind,
+            default_context_window=model.context_window,
+            max_context_window=context_window_ceiling(model),
+            listed=slug not in hidden,
+        )
+        for slug, model in catalogue.items()
+        if slug not in redirects
+    ]
+    for source, target in redirects.items():
+        original = targets.get(source)
+        active = model_redirect_inactivity(target, redirects, targets) is None
+        model = targets[target] if active else catalogue.get(source)
+        if model is None:
+            continue
+        target_override = resolved.get(target) if active else None
+        ceiling = context_window_ceiling(model)
+        models.append(
             ModelCatalogueEntryResponse(
-                slug=model.slug,
-                display_name=model.display_name,
+                slug=source,
+                display_name=original.display_name if original is not None else source,
                 provider=model.source_kind,
                 default_context_window=model.context_window,
-                max_context_window=context_window_ceiling(model),
-                listed=model.slug not in hidden,
+                max_context_window=ceiling,
+                listed=source not in hidden,
+                redirect_target_model=target,
+                redirect_target_override_tokens=(
+                    min(target_override.context_window, ceiling)
+                    if ceiling is not None and target_override is not None
+                    else target_override.context_window
+                    if target_override is not None
+                    else None
+                ),
+                retired=original is None,
             )
-            for model in await list_model_catalogue()
-        ],
+        )
+    return ModelContextWindowOverridesResponse(
+        models=models,
         overrides=[
             ModelContextWindowOverrideResponse(
                 slug=override.slug,
@@ -834,6 +874,10 @@ async def put_model_context_window_override(
     context: SettingsContext = Depends(get_settings_context),
 ) -> ModelContextWindowOverridesResponse:
     normalized = _validate_model_slug(slug)
+    if normalized in await ModelRedirectsRepository(context.session).list_all():
+        raise DashboardBadRequestError(
+            "Uses the served model's context window while redirected", code="model_redirect_conflict"
+        )
     model = next((model for model in await list_model_catalogue() if model.slug == normalized), None)
     if model is None:
         raise DashboardBadRequestError(
@@ -893,7 +937,8 @@ async def put_hidden_model(
     context: SettingsContext = Depends(get_settings_context),
 ) -> ModelContextWindowOverridesResponse:
     normalized = _validate_model_slug(slug)
-    if not any(model.slug == normalized for model in await list_model_catalogue()):
+    redirects = await ModelRedirectsRepository(context.session).list_all()
+    if normalized not in redirects and not any(model.slug == normalized for model in await list_model_catalogue()):
         raise DashboardBadRequestError(
             "Model is not offered to clients; enable it before hiding it",
             code="model_not_in_catalogue",
@@ -929,6 +974,111 @@ async def delete_hidden_model(
 
 # Native compaction model routes (model_compaction_routes).
 MODEL_COMPACTION_ROUTES_PATH = "/model-compaction-routes"
+MODEL_REDIRECTS_PATH = "/model-redirects"
+
+
+async def _model_redirects_response(context: SettingsContext) -> ModelRedirectsResponse:
+    redirects = await ModelRedirectsRepository(context.session).list_all()
+    catalogue = await list_redirect_target_catalogue()
+    hidden = await HiddenModelsRepository(context.session).slugs()
+    groups: dict[str, list[ModelRedirectTargetResponse]] = {}
+    for slug, model in catalogue.items():
+        if slug not in redirects:
+            groups.setdefault(model.source_kind, []).append(
+                ModelRedirectTargetResponse(
+                    slug=slug,
+                    display_name=model.display_name,
+                    hidden=slug in hidden or model.raw.get("visibility", "list") != "list",
+                )
+            )
+    return ModelRedirectsResponse(
+        redirects=[
+            ModelRedirectResponse(
+                source_model=source,
+                target_model=target,
+                status="active" if reason is None else "inactive",
+                reason=reason,
+            )
+            for source, target in redirects.items()
+            for reason in [model_redirect_inactivity(target, redirects, catalogue)]
+        ],
+        targets=[
+            ModelRedirectProviderResponse(provider=provider, models=models) for provider, models in groups.items()
+        ],
+    )
+
+
+@router.get(MODEL_REDIRECTS_PATH, response_model=ModelRedirectsResponse)
+async def get_model_redirects(context: SettingsContext = Depends(get_settings_context)) -> ModelRedirectsResponse:
+    return await _model_redirects_response(context)
+
+
+@router.put(MODEL_REDIRECTS_PATH + "/{source:path}", response_model=ModelRedirectsResponse)
+async def put_model_redirect(
+    request: Request,
+    source: str,
+    payload: ModelRedirectUpsertRequest,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelRedirectsResponse:
+    source = _validate_model_slug(source, code="model_redirect_invalid")
+    target = _validate_model_slug(payload.target_model, code="model_redirect_invalid")
+    if source == target:
+        raise DashboardBadRequestError("A model can't redirect to itself.", code="model_redirect_invalid")
+    catalogue = await list_redirect_target_catalogue()
+    repository = ModelRedirectsRepository(context.session)
+    await repository.acquire_model_route_write_intent()
+    redirects = await repository.list_all()
+    if target in redirects:
+        raise DashboardBadRequestError(
+            f"{target} is itself redirected to {redirects[target]}.", code="model_redirect_invalid"
+        )
+    feeding = [requested for requested, served in redirects.items() if served == source]
+    if feeding:
+        raise DashboardBadRequestError(
+            f"{source} is served for {', '.join(feeding)}. Redirects can't chain.", code="model_redirect_invalid"
+        )
+    if target not in catalogue:
+        raise DashboardBadRequestError(f"{target} is not in the text model catalogue.", code="model_redirect_invalid")
+    routes = await ModelCompactionRoutesRepository(context.session).list_all()
+    if any(source in (route.slug, route.compaction_model) for route in routes):
+        raise DashboardBadRequestError(
+            f"{source} is part of a compaction route. Change that route first.", code="model_redirect_conflict"
+        )
+    original = catalogue.get(source) or get_model_registry().get_models_with_fallback().get(source)
+    if source not in redirects and (original is None or original.raw.get("visibility", "list") != "list"):
+        await HiddenModelsRepository(context.session).hide(source, commit=False)
+    await repository.upsert(source, target)
+    await get_hidden_models_cache().invalidate(propagate=False)
+    await get_model_redirects_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_redirects"], "slug": source, "target_model": target},
+    )
+    return await _model_redirects_response(context)
+
+
+@router.delete(MODEL_REDIRECTS_PATH + "/{source:path}", response_model=ModelRedirectsResponse)
+async def delete_model_redirect(
+    request: Request,
+    source: str,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelRedirectsResponse:
+    source = _validate_model_slug(source, code="model_redirect_invalid")
+    repository = ModelRedirectsRepository(context.session)
+    await repository.acquire_model_route_write_intent()
+    if not await repository.delete(source):
+        raise DashboardNotFoundError("Model redirect not found", code="model_redirect_not_found")
+    await get_model_redirects_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_redirects"], "slug": source},
+    )
+    return await _model_redirects_response(context)
+
 
 _COMPACTION_ROUTE_REASON_MESSAGES: dict[CompactionRouteIncompatibility, str] = {
     CompactionRouteIncompatibility.CODING_MODEL_UNAVAILABLE: (
@@ -959,11 +1109,12 @@ async def _compaction_routes_response(context: SettingsContext) -> CompactionRou
     registry = get_model_registry()
     routes = _compaction_route_rows(await ModelCompactionRoutesRepository(context.session).list_all())
     hidden = await HiddenModelsRepository(context.session).slugs()
+    redirects = await ModelRedirectsRepository(context.session).list_all()
     client_windows = await effective_client_windows()
     models = [
         native
         for model in await list_model_catalogue()
-        if (native := native_route_model(registry, model.slug)) is not None
+        if model.slug not in redirects and (native := native_route_model(registry, model.slug)) is not None
     ]
     entries: list[CompactionRouteResponse] = []
     for route in routes.values():
@@ -1009,6 +1160,14 @@ async def put_model_compaction_route(
     context: SettingsContext = Depends(get_settings_context),
 ) -> CompactionRoutesResponse:
     normalized = _validate_model_slug(slug)
+    redirect_repository = ModelRedirectsRepository(context.session)
+    await redirect_repository.acquire_model_route_write_intent()
+    redirects = await redirect_repository.list_all()
+    conflict = next((model for model in (normalized, payload.compaction_model) if model in redirects), None)
+    if conflict is not None:
+        raise DashboardBadRequestError(
+            f"{conflict} is redirected. Change that redirect first.", code="model_redirect_conflict"
+        )
     repository = ModelCompactionRoutesRepository(context.session)
     route = CompactionRoute(normalized, payload.compaction_model, payload.reasoning_effort)
     routes = _compaction_route_rows(await repository.list_all())

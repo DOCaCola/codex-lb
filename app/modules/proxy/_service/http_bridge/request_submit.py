@@ -56,6 +56,7 @@ from app.core.clients.thread_cache_identity import (
 from app.core.clock import REAL_CLOCK, Clock, clock_for, scheduler_for
 from app.core.config.dashboard_overrides import with_dashboard_overrides
 from app.core.errors import openai_error
+from app.core.openai.model_redirects import get_request_model_redirect
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
@@ -922,6 +923,7 @@ class _HTTPBridgeRequestSubmitMixin:
             request_log_id=request_log_id,
             archive_request_id=request_log_id or resolved_request_id,
             model=payload.model,
+            model_redirect=get_request_model_redirect() if transport == _REQUEST_TRANSPORT_HTTP else None,
             service_tier=forwarded_service_tier,
             reasoning_effort=payload.reasoning.effort if payload.reasoning else None,
             pre_normalization_reasoning_effort=payload._codex_lb_pre_normalization_reasoning_effort,

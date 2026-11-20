@@ -45,6 +45,12 @@ class ProxyModelNotAllowed(AppError):
     error_type = "permission_error"
 
 
+class ProxyModelRedirectUnavailable(AppError):
+    status_code = 400
+    code = "model_redirect_target_unavailable"
+    error_type = "invalid_request_error"
+
+
 class ProxyReasoningEffortNotAllowed(AppError):
     status_code = 403
     code = "reasoning_effort_not_allowed"

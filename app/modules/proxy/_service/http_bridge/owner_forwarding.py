@@ -39,6 +39,7 @@ from app.core.metrics.prometheus import (
     bridge_forward_latency_seconds,
     bridge_owner_forward_total,
 )
+from app.core.openai.model_redirects import get_request_model_redirect
 from app.core.openai.requests import (
     ResponsesRequest,
 )
@@ -412,6 +413,7 @@ class _HTTPBridgeOwnerForwardingMixin:
             headers = without_http_bridge_session_affinity_headers(headers)
             incoming_turn_state = None
         forwarded_turn_state = incoming_turn_state or downstream_turn_state
+        redirect = get_request_model_redirect()
         # file_owner_account_id is an origin-side ownership proof, not a route
         # hint. The forwarding signer binds it before another replica may skip
         # its own process-local file-pin lookup.
@@ -435,6 +437,7 @@ class _HTTPBridgeOwnerForwardingMixin:
             file_owner_account_id=file_owner_account_id,
             client_ip=client_ip,
             request_operation=get_request_operation(),
+            requested_model=redirect.requested_model if redirect is not None else None,
         )
         forward_headers = _headers_with_authorization(headers, proxy_api_authorization)
         clock = clock_for(self)

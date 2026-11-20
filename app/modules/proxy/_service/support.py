@@ -32,6 +32,7 @@ from app.core.clients.proxy_websocket import (
 from app.core.clock import REAL_CLOCK, Clock, Scheduler
 from app.core.config.settings import get_settings
 from app.core.errors import OpenAIErrorEnvelope, OpenAIErrorParam, openai_error
+from app.core.openai.model_redirects import ModelRedirectAttribution
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import classify_event_type
@@ -1046,6 +1047,7 @@ class _WebSocketRequestState:
     api_key_reservation: ApiKeyUsageReservationData | None
     started_at: float
     request_operation: RequestOperation = field(default_factory=get_request_operation)
+    model_redirect: ModelRedirectAttribution | None = None
     pre_normalization_reasoning_effort: str | None = None
     responses_lite_model: str | None = None
     latency_first_token_ms: int | None = None

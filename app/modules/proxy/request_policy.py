@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from pydantic import ValidationError
 
 from app.core.errors import OpenAIErrorEnvelope, openai_error
-from app.core.exceptions import ProxyModelNotAllowed, ProxyReasoningEffortNotAllowed
+from app.core.exceptions import ProxyModelNotAllowed, ProxyModelRedirectUnavailable, ProxyReasoningEffortNotAllowed
 from app.core.openai.compaction_routes import CompactionRoute
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.openai.model_redirects import (
+    ModelRedirectAttribution,
+    get_model_redirects_cache,
+    get_request_model_redirect,
+    model_redirect_inactivity,
+)
 from app.core.openai.model_registry import ModelRegistry, canonical_service_tier_value, get_model_registry
 from app.core.openai.requests import (
     ResponsesCompactRequest,
@@ -29,7 +36,11 @@ from app.core.utils.json_guards import is_json_list, is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.db.models import ModelSource
 from app.modules.api_keys.service import ApiKeyData
-from app.modules.model_sources.catalog import source_model_reasoning_levels
+from app.modules.model_sources.catalog import (
+    native_redirect_targets,
+    source_model_reasoning_levels,
+    source_redirect_targets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +141,82 @@ def validate_model_access(api_key: ApiKeyData | None, model: str | None) -> None
     if model is None or effective_model in allowed_models:
         return
     raise ProxyModelNotAllowed(f"This API key does not have access to model '{model}'")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelResolution:
+    requested_model: str
+    model: str
+    raw_source_model: str
+    enforced_model: str | None
+
+    @property
+    def redirect(self) -> ModelRedirectAttribution | None:
+        if self.requested_model == self.model:
+            return None
+        return ModelRedirectAttribution(self.requested_model, self.model)
+
+
+def api_key_enforced_model(api_key: ApiKeyData | None) -> str | None:
+    return api_key.enforced_model if api_key is not None else None
+
+
+def model_for_key_authorization(model: str, redirect: ModelRedirectAttribution | None) -> str:
+    return redirect.requested_model if redirect is not None and redirect.served_model == model else model
+
+
+def provider_model_allowed(api_key: ApiKeyData | None, model: str) -> bool:
+    if api_key is None:
+        return True
+    if redirect := get_request_model_redirect():
+        # The resolver already authorized the requested slug on this key.
+        return model == redirect.served_model
+    enforced = resolve_model_alias(api_key_enforced_model(api_key))
+    allowed = {resolve_model_alias(option) for option in api_key.allowed_models or ()}
+    return (not allowed or model in allowed) and (enforced is None or enforced == model)
+
+
+def resolve_model_without_redirect(model: str, api_key: ApiKeyData | None) -> ModelResolution:
+    enforced = api_key_enforced_model(api_key)
+    raw_source = enforced or model
+    requested = resolve_model_alias(raw_source) or raw_source
+    return ModelResolution(requested, requested, raw_source, enforced)
+
+
+async def resolve_request_model(
+    model: str, api_key: ApiKeyData | None, *, native_claude_ids: bool = False
+) -> ModelResolution:
+    resolution = resolve_model_without_redirect(model, api_key)
+    redirects = await get_model_redirects_cache().get()
+    target = redirects.get(resolution.requested_model)
+    if target is None and native_claude_ids and resolution.requested_model.startswith("claude-"):
+        # Claude Code sends native IDs without the catalogue's provider prefix.
+        native_slug = f"anthropic/{resolution.requested_model}"
+        if native_slug in redirects:
+            resolution = replace(resolution, requested_model=native_slug)
+            target = redirects[native_slug]
+    if target is None:
+        return resolution
+    validate_model_access(api_key, resolution.requested_model)
+    catalogue = native_redirect_targets()
+    if target not in catalogue and target not in redirects:
+        catalogue = await source_redirect_targets()
+    if model_redirect_inactivity(target, redirects, catalogue) is not None:
+        raise ProxyModelRedirectUnavailable(
+            f"Model '{resolution.requested_model}' redirects to '{target}', which is unavailable",
+            param="model",
+        )
+    return replace(resolution, model=target, raw_source_model=target)
+
+
+def log_model_redirect(redirect: ModelRedirectAttribution, surface: str, *, request_id: str | None = None) -> None:
+    logger.info(
+        "model_redirected request_id=%s requested_model=%s served_model=%s surface=%s",
+        request_id or get_request_id(),
+        redirect.requested_model,
+        redirect.served_model,
+        surface,
+    )
 
 
 def validate_reasoning_effort_access(api_key: ApiKeyData | None, effort: str | None) -> None:
@@ -272,6 +359,7 @@ def apply_api_key_enforcement(
     registry: ModelRegistry | None = None,
     prohibit_fast_mode: bool = False,
     compaction_routes: Mapping[str, CompactionRoute] | None = None,
+    model_resolution: ModelResolution | None = None,
 ) -> ApiKeyEnforcementResult:
     """Apply API-key policy and report whether it supplied the service tier.
 
@@ -287,45 +375,43 @@ def apply_api_key_enforcement(
     client_reasoning_effort = payload._codex_lb_client_reasoning_effort or _client_reasoning_effort(payload)
     payload._codex_lb_client_reasoning_effort = client_reasoning_effort
     provider_reasoning_effort = _client_reasoning_effort_from_provider_aliases(payload)
+    resolution = model_resolution or resolve_model_without_redirect(payload.model, api_key)
     normalize_upstream_model_alias(payload)
-
-    if api_key is None:
-        _apply_compaction_route(payload, None, compaction_routes)
-        _materialize_provider_reasoning_effort(payload, provider_reasoning_effort)
-        pre_normalization_effort = normalize_unsupported_reasoning_effort(payload, registry=registry)
-        apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
-        return ApiKeyEnforcementResult(False, pre_normalization_effort)
-
-    if api_key.enforced_model:
-        enforced_model_reasoning_effort = _client_reasoning_effort_from_model(api_key.enforced_model)
+    if resolution.enforced_model is not None:
+        assert api_key is not None
+        enforced_model_reasoning_effort = _client_reasoning_effort_from_model(resolution.enforced_model)
         requested_model = payload.model
-        if requested_model != api_key.enforced_model:
+        if requested_model != resolution.enforced_model:
             logger.info(
                 "api_key_model_enforced request_id=%s key_id=%s requested_model=%s enforced_model=%s",
                 get_request_id(),
                 api_key.id,
                 requested_model,
-                api_key.enforced_model,
+                resolution.enforced_model,
             )
-        payload.model = api_key.enforced_model
+        payload.model = resolution.enforced_model
         if enforced_model_reasoning_effort is not None:
             client_reasoning_effort = enforced_model_reasoning_effort
             payload._codex_lb_client_reasoning_effort = client_reasoning_effort
         normalize_upstream_model_alias(payload)
-        if (
-            responses_input_uses_lite_tools(payload.input)
-            and _model_responses_lite_capability(
-                payload.model,
-                registry=registry or get_model_registry(),
-            )
-            is False
-        ):
-            raise ProxyModelNotAllowed(
-                f"API key enforced model '{payload.model}' does not support Responses Lite",
-                code="responses_lite_model_mismatch",
-            )
+    payload.model = resolution.model
+    if (
+        resolution.enforced_model is not None
+        and responses_input_uses_lite_tools(payload.input)
+        and _model_responses_lite_capability(payload.model, registry=registry or get_model_registry()) is False
+    ):
+        raise ProxyModelNotAllowed(
+            f"API key enforced model '{payload.model}' does not support Responses Lite",
+            code="responses_lite_model_mismatch",
+        )
 
     _apply_compaction_route(payload, api_key, compaction_routes)
+
+    if api_key is None:
+        _materialize_provider_reasoning_effort(payload, provider_reasoning_effort)
+        pre_normalization_effort = normalize_unsupported_reasoning_effort(payload, registry=registry)
+        apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
+        return ApiKeyEnforcementResult(False, pre_normalization_effort)
 
     if api_key.enforced_reasoning_effort is not None:
         payload._codex_lb_pre_normalization_reasoning_effort = None

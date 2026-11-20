@@ -20,7 +20,7 @@ from app.dependencies import ProxyContext
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy.images_observability import IMAGE_ROUTE_STARTED_AT_STATE, record_images_route_observability
 from app.modules.proxy.native_image_usage import NativeImageAccounting
-from app.modules.proxy.request_policy import openai_validation_error
+from app.modules.proxy.request_policy import api_key_enforced_model, openai_validation_error
 
 ImageOperation = Literal["generations", "edits"]
 DEFAULT_IMAGE_MODEL = "gpt-image-2"
@@ -193,7 +193,7 @@ async def forward_native_image(
                 image_invalid_request_error("At least one images[].image_url is required.", param="images"),
                 headers=dict(rate_limit_headers),
             )
-        model = api._effective_model_for_api_key(api_key, payload.model)
+        model = api_key_enforced_model(api_key) or payload.model
         if not model.startswith("gpt-image-"):
             status = 400
             return api._logged_error_json_response(

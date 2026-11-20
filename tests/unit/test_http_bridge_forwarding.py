@@ -27,6 +27,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER,
     HTTP_BRIDGE_ORIGINAL_UNANCHORED_HEADER,
     HTTP_BRIDGE_REQUEST_OPERATION_HEADER,
+    HTTP_BRIDGE_REQUESTED_MODEL_HEADER,
     HTTP_BRIDGE_RESERVATION_ID_HEADER,
     HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER,
     HTTP_BRIDGE_RESERVATION_MODEL_HEADER,
@@ -58,6 +59,33 @@ def _temp_bridge_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterato
 
 def _payload() -> ResponsesRequest:
     return ResponsesRequest.model_validate({"model": "gpt-5.4", "instructions": "hi", "input": "hi"})
+
+
+@pytest.mark.parametrize("tamper", [None, "change", "remove", "unsigned"])
+def test_forwarded_requested_model_is_signed(tamper):
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="origin",
+        target_instance="owner",
+        codex_session_affinity=True,
+        downstream_turn_state=None,
+        requested_model="retired/模型",
+    )
+    headers = build_owner_forward_headers(payload=payload, headers={}, context=context)
+    if tamper == "change":
+        headers[HTTP_BRIDGE_REQUESTED_MODEL_HEADER] = "other-model"
+    elif tamper == "remove":
+        headers.pop(HTTP_BRIDGE_REQUESTED_MODEL_HEADER)
+    elif tamper == "unsigned":
+        headers.pop(HTTP_BRIDGE_SIGNATURE_V2_HEADER)
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="owner")
+    if tamper is None:
+        assert error is None
+        assert forwarded is not None
+        assert forwarded.context.requested_model == "retired/模型"
+    else:
+        assert forwarded is None
+        assert error is not None
 
 
 @pytest.mark.parametrize("tamper", [None, "label", "signature", "invalid"])

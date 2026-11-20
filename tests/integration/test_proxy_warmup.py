@@ -538,7 +538,8 @@ async def test_warmup_post_exchange_persist_conflict_surfaces_upstream_unavailab
 
 
 @pytest.mark.asyncio
-async def test_warmup_normalizes_model_alias_before_upstream(async_client, monkeypatch):
+@pytest.mark.parametrize("redirect_target", [None, "gpt-6-astra"])
+async def test_warmup_normalizes_model_alias_before_upstream(async_client, monkeypatch, redirect_target):
     await _enable_api_key_auth(async_client)
     settings_response = await async_client.put(
         "/api/settings",
@@ -550,6 +551,11 @@ async def test_warmup_normalizes_model_alias_before_upstream(async_client, monke
         },
     )
     assert settings_response.status_code == 200
+    if redirect_target:
+        redirect = await async_client.put(
+            "/api/settings/model-redirects/gpt-5.4-mini", json={"targetModel": redirect_target}
+        )
+        assert redirect.status_code == 200, redirect.text
     eligible_id = await _import_account(async_client, "acc-warmup-alias", "warmup-alias@example.com")
     await _add_primary_usage(eligible_id, used_percent=0.0, window_minutes=300)
 
@@ -583,10 +589,13 @@ async def test_warmup_normalizes_model_alias_before_upstream(async_client, monke
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["submitted"][0]["model"] == "gpt-5.4-mini-high"
+    assert payload["submitted"][0]["model"] == (redirect_target or "gpt-5.4-mini-high")
     captured_request_payload = captured_payloads[0]
-    assert captured_request_payload["model"] == "gpt-5.4-mini"
+    assert captured_request_payload["model"] == (redirect_target or "gpt-5.4-mini")
     assert captured_request_payload["reasoning"] == {"effort": "high"}
+    if redirect_target:
+        rows = (await async_client.get("/api/request-logs", params={"model": "gpt-5.4-mini"})).json()["requests"]
+        assert [(row["model"], row["requestedModel"]) for row in rows] == [(redirect_target, "gpt-5.4-mini")]
 
 
 @pytest.mark.asyncio

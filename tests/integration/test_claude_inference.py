@@ -7,6 +7,7 @@ import pytest
 from pydantic import JsonValue
 
 from tests.integration import test_claude_routing as routing_fixtures
+from tests.integration.model_source_helpers import _enable_api_key_auth
 
 MODEL = routing_fixtures.MODEL
 pool = routing_fixtures.pool
@@ -948,6 +949,37 @@ async def test_native_messages_preserves_body_and_pings(async_client, pool, monk
     assert captured[0][2]["system"] == system
     assert response.headers["anthropic-ratelimit-requests-remaining"] == "10"
     assert closed == [captured[0][0]]
+
+
+@pytest.mark.parametrize("enforce_model", [False, True])
+async def test_native_messages_uses_redirects_with_an_api_key(async_client, pool, monkeypatch, enforce_model):
+    captured, _ = install_upstream(monkeypatch)
+    source = "anthropic/claude-retired-coding-model"
+    redirect = await async_client.put(
+        "/api/settings/model-redirects/anthropic%2Fclaude-retired-coding-model", json={"targetModel": MODEL}
+    )
+    assert redirect.status_code == 200, redirect.text
+    await _enable_api_key_auth(async_client)
+    result = await async_client.post(
+        "/api/api-keys/",
+        json={"name": "redirected key", "allowedModels": [source], "enforcedModel": source if enforce_model else None},
+    )
+    assert result.status_code == 200, result.text
+    response = await async_client.post(
+        "/v1/messages",
+        headers={**native_headers(), "Authorization": f"Bearer {result.json()['key']}"},
+        json={
+            "model": "ignored-by-key" if enforce_model else source.removeprefix("anthropic/"),
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "stream": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "Hello from Claude" in response.text
+    assert captured[0][2]["model"] == MODEL.removeprefix("anthropic/")
+    rows = (await async_client.get("/api/request-logs", params={"model": source})).json()["requests"]
+    assert [(row["model"], row["requestedModel"]) for row in rows] == [(MODEL, source)]
 
 
 async def test_replayed_thinking_on_preserved_model_opts_into_drop_block(async_client, pool, monkeypatch, caplog):

@@ -760,6 +760,7 @@ from app.modules.proxy.load_balancer import (
     effective_routing_tunables,
 )
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
+from app.modules.proxy.request_policy import api_key_enforced_model
 from app.modules.proxy.ring_membership import (
     RingMembershipService,
 )
@@ -990,7 +991,7 @@ class ProxyService(
         affinity = _sticky_key_for_thread_goal_request(
             payload, headers, codex_session_affinity, settings.openai_cache_affinity_max_age_seconds
         )
-        selection_model = api_key.enforced_model if api_key is not None else None
+        selection_model = api_key_enforced_model(api_key)
         routing_strategy = _routing_strategy(settings)
         account_id_value: str | None = None
         log_status = "error"

@@ -26,11 +26,9 @@ from fastapi import WebSocket
 import app.modules.model_sources.selection as source_selection
 import app.modules.proxy._service.websocket.mixin as ws_mixin
 from app.modules.api_keys.service import ApiKeyData
-from app.modules.model_sources.selection import (
-    effective_model_for_api_key,
-    responses_model_is_source_owned,
-)
+from app.modules.model_sources.selection import responses_model_is_source_owned
 from app.modules.proxy import service as proxy_service
+from app.modules.proxy.request_policy import resolve_model_without_redirect
 from tests.unit.test_proxy_utils import (
     _make_account,
     _make_proxy_settings,
@@ -78,9 +76,9 @@ def _request_state(model: str) -> ws_mixin._WebSocketRequestState:
 
 
 def test_effective_model_prefers_enforced_model() -> None:
-    assert effective_model_for_api_key(None, "gpt-5.6-sol") == "gpt-5.6-sol"
-    assert effective_model_for_api_key(_api_key(), "gpt-5.6-sol") == "gpt-5.6-sol"
-    assert effective_model_for_api_key(_api_key(enforced_model="qwen3.8-max"), "gpt-5.6-sol") == "qwen3.8-max"
+    assert resolve_model_without_redirect("gpt-5.6-sol", None).model == "gpt-5.6-sol"
+    assert resolve_model_without_redirect("gpt-5.6-sol", _api_key()).model == "gpt-5.6-sol"
+    assert resolve_model_without_redirect("gpt-5.6-sol", _api_key(enforced_model="qwen3.8-max")).model == "qwen3.8-max"
 
 
 @pytest.mark.asyncio
@@ -117,7 +115,7 @@ async def _run_connect_guard(
     selection_calls = 0
     seen_api_keys: list[ApiKeyData | None] = []
 
-    async def fake_is_source_owned(model, key, *, raw_model=None):  # noqa: ANN001
+    async def fake_is_source_owned(model, key, *, raw_model=None, model_redirect=None):  # noqa: ANN001
         seen_api_keys.append(key)
         return is_source_owned
 
@@ -346,7 +344,7 @@ async def test_reuse_guard_rejects_a_later_source_owned_turn(monkeypatch: pytest
         return account, upstream
 
     # Only the second turn's model is source-owned.
-    async def source_owned_for_qwen(model, _api_key, *, raw_model=None):  # noqa: ANN001
+    async def source_owned_for_qwen(model, _api_key, *, raw_model=None, model_redirect=None):  # noqa: ANN001
         return model == "qwen3.8-max"
 
     released = AsyncMock()
@@ -738,7 +736,7 @@ async def test_reuse_guard_forwards_a_pinned_input_file_turn(db_setup, monkeypat
         return account, upstream
 
     # The second turn's model is source-owned, like the reuse-guard rejection test.
-    async def source_owned_for_qwen(model, _api_key, *, raw_model=None):  # noqa: ANN001
+    async def source_owned_for_qwen(model, _api_key, *, raw_model=None, model_redirect=None):  # noqa: ANN001
         return model == "qwen3.8-max"
 
     monkeypatch.setattr(ws_mixin, "responses_model_is_source_owned", source_owned_for_qwen)
@@ -790,7 +788,7 @@ async def test_reuse_guard_forwards_a_terminal_compaction_trigger_turn(
     async def fake_connect(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
         return account, upstream
 
-    async def source_owned_for_qwen(model, _api_key, *, raw_model=None):  # noqa: ANN001
+    async def source_owned_for_qwen(model, _api_key, *, raw_model=None, model_redirect=None):  # noqa: ANN001
         return model == "qwen3.8-max"
 
     monkeypatch.setattr(ws_mixin, "responses_model_is_source_owned", source_owned_for_qwen)

@@ -67,6 +67,7 @@ import {
   type RequestLogEntry,
   type UpstreamProxyAdmin,
 } from "@/test/mocks/factories";
+import type { ModelRedirect, ModelRedirects } from "@/features/settings/schemas";
 
 const MODEL_OPTION_DELIMITER = ":::";
 const AccountModelPayloadSchema = z.object({
@@ -423,6 +424,8 @@ type MockState = {
   upstreamProxyAdmin: UpstreamProxyAdmin;
   modelContextWindowOverrides: ModelContextWindowOverrides;
   compactionRoutes: CompactionRoutes;
+  modelRedirects: ModelRedirect[];
+  listedRetiredModels: Set<string>;
   quotaPlannerForecast: QuotaPlannerForecast;
   apiKeys: ApiKey[];
   automations: Array<{
@@ -534,6 +537,8 @@ function createInitialState(): MockState {
     upstreamProxyAdmin: createUpstreamProxyAdmin(),
     modelContextWindowOverrides: createModelContextWindowOverrides(),
     compactionRoutes: createCompactionRoutes(),
+    modelRedirects: [],
+    listedRetiredModels: new Set(),
     quotaPlannerForecast: createQuotaPlannerForecast(),
     apiKeys: createDefaultApiKeys(),
     automations: [],
@@ -562,6 +567,57 @@ function parseDateValue(value: string | null): number | null {
   }
   const timestamp = new Date(value).getTime();
   return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function modelRedirectsResponse(): ModelRedirects {
+  const groups = new Map<string, ModelRedirects["targets"][number]["models"]>();
+  for (const model of state.modelContextWindowOverrides.models) {
+    if (state.modelRedirects.some((redirect) => redirect.sourceModel === model.slug)) continue;
+    const option = { slug: model.slug, displayName: model.displayName, hidden: !model.listed };
+    groups.set(model.provider, [...(groups.get(model.provider) ?? []), option]);
+  }
+  return {
+    redirects: state.modelRedirects,
+    targets: [...groups].map(([provider, models]) => ({ provider, models })),
+  };
+}
+
+function catalogueSettingsResponse(): ModelContextWindowOverrides {
+  const { models, overrides } = state.modelContextWindowOverrides;
+  return {
+    overrides,
+    models: [
+      ...models.filter((model) => !state.modelRedirects.some((redirect) => redirect.sourceModel === model.slug)),
+      ...state.modelRedirects.flatMap(({ sourceModel, targetModel }) => {
+        const target = models.find((model) => model.slug === targetModel);
+        if (!target) return [];
+        const source = models.find((model) => model.slug === sourceModel);
+        const override = overrides.find((entry) => entry.slug === targetModel)?.contextWindow;
+        return [{
+          ...target,
+          slug: sourceModel,
+          displayName: source?.displayName ?? sourceModel,
+          listed: source?.listed ?? state.listedRetiredModels.has(sourceModel),
+          redirectTargetModel: targetModel,
+          redirectTargetOverrideTokens: override === undefined ? null : Math.min(override, target.maxContextWindow ?? override),
+          retired: !source,
+        }];
+      }),
+    ],
+  };
+}
+
+function compactionRoutesResponse(): CompactionRoutes {
+  return {
+    ...state.compactionRoutes,
+    models: state.compactionRoutes.models.filter(
+      (model) => !state.modelRedirects.some((redirect) => redirect.sourceModel === model.slug),
+    ),
+  };
+}
+
+function requestModelNames(entry: RequestLogEntry): string[] {
+  return entry.requestedModel ? [entry.model, entry.requestedModel] : [entry.model];
 }
 
 function filterRequestLogs(
@@ -606,7 +662,7 @@ function filterRequestLogs(
       return false;
     }
 
-    if (models.size > 0 && !models.has(entry.model)) {
+    if (models.size > 0 && !requestModelNames(entry).some((model) => models.has(model))) {
       return false;
     }
 
@@ -618,9 +674,9 @@ function filterRequestLogs(
     }
 
     if (modelOptions.size > 0) {
-      const key = `${entry.model}${MODEL_OPTION_DELIMITER}${entry.reasoningEffort ?? ""}`;
-      const matchNoEffort = modelOptions.has(entry.model);
-      if (!modelOptions.has(key) && !matchNoEffort) {
+      if (!requestModelNames(entry).some((model) =>
+        modelOptions.has(model) || modelOptions.has(`${model}${MODEL_OPTION_DELIMITER}${entry.reasoningEffort ?? ""}`)
+      )) {
         return false;
       }
     }
@@ -640,6 +696,7 @@ function filterRequestLogs(
         entry.apiKeyName,
         entry.requestId,
         entry.model,
+        entry.requestedModel,
         entry.reasoningEffort,
         entry.errorCode,
         entry.errorMessage,
@@ -674,12 +731,9 @@ function requestLogOptionsFromEntries(
     { model: string; reasoningEffort: string | null }
   >();
   for (const entry of entries) {
-    const key = `${entry.model}${MODEL_OPTION_DELIMITER}${entry.reasoningEffort ?? ""}`;
-    if (!modelMap.has(key)) {
-      modelMap.set(key, {
-        model: entry.model,
-        reasoningEffort: entry.reasoningEffort ?? null,
-      });
+    for (const model of requestModelNames(entry)) {
+      const key = `${model}${MODEL_OPTION_DELIMITER}${entry.reasoningEffort ?? ""}`;
+      if (!modelMap.has(key)) modelMap.set(key, { model, reasoningEffort: entry.reasoningEffort ?? null });
     }
   }
   const modelOptionsList = [...modelMap.values()].sort((a, b) => {
@@ -1878,7 +1932,7 @@ export const handlers = [
   }),
 
   http.get("/api/settings/model-context-window-overrides", () => {
-    return HttpResponse.json(state.modelContextWindowOverrides);
+    return HttpResponse.json(catalogueSettingsResponse());
   }),
 
   http.put("/api/settings/model-context-window-overrides/:slug*", async ({ params, request }) => {
@@ -1899,6 +1953,12 @@ export const handlers = [
       );
     }
     const model = state.modelContextWindowOverrides.models.find((entry) => entry.slug === slug);
+    if (state.modelRedirects.some((redirect) => redirect.sourceModel === slug)) {
+      return HttpResponse.json(
+        { error: { code: "model_redirect_conflict", message: "Uses the served model's context window while redirected" } },
+        { status: 400 },
+      );
+    }
     if (!model) {
       return HttpResponse.json(
         { error: { code: "model_not_in_catalogue", message: "Model is not offered to clients" } },
@@ -1920,7 +1980,7 @@ export const handlers = [
         { slug, contextWindow: payload.contextWindow, source: "dashboard" as const, envValue: existing?.envValue ?? null },
       ].sort((a, b) => a.slug.localeCompare(b.slug)),
     };
-    return HttpResponse.json(state.modelContextWindowOverrides);
+    return HttpResponse.json(catalogueSettingsResponse());
   }),
 
   http.delete("/api/settings/model-context-window-overrides/:slug*", ({ params }) => {
@@ -1942,16 +2002,16 @@ export const handlers = [
             )
           : others,
     };
-    return HttpResponse.json(state.modelContextWindowOverrides);
+    return HttpResponse.json(catalogueSettingsResponse());
   }),
 
   http.get("/api/settings/model-compaction-routes", () => {
-    return HttpResponse.json(state.compactionRoutes);
+    return HttpResponse.json(compactionRoutesResponse());
   }),
 
   http.put("/api/settings/hidden-models/:slug*", ({ params }) => {
     const slug = decodeURIComponent(String(params.slug));
-    if (!state.modelContextWindowOverrides.models.some((entry) => entry.slug === slug)) {
+    if (!catalogueSettingsResponse().models.some((entry) => entry.slug === slug)) {
       return HttpResponse.json(
         { error: { code: "model_not_in_catalogue", message: "Model is not offered to clients" } },
         { status: 400 },
@@ -1963,12 +2023,14 @@ export const handlers = [
         entry.slug === slug ? { ...entry, listed: false } : entry,
       ),
     };
-    return HttpResponse.json(state.modelContextWindowOverrides);
+    state.listedRetiredModels.delete(slug);
+    return HttpResponse.json(catalogueSettingsResponse());
   }),
 
   http.delete("/api/settings/hidden-models/:slug*", ({ params }) => {
     const slug = decodeURIComponent(String(params.slug));
-    if (!state.modelContextWindowOverrides.models.some((entry) => entry.slug === slug && !entry.listed)) {
+    const model = catalogueSettingsResponse().models.find((entry) => entry.slug === slug);
+    if (!model || model.listed) {
       return HttpResponse.json(
         { error: { code: "hidden_model_not_found", message: "Model is not hidden" } },
         { status: 404 },
@@ -1980,7 +2042,8 @@ export const handlers = [
         entry.slug === slug ? { ...entry, listed: true } : entry,
       ),
     };
-    return HttpResponse.json(state.modelContextWindowOverrides);
+    if (model.retired) state.listedRetiredModels.add(slug);
+    return HttpResponse.json(catalogueSettingsResponse());
   }),
 
   http.put("/api/settings/model-compaction-routes/:slug*", async ({ params, request }) => {
@@ -1990,6 +2053,12 @@ export const handlers = [
       z.object({ compactionModel: z.string().min(1), reasoningEffort: z.string().min(1).nullable() }),
     );
     const models = state.compactionRoutes.models;
+    if (state.modelRedirects.some((redirect) => [slug, payload?.compactionModel].includes(redirect.sourceModel))) {
+      return HttpResponse.json(
+        { error: { code: "model_redirect_conflict", message: "A redirected model cannot be used in a compaction route" } },
+        { status: 400 },
+      );
+    }
     if (!payload || !models.some((model) => model.slug === slug)) {
       return HttpResponse.json(
         { error: { code: "compaction_route_incompatible", message: "The coding model is not a native model offered to accounts" } },
@@ -2003,7 +2072,7 @@ export const handlers = [
         a.slug.localeCompare(b.slug),
       ),
     };
-    return HttpResponse.json(state.compactionRoutes);
+    return HttpResponse.json(compactionRoutesResponse());
   }),
 
   http.delete("/api/settings/model-compaction-routes/:slug*", ({ params }) => {
@@ -2018,7 +2087,51 @@ export const handlers = [
       ...state.compactionRoutes,
       routes: state.compactionRoutes.routes.filter((route) => route.slug !== slug),
     };
-    return HttpResponse.json(state.compactionRoutes);
+    return HttpResponse.json(compactionRoutesResponse());
+  }),
+
+  http.get("/api/settings/model-redirects", () => HttpResponse.json(modelRedirectsResponse())),
+
+  http.put("/api/settings/model-redirects/:source*", async ({ params, request }) => {
+    const sourceModel = decodeURIComponent(String(params.source));
+    const payload = await parseJsonBody(request, z.object({ targetModel: z.string() }));
+    const targetModel = payload?.targetModel ?? "";
+    const target = state.modelContextWindowOverrides.models.find((model) => model.slug === targetModel);
+    if (!sourceModel || sourceModel.length > 256 || /\s|\p{C}/u.test(sourceModel) || !target ||
+        sourceModel === targetModel || state.modelRedirects.some(
+          (redirect) => redirect.sourceModel === targetModel || redirect.targetModel === sourceModel,
+        )) {
+      return HttpResponse.json(
+        { error: { code: "model_redirect_invalid", message: "Invalid redirect" } },
+        { status: 400 },
+      );
+    }
+    if (state.compactionRoutes.routes.some((route) => [route.slug, route.compactionModel].includes(sourceModel))) {
+      return HttpResponse.json(
+        { error: { code: "model_redirect_conflict", message: "Model is already part of a compaction route" } },
+        { status: 400 },
+      );
+    }
+    if (!state.modelRedirects.some((redirect) => redirect.sourceModel === sourceModel)) {
+      state.listedRetiredModels.delete(sourceModel);
+    }
+    state.modelRedirects = [
+      ...state.modelRedirects.filter((redirect) => redirect.sourceModel !== sourceModel),
+      { sourceModel, targetModel, status: "active" as const, reason: null },
+    ].sort((left, right) => left.sourceModel.localeCompare(right.sourceModel));
+    return HttpResponse.json(modelRedirectsResponse());
+  }),
+
+  http.delete("/api/settings/model-redirects/:source*", ({ params }) => {
+    const source = decodeURIComponent(String(params.source));
+    if (!state.modelRedirects.some((redirect) => redirect.sourceModel === source)) {
+      return HttpResponse.json(
+        { error: { code: "model_redirect_not_found", message: "Model redirect not found" } },
+        { status: 404 },
+      );
+    }
+    state.modelRedirects = state.modelRedirects.filter((redirect) => redirect.sourceModel !== source);
+    return HttpResponse.json(modelRedirectsResponse());
   }),
 
   http.put("/api/settings", async ({ request }) => {

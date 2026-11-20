@@ -7,6 +7,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import quote, unquote
 
 import aiohttp
 
@@ -63,6 +64,7 @@ HTTP_BRIDGE_SIGNATURE_VERSION_HEADER = "x-codex-bridge-signature-version"
 HTTP_BRIDGE_CLIENT_IP_HEADER = "x-codex-bridge-client-ip"
 HTTP_BRIDGE_CLIENT_IP_SIGNATURE_HEADER = "x-codex-bridge-client-ip-signature"
 HTTP_BRIDGE_REQUEST_OPERATION_HEADER = "x-codex-bridge-request-operation"
+HTTP_BRIDGE_REQUESTED_MODEL_HEADER = "x-codex-bridge-requested-model"
 HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 # Additive tamper-proofing header (#1203): a second signature bound to the
 # exact forwarding body (``model_dump_for_forwarding``) that is posted, so an
@@ -99,6 +101,7 @@ class HTTPBridgeForwardContext:
     file_owner_account_id: str | None = None
     client_ip: str | None = None
     request_operation: RequestOperation | None = None
+    requested_model: str | None = None
     reservation: ApiKeyUsageReservationData | None = None
     signature_version: str | None = None
 
@@ -334,6 +337,8 @@ def build_owner_forward_headers(
     forwarded[HTTP_BRIDGE_CODEX_AFFINITY_HEADER] = "1" if context.codex_session_affinity else "0"
     if context.request_operation is not None:
         forwarded[HTTP_BRIDGE_REQUEST_OPERATION_HEADER] = context.request_operation.value
+    if context.requested_model is not None:
+        forwarded[HTTP_BRIDGE_REQUESTED_MODEL_HEADER] = quote(context.requested_model, safe="")
     signature_version = _HTTP_BRIDGE_SIGNATURE_VERSION_V2 if context.original_request_unanchored else None
     if signature_version is not None:
         forwarded[HTTP_BRIDGE_SIGNATURE_VERSION_HEADER] = signature_version
@@ -411,6 +416,7 @@ def parse_forwarded_request(
         )
     client_ip = _optional_header(headers.get(HTTP_BRIDGE_CLIENT_IP_HEADER))
     raw_operation = _optional_header(headers.get(HTTP_BRIDGE_REQUEST_OPERATION_HEADER))
+    raw_requested_model = _optional_header(headers.get(HTTP_BRIDGE_REQUESTED_MODEL_HEADER))
     try:
         request_operation = RequestOperation(raw_operation) if raw_operation is not None else None
     except ValueError:
@@ -436,6 +442,7 @@ def parse_forwarded_request(
         file_owner_account_id=_optional_header(headers.get(HTTP_BRIDGE_FILE_OWNER_HEADER)),
         client_ip=client_ip,
         request_operation=request_operation,
+        requested_model=unquote(raw_requested_model) if raw_requested_model is not None else None,
         reservation=_reservation_from_headers(headers),
         signature_version=signature_version,
     )
@@ -462,6 +469,7 @@ def parse_forwarded_request(
         return HTTPBridgeForwardedRequest(context=context), None
     if (
         context.request_operation is not None
+        or context.requested_model is not None
         or context.file_owner_account_id is not None
         or extract_input_file_ids(payload.input)
     ):
@@ -598,7 +606,7 @@ def _bridge_forward_signature(
     encoding whose object boundaries make field re-packing impossible.
     """
     body_digest = _bridge_forward_body_digest(payload.model_dump(mode="json", exclude_none=True))
-    if signature_version is None:
+    if signature_version is None and context.requested_model is None:
         # Preserve the deployed legacy wire format for anchored requests during
         # rolling upgrades. Its delimiter-based encoding is intentionally not
         # reused by the versioned path because attacker-controlled affinity
@@ -707,6 +715,7 @@ def _structured_bridge_signing_payload(
             "signature_version": signature_version,
             "target_instance": context.target_instance,
             **({"request_operation": context.request_operation.value} if context.request_operation is not None else {}),
+            **({"requested_model": context.requested_model} if context.requested_model is not None else {}),
         },
         ensure_ascii=True,
         sort_keys=True,

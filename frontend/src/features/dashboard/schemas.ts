@@ -268,6 +268,7 @@ export const RequestLogSchema = z.object({
   requestOperation: RequestOperationSchema.nullable().optional(),
   connectionRequestKind: z.enum(["normal", "prewarm"]).nullable().optional(),
   model: z.string(),
+  requestedModel: z.string().nullable(),
   source: z.string().nullable().optional().default(null),
   modelSourceId: z.string().nullable().optional(),
   modelSourceName: z.string().nullable().optional(),

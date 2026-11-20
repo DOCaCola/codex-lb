@@ -23,6 +23,7 @@ from app.core.config.dashboard_overrides import dashboard_overrides_bound, with_
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
+from app.core.openai.model_redirects import set_request_model_redirect
 from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
 from app.core.resilience.toggles import bind_resilience_toggles
@@ -35,7 +36,9 @@ from app.modules.proxy.capability_routing import cyber_access_program_for_accoun
 from app.modules.proxy.helpers import _header_account_id, _normalize_error_code, _parse_openai_error
 from app.modules.proxy.request_policy import (
     apply_prohibit_fast_mode,
+    log_model_redirect,
     normalize_upstream_model_alias,
+    resolve_request_model,
     validate_model_access,
 )
 
@@ -187,6 +190,16 @@ class _WarmupMixin:
         if normalized_mode not in _WARMUP_MODES:
             raise ValueError(f"Unsupported warmup mode: {mode}")
 
+        dashboard_settings = await get_settings_cache().get()
+        # Client warmup follows the same key policy as a model turn. Internal
+        # limit-warmup jobs have their own explicit model path.
+        configured_model = dashboard_settings.warmup_model
+        resolution = await resolve_request_model(configured_model, api_key)
+        if redirect := resolution.redirect:
+            set_request_model_redirect(redirect)
+            log_model_redirect(redirect, "/v1/warmup")
+        validate_model_access(api_key, resolution.requested_model)
+
         proxy = cast(_WarmupServiceProtocol, self)
         async with proxy._repo_factory() as repos:
             all_accounts = await repos.accounts.list_accounts()
@@ -239,14 +252,11 @@ class _WarmupMixin:
                 if account.id not in eligible_ids
             )
 
-        dashboard_settings = await get_settings_cache().get()
         # C2-3 resilience toggles: bound before the per-account fan-out so every
         # warmup submission task inherits the dashboard breaker gate.
         bind_resilience_toggles(dashboard_settings)
-        configured_model = dashboard_settings.warmup_model
         prohibit_fast_mode = dashboard_settings.prohibit_fast_mode
-        effective_model = api_key.enforced_model if api_key and api_key.enforced_model else configured_model
-        validate_model_access(api_key, effective_model)
+        effective_model = resolution.model if resolution.redirect else resolution.raw_source_model
         filtered_headers = filter_inbound_headers(headers)
 
         submission_semaphore = asyncio.Semaphore(_WARMUP_MAX_CONCURRENT_SUBMISSIONS)
@@ -258,7 +268,8 @@ class _WarmupMixin:
                         account=account,
                         api_key=api_key,
                         headers=filtered_headers,
-                        warmup_model=effective_model,
+                        warmup_model=resolution.enforced_model or configured_model,
+                        redirected_model=resolution.model if resolution.redirect else None,
                         prohibit_fast_mode=prohibit_fast_mode,
                     )
 
@@ -313,6 +324,7 @@ class _WarmupMixin:
         headers: Mapping[str, str],
         warmup_model: str,
         prohibit_fast_mode: bool,
+        redirected_model: str | None = None,
     ) -> _WarmupSubmitResult:
         started_at = time.monotonic()
         useragent, useragent_group, conversation_id = _request_log_client_fields(headers)
@@ -356,6 +368,8 @@ class _WarmupMixin:
                 store=False,
             )
             normalize_upstream_model_alias(payload)
+            if redirected_model is not None:
+                payload.model = redirected_model
             apply_prohibit_fast_mode(
                 payload,
                 prohibit_fast_mode=prohibit_fast_mode,
@@ -451,7 +465,7 @@ class _WarmupMixin:
                     account_id=account.id,
                     api_key=api_key,
                     request_id=request_id,
-                    model=warmup_model,
+                    model=redirected_model or warmup_model,
                     latency_ms=int((time.monotonic() - started_at) * 1000),
                     status=status,
                     error_code=error_code,

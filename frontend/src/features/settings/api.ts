@@ -7,6 +7,8 @@ import {
   DashboardSettingsSchema,
   ModelContextWindowOverrideUpsertRequestSchema,
   ModelContextWindowOverridesSchema,
+  ModelRedirectsSchema,
+  ModelRedirectUpsertRequestSchema,
   SettingsUpdateRequestSchema,
   UpstreamProxyAdminSchema,
   UpstreamProxyEndpointCreateRequestSchema,
@@ -21,6 +23,7 @@ const SETTINGS_PATH = "/api/settings";
 const UPSTREAM_PROXY_PATH = `${SETTINGS_PATH}/upstream-proxy`;
 const MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = `${SETTINGS_PATH}/model-context-window-overrides`;
 const MODEL_COMPACTION_ROUTES_PATH = `${SETTINGS_PATH}/model-compaction-routes`;
+const MODEL_REDIRECTS_PATH = `${SETTINGS_PATH}/model-redirects`;
 const HIDDEN_MODELS_PATH = `${SETTINGS_PATH}/hidden-models`;
 
 export function getSettings() {
@@ -112,4 +115,17 @@ export function putModelCompactionRoute(slug: string, payload: unknown) {
 
 export function deleteModelCompactionRoute(slug: string) {
   return del(`${MODEL_COMPACTION_ROUTES_PATH}/${encodeURIComponent(slug)}`, CompactionRoutesSchema);
+}
+
+export function getModelRedirects() {
+  return get(MODEL_REDIRECTS_PATH, ModelRedirectsSchema);
+}
+
+export function putModelRedirect(source: string, targetModel: string) {
+  const body = ModelRedirectUpsertRequestSchema.parse({ targetModel });
+  return put(`${MODEL_REDIRECTS_PATH}/${encodeURIComponent(source)}`, ModelRedirectsSchema, { body });
+}
+
+export function deleteModelRedirect(source: string) {
+  return del(`${MODEL_REDIRECTS_PATH}/${encodeURIComponent(source)}`, ModelRedirectsSchema);
 }

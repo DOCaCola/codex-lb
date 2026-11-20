@@ -365,6 +365,18 @@ async def db_setup(_reset_db_state):
     return True
 
 
+@pytest.fixture(autouse=True)
+def _model_redirects_for_database_free_unit_tests(monkeypatch, request):
+    if request.path.parent.name != "unit" or "_reset_db_state" in request.fixturenames:
+        return
+    from app.core.openai.model_redirects import get_model_redirects_cache
+
+    async def no_redirects() -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(get_model_redirects_cache(), "get", no_redirects)
+
+
 @pytest_asyncio.fixture
 async def async_client(app_instance):
     async def _drain_proxy_persistence(response) -> None:
@@ -550,6 +562,9 @@ def _reset_global_state() -> None:
         get_hidden_models_cache().clear()
     except Exception:
         pass
+    from app.core.openai.model_redirects import get_model_redirects_cache
+
+    get_model_redirects_cache().clear()
     try:
         # Pending workspace-less plan-downgrade confirmations live in a
         # process-global fallback store when persistence is disabled, so a test

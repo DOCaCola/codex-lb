@@ -536,7 +536,13 @@ export function RecentRequestsTable({
                   </TableCell> : null}
                   {isColumnVisible("model") ? <TableCell className="align-top">
                     <div className="min-w-0 leading-tight">
-                      <div className="truncate text-xs" title={request.model || undefined}>
+                      <div
+                        className="truncate text-xs"
+                        title={request.requestedModel ? `${request.requestedModel} → ${request.model}` : request.model || undefined}
+                      >
+                        {request.requestedModel ? (
+                          <><span className="font-mono text-[11px] text-muted-foreground">{request.requestedModel}</span> <span className="text-muted-foreground">→</span>{" "}</>
+                        ) : null}
                         {modelDisplayName(request.model, modelNames.get(request.model))}
                         {reasoningEffort ? <> <span className="text-muted-foreground">{reasoningEffort}</span></> : null}
                         {billedTier ? <> <ServiceTierMark tier={billedTier} label={serviceTierLabel(billedTier, t)} /></> : null}
@@ -650,7 +656,7 @@ export function RecentRequestsTable({
                   <RequestDetailField label={t("dashboard.requests.columns.account")} value={requestAccountLabel(selectedRequest)} />
                 </div> : null}
                 <RequestDetailField label={t("dashboard.requests.columns.status")} value={selectedRequest ? t(`dashboard.requestStatus.${selectedRequest.status}`, { defaultValue: REQUEST_STATUS_LABELS[selectedRequest.status] ?? selectedRequest.status }) : "—"} />
-                <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, serviceTierLabel(visibleServiceTier(selectedRequest.serviceTier), t)) : "—"} mono />
+                <RequestDetailField label={t("dashboard.requests.columns.model")} value={selectedRequest ? formatModelLabel(selectedRequest.requestedModel ? `${selectedRequest.requestedModel} → ${selectedRequest.model}` : selectedRequest.model, selectedRequest.reasoningEffort, serviceTierLabel(visibleServiceTier(selectedRequest.serviceTier), t)) : "—"} mono />
                 <RequestDetailField label={t("dashboard.requestDetails.requestKind")} value={selectedRequest ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ?? selectedRequest.requestKind) : "—"} />
                 <RequestDetailField label={t("dashboard.requestDetails.operation")} value={selectedRequest ? requestOperationLabel(selectedRequest, t) : "—"} />
                 <RequestDetailField label={t("dashboard.requests.columns.plan")} value={requestPlanLabel(selectedRequest, "—")} />

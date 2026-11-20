@@ -70,6 +70,7 @@ def to_request_log_entry(
         connection_request_kind=log.connection_request_kind,
         request_operation=RequestOperation(log.request_operation) if log.request_operation is not None else None,
         model=log.model,
+        requested_model=log.requested_model,
         source=log.source,
         model_source_id=log.model_source_id,
         model_source_kind=log.model_source_kind,

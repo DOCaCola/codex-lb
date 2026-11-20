@@ -111,6 +111,7 @@ from app.core.errors import (
 from app.core.exceptions import (
     ProxyAuthError,
     ProxyModelNotAllowed,
+    ProxyModelRedirectUnavailable,
     ProxyRateLimitError,
     ProxyReasoningEffortNotAllowed,
     ProxyUpstreamError,
@@ -158,6 +159,14 @@ from app.core.openai.compaction import (
 from app.core.openai.compaction_routes import compaction_routes_for
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.hidden_models import get_hidden_models_cache
+from app.core.openai.model_redirects import (
+    ModelRedirectAttribution,
+    get_model_redirects_cache,
+    get_request_model_redirect,
+    model_redirect_inactivity,
+    reset_request_model_redirect,
+    set_request_model_redirect,
+)
 from app.core.openai.model_registry import (
     MODEL_SOURCE_KIND_SUBSCRIPTION,
     UpstreamModel,
@@ -247,12 +256,20 @@ from app.modules.api_keys.service import (
 from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.model_sources.catalog import (
+    is_codex_backend_catalog_model as _is_codex_backend_catalog_model,
+)
+from app.modules.model_sources.catalog import (
+    is_openrouter_image_only as _is_openrouter_image_only,
+)
+from app.modules.model_sources.catalog import (
+    native_redirect_targets,
     source_model_audio_cost_usd,
     source_model_display_name,
     source_model_request_overrides,
     source_model_supported_tool_types,
     source_model_supports_reasoning,
     source_models_to_upstream_models,
+    source_redirect_targets,
 )
 from app.modules.model_sources.compaction import (
     SourceCompactionResultError,
@@ -296,8 +313,8 @@ from app.modules.model_sources.projection import strip_source_telemetry
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.selection import (
     allowed_source_ids_for_api_key,
-    effective_model_for_api_key,
     select_responses_model_source,
+    source_model_allowed,
 )
 from app.modules.model_sources.websocket_fallback import source_websocket_fallback_identities
 from app.modules.proxy import affinity as proxy_affinity_module
@@ -355,6 +372,8 @@ from app.modules.proxy.rate_limit_events import (
 )
 from app.modules.proxy.replay_store import ApiKeyScope
 from app.modules.proxy.request_policy import (
+    ModelResolution,
+    api_key_enforced_model,
     apply_api_key_enforcement,
     apply_api_key_enforcement_to_chat_payload,
     apply_enforced_service_tier_model_fallback,
@@ -362,12 +381,14 @@ from app.modules.proxy.request_policy import (
     build_terminal_compact_request,
     enforce_strict_function_tools_format,
     enforce_strict_text_format,
+    log_model_redirect,
     model_alias_requests_fast_mode,
     normalize_responses_request_payload,
     normalize_source_reasoning_aliases,
     openai_client_payload_error,
     openai_validation_error,
     resolve_model_alias,
+    resolve_request_model,
     resolve_wire_reasoning_effort,
     responses_source_route_excluded,
     restore_source_reasoning_effort,
@@ -1248,15 +1269,12 @@ async def responses(
         return _logged_error_json_response(request, 400, error)
 
     backend_non_streaming_requested = responses_payload.stream is False
-    raw_source_model = _effective_optional_model_for_api_key(api_key, responses_payload.model)
     (
         prohibit_fast_mode,
         service_tier_was_enforced,
         pre_normalization_effort,
-    ) = await _apply_api_key_enforcement_with_fast_mode_policy(responses_payload, api_key)
-    if prohibit_fast_mode and _is_fast_mode_model_alias(raw_source_model):
-        raw_source_model = responses_payload.model
-    validate_model_access(api_key, responses_payload.model)
+        raw_source_model,
+    ) = await _apply_api_key_enforcement_with_fast_mode_policy(request, responses_payload, api_key)
     try:
         # File pins are structural subscription-only constraints. Terminal
         # compaction participates in source selection so a routed model can
@@ -1391,7 +1409,11 @@ async def opportunistic_admission(
     capability_transport_denial = await _required_capability_http_transport_denial(request, api_key)
     if capability_transport_denial is not None:
         return capability_transport_denial
-    denial = await _opportunistic_admission_denial(request, context, api_key, model=model)
+    requested = model or api_key_enforced_model(api_key)
+    resolved = await resolve_request_model(requested, api_key) if requested is not None else None
+    denial = await _opportunistic_admission_denial(
+        request, context, api_key, model=resolved.model if resolved is not None else None
+    )
     if denial is not None:
         return denial
     return JSONResponse({"admitted": True})
@@ -1482,6 +1504,8 @@ async def _serve_v1_responses(
     payload: V1ResponsesRequest,
     context: ProxyContext,
     api_key: ApiKeyData | None,
+    *,
+    model_resolution: ModelResolution | None = None,
 ) -> Response:
     """The `/v1/responses` dispatch after ingress parsing; Messages translation shares it."""
     try:
@@ -1494,15 +1518,14 @@ async def _serve_v1_responses(
     except ValidationError as exc:
         error = openai_validation_error(exc)
         return _logged_error_json_response(request, 400, error)
-    raw_source_model = _effective_optional_model_for_api_key(api_key, responses_payload.model)
     (
         prohibit_fast_mode,
         service_tier_was_enforced,
         pre_normalization_effort,
-    ) = await _apply_api_key_enforcement_with_fast_mode_policy(responses_payload, api_key)
-    if prohibit_fast_mode and _is_fast_mode_model_alias(raw_source_model):
-        raw_source_model = responses_payload.model
-    validate_model_access(api_key, responses_payload.model)
+        raw_source_model,
+    ) = await _apply_api_key_enforcement_with_fast_mode_policy(
+        request, responses_payload, api_key, model_resolution=model_resolution
+    )
     try:
         # Share file-pin exclusions with Codex/WebSocket. Terminal compaction
         # participates in source selection and is synthesized locally for a
@@ -1648,6 +1671,8 @@ async def internal_bridge_responses(
     # Only authenticated, signature-verified internal metadata can replace the
     # ingress operation. The outer ASGI context owns reset after streaming ends.
     set_request_operation(forwarded_request_context.context.request_operation or RequestOperation.UNKNOWN)
+    if requested_model := forwarded_request_context.context.requested_model:
+        set_request_model_redirect(ModelRedirectAttribution(requested_model, payload.model))
     capability_transport_denial = await _required_capability_http_transport_denial(request, api_key, payload=payload)
     if capability_transport_denial is not None:
         return capability_transport_denial
@@ -1973,7 +1998,22 @@ async def claude_messages(
         selection = decode_discovery_alias(requested_model)
     except MessagesRequestError as exc:
         return _logged_error_json_response(request, 400, anthropic_error_body("invalid_request_error", str(exc)))
-    model = effective_model_for_api_key(api_key, selection.model) or selection.model
+    try:
+        resolution = await resolve_request_model(selection.model, api_key, native_claude_ids=True)
+    except ProxyModelRedirectUnavailable as exc:
+        return _logged_error_json_response(
+            request,
+            400,
+            {"type": "error", "error": {"type": exc.error_type, "code": exc.code, "message": exc.message}},
+        )
+    except ProxyModelNotAllowed as exc:
+        return _logged_error_json_response(
+            request, exc.status_code, anthropic_error_body("permission_error", exc.message)
+        )
+    model = resolution.model
+    if redirect := resolution.redirect:
+        set_request_model_redirect(redirect)
+        log_model_redirect(redirect, request.url.path)
     if selection.fast and not _model_offers_fast_mode(model):
         return _logged_error_json_response(
             request, 400, anthropic_error_body("invalid_request_error", f"Model '{model}' has no Fast Mode")
@@ -1982,17 +2022,17 @@ async def claude_messages(
         return await _messages_with_responses_model(
             request,
             payload,
-            model,
+            resolution,
             context,
             api_key,
             fast=selection.fast,
-            reported_model=requested_model,
+            reported_model=model if resolution.redirect else requested_model,
             count_tokens=count_tokens,
         )
     model = model if model.startswith("anthropic/") else "anthropic/" + model
     native_body["model"] = model
     strip_proxy_thinking(native_body)
-    validate_model_access(api_key, model)
+    validate_model_access(api_key, resolution.requested_model if resolution.redirect else model)
     estimate = ResponsesRequest(
         model=model, instructions="", input=json.dumps(native_body), stream=native_body.get("stream") is True
     )
@@ -2049,7 +2089,7 @@ async def claude_messages(
 async def _messages_with_responses_model(
     request: Request,
     body: dict[str, Any],
-    model: str,
+    resolution: ModelResolution,
     context: ProxyContext,
     api_key: ApiKeyData | None,
     *,
@@ -2058,9 +2098,10 @@ async def _messages_with_responses_model(
     count_tokens: bool,
 ) -> Response:
     """Serve a Messages request for a Responses model through the `/v1/responses` dispatch."""
+    model = resolution.model
     key = envelope_key()
     try:
-        validate_model_access(api_key, model)
+        validate_model_access(api_key, resolution.requested_model)
         translated = translate_messages_request(
             body,
             model=model,
@@ -2085,7 +2126,7 @@ async def _messages_with_responses_model(
     try:
         response = await _required_capability_http_transport_denial(
             request, api_key, payload=responses_payload
-        ) or await _serve_v1_responses(request, responses_payload, context, api_key)
+        ) or await _serve_v1_responses(request, responses_payload, context, api_key, model_resolution=resolution)
     except (ProxyModelNotAllowed, ProxyReasoningEffortNotAllowed, ProxyRateLimitError) as exc:
         status, envelope = anthropic_error(
             exc.status_code, {"code": exc.code, "type": exc.error_type, "message": exc.message}
@@ -2617,30 +2658,44 @@ async def _build_codex_usage_payload_for_api_key(api_key: ApiKeyData) -> RateLim
 
 
 async def _apply_api_key_enforcement_with_fast_mode_policy(
+    request: Request,
     payload: ResponsesRequest | ResponsesCompactRequest,
     api_key: ApiKeyData | None,
-) -> tuple[bool, bool, str | None]:
-    prohibit_fast_mode = await _prohibit_fast_mode_enabled()
+    *,
+    prohibit_fast_mode: bool | None = None,
+    model_resolution: ModelResolution | None = None,
+) -> tuple[bool, bool, str | None, str]:
+    if prohibit_fast_mode is None:
+        prohibit_fast_mode = await _prohibit_fast_mode_enabled()
+    resolution = model_resolution or getattr(request.state, "model_resolution", None)
+    if resolution is None:
+        resolution = await resolve_request_model(payload.model, api_key)
+    if redirect := resolution.redirect:
+        if get_request_model_redirect() is None:
+            set_request_model_redirect(redirect)
+            log_model_redirect(redirect, "websocket" if request.scope.get("source_websocket") else request.url.path)
     enforcement = apply_api_key_enforcement(
         payload,
         api_key,
         prohibit_fast_mode=prohibit_fast_mode,
         compaction_routes=await compaction_routes_for(payload),
+        model_resolution=resolution,
     )
+    validate_model_access(api_key, resolution.requested_model if resolution.redirect else payload.model)
+    raw = resolution.raw_source_model
+    if payload.model != resolution.model or (prohibit_fast_mode and model_alias_requests_fast_mode(raw)):
+        raw = payload.model
     return (
         prohibit_fast_mode,
         enforcement.service_tier_was_enforced,
         enforcement.pre_normalization_reasoning_effort,
+        raw,
     )
 
 
 async def _prohibit_fast_mode_enabled() -> bool:
     settings = await get_settings_cache().get()
     return bool(getattr(settings, "prohibit_fast_mode", False))
-
-
-def _is_fast_mode_model_alias(model: str | None) -> bool:
-    return model_alias_requests_fast_mode(model)
 
 
 def _model_offers_fast_mode(model: str) -> bool:
@@ -3196,7 +3251,7 @@ async def v1_images_generations(
             image_invalid_request_error("Expected a JSON request body.", param="prompt"),
         )
     if isinstance(body, dict) and isinstance(requested_model, str | None):
-        effective_model = _effective_model_for_api_key(api_key, requested_model or DEFAULT_IMAGE_MODEL)
+        effective_model = api_key_enforced_model(api_key) or requested_model or DEFAULT_IMAGE_MODEL
         if effective_model.startswith("openrouter/"):
             from app.modules.openrouter.images import image_response
 
@@ -3372,7 +3427,7 @@ async def v1_images_edits(
 
         text_fields = ordered_text_items(form)
 
-    effective_model = _effective_model_for_api_key(api_key, model or DEFAULT_IMAGE_MODEL)
+    effective_model = api_key_enforced_model(api_key) or model or DEFAULT_IMAGE_MODEL
     if effective_model.startswith("openrouter/"):
         from app.modules.openrouter.images import image_response
 
@@ -3472,14 +3527,15 @@ async def _build_codex_models_response_body(
         for model in await _list_enabled_source_catalog_models(api_key, require_responses=True)
         if model.raw.get("supports_streaming") is True
     ]
+    models, source_models, context_window_overrides, redirects = await _catalog_redirects(
+        models, source_models, context_window_overrides, require_responses=True
+    )
     visible_source_models = []
     for source_model in source_models:
-        if visibility_allowed_models is None:
-            if exact_source_allowed_models is not None:
-                if source_model.slug not in exact_source_allowed_models:
-                    continue
-            elif not is_public_model(source_model, allowed_models):
-                continue
+        if visibility_allowed_models is None and not _source_catalog_model_allowed(
+            source_model, redirects, allowed_models, exact_source_allowed_models
+        ):
+            continue
         visible_source_models.append(source_model)
     visible_source_models.sort(
         key=lambda model: (
@@ -3487,7 +3543,9 @@ async def _build_codex_models_response_body(
             _effective_source_codex_visibility(
                 model,
                 visibility_allowed_models=visibility_allowed_models,
-                exact_source_allowed_models=exact_source_allowed_models,
+                exact_source_allowed_models=(
+                    allowed_models if model.slug in redirects else exact_source_allowed_models
+                ),
             )
             != "list",
         )
@@ -3498,7 +3556,7 @@ async def _build_codex_models_response_body(
         if _effective_source_codex_visibility(
             model,
             visibility_allowed_models=visibility_allowed_models,
-            exact_source_allowed_models=exact_source_allowed_models,
+            exact_source_allowed_models=allowed_models if model.slug in redirects else exact_source_allowed_models,
         )
         == "list"
     }
@@ -3562,7 +3620,12 @@ async def _build_codex_models_response_body(
                 )
             )
     for slug, model in metadata_models.items():
-        if slug in models or slug in source_model_slugs or not _is_codex_backend_catalog_model(model):
+        if (
+            slug in redirects
+            or slug in models
+            or slug in source_model_slugs
+            or not _is_codex_backend_catalog_model(model)
+        ):
             continue
         if visibility_allowed_models is None and allowed_models is not None and slug not in allowed_models:
             continue
@@ -3603,7 +3666,9 @@ async def _build_codex_models_response_body(
                 else _effective_source_codex_visibility(
                     model,
                     visibility_allowed_models=visibility_allowed_models,
-                    exact_source_allowed_models=exact_source_allowed_models,
+                    exact_source_allowed_models=(
+                        allowed_models if model.slug in redirects else exact_source_allowed_models
+                    ),
                 )
             ),
             base_instructions=source_base_instructions(model, routed_instructions),
@@ -3653,6 +3718,9 @@ async def _build_models_response_body(
     registry = get_model_registry()
     models = await _operator_available_native_models(registry.get_models_with_fallback(), api_key)
     source_models = await _list_enabled_source_catalog_models(api_key)
+    models, source_models, context_window_overrides, redirects = await _catalog_redirects(
+        models, source_models, context_window_overrides
+    )
 
     if not models and not source_models:
         return JSONResponse(content=_dump_v1_models_response(ModelListResponse(data=[])))
@@ -3669,10 +3737,7 @@ async def _build_models_response_body(
     for model in source_models:
         if model.slug in seen_slugs or model.slug in hidden_models:
             continue
-        if exact_source_allowed_models is not None:
-            if model.slug not in exact_source_allowed_models:
-                continue
-        elif not is_public_model(model, allowed_models):
+        if not _source_catalog_model_allowed(model, redirects, allowed_models, exact_source_allowed_models):
             continue
         items.append(
             _to_model_list_item(model.slug, model, created=created, context_window_overrides=context_window_overrides)
@@ -3719,17 +3784,20 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
     created_at = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     native_models = await _operator_available_native_models(get_model_registry().get_models_with_fallback(), api_key)
-    listed = [model for model in native_models.values() if is_public_model(model, allowed_models)]
     source_models = [
         model
         for model in await _list_enabled_source_catalog_models(api_key, require_responses=True)
         if model.raw.get("supports_streaming") is True
-        and model.slug not in native_models
-        and (
-            model.slug in exact_source_allowed_models
-            if exact_source_allowed_models is not None
-            else is_public_model(model, allowed_models)
-        )
+    ]
+    native_models, source_models, context_window_overrides, redirects = await _catalog_redirects(
+        native_models, source_models, context_window_overrides, require_responses=True
+    )
+    listed = [model for model in native_models.values() if is_public_model(model, allowed_models)]
+    source_models = [
+        model
+        for model in source_models
+        if model.slug not in native_models
+        and _source_catalog_model_allowed(model, redirects, allowed_models, exact_source_allowed_models)
     ]
     listed.extend(
         sorted(
@@ -3746,9 +3814,16 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
     data: list[dict[str, JsonValue]] = []
     for model in listed:
         claude = model.source_kind == "claude"
+        model_id = (
+            model.slug
+            if model.slug in redirects
+            else model.slug.removeprefix("anthropic/")
+            if claude
+            else discovery_alias(model.slug)
+        )
         entry: dict[str, JsonValue] = {
             "type": "model",
-            "id": model.slug.removeprefix("anthropic/") if claude else discovery_alias(model.slug),
+            "id": model_id,
             "display_name": model.display_name,
             "description": (
                 f"{_ANTHROPIC_LIST_PROVIDERS.get(model.source_kind, 'OpenAI-compatible source')} via codex-lb"
@@ -3777,6 +3852,42 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
             "last_id": data[-1]["id"] if data else None,
         }
     )
+
+
+async def _catalog_redirects(
+    native_models: dict[str, UpstreamModel],
+    source_models: list[UpstreamModel],
+    overrides: Mapping[str, int],
+    *,
+    require_responses: bool = False,
+) -> tuple[dict[str, UpstreamModel], list[UpstreamModel], Mapping[str, int], dict[str, str]]:
+    redirects = await get_model_redirects_cache().get()
+    if not redirects:
+        return native_models, source_models, overrides, redirects
+    # Availability, API-key assignment and list visibility do not define the
+    # metadata of the model selected by a redirect. Filter the alias itself.
+    native_targets = native_redirect_targets()
+    source_targets = await source_redirect_targets(require_responses=require_responses)
+    targets = {**source_targets, **native_targets}
+    native = {slug: model for slug, model in native_models.items() if slug not in redirects}
+    sources = [model for model in source_models if model.slug not in redirects]
+    windows = {slug: window for slug, window in overrides.items() if slug not in redirects}
+    for source, target in redirects.items():
+        if model_redirect_inactivity(target, redirects, targets) is not None:
+            continue
+        original = targets.get(source)
+        model = targets[target]
+        raw = {**model.raw, "visibility": "list"}
+        if "id" in raw:
+            raw["id"] = source
+        alias = replace(model, slug=source, display_name=original.display_name if original else source, raw=raw)
+        if target in native_targets:
+            native[source] = alias
+        else:
+            sources.append(alias)
+        if target in overrides:
+            windows[source] = overrides[target]
+    return native, sources, windows, redirects
 
 
 async def _operator_available_native_models(
@@ -3828,14 +3939,6 @@ async def _list_enabled_source_catalog_models(
     return [model for model in models if not require_responses or not _is_openrouter_image_only(model)]
 
 
-def _is_openrouter_image_only(model: UpstreamModel) -> bool:
-    return (
-        model.source_kind == "openrouter"
-        and "image" in model.raw
-        and "text" not in (_raw_string_list(model.raw, "output_modalities") or [])
-    )
-
-
 def _dump_v1_models_response(response: ModelListResponse) -> dict[str, JsonValue]:
     payload = response.model_dump(mode="json")
     for item in payload["data"]:
@@ -3850,8 +3953,8 @@ def _dump_v1_models_response(response: ModelListResponse) -> dict[str, JsonValue
 
 def _allowed_models_for_api_key(api_key: ApiKeyData | None) -> set[str] | None:
     allowed_models = _canonical_model_set(api_key.allowed_models) if api_key and api_key.allowed_models else None
-    if api_key and api_key.enforced_model:
-        forced = {_canonical_model_slug(api_key.enforced_model)}
+    if enforced := api_key_enforced_model(api_key):
+        forced = {_canonical_model_slug(enforced)}
         return forced if allowed_models is None else (allowed_models & forced)
     return allowed_models
 
@@ -3860,10 +3963,21 @@ def _exact_source_allowed_models_for_api_key(api_key: ApiKeyData | None) -> set[
     if api_key is None:
         return None
     allowed_models = set(api_key.allowed_models) if api_key.allowed_models else None
-    if api_key.enforced_model:
-        forced = {api_key.enforced_model}
+    if enforced := api_key_enforced_model(api_key):
+        forced = {enforced}
         return forced if allowed_models is None else (allowed_models & forced)
     return allowed_models
+
+
+def _source_catalog_model_allowed(
+    model: UpstreamModel,
+    redirects: Mapping[str, str],
+    allowed_models: set[str] | None,
+    exact_source_allowed_models: set[str] | None,
+) -> bool:
+    if model.slug not in redirects and exact_source_allowed_models is not None:
+        return model.slug in exact_source_allowed_models
+    return is_public_model(model, allowed_models)
 
 
 def _canonical_model_set(models: Iterable[str]) -> set[str]:
@@ -3929,12 +4043,6 @@ def _codex_model_visibility_allowed_models(api_key: ApiKeyData | None) -> set[st
     if api_key is None or not api_key.apply_to_codex_model or not api_key.allowed_models:
         return None
     return _allowed_models_for_api_key(api_key)
-
-
-def _is_codex_backend_catalog_model(model: UpstreamModel) -> bool:
-    if model.supported_in_api:
-        return True
-    return model.raw.get("shell_type") == "shell_command"
 
 
 _CODEX_WIRE_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
@@ -4236,7 +4344,6 @@ async def v1_chat_completions(
     if capability_transport_denial is not None:
         return capability_transport_denial
     cursor_compat_client = _is_cursor_compat_client(request, api_key)
-    effective_model = _effective_model_for_api_key(api_key, payload.model)
 
     rate_limit_headers = await _rate_limit_headers_for_request(context, api_key)
     tool_media_candidate = any(
@@ -4279,10 +4386,8 @@ async def v1_chat_completions(
         prohibit_fast_mode,
         service_tier_was_enforced,
         pre_normalization_effort,
-    ) = await _apply_api_key_enforcement_with_fast_mode_policy(responses_payload, api_key)
-    if prohibit_fast_mode and _is_fast_mode_model_alias(effective_model):
-        effective_model = responses_payload.model
-    validate_model_access(api_key, responses_payload.model)
+        effective_model,
+    ) = await _apply_api_key_enforcement_with_fast_mode_policy(request, responses_payload, api_key)
     source_route_attempted = not responses_shaped_payload and payload.messages is not None
     try:
         source_selection = (
@@ -4320,11 +4425,10 @@ async def v1_chat_completions(
         )
         if disabled_denial is not None:
             return disabled_denial
-        claude_candidates = [
-            candidate
-            for candidate in dict.fromkeys((effective_model, payload.model))
-            if candidate.startswith("anthropic/")
-        ]
+        candidates = (
+            (effective_model,) if get_request_model_redirect() is not None else (effective_model, payload.model)
+        )
+        claude_candidates = [candidate for candidate in dict.fromkeys(candidates) if candidate.startswith("anthropic/")]
         if claude_candidates:
             async with get_background_session() as session:
                 repository = ModelSourcesRepository(session)
@@ -4563,7 +4667,7 @@ async def _select_chat_model_source(
     async with get_background_session() as session:
         repository = ModelSourcesRepository(session)
         for candidate in deduped_candidates:
-            if exact_allowed_models is not None and candidate not in exact_allowed_models:
+            if not source_model_allowed(candidate, exact_allowed_models, get_request_model_redirect()):
                 continue
             subscription_model = registry_models.get(candidate)
             if assigned_source_ids is None and subscription_model is not None:
@@ -7103,15 +7207,10 @@ async def _stream_responses(
     # not re-add a tier that the origin authoritatively removed.
     forwarded_effective_service_tier = payload.service_tier if forwarded_request else None
     service_tier_was_enforced = False
-    if not api_key_policy_already_applied:
-        service_tier_was_enforced = apply_api_key_enforcement(
-            payload,
-            api_key,
-            # A forwarded payload carries the origin's signed effective tier.
-            # Restore that tier below, then apply the global policy once.
-            prohibit_fast_mode=prohibit_fast_mode and not forwarded_request,
-            compaction_routes=await compaction_routes_for(payload),
-        ).service_tier_was_enforced
+    if not forwarded_request and not api_key_policy_already_applied:
+        _, service_tier_was_enforced, _, _ = await _apply_api_key_enforcement_with_fast_mode_policy(
+            request, payload, api_key, prohibit_fast_mode=prohibit_fast_mode
+        )
     if forwarded_request:
         payload.service_tier = forwarded_effective_service_tier
     else:
@@ -7120,7 +7219,8 @@ async def _stream_responses(
             service_tier_was_enforced=service_tier_was_enforced,
         )
     apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
-    validate_model_access(api_key, payload.model)
+    redirect = get_request_model_redirect()
+    validate_model_access(api_key, redirect.requested_model if redirect else payload.model)
     admission_denial = await _opportunistic_admission_denial(request, context, api_key, model=payload.model)
     if admission_denial is not None:
         return admission_denial
@@ -7462,6 +7562,7 @@ def _source_checkpoint_resolver(
         )
         token = set_request_id(native_request_id)
         operation_token = set_request_operation(RequestOperation.CHECKPOINT_HANDOFF)
+        model_redirect_token = set_request_model_redirect(None)
         try:
             try:
                 result = await scheduler_for(native_context.service).wait_for(
@@ -7492,6 +7593,7 @@ def _source_checkpoint_resolver(
                 )
             return body
         finally:
+            reset_request_model_redirect(model_redirect_token)
             reset_request_operation(operation_token)
             reset_request_id(token)
 
@@ -7517,17 +7619,18 @@ async def _collect_responses(
     if not api_key_policy_already_applied:
         # The replaced effort is discarded: this path uses subscription
         # accounts, so the backend-hang rewrite must stick.
-        service_tier_was_enforced = apply_api_key_enforcement(
+        _, service_tier_was_enforced, _, _ = await _apply_api_key_enforcement_with_fast_mode_policy(
+            request,
             payload,
             api_key,
             prohibit_fast_mode=prohibit_fast_mode,
-            compaction_routes=await compaction_routes_for(payload),
-        ).service_tier_was_enforced
+        )
     apply_enforced_service_tier_model_fallback(
         payload,
         service_tier_was_enforced=service_tier_was_enforced,
     )
-    validate_model_access(api_key, payload.model)
+    redirect = get_request_model_redirect()
+    validate_model_access(api_key, redirect.requested_model if redirect else payload.model)
     admission_denial = await _opportunistic_admission_denial(request, context, api_key, model=payload.model)
     if admission_denial is not None:
         return admission_denial
@@ -7744,20 +7847,24 @@ async def _compact_responses(
     openai_cache_affinity: bool = False,
     prohibit_fast_mode: bool = False,
 ) -> Response:
-    enforcement = apply_api_key_enforcement(
+    (
+        _,
+        tier_enforced,
+        pre_normalization_effort,
+        raw_source_model,
+    ) = await _apply_api_key_enforcement_with_fast_mode_policy(
+        request,
         payload,
         api_key,
         prohibit_fast_mode=prohibit_fast_mode,
-        compaction_routes=await compaction_routes_for(payload),
     )
     apply_enforced_service_tier_model_fallback(
         payload,
-        service_tier_was_enforced=enforcement.service_tier_was_enforced,
+        service_tier_was_enforced=tier_enforced,
     )
-    validate_model_access(api_key, payload.model)
     try:
         source_selection = await select_responses_model_source(
-            payload.model, api_key, reasoning_effort=payload.routing_reasoning_effort
+            payload.model, api_key, raw_model=raw_source_model, reasoning_effort=payload.routing_reasoning_effort
         )
     except ProxyResponseError as exc:
         return _logged_error_json_response(request, exc.status_code, exc.payload)
@@ -7768,7 +7875,7 @@ async def _compact_responses(
             source=source_selection[0],
             api_key=api_key,
             rate_limit_headers={},
-            pre_normalization_effort=enforcement.pre_normalization_reasoning_effort,
+            pre_normalization_effort=pre_normalization_effort,
             context=context,
             streaming=False,
         )
@@ -9386,7 +9493,7 @@ async def _opportunistic_admission_denial(
         return None
     selection = await context.service.check_opportunistic_admission(
         api_key=api_key,
-        model=_effective_optional_model_for_api_key(api_key, model),
+        model=model,
         lease_kind=lease_kind,
     )
     if selection.account is not None:
@@ -9541,6 +9648,7 @@ async def _log_source_chat_completion(
     preserve_unknown_cost: bool = False,
 ) -> None:
     conversation_id = _request_log_client_fields(request.headers)[2]
+    redirect = get_request_model_redirect()
     cost_usd = cost_usd_override if cost_usd_override is not None else _source_usage_cost_usd(source, model, usage)
     try:
         async with get_background_session() as session:
@@ -9553,6 +9661,7 @@ async def _log_source_chat_completion(
                 api_key_id=api_key.id if api_key is not None else None,
                 request_id=ensure_request_id(),
                 model=model,
+                requested_model=redirect.requested_model if redirect else None,
                 input_tokens=usage.input_tokens if usage is not None else None,
                 output_tokens=usage.output_tokens if usage is not None else None,
                 cached_input_tokens=usage.cached_input_tokens if usage is not None else None,
@@ -9621,16 +9730,6 @@ def _source_error_message(payload: Mapping[str, JsonValue]) -> str | None:
         return None
     message = error.get("message")
     return message if isinstance(message, str) else None
-
-
-def _effective_model_for_api_key(api_key: ApiKeyData | None, requested_model: str) -> str:
-    if api_key is None or api_key.enforced_model is None:
-        return requested_model
-    return api_key.enforced_model
-
-
-def _effective_optional_model_for_api_key(api_key: ApiKeyData | None, requested_model: str | None) -> str | None:
-    return effective_model_for_api_key(api_key, requested_model)
 
 
 def _compact_request_service_tier(payload: ResponsesCompactRequest) -> str | None:

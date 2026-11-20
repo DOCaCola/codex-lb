@@ -413,6 +413,7 @@ export function createRequestLogEntry(
 		requestId: "req_1",
 		requestKind: "normal",
 		model: "gpt-5.1",
+		requestedModel: null,
 		source: null,
 		transport: "http",
 		useragent: null,
@@ -1142,6 +1143,9 @@ export function createModelContextWindowOverrides(
 				defaultContextWindow: 272000,
 				maxContextWindow: 1000000,
 				listed: true,
+				redirectTargetModel: null,
+				redirectTargetOverrideTokens: null,
+				retired: false,
 			},
 			{
 				slug: "gpt-5.5",
@@ -1150,6 +1154,9 @@ export function createModelContextWindowOverrides(
 				defaultContextWindow: 272000,
 				maxContextWindow: null,
 				listed: false,
+				redirectTargetModel: null,
+				redirectTargetOverrideTokens: null,
+				retired: false,
 			},
 			{
 				slug: "anthropic/claude-opus-5-5",
@@ -1158,6 +1165,9 @@ export function createModelContextWindowOverrides(
 				defaultContextWindow: 1000000,
 				maxContextWindow: 1000000,
 				listed: true,
+				redirectTargetModel: null,
+				redirectTargetOverrideTokens: null,
+				retired: false,
 			},
 		],
 		overrides: [

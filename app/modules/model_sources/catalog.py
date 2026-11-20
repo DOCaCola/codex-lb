@@ -6,6 +6,7 @@ from app.core.openai.model_registry import (
     MODEL_SOURCE_KIND_OPENAI_COMPATIBLE,
     ReasoningLevel,
     UpstreamModel,
+    get_model_registry,
 )
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
@@ -31,6 +32,61 @@ def source_models_to_upstream_models(sources: list[ModelSource]) -> list[Upstrea
                 continue
             models.append(_to_upstream_model(source, source_model))
     return models
+
+
+def is_openrouter_image_only(model: UpstreamModel) -> bool:
+    return (
+        model.source_kind == "openrouter"
+        and "image" in model.raw
+        and not (is_json_list(modalities := model.raw.get("output_modalities")) and "text" in modalities)
+    )
+
+
+def is_codex_backend_catalog_model(model: UpstreamModel) -> bool:
+    return model.supported_in_api or model.raw.get("shell_type") == "shell_command"
+
+
+def native_redirect_targets() -> dict[str, UpstreamModel]:
+    registry = get_model_registry()
+    return {
+        slug: model
+        for slug, model in registry.get_models_with_fallback().items()
+        if is_codex_backend_catalog_model(model) and not registry.is_suppressed_model(slug)
+    }
+
+
+async def source_redirect_targets(*, require_responses: bool = False) -> dict[str, UpstreamModel]:
+    from app.db.session import get_background_session
+    from app.modules.model_sources.repository import ModelSourcesRepository
+
+    async with get_background_session() as session:
+        sources = await ModelSourcesRepository(session).list_enabled_sources()
+        models = source_models_to_upstream_models(
+            [
+                source
+                for source in sources
+                if source.supports_responses
+                or (
+                    not require_responses
+                    and source.supports_chat_completions
+                    and source.kind in {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter"}
+                )
+            ]
+        )
+    targets: dict[str, UpstreamModel] = {}
+    for model in models:
+        if not is_openrouter_image_only(model) and (
+            not require_responses or model.raw.get("supports_streaming") is True
+        ):
+            targets.setdefault(model.slug, model)
+    return targets
+
+
+async def list_redirect_target_catalogue() -> dict[str, UpstreamModel]:
+    targets = native_redirect_targets()
+    for slug, model in (await source_redirect_targets()).items():
+        targets.setdefault(slug, model)
+    return targets
 
 
 def _to_upstream_model(source: ModelSource, source_model: ModelSourceModel) -> UpstreamModel:

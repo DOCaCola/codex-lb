@@ -50,6 +50,7 @@ from app.modules.proxy.load_balancer import (
     effective_account_concurrency_caps,
     effective_routing_tunables,
 )
+from app.modules.proxy.request_policy import api_key_enforced_model
 from app.modules.proxy.selection_errors import selection_failure_response
 
 logger = logging.getLogger("app.modules.proxy.service")
@@ -328,7 +329,7 @@ class _CodexControlMixin:
                 headers,
                 codex_session_affinity=codex_session_affinity,
             )
-        selection_model = api_key.enforced_model if api_key is not None else None
+        selection_model = api_key_enforced_model(api_key)
         routing_strategy = _routing_strategy(settings)
         account_id_value: str | None = None
         log_status = "error"

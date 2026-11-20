@@ -614,7 +614,7 @@ async def test_stream_responses_prohibits_forwarded_priority_service_tier_once(m
     assert response.status_code == 200
     assert "service_tier" not in observed
     assert payload.service_tier is None
-    assert enforcement_prohibit_values == [False]
+    assert enforcement_prohibit_values == []
 
 
 @pytest.mark.asyncio

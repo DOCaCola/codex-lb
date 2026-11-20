@@ -1156,6 +1156,7 @@ class RequestLogsRepository:
         sticky_key_source: str | None = None,
         sticky_kind: str | None = None,
         sticky_key_hash: str | None = None,
+        requested_model: str | None = None,
     ) -> RequestLog:
         async with sqlite_writer_section():
             # Telemetry write: this transaction only appends one request-log
@@ -1184,6 +1185,7 @@ class RequestLogsRepository:
                 request_id=resolved_request_id,
                 archive_request_id=resolved_archive_request_id,
                 model=model,
+                requested_model=requested_model,
                 plan_type=resolved_plan_type,
                 source=source,
                 transport=transport,
@@ -1624,7 +1626,15 @@ class RequestLogsRepository:
             return (
                 [value for value in await self._distinct_skip_scan(RequestLog.account_id, filters.conditions) if value]
                 + source_options,
-                await self._pair_facet_skip_scan(RequestLog.model, RequestLog.reasoning_effort, filters.conditions),
+                self._merge_model_options(
+                    await self._pair_facet_skip_scan(RequestLog.model, RequestLog.reasoning_effort, filters.conditions),
+                    await self._pair_facet_skip_scan(
+                        RequestLog.requested_model,
+                        RequestLog.reasoning_effort,
+                        filters.conditions,
+                        leading_prefix_conditions=(RequestLog.requested_model.is_not(None),),
+                    ),
+                ),
                 [
                     value
                     for value in await self._distinct_skip_scan(RequestLog.api_key_id, api_key_facet_filters.conditions)
@@ -1657,12 +1667,29 @@ class RequestLogsRepository:
         model_rows = await self._session.execute(model_stmt)
         api_key_rows = await self._session.execute(api_key_stmt)
         status_rows = await self._session.execute(status_stmt)
+        requested_model_rows = await self._session.execute(
+            select(RequestLog.requested_model, RequestLog.reasoning_effort)
+            .where(*filters.conditions, RequestLog.requested_model.is_not(None))
+            .distinct()
+        )
 
         account_ids = [row[0] for row in account_rows.all() if row[0]] + source_options
         model_options = [(row[0], row[1]) for row in model_rows.all() if row[0]]
+        requested_options = [(model, effort) for model, effort in requested_model_rows.all() if model]
         api_key_ids = [row[0] for row in api_key_rows.all() if row[0]]
         status_values = [(row[0], row[1]) for row in status_rows.all() if row[0]]
-        return account_ids, model_options, api_key_ids, status_values
+        return account_ids, self._merge_model_options(model_options, requested_options), api_key_ids, status_values
+
+    def _merge_model_options(
+        self, served: list[tuple[str, str | None]], requested: list[tuple[str, str | None]]
+    ) -> list[tuple[str, str | None]]:
+        if not requested:
+            return served
+        nulls_first = self._session.get_bind().dialect.name == "sqlite"
+        return sorted(
+            set(served) | set(requested),
+            key=lambda option: (option[0], (option[1] is not None) == nulls_first, option[1] or ""),
+        )
 
     async def get_model_source_names_by_ids(self, source_ids: list[str]) -> dict[str, str]:
         rows = await self._session.execute(
@@ -1702,6 +1729,8 @@ class RequestLogsRepository:
         leading: InstrumentedAttribute[str] | InstrumentedAttribute[str | None],
         second: InstrumentedAttribute[str] | InstrumentedAttribute[str | None],
         conditions: list,
+        *,
+        leading_prefix_conditions: tuple[ColumnElement[bool], ...] = (),
     ) -> list[tuple[str, str | None]]:
         """(leading, second) facet: skip-scan the leading column, then per
         value probe a `(value, NULL)` pair and skip-scan the non-NULL second
@@ -1710,7 +1739,9 @@ class RequestLogsRepository:
         legacy DISTINCT path exactly."""
         nulls_first = self._session.get_bind().dialect.name == "sqlite"
         pairs: list[tuple[str, str | None]] = []
-        for value in await self._distinct_skip_scan(leading, conditions):
+        for value in await self._distinct_skip_scan(
+            leading, [*conditions, *leading_prefix_conditions], prefix_conditions=leading_prefix_conditions
+        ):
             if not value:
                 # Legacy DISTINCT drops falsy leading values in Python.
                 continue
@@ -1793,15 +1824,17 @@ class RequestLogsRepository:
                 base = (model or "").strip()
                 if not base:
                     continue
-                if effort is None:
-                    pair_conditions.append(and_(RequestLog.model == base, RequestLog.reasoning_effort.is_(None)))
-                else:
-                    pair_conditions.append(and_(RequestLog.model == base, RequestLog.reasoning_effort == effort))
+                pair_conditions.append(
+                    and_(
+                        or_(RequestLog.model == base, RequestLog.requested_model == base),
+                        RequestLog.reasoning_effort == effort,
+                    )
+                )
             if pair_conditions:
                 conditions.append(or_(*pair_conditions))
         else:
             if models:
-                conditions.append(RequestLog.model.in_(models))
+                conditions.append(or_(RequestLog.model.in_(models), RequestLog.requested_model.in_(models)))
             if reasoning_efforts:
                 conditions.append(RequestLog.reasoning_effort.in_(reasoning_efforts))
 
@@ -1846,6 +1879,7 @@ class RequestLogsRepository:
                 RequestLog.model_source_id.ilike(search_pattern),
                 RequestLog.request_id.ilike(search_pattern),
                 RequestLog.model.ilike(search_pattern),
+                RequestLog.requested_model.ilike(search_pattern),
                 RequestLog.reasoning_effort.ilike(search_pattern),
                 RequestLog.source.ilike(search_pattern),
                 RequestLog.status.ilike(search_pattern),

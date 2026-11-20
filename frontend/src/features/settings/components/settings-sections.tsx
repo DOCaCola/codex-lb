@@ -18,6 +18,7 @@ import { DataRetentionSettings } from "@/features/settings/components/data-reten
 import { ImportSettings } from "@/features/settings/components/import-settings";
 import { CompactionRouteSettings } from "@/features/settings/components/compaction-route-settings";
 import { ModelCatalogueSettings } from "@/features/settings/components/model-catalogue-settings";
+import { ModelRedirectSettings } from "@/features/settings/components/model-redirect-settings";
 import { QuotaResetWebhookSettings } from "@/features/settings/components/quota-reset-webhook-settings";
 import { ResetCreditSettings } from "@/features/settings/components/reset-credit-settings";
 import { ResilienceSettings } from "@/features/settings/components/resilience-settings";
@@ -160,6 +161,7 @@ export function ModelsSettingsSection() {
   const { controlsDisabled } = useSettingsSection();
   return (
     <SettingsSection section="models">
+      <ModelRedirectSettings disabled={controlsDisabled} />
       <ModelCatalogueSettings disabled={controlsDisabled} />
       <CompactionRouteSettings disabled={controlsDisabled} />
     </SettingsSection>

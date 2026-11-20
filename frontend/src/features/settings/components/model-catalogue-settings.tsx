@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
-import { BookOpen, Info } from "lucide-react";
+import { ArrowRight, BookOpen, Info } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { AlertMessage } from "@/components/alert-message";
@@ -67,6 +67,7 @@ export function ModelCatalogueSettings({ disabled = false }: ModelCatalogueSetti
   );
 
   const models = useMemo(() => overridesQuery.data?.models ?? [], [overridesQuery.data?.models]);
+  const displayNames = new Map(models.map((model) => [model.slug, model.displayName]));
   const overrides = useMemo(
     () => new Map((overridesQuery.data?.overrides ?? []).map((override) => [override.slug, override])),
     [overridesQuery.data?.overrides],
@@ -94,7 +95,7 @@ export function ModelCatalogueSettings({ disabled = false }: ModelCatalogueSetti
   const draftWindow = draft ? parseContextWindow(draft.contextWindow) : null;
   const aboveMaximum =
     draftWindow !== null && draftModel?.maxContextWindow != null && draftWindow > draftModel.maxContextWindow;
-  const canSave = !busy && draftWindow !== null && !aboveMaximum;
+  const canSave = !busy && draftWindow !== null && !aboveMaximum && !draftModel?.redirectTargetModel;
 
   const handleSave = async () => {
     if (!draft || !canSave || draftWindow === null) {
@@ -201,14 +202,27 @@ export function ModelCatalogueSettings({ disabled = false }: ModelCatalogueSetti
                     </TableRow>
                     {group.models.map((model) => {
                       const override = overrides.get(model.slug);
-                      const editing = draft?.slug === model.slug;
+                      const editing = draft?.slug === model.slug && !model.redirectTargetModel;
+                      const targetName = model.redirectTargetModel
+                        ? displayNames.get(model.redirectTargetModel) ?? model.redirectTargetModel
+                        : null;
                       const dimmed = !model.listed && "opacity-60";
                       return (
                         <TableRow key={model.slug}>
                           <TableCell>
                             <span className={cn("flex flex-col", dimmed)}>
-                              <span className="text-xs font-medium">{model.displayName}</span>
-                              <span className="font-mono text-[11px] text-muted-foreground">{model.slug}</span>
+                              <span className="flex flex-wrap items-center gap-1.5 text-xs font-medium">
+                                {model.displayName}
+                                {targetName ? (
+                                  <Badge variant="outline" className="bg-primary/10 text-[10px] text-primary">
+                                    <ArrowRight className="size-2.5" aria-hidden="true" />
+                                    {t("settings.modelCatalogue.redirectsTo", { target: targetName })}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                              <span className={cn("text-[11px] text-muted-foreground", !model.retired && "font-mono")}>
+                                {model.retired ? t("settings.modelCatalogue.notInRegistry") : model.slug}
+                              </span>
                             </span>
                           </TableCell>
                           <TableCell className={cn("text-right text-xs tabular-nums", dimmed)}>
@@ -218,7 +232,14 @@ export function ModelCatalogueSettings({ disabled = false }: ModelCatalogueSetti
                             {model.maxContextWindow !== null ? model.maxContextWindow.toLocaleString() : "—"}
                           </TableCell>
                           <TableCell className={cn(dimmed)}>
-                            {editing && draft ? (
+                            {targetName ? (
+                              <span className="text-xs text-muted-foreground">
+                                {model.redirectTargetOverrideTokens !== null
+                                  ? `${model.redirectTargetOverrideTokens.toLocaleString()} · `
+                                  : null}
+                                {t("settings.modelRedirects.servedModel")}
+                              </span>
+                            ) : editing && draft ? (
                               <span className="flex flex-col gap-1">
                                 <Input
                                   aria-label={t("settings.modelCatalogue.form.contextWindowLabel", {
@@ -296,7 +317,13 @@ export function ModelCatalogueSettings({ disabled = false }: ModelCatalogueSetti
                             </span>
                           </TableCell>
                           <TableCell className="text-right">
-                            {editing ? (
+                            {targetName ? (
+                              <span title={t("settings.modelCatalogue.redirectOverrideDisabled")}>
+                                <Button type="button" size="sm" variant="ghost" disabled>
+                                  {t("settings.modelCatalogue.actions.override")}
+                                </Button>
+                              </span>
+                            ) : editing ? (
                               <>
                                 <Button
                                   type="button"

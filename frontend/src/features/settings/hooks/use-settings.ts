@@ -10,14 +10,17 @@ import {
   deleteModelCompactionRoute,
   deleteHiddenModel,
   deleteModelContextWindowOverride,
+  deleteModelRedirect,
   getModelCompactionRoutes,
   getModelContextWindowOverrides,
+  getModelRedirects,
   getSettings,
   getUpstreamProxyAdmin,
   putAccountProxyBinding,
   putModelCompactionRoute,
   putHiddenModel,
   putModelContextWindowOverride,
+  putModelRedirect,
   testUpstreamProxyEndpoint,
   updateSettings,
 } from "@/features/settings/api";
@@ -209,6 +212,7 @@ export function useModelContextWindowOverrides() {
       toast.success(t(listed ? "settings.modelCatalogue.toasts.listed" : "settings.modelCatalogue.toasts.hidden"));
       queryClient.setQueryData(queryKey, catalogue);
       void queryClient.invalidateQueries({ queryKey: ["settings", "model-compaction-routes"] });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "model-redirects"] });
     },
     onError: (error: Error) => {
       toast.error(error.message || t("settings.modelCatalogue.toasts.visibilityFailed"));
@@ -252,4 +256,25 @@ export function useModelCompactionRoutes() {
   });
 
   return { routesQuery, upsertMutation, deleteMutation };
+}
+
+export function useModelRedirects() {
+  const queryClient = useQueryClient();
+  const queryKey = ["settings", "model-redirects"] as const;
+  const redirectsQuery = useQuery({ queryKey, queryFn: getModelRedirects });
+
+  const refreshModels = (data: Awaited<ReturnType<typeof getModelRedirects>>) => {
+    queryClient.setQueryData(queryKey, data);
+    void queryClient.invalidateQueries({ queryKey: ["settings", "model-context-window-overrides"] });
+    void queryClient.invalidateQueries({ queryKey: ["settings", "model-compaction-routes"] });
+  };
+
+  const upsertMutation = useMutation({
+    mutationFn: ({ sourceModel, targetModel }: { sourceModel: string; targetModel: string }) =>
+      putModelRedirect(sourceModel, targetModel),
+    onSuccess: refreshModels,
+  });
+
+  const deleteMutation = useMutation({ mutationFn: deleteModelRedirect, onSuccess: refreshModels });
+  return { redirectsQuery, upsertMutation, deleteMutation };
 }

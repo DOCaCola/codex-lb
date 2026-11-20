@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.openai.model_redirects import reset_request_model_redirect, set_request_model_redirect
 from app.core.utils.request_id import (
     clear_request_id,
     clear_request_scope_id,
@@ -52,6 +53,7 @@ class RequestIdMiddleware:
         request_id = _inbound_request_id(scope) or str(uuid4())
         request_id_token = set_request_id(request_id)
         request_scope_token = set_request_scope_id(str(uuid4()))
+        model_redirect_token = set_request_model_redirect(None)
 
         async def send_with_request_id(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -62,6 +64,7 @@ class RequestIdMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         finally:
+            reset_request_model_redirect(model_redirect_token)
             reset_request_scope_id(request_scope_token)
             reset_request_id(request_id_token)
             clear_request_scope_id()

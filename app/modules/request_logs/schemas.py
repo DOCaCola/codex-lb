@@ -36,6 +36,7 @@ class RequestLogEntry(DashboardModel):
     connection_request_kind: str | None = None
     request_operation: RequestOperation | None = None
     model: str
+    requested_model: str | None = None
     source: str | None = None
     model_source_id: str | None = None
     model_source_kind: str | None = None
