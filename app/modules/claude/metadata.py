@@ -7,7 +7,8 @@ from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.schemas import AccountState, MetadataEndpoint
 
 # Reply headers are the primary quota source (as in Claude Code, which never polls usage).
-# The endpoint fills idle accounts and refreshes data only it reports.
+# The endpoint fills idle accounts, refreshes data only it reports, and confirms a window
+# once its known reset passed: an exhausted account receives no replies to report it.
 USAGE_IDLE_INTERVAL = timedelta(minutes=15)
 USAGE_SNAPSHOT_INTERVAL = timedelta(hours=1)
 # Claude Code's wait after a refusal without Retry-After.
@@ -57,7 +58,29 @@ def _usage_due(state: AccountState, now: datetime) -> bool:
         return True
     headers = [state.header_usage.get("five_hour"), state.header_usage.get("seven_day")]
     newest = max([polled, *(observation.observed_at for observation in headers if observation is not None)])
-    return now - newest >= USAGE_IDLE_INTERVAL
+    return now - newest >= USAGE_IDLE_INTERVAL or _reset_passed_since_reading(state, polled, now)
+
+
+def _reset_passed_since_reading(state: AccountState, polled: datetime, now: datetime) -> bool:
+    """Whether a window's known reset passed after its latest reading."""
+    usage = state.usage
+    polled_windows = (
+        (
+            usage.five_hour,
+            usage.seven_day,
+            usage.seven_day_opus,
+            usage.seven_day_sonnet,
+            usage.seven_day_overage_included,
+        )
+        if usage is not None
+        else ()
+    )
+    deadlines = [(window.resets_at, polled) for window in polled_windows if window is not None]
+    deadlines += [
+        (observation.window.resets_at, max(observation.observed_at, polled))
+        for observation in state.header_usage.values()
+    ]
+    return any(reset is not None and read_at < reset <= now for reset, read_at in deadlines)
 
 
 def refresh_due(

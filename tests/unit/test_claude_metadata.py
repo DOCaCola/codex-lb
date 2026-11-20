@@ -78,6 +78,33 @@ def test_usage_reads_only_when_header_and_endpoint_evidence_is_idle():
     assert refresh_due(AccountState(), "usage", NOW, force=False, generation=1)
 
 
+def test_usage_reads_once_a_known_reset_passes_without_waiting_for_the_idle_interval():
+    reset = NOW + timedelta(minutes=4)
+    # An exhausted account receives no replies, so only the endpoint can confirm the reset.
+    state = AccountState(
+        usage_updated_at=NOW,
+        usage=UsageSnapshot(five_hour=QuotaWindow(utilization=100, resets_at=reset)),
+    )
+    assert not refresh_due(state, "usage", reset - timedelta(seconds=1), force=False, generation=1)
+    assert refresh_due(state, "usage", reset, force=False, generation=1)
+    # A reading taken after the reset satisfies it.
+    state.usage_updated_at = reset + timedelta(seconds=30)
+    assert not refresh_due(state, "usage", reset + timedelta(minutes=1), force=False, generation=1)
+
+
+def test_header_reset_is_satisfied_by_any_later_reading():
+    reset = NOW + timedelta(minutes=4)
+    observation = HeaderQuotaObservation(
+        window=QuotaWindow(utilization=100, resets_at=reset), requested_at=NOW, observed_at=NOW
+    )
+    state = AccountState(usage_updated_at=NOW - timedelta(minutes=1), header_usage={"five_hour": observation})
+    assert not refresh_due(state, "usage", reset - timedelta(seconds=1), force=False, generation=1)
+    assert refresh_due(state, "usage", reset, force=False, generation=1)
+    # The endpoint read after the reset retires the older header deadline.
+    state.usage_updated_at = reset + timedelta(seconds=30)
+    assert not refresh_due(state, "usage", reset + timedelta(minutes=1), force=False, generation=1)
+
+
 def test_rate_limit_binds_only_the_credential_generation_that_received_it():
     state = AccountState(
         usage_updated_at=NOW - timedelta(hours=2),

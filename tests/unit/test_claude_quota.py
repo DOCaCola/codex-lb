@@ -81,7 +81,9 @@ def test_stale_exhaustion_remains_blocked_until_reset_without_invented_zero():
     assert all(model.blocked for model in status.models)
     status = quota_status(observed, now=NOW + timedelta(hours=2))
     assert status.windows[1].freshness == "unknown"
-    assert status.windows[1].utilization == 100
+    # The passed reset retires the reading instead of showing the pre-reset percentage.
+    assert status.windows[1].utilization is None
+    assert status.windows[1].resets_at is None
     assert not any(model.blocked for model in status.models)
 
 

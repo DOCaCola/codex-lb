@@ -72,8 +72,11 @@ def _window(name: WindowName, value: QuotaWindow | None, state: AccountState, no
     if barrier is not None and (requested_at is None or requested_at <= barrier):
         value = None
         observed_at = None
-    expired = value is not None and value.resets_at is not None and value.resets_at <= now
-    unknown = value is None or observed_at is None or expired
+    # A passed reset retires the reading: the window's usage is unknown until observed again,
+    # never the stale pre-reset percentage and never an assumed fresh allowance.
+    if value is not None and value.resets_at is not None and value.resets_at <= now:
+        value = None
+    unknown = value is None or observed_at is None
     stale = poll_failed or (observed_at is not None and now - observed_at >= QUOTA_FRESHNESS)
     return WindowStatus(
         observed_at=observed_at,
