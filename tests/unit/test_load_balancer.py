@@ -2368,7 +2368,7 @@ def test_state_from_account_keeps_raw_usage_evidence_separate_from_pressure(monk
     assert state.priority_used_percent == 98.0
 
 
-def test_state_from_account_preserves_pressure_for_active_routing(monkeypatch):
+def test_state_from_account_keeps_pressure_for_ranking_not_budget_thresholds(monkeypatch):
     now = 1_700_000_000.0
     future_reset = int(now + 300)
     monkeypatch.setattr("time.time", lambda: now)
@@ -2389,7 +2389,8 @@ def test_state_from_account_preserves_pressure_for_active_routing(monkeypatch):
     assert state.status == AccountStatus.ACTIVE
     assert state.used_percent == 96.5
     assert state.priority_used_percent is None
-    assert _state_above_sticky_budget_threshold(state, 95.0) is True
+    assert _state_above_sticky_budget_threshold(state, 95.0) is False
+    assert _state_above_sticky_budget_threshold(state, 93.0) is True
 
 
 def test_state_from_account_clears_stale_advisory_account_reset_for_active_account(monkeypatch):

@@ -2288,19 +2288,38 @@ def _account_cap_error_message(lease_kind: AccountLeaseKind | None, caps: Accoun
 
 
 def _state_above_budget_threshold(state: AccountState, budget_threshold_pct: float) -> bool:
-    used_percent = state.priority_used_percent if state.priority_used_percent is not None else state.used_percent
+    used_percent, _ = _sticky_usage_evidence(state)
     return used_percent is not None and used_percent > budget_threshold_pct
 
 
+def _reported_used_percent(state: AccountState) -> tuple[float | None, float | None]:
+    """Return the (primary, secondary) quota usage upstream reported, without in-flight pressure."""
+    return (
+        state.persisted_used_percent if state.persisted_used_percent is not None else state.used_percent,
+        state.persisted_secondary_used_percent
+        if state.persisted_secondary_used_percent is not None
+        else state.secondary_used_percent,
+    )
+
+
 def _sticky_usage_evidence(state: AccountState) -> tuple[float | None, float | None]:
-    """Return the (primary, secondary) used percent that sticky routing ranks on."""
-    used_percent = state.priority_used_percent if state.priority_used_percent is not None else state.used_percent
+    """Return the (primary, secondary) quota usage that budget thresholds and exhaustion judge.
+
+    Thresholds are quota decisions, so they read reported usage. Runtime
+    in-flight pressure only spreads load inside the routing strategy: an open
+    Codex WebSocket holds its stream lease for the whole connection, so on a
+    busy account the pressure grows with the number of connected chats and
+    would otherwise push a soft owner over the sticky threshold and rebind
+    its conversation to a cold account.
+    """
+    reported_primary, reported_secondary = _reported_used_percent(state)
+    used_percent = state.priority_used_percent if state.priority_used_percent is not None else reported_primary
     if state.limit_scoped_usage and state.priority_secondary_used_percent is None:
         return used_percent, used_percent
     return used_percent, (
         state.priority_secondary_used_percent
         if state.priority_secondary_used_percent is not None
-        else state.secondary_used_percent
+        else reported_secondary
     )
 
 

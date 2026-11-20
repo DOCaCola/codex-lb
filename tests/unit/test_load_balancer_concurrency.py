@@ -1281,6 +1281,81 @@ async def test_unbound_codex_session_sticky_filters_saturated_accounts() -> None
         await balancer.release_account_lease(lease)
 
 
+def _weekly_usage_row(entry_id: int, account_id: str, *, used_percent: float, reset_at: int) -> UsageHistory:
+    row = _usage_row_with_percent(entry_id, account_id, used_percent=used_percent, reset_at=reset_at)
+    row.window_minutes = 10080
+    return row
+
+
+@pytest.mark.asyncio
+async def test_busy_prompt_cache_owner_below_threshold_keeps_its_conversation() -> None:
+    # Production 2026-11-20: a weekly-only owner at 84% held five open Codex
+    # WebSocket stream leases. In-flight pressure lifted it past the 95% sticky
+    # threshold and a reconnect rebound the thread to an idle cold account.
+    now_epoch = int(datetime.now(tz=timezone.utc).timestamp())
+    owner = _make_account("acc-busy-prompt-cache-owner")
+    idle = _make_account("acc-idle-prompt-cache-sibling")
+    usage_repo = _StubUsageRepository(
+        primary={
+            owner.id: _weekly_usage_row(1, owner.id, used_percent=84.0, reset_at=now_epoch + 5 * 86400),
+            idle.id: _weekly_usage_row(2, idle.id, used_percent=1.0, reset_at=now_epoch + 6 * 86400),
+        },
+        secondary={},
+    )
+    sticky_repo = _StubStickySessionsRepository()
+    sticky_repo.account_id = owner.id
+    balancer = LoadBalancer(lambda: _repo_factory(_StubAccountsRepository([owner, idle]), usage_repo, sticky_repo))
+    open_streams = [await balancer.acquire_account_lease(owner.id, kind="stream") for _ in range(5)]
+
+    selected = await balancer.select_account(
+        sticky_key="thread-row",
+        sticky_kind=StickySessionKind.PROMPT_CACHE,
+        sticky_max_age_seconds=86400,
+        routing_strategy="capacity_weighted",
+        lease_kind="stream",
+        budget_threshold_pct=95.0,
+        secondary_budget_threshold_pct=95.0,
+    )
+
+    assert selected.account is not None
+    assert selected.account.id == owner.id
+    assert sticky_repo.account_id == owner.id
+    assert sticky_repo.deleted == []
+
+    for lease in [*open_streams, selected.lease]:
+        await balancer.release_account_lease(lease)
+
+
+@pytest.mark.asyncio
+async def test_fresh_selection_budget_threshold_ignores_in_flight_pressure() -> None:
+    now_epoch = int(datetime.now(tz=timezone.utc).timestamp())
+    busy = _make_account("acc-busy-under-budget")
+    over_budget = _make_account("acc-idle-over-budget")
+    usage_repo = _StubUsageRepository(
+        primary={
+            busy.id: _usage_row_with_percent(1, busy.id, used_percent=65.0, reset_at=now_epoch + 3600),
+            over_budget.id: _usage_row_with_percent(2, over_budget.id, used_percent=72.0, reset_at=now_epoch + 3600),
+        },
+        secondary={},
+    )
+    balancer = LoadBalancer(lambda: _repo_factory(_StubAccountsRepository([busy, over_budget]), usage_repo))
+    open_streams = [await balancer.acquire_account_lease(busy.id, kind="stream") for _ in range(5)]
+
+    selected = await balancer.select_account(
+        # The over-budget fallback ranks least-used first, so pressure counted
+        # as quota would hand the turn to the account that is truly over budget.
+        routing_strategy="usage_weighted",
+        lease_kind="stream",
+        budget_threshold_pct=70.0,
+    )
+
+    assert selected.account is not None
+    assert selected.account.id == busy.id
+
+    for lease in [*open_streams, selected.lease]:
+        await balancer.release_account_lease(lease)
+
+
 @pytest.mark.asyncio
 async def test_existing_codex_session_owner_is_not_displaced_by_due_probing_account() -> None:
     now_epoch = int(datetime.now(tz=timezone.utc).timestamp())

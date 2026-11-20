@@ -923,20 +923,20 @@ describe("RoutingSettings", () => {
     render(<RoutingSettings settings={BASE_SETTINGS} busy={false} onSave={vi.fn().mockResolvedValue(undefined)} />);
 
     // Defaults: primary 95% used, secondary 100% used.
-    expect(screen.getByText("95% used · 5% remaining in quota terms")).toBeInTheDocument();
-    expect(screen.getByText("100% used · 0% remaining in quota terms")).toBeInTheDocument();
+    expect(screen.getByText("95% used · 5% remaining")).toBeInTheDocument();
+    expect(screen.getByText("100% used · 0% remaining")).toBeInTheDocument();
 
     const secondary = screen.getByRole("spinbutton", { name: "Sticky secondary threshold" });
     await user.clear(secondary);
     await user.type(secondary, "70");
 
-    expect(screen.getByText("70% used · 30% remaining in quota terms")).toBeInTheDocument();
+    expect(screen.getByText("70% used · 30% remaining")).toBeInTheDocument();
 
     // Decimal thresholds keep the two displayed values complementary.
     await user.clear(secondary);
     await user.type(secondary, "12.5");
 
-    expect(screen.getByText("12.5% used · 87.5% remaining in quota terms")).toBeInTheDocument();
+    expect(screen.getByText("12.5% used · 87.5% remaining")).toBeInTheDocument();
   });
 
   it("describes prefer-earlier-reset selection behavior", () => {
