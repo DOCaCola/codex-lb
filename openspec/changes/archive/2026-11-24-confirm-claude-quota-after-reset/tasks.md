@@ -7,5 +7,5 @@
 
 - [x] 2.1 Regression tests for the passed-reset reading and the reset-triggered usage read
 - [x] 2.2 Claude unit tests, frontend Claude/account/dashboard tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment
 

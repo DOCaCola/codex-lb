@@ -7,4 +7,4 @@
 
 - [x] 2.1 Regression tests: busy prompt-cache owner below threshold keeps its conversation; fresh selection treats a busy under-budget account as budget-safe (both fail without the fix)
 - [x] 2.2 Unit suite, frontend routing settings test, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

@@ -3220,16 +3220,16 @@ affinity for requests that carry continuation state.
 
 The sticky reallocation threshold controls SHALL name the quota window they
 apply to, SHALL state that the value is percent used, and SHALL show the
-quota-arithmetic remaining percent for a valid threshold value, qualified so
-it is not presented as the exact account-page remaining figure (routing adds
-temporary in-flight pressure on top of reported usage).
+remaining percent for a valid threshold value. Because routing judges
+thresholds on the same reported usage the account pages show, the remaining
+percent SHALL be presented as directly comparable to the account-page figure.
 
 #### Scenario: Threshold unit hint
 
 - **GIVEN** the sticky secondary threshold input holds the valid value `70`
 - **WHEN** the routing settings section renders
-- **THEN** a hint shows `70% used` alongside `30% remaining` in quota terms
-- **AND** the quota-window explainer states that in-flight work counts as temporary extra usage
+- **THEN** a hint shows `70% used` alongside `30% remaining`
+- **AND** the quota-window explainer states that thresholds compare against the reported usage the account pages show and that in-flight work only spreads new requests
 
 #### Scenario: Quota window explainer
 
@@ -4999,3 +4999,34 @@ Compaction route model pickers SHALL keep offering hidden models and mark them a
 - **GIVEN** `gpt-6-sol` is hidden
 - **WHEN** an operator opens a compaction route's model picker
 - **THEN** `gpt-6-sol` is offered and marked as hidden
+
+### Requirement: Model catalogue manages redirects
+
+Settings > Models > Model catalogue MUST include a Redirects card listing requested model, served model and
+status (active, or inactive with its reason) with add, change and delete actions. The requested model MUST
+accept any slug and suggest catalogue models; the served-model picker MUST group eligible targets by provider
+and mark hidden ones.
+
+#### Scenario: Adding a redirect for a retired model
+- **WHEN** the operator adds `gpt-5.4` redirecting to `gpt-5.5`
+- **THEN** the card lists it as active
+
+### Requirement: Catalogue rows mark redirect sources
+
+Catalogue rows MUST include redirect sources marked "Redirects to <target>", keep their Client lists switch,
+and show their context-window override as disabled while redirected. Compaction-route pickers MUST exclude
+redirect sources.
+
+#### Scenario: Retired model row
+- **GIVEN** a redirect `gpt-5.4 -> gpt-5.5` for a slug outside the registry
+- **WHEN** the catalogue renders
+- **THEN** it shows a hidden `gpt-5.4` row marked "Redirects to gpt-5.5"
+
+### Requirement: Request logs show redirected models
+
+The request-log model cell MUST show `requested -> served` for redirected requests.
+
+#### Scenario: Redirected request in the logs
+- **GIVEN** a logged request for `gpt-5.4` served by `gpt-5.5`
+- **WHEN** the logs page renders it
+- **THEN** the model cell reads `gpt-5.4 -> gpt-5.5`
