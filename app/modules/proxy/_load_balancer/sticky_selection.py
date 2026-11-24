@@ -1605,6 +1605,39 @@ async def _select_with_stickiness(
                 if alternative.account is not None and alternative.account.account_id != initial_preferred.account_id:
                     overload_reroute = alternative
                     overload_reroute_pool = preference_free_pool
+        # The preference is declined, like an existing owner is released, once
+        # it reports a used-up window: the next request on it is an upstream
+        # usage-limit rejection, and a request bound to it at dispatch cannot
+        # move afterwards. The fresh selection below then ranks the pool, so
+        # the preference is kept only when no non-exhausted sibling exists.
+        if (
+            initial_preferred is not None
+            and overload_reroute is None
+            and initial_preferred.status != AccountStatus.RATE_LIMITED
+            and _state_usage_exhausted(initial_preferred)
+        ):
+            pool_best = _select_account_preferring_budget_safe(
+                states,
+                hard_owner_pool=hard_owner_pool,
+                prefer_earlier_reset=prefer_earlier_reset_accounts,
+                prefer_earlier_reset_window=prefer_earlier_reset_window,
+                routing_strategy=routing_strategy,
+                relative_availability_power=relative_availability_power,
+                relative_availability_top_k=relative_availability_top_k,
+                deterministic_probe=True,
+                budget_threshold_pct=budget_threshold_pct,
+                traffic_class=traffic_class,
+                ignore_standard_quota=ignore_standard_quota,
+                routing_costs_by_account_id=routing_costs_by_account_id,
+                allow_usage_exhaustion_error=allow_usage_exhaustion_error,
+                usage_exhaustion_states=usage_exhaustion_state_list,
+            )
+            if (
+                pool_best.account is not None
+                and pool_best.account.account_id != initial_preferred.account_id
+                and not _state_usage_exhausted(pool_best.account)
+            ):
+                initial_preferred = None
         if initial_preferred is not None and overload_reroute is None:
             initial_result = select_account(
                 [initial_preferred],

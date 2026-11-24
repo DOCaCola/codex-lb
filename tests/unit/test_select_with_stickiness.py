@@ -87,6 +87,7 @@ async def _invoke_stickiness(
     sticky_refresh_skip_deadline: datetime | None = None,
     sticky_existing_account_id: str | None | object = _STICKY_EXISTING_UNSET,
     hard_owner_pool: bool = False,
+    initial_preferred_account_id: str | None = None,
     clock: Clock = REAL_CLOCK,
 ):
     """Wrapper that calls production LoadBalancer._select_with_stickiness.
@@ -122,6 +123,7 @@ async def _invoke_stickiness(
         sticky_refresh_skip_deadline=sticky_refresh_skip_deadline,
         sticky_existing_account_id=sticky_existing_account_id,
         hard_owner_pool=hard_owner_pool,
+        initial_preferred_account_id=initial_preferred_account_id,
     )
     # Mirror the production persist site (run_sticky_selection_path): a pure
     # same-owner freshness rewrite is omitted only after revalidating its
@@ -1199,6 +1201,65 @@ async def test_owner_with_exhausted_weekly_window_is_released_at_default_seconda
     assert result.account is not None
     assert result.account.account_id == "b"
     repo.upsert.assert_called_once_with("key1", "b", kind=StickySessionKind.PROMPT_CACHE)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_session_preference_is_declined_for_a_new_thread():
+    """A new thread row does not inherit a session account whose window is used up.
+
+    Production: composer predictions start new threads under the parent's
+    session, whose Plus account reported 100%; every one was dispatched there,
+    rejected upstream and could not move afterwards.
+    """
+    preferred = _active("plus", used_percent=100.0, routing_policy="burn_first")
+    sibling = _active("pro", used_percent=97.0, secondary_used_percent=40.0)
+    repo = _make_sticky_repo(existing_account_id=None)
+
+    result = await _invoke_stickiness(
+        [preferred, sibling],
+        "new-thread",
+        repo,
+        initial_preferred_account_id="plus",
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "pro"
+    repo.upsert.assert_called_once_with("new-thread", "pro", kind=StickySessionKind.PROMPT_CACHE)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_session_preference_is_kept_when_every_sibling_is_exhausted():
+    preferred = _active("plus", used_percent=100.0)
+    sibling = _active("pro", used_percent=20.0, secondary_used_percent=100.0)
+    repo = _make_sticky_repo(existing_account_id=None)
+
+    result = await _invoke_stickiness(
+        [preferred, sibling],
+        "new-thread",
+        repo,
+        initial_preferred_account_id="plus",
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "plus"
+    repo.upsert.assert_called_once_with("new-thread", "plus", kind=StickySessionKind.PROMPT_CACHE)
+
+
+@pytest.mark.asyncio
+async def test_session_preference_above_threshold_but_not_exhausted_is_kept():
+    preferred = _active("plus", used_percent=99.0, routing_policy="burn_first")
+    sibling = _active("pro", used_percent=10.0)
+    repo = _make_sticky_repo(existing_account_id=None)
+
+    result = await _invoke_stickiness(
+        [preferred, sibling],
+        "new-thread",
+        repo,
+        initial_preferred_account_id="plus",
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "plus"
 
 
 # ---------------------------------------------------------------------------
