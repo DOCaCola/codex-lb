@@ -2,7 +2,9 @@
 
 Based on agent-lb's projection with CLIProxyAPI's fixes: one thinking block per reasoning item,
 commentary-phase messages as unsigned thinking, tool-call start deferred until the name is
-known, hosted web search blocks, and cache-adjusted usage.
+known, hosted web search blocks, and cache-adjusted usage. Parallel function calls are serialized
+(sub2api #9071): Messages blocks cannot interleave, so one tool_use block is open at a time and
+sibling calls queue in announcement order with their arguments buffered.
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ class _Item:
     call_id: str | None = None
     name: str | None = None
     arguments: list[str] = field(default_factory=list)
+    done: bool = False
+    final_arguments: str = ""
+    emitted: bool = False
 
 
 @dataclass(slots=True)
@@ -56,6 +61,7 @@ class MessagesStreamProjector:
         self._envelope_key = envelope_key
         self._message_id: str | None = None
         self._items: dict[str, _Item] = {}
+        self._tool_queue: list[str] = []
         self._open: _OpenBlock | None = None
         self._index = 0
         self._tool_used = False
@@ -124,8 +130,9 @@ class MessagesStreamProjector:
         if not isinstance(item, dict) or not isinstance(item_id, str):
             return
         record = self._record(item_id, item)
-        if record.item_type == "function_call" and record.name is not None:
-            self._start_tool(item_id, record, out)
+        if record.item_type == "function_call":
+            self._queue_tool(item_id, record)
+            self._advance_tools(out)
 
     def _record(self, item_id: str, item: Mapping[str, JsonValue]) -> _Item:
         record = self._items.get(item_id)
@@ -182,7 +189,7 @@ class MessagesStreamProjector:
         if self._open == _OpenBlock("tool_use", item_id):
             record.streamed = True
             out.append(self._delta({"type": "input_json_delta", "partial_json": delta}))
-        else:
+        elif not record.emitted:
             record.arguments.append(delta)
 
     def _item_done(self, item: JsonValue, out: list[dict[str, JsonValue]]) -> None:
@@ -223,20 +230,61 @@ class MessagesStreamProjector:
     def _function_call_done(
         self, item_id: str, item: dict[str, JsonValue], record: _Item, out: list[dict[str, JsonValue]]
     ) -> None:
-        if self._open != _OpenBlock("tool_use", item_id):
+        # The completed item's arguments are authoritative over deltas buffered before the tool
+        # name was known (CLIProxyAPI 34639c3c).
+        arguments = item.get("arguments")
+        record.done = True
+        record.final_arguments = arguments if isinstance(arguments, str) and arguments else "".join(record.arguments)
+        if self._open == _OpenBlock("tool_use", item_id):
+            if not record.streamed and record.final_arguments:
+                out.append(self._delta({"type": "input_json_delta", "partial_json": record.final_arguments}))
+            self._close(out)
+        else:
+            self._queue_tool(item_id, record)
+        self._advance_tools(out)
+
+    # Tool queue -----------------------------------------------------------------------------
+
+    def _queue_tool(self, item_id: str, record: _Item) -> None:
+        if not record.emitted and item_id not in self._tool_queue:
+            self._tool_queue.append(item_id)
+
+    def _advance_tools(self, out: list[dict[str, JsonValue]]) -> None:
+        """Start queued calls in order while no tool block is open.
+
+        A finished call is emitted whole; an unfinished one stays open and streams the rest of
+        its arguments. The head waits for its name unless it has already finished.
+        """
+        while self._tool_queue and (self._open is None or self._open.kind != "tool_use"):
+            item_id = self._tool_queue[0]
+            record = self._items[item_id]
+            if record.name is None and not record.done:
+                return
+            self._tool_queue.pop(0)
             self._start_tool(item_id, record, out)
-        if not record.streamed:
-            # The completed item's arguments are authoritative over deltas buffered before the
-            # tool name was known (CLIProxyAPI 34639c3c).
-            arguments = item.get("arguments")
-            partial = arguments if isinstance(arguments, str) and arguments else "".join(record.arguments)
-            if partial:
-                out.append(self._delta({"type": "input_json_delta", "partial_json": partial}))
-        self._close_item(item_id, out)
+            if record.done:
+                if record.final_arguments:
+                    out.append(self._delta({"type": "input_json_delta", "partial_json": record.final_arguments}))
+                self._close(out)
+            elif record.arguments:
+                record.streamed = True
+                out.append(self._delta({"type": "input_json_delta", "partial_json": "".join(record.arguments)}))
+                record.arguments.clear()
+
+    def _drain_tools(self, out: list[dict[str, JsonValue]]) -> None:
+        """Emit every queued call at the end of the response with the arguments received."""
+        self._close(out)
+        for item_id in self._tool_queue:
+            record = self._items[item_id]
+            if not record.done:
+                record.done = True
+                record.final_arguments = "".join(record.arguments)
+        self._advance_tools(out)
 
     def _start_tool(self, item_id: str, record: _Item, out: list[dict[str, JsonValue]]) -> None:
         self._close(out)
         name = record.name or ""
+        record.emitted = True
         self._tool_used = True
         self._open = _OpenBlock("tool_use", item_id)
         self.has_output = True
@@ -288,7 +336,7 @@ class MessagesStreamProjector:
 
     def _complete(self, response: Mapping[str, JsonValue], out: list[dict[str, JsonValue]]) -> None:
         self._capture_id(response)
-        self._close(out)
+        self._drain_tools(out)
         self.terminal = True
         out.append(
             {

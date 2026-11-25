@@ -660,6 +660,86 @@ def test_tool_turn_projection():
     assert message["stop_reason"] == "tool_use"
 
 
+def _assert_sequential_blocks(out: list[dict]) -> None:
+    """Every delta targets the open block, and blocks open and close one at a time in order."""
+    open_index: int | None = None
+    next_index = 0
+    for event in out:
+        if event["type"] == "content_block_start":
+            assert open_index is None and event["index"] == next_index
+            open_index = event["index"]
+        elif event["type"] == "content_block_delta":
+            assert event["index"] == open_index
+        elif event["type"] == "content_block_stop":
+            assert event["index"] == open_index
+            open_index, next_index = None, next_index + 1
+    assert open_index is None
+
+
+def _call(item_id: str, name: str | None = None, arguments: str | None = None) -> dict:
+    item: dict = {"id": item_id, "type": "function_call", "call_id": f"call_{item_id}"}
+    if name is not None:
+        item["name"] = name
+    if arguments is not None:
+        item["arguments"] = arguments
+    return item
+
+
+def _args(item_id: str, delta: str) -> dict:
+    return {"type": "response.function_call_arguments.delta", "item_id": item_id, "delta": delta}
+
+
+@pytest.mark.parametrize(
+    "done_order",
+    [("fc_a", "fc_b"), ("fc_b", "fc_a")],
+    ids=["in_order", "second_finishes_first"],
+)
+def test_parallel_tool_calls_project_one_block_each(done_order: tuple[str, str]):
+    projector = MessagesStreamProjector(model=MODEL, reported_model=MODEL, tool_names={}, envelope_key=KEY)
+    final = {"fc_a": '{"path":"a"}', "fc_b": '{"path":"b"}'}
+    names = {"fc_a": "Read", "fc_b": "Grep"}
+    out = _feed(
+        projector,
+        [
+            {"type": "response.output_item.added", "item": _call("fc_a", "Read")},
+            {"type": "response.output_item.added", "item": _call("fc_b", "Grep")},
+            _args("fc_a", '{"path":'),
+            _args("fc_b", '{"path":'),
+            _args("fc_b", '"b"}'),
+            _args("fc_a", '"a"}'),
+            *(
+                {"type": "response.output_item.done", "item": _call(item_id, names[item_id], final[item_id])}
+                for item_id in done_order
+            ),
+            {"type": "response.completed", "response": {"usage": {"input_tokens": 1, "output_tokens": 1}}},
+        ],
+    )
+    _assert_sequential_blocks(out)
+    message = aggregate_message(projector.message_start(), out)
+    assert message["content"] == [
+        {"type": "tool_use", "id": "call_fc_a", "name": "Read", "input": {"path": "a"}},
+        {"type": "tool_use", "id": "call_fc_b", "name": "Grep", "input": {"path": "b"}},
+    ]
+    assert message["stop_reason"] == "tool_use"
+
+
+def test_queued_tool_call_unfinished_at_completion_is_emitted_with_received_arguments():
+    projector = MessagesStreamProjector(model=MODEL, reported_model=MODEL, tool_names={}, envelope_key=KEY)
+    out = _feed(
+        projector,
+        [
+            {"type": "response.output_item.added", "item": _call("fc_a", "Read")},
+            {"type": "response.output_item.added", "item": _call("fc_b", "Grep")},
+            _args("fc_b", '{"q":"x"}'),
+            {"type": "response.output_item.done", "item": _call("fc_a", "Read", '{"path":"a"}')},
+            {"type": "response.completed", "response": {"usage": {"input_tokens": 1, "output_tokens": 1}}},
+        ],
+    )
+    _assert_sequential_blocks(out)
+    message = aggregate_message(projector.message_start(), out)
+    assert [block["input"] for block in message["content"]] == [{"path": "a"}, {"q": "x"}]
+
+
 def test_text_web_search_and_incomplete_projection():
     projector = MessagesStreamProjector(model=MODEL, reported_model=MODEL, tool_names={}, envelope_key=KEY)
     out = _feed(
