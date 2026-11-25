@@ -828,7 +828,10 @@ async def test_open_stream_leases_keep_relative_availability_ranked_by_persisted
 
 
 @pytest.mark.asyncio
-async def test_open_stream_leases_let_sticky_reallocation_leave_exhausted_account(db_setup):
+async def test_open_stream_leases_do_not_push_a_sticky_owner_over_its_budget_threshold(db_setup):
+    """Thresholds judge reported usage: the owner reports 95% against a 95%
+    threshold, so open streams on it may rank candidates but must not move the
+    session (sticky-session-operations, reported-usage budget thresholds)."""
     await _seed_plus_accounts_with_weekly_usage({"acc_sticky_heavy": 95.0, "acc_sticky_light": 38.0})
     raw_session = "thread-lease-pressure"
     sticky_key = _codex_session_selection_key(raw_session)
@@ -856,11 +859,11 @@ async def test_open_stream_leases_let_sticky_reallocation_leave_exhausted_accoun
     )
 
     assert selection.account is not None
-    assert selection.account.id == "acc_sticky_light"
+    assert selection.account.id == "acc_sticky_heavy"
     async with SessionLocal() as session:
         entry = await StickySessionsRepository(session).get_entry(sticky_key, kind=StickySessionKind.CODEX_SESSION)
     assert entry is not None
-    assert entry.account_id == "acc_sticky_light"
+    assert entry.account_id == "acc_sticky_heavy"
 
 
 @pytest.mark.asyncio
