@@ -9,6 +9,7 @@ import anyio
 import pytest
 
 import app.modules.proxy.api as proxy_api_module
+from app.core.openai.chat_requests import ChatCompletionsRequest
 from app.core.openai.models import CompactResponsePayload
 from app.core.types import JsonValue
 from app.core.utils.sse import ParsedSseBlock, format_sse_event, sse_block_with_payload
@@ -19,6 +20,105 @@ pytestmark = pytest.mark.unit
 async def _iter_blocks(*blocks: str) -> AsyncIterator[str]:
     for block in blocks:
         yield block
+
+
+_NATIVE_CREATED_BLOCK = 'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_lease"}}\n\n'
+_NATIVE_SYNTHETIC_FAILURE_BLOCK = (
+    'data: {"type":"response.failed","_codex_lb_synthetic_transport_failure":true,'
+    '"response":{"status":"failed","error":{"code":"stream_incomplete",'
+    '"message":"Upstream closed stream without completion"}}}\n\n'
+)
+
+
+def _lease_holding_stream(released: list[str], *blocks: str) -> AsyncIterator[str]:
+    """Stand-in for ``_stream_with_retry``, whose ``finally`` releases the account lease."""
+
+    async def stream() -> AsyncIterator[str]:
+        try:
+            for block in blocks:
+                yield block
+        finally:
+            released.append("lease")
+
+    return stream()
+
+
+def _native_responses_chain(root: AsyncIterator[str]) -> AsyncIterator[str]:
+    """The account-backed native Responses wrapper chain built by ``_stream_responses``."""
+
+    async def relay_rate_limits(payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+        return payload
+
+    return proxy_api_module._normalize_public_responses_stream(
+        proxy_api_module._replace_rate_limit_events(
+            proxy_api_module._stream_response_error_events(
+                root,
+                owns_reservation=False,
+                reservation=None,
+                preserve_native_failure_lifecycle=True,
+            ),
+            relay_rate_limits,
+        ),
+        enforce_openai_sdk_contract=False,
+        preserve_native_failure_lifecycle=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_transport_failure_raised_mid_chain_releases_the_account_lease() -> None:
+    """Issue Soju06/codex-lb#2470: the normalizer raises on a synthetic transport
+    failure while every wrapper beneath it is suspended; the lease-holding root
+    must be closed before the error leaves the chain, not when it is collected."""
+
+    released: list[str] = []
+    chain = _native_responses_chain(
+        _lease_holding_stream(released, _NATIVE_CREATED_BLOCK, _NATIVE_SYNTHETIC_FAILURE_BLOCK, "data: [DONE]\n\n")
+    )
+
+    assert await chain.__anext__() == _NATIVE_CREATED_BLOCK
+    with pytest.raises(proxy_api_module.ProxyResponseError) as excinfo:
+        await chain.__anext__()
+
+    assert excinfo.value.status_code == 502
+    assert released == ["lease"]
+
+
+@pytest.mark.asyncio
+async def test_closing_the_native_chain_early_releases_the_account_lease() -> None:
+    released: list[str] = []
+    chain = _native_responses_chain(
+        _lease_holding_stream(released, _NATIVE_CREATED_BLOCK, _NATIVE_CREATED_BLOCK, "data: [DONE]\n\n")
+    )
+
+    assert await chain.__anext__() == _NATIVE_CREATED_BLOCK
+    await cast(Any, chain).aclose()
+
+    assert released == ["lease"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrapper", ["prepend_first", "prepend_items", "proxy_errors", "cursor_usage"])
+async def test_closing_a_prepending_wrapper_early_releases_the_account_lease(wrapper: str) -> None:
+    released: list[str] = []
+    root = _lease_holding_stream(released, "data: {}\n\n", "data: {}\n\n")
+    if wrapper == "prepend_first":
+        stream = proxy_api_module._prepend_first(None, root)
+    elif wrapper == "prepend_items":
+        stream = proxy_api_module._prepend_items([], root)
+    elif wrapper == "proxy_errors":
+        stream = proxy_api_module._stream_proxy_errors_as_response_failed(root)
+    else:
+        stream = proxy_api_module._stream_with_cursor_usage_fallback(
+            root,
+            ChatCompletionsRequest.model_validate(
+                {"model": "gpt-test", "messages": [{"role": "user", "content": "hi"}]}
+            ),
+        )
+
+    await stream.__anext__()
+    await cast(Any, stream).aclose()
+
+    assert released == ["lease"]
 
 
 @pytest.mark.asyncio

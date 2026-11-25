@@ -6911,15 +6911,18 @@ async def _replace_rate_limit_events(
 ) -> AsyncIterator[str]:
     """Swap each upstream ``codex.rate_limits`` event for the pool's, or withhold it."""
 
-    async for event_block in stream:
-        if EVENT_MARKER in event_block:
-            payload = _parse_sse_payload(event_block)
-            if payload is not None and payload.get("type") == RATE_LIMIT_EVENT_TYPE:
-                pool_event = await rate_limit_event(payload)
-                if pool_event is not None:
-                    yield format_sse_event(pool_event)
-                continue
-        yield event_block
+    try:
+        async for event_block in stream:
+            if EVENT_MARKER in event_block:
+                payload = _parse_sse_payload(event_block)
+                if payload is not None and payload.get("type") == RATE_LIMIT_EVENT_TYPE:
+                    pool_event = await rate_limit_event(payload)
+                    if pool_event is not None:
+                        yield format_sse_event(pool_event)
+                    continue
+            yield event_block
+    finally:
+        await _close_responses_stream_best_effort(stream, action="rate limit relay")
 
 
 async def _withhold_source_rate_limit_event(_payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
@@ -8281,10 +8284,13 @@ def _request_state_str(request: Request, name: str) -> str | None:
 
 
 async def _prepend_first(first: str | None, stream: AsyncIterator[str]) -> AsyncIterator[str]:
-    if first is not None:
-        yield first
-    async for line in stream:
-        yield line
+    try:
+        if first is not None:
+            yield first
+        async for line in stream:
+            yield line
+    finally:
+        await _close_responses_stream_best_effort(stream, action="prepended first item")
 
 
 async def _read_first_stream_item(stream: AsyncIterator[str]) -> str:
@@ -8725,28 +8731,31 @@ async def _stream_with_cursor_usage_fallback(
 ) -> AsyncIterator[str]:
     prompt_tokens = _estimate_cursor_prompt_tokens(payload)
     completion_chars = 0
-    async for line in stream:
-        parsed = _parse_chat_completion_sse(line)
-        if parsed is None:
+    try:
+        async for line in stream:
+            parsed = _parse_chat_completion_sse(line)
+            if parsed is None:
+                yield line
+                continue
+            completion_chars += _chat_completion_delta_chars(parsed)
+            if _is_chat_completion_usage_chunk(parsed) and _needs_cursor_usage_fallback(parsed.get("usage")):
+                completion_tokens = max(1, _estimate_tokens_from_chars(completion_chars))
+                parsed["usage"] = {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                }
+                logger.info(
+                    "cursor_usage_fallback source=stream model=%s prompt_tokens=%s completion_tokens=%s",
+                    payload.model,
+                    prompt_tokens,
+                    completion_tokens,
+                )
+                yield f"data: {json.dumps(parsed, separators=(',', ':'))}\n\n"
+                continue
             yield line
-            continue
-        completion_chars += _chat_completion_delta_chars(parsed)
-        if _is_chat_completion_usage_chunk(parsed) and _needs_cursor_usage_fallback(parsed.get("usage")):
-            completion_tokens = max(1, _estimate_tokens_from_chars(completion_chars))
-            parsed["usage"] = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            }
-            logger.info(
-                "cursor_usage_fallback source=stream model=%s prompt_tokens=%s completion_tokens=%s",
-                payload.model,
-                prompt_tokens,
-                completion_tokens,
-            )
-            yield f"data: {json.dumps(parsed, separators=(',', ':'))}\n\n"
-            continue
-        yield line
+    finally:
+        await _close_responses_stream_best_effort(stream, action="cursor usage fallback")
 
 
 def _is_chat_completion_usage_chunk(payload: dict[str, JsonValue]) -> bool:
@@ -8910,43 +8919,49 @@ async def _probe_chat_stream_startup_error(
 
 
 async def _prepend_items(items: list[str], stream: AsyncIterator[str]) -> AsyncIterator[str]:
-    for item in items:
-        yield item
-    async for line in stream:
-        yield line
+    try:
+        for item in items:
+            yield item
+        async for line in stream:
+            yield line
+    finally:
+        await _close_responses_stream_best_effort(stream, action="prepended items")
 
 
 async def _prepend_first_task(first_task: asyncio.Task[str], stream: AsyncIterator[str]) -> AsyncIterator[str]:
     try:
-        # Not ``await first_task``: a level-cancelled Starlette scope re-cancels
-        # the consuming task on every loop iteration, and ``Task.cancel()``
-        # cascades down the ``_fut_waiter`` chain into the awaited task. The
-        # probe task defers cancellation while its bridge cleanup finishes, so
-        # a direct await turned every client disconnect into a busy spin that
-        # lasted as long as that cleanup (2026-09-07 production: ~1.4e9
-        # re-cancels across 15 wedged requests). The per-waiter proxy future
-        # absorbs the level cancellation here; the probe sees only the single
-        # explicit teardown ``cancel()`` below.
-        first = await wait_on_shared_future(first_task)
-    except StopAsyncIteration:
-        return
+        try:
+            # Not ``await first_task``: a level-cancelled Starlette scope re-cancels
+            # the consuming task on every loop iteration, and ``Task.cancel()``
+            # cascades down the ``_fut_waiter`` chain into the awaited task. The
+            # probe task defers cancellation while its bridge cleanup finishes, so
+            # a direct await turned every client disconnect into a busy spin that
+            # lasted as long as that cleanup (2026-09-07 production: ~1.4e9
+            # re-cancels across 15 wedged requests). The per-waiter proxy future
+            # absorbs the level cancellation here; the probe sees only the single
+            # explicit teardown ``cancel()`` below.
+            first = await wait_on_shared_future(first_task)
+        except StopAsyncIteration:
+            return
+        finally:
+            # If the wrapping stream is closed before the first item is consumed
+            # (client disconnect, request teardown), cancel the still-running probe
+            # task so it does not hold the upstream connection open, then wait for
+            # its deferred bridge cleanup to settle so the stream it drives is not
+            # closed underneath it. The canonical helper waits without cascading
+            # repeated level cancels into the probe; its exception, if any, is
+            # retrieved here (the probe's done-callback also settles it).
+            if not first_task.done():
+                first_task.cancel()
+                try:
+                    await _shared_await_task_deferring_cancellation(first_task)
+                except BaseException:
+                    pass
+        yield first
+        async for line in stream:
+            yield line
     finally:
-        # If the wrapping stream is closed before the first item is consumed
-        # (client disconnect, request teardown), cancel the still-running probe
-        # task so it does not hold the upstream connection open, then wait for
-        # its deferred bridge cleanup to settle so the stream it drives is not
-        # closed underneath it. The canonical helper waits without cascading
-        # repeated level cancels into the probe; its exception, if any, is
-        # retrieved here (the probe's done-callback also settles it).
-        if not first_task.done():
-            first_task.cancel()
-            try:
-                await _shared_await_task_deferring_cancellation(first_task)
-            except BaseException:
-                pass
-    yield first
-    async for line in stream:
-        yield line
+        await _close_responses_stream_best_effort(stream, action="startup probe")
 
 
 async def _prepend_initial_sse_heartbeat(
@@ -9031,15 +9046,14 @@ async def _close_responses_stream_best_effort(
         logger.warning("Failed to close Responses %s stream", action, exc_info=True)
 
 
-async def _stream_proxy_errors_as_response_failed(
+def _stream_proxy_errors_as_response_failed(
     stream: AsyncIterator[str],
 ) -> AsyncIterator[str]:
-    async for line in _stream_response_error_events(
+    return _stream_response_error_events(
         stream,
         owns_reservation=False,
         reservation=None,
-    ):
-        yield line
+    )
 
 
 async def _stream_response_error_events(
@@ -9131,6 +9145,8 @@ async def _stream_response_error_events(
             # a marked terminal straight back into a terminated stream.
             failed_event = synthetic_transport_failure_event(failed_event)
         yield retry_hint + format_sse_event(failed_event)
+    finally:
+        await _close_responses_stream_best_effort(stream, action="response error events")
 
 
 def _stream_startup_error_response(
@@ -9895,189 +9911,213 @@ async def _normalize_public_responses_stream(
             rewrite reasoning, error, and terminal response payloads.
     """
     stream = _normalize_reasoning_summary_stream(stream)
-    terminal_seen = False
-    done_seen = False
-    unparseable_forwarded = False
-    contract_violation_kind: str | None = None
-    next_sequence_number = 0
-    seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
-    # Collect output items from streamed ``response.output_item.added`` /
-    # ``response.output_item.done`` events so the terminal
-    # ``response.completed`` / ``response.incomplete`` payload can be
-    # backfilled when the upstream Codex backend leaves ``response.output``
-    # empty. This mirrors the existing non-streaming behavior in
-    # ``_collect_responses_payload`` so OpenAI SDK consumers calling
-    # ``stream.get_final_response().output`` see the same items the
-    # non-streaming endpoint returns.
-    output_items: dict[int, dict[str, JsonValue]] = {}
-    # Track whether the first standard ``response.*`` event the public stream
-    # emits is ``response.created``. The OpenAI Responses SSE contract requires
-    # ``response.created`` to be the first event. The upstream Codex backend
-    # sometimes drops straight to a terminal event (e.g. ``response.failed``
-    # when upstream rejects the request mid-stream) without emitting
-    # ``response.created`` first, which makes the OpenAI SDK's
-    # ``_create_initial_response`` raise ``RuntimeError``. When that happens
-    # we synthesize a ``response.created`` snapshot from the terminal event's
-    # ``response`` envelope so the SDK parser can complete the stream.
-    created_emitted = False
-    # Anonymous pre-created events cannot be made SDK-safe until a response
-    # envelope arrives: the public OpenAI SDK requires response.created first.
-    # Buffer them temporarily. Once an envelope arrives, replay only lightweight
-    # visible content events (text/content-part deltas) after the created event;
-    # drop unowned output_item lifecycle events so cancelled-request orphans are
-    # not attached to the later response.
-    pre_created_buffer: list[dict[str, JsonValue]] = []
+    try:
+        terminal_seen = False
+        done_seen = False
+        unparseable_forwarded = False
+        contract_violation_kind: str | None = None
+        next_sequence_number = 0
+        seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
+        # Collect output items from streamed ``response.output_item.added`` /
+        # ``response.output_item.done`` events so the terminal
+        # ``response.completed`` / ``response.incomplete`` payload can be
+        # backfilled when the upstream Codex backend leaves ``response.output``
+        # empty. This mirrors the existing non-streaming behavior in
+        # ``_collect_responses_payload`` so OpenAI SDK consumers calling
+        # ``stream.get_final_response().output`` see the same items the
+        # non-streaming endpoint returns.
+        output_items: dict[int, dict[str, JsonValue]] = {}
+        # Track whether the first standard ``response.*`` event the public stream
+        # emits is ``response.created``. The OpenAI Responses SSE contract requires
+        # ``response.created`` to be the first event. The upstream Codex backend
+        # sometimes drops straight to a terminal event (e.g. ``response.failed``
+        # when upstream rejects the request mid-stream) without emitting
+        # ``response.created`` first, which makes the OpenAI SDK's
+        # ``_create_initial_response`` raise ``RuntimeError``. When that happens
+        # we synthesize a ``response.created`` snapshot from the terminal event's
+        # ``response`` envelope so the SDK parser can complete the stream.
+        created_emitted = False
+        # Anonymous pre-created events cannot be made SDK-safe until a response
+        # envelope arrives: the public OpenAI SDK requires response.created first.
+        # Buffer them temporarily. Once an envelope arrives, replay only lightweight
+        # visible content events (text/content-part deltas) after the created event;
+        # drop unowned output_item lifecycle events so cancelled-request orphans are
+        # not attached to the later response.
+        pre_created_buffer: list[dict[str, JsonValue]] = []
 
-    def formatted_payloads_with_synthetic_deltas(
-        payload: dict[str, JsonValue], raw_block: str | None = None
-    ) -> list[str]:
-        synthetic_blocks = [
-            format_sse_event(synthetic_payload)
-            for synthetic_payload in _synthetic_text_delta_events(payload, seen_text_delta_keys)
-        ]
-        if raw_block is not None and not synthetic_blocks:
-            # Nothing rewrote the payload and nothing synthetic precedes it:
-            # pass the upstream block through instead of re-serializing.
-            return [raw_block]
-        return [*synthetic_blocks, format_sse_event(payload)]
+        def formatted_payloads_with_synthetic_deltas(
+            payload: dict[str, JsonValue], raw_block: str | None = None
+        ) -> list[str]:
+            synthetic_blocks = [
+                format_sse_event(synthetic_payload)
+                for synthetic_payload in _synthetic_text_delta_events(payload, seen_text_delta_keys)
+            ]
+            if raw_block is not None and not synthetic_blocks:
+                # Nothing rewrote the payload and nothing synthetic precedes it:
+                # pass the upstream block through instead of re-serializing.
+                return [raw_block]
+            return [*synthetic_blocks, format_sse_event(payload)]
 
-    def buffered_pre_created_payloads_to_replay(response_id: str | None) -> list[str]:
-        try:
-            if _pre_created_buffer_has_indexed_lifecycle(pre_created_buffer):
-                return []
-            return _format_legacy_pre_created_payloads(
-                pre_created_buffer,
-                response_id=response_id,
-                seen_text_delta_keys=seen_text_delta_keys,
-            )
-        finally:
-            pre_created_buffer.clear()
-
-    def normalize_public_failure_sequence(
-        payload: dict[str, JsonValue],
-        *,
-        reserve_created_sequence: bool,
-    ) -> tuple[dict[str, JsonValue], int | None]:
-        nonlocal next_sequence_number
-        sequence_number = payload.get("sequence_number")
-        if isinstance(sequence_number, int) and not isinstance(sequence_number, bool):
-            next_sequence_number = max(next_sequence_number, sequence_number + 1)
-            if enforce_openai_sdk_contract and reserve_created_sequence and payload.get("type") == "response.failed":
-                return payload, sequence_number - 1
-            return payload, None
-        if enforce_openai_sdk_contract and payload.get("type") == "response.failed":
-            created_sequence_number: int | None = None
-            if reserve_created_sequence:
-                created_sequence_number = next_sequence_number
-                next_sequence_number += 1
-            normalized_payload = dict(payload)
-            normalized_payload["sequence_number"] = next_sequence_number
-            next_sequence_number += 1
-            return normalized_payload, created_sequence_number
-        return payload, None
-
-    async for event_block in stream:
-        if event_block.strip() == "data: [DONE]":
-            done_seen = True
-            if terminal_seen:
-                yield event_block
-            continue
-        if _looks_like_sse_comment_block(event_block):
-            yield event_block
-            continue
-        payload = _parse_sse_payload(event_block)
-        if payload is None:
-            is_unparseable_data = _looks_like_sse_data_block(event_block)
-            if is_unparseable_data:
-                contract_violation_kind = contract_violation_kind or "invalid_json"
-            if forward_unparseable_data:
-                # Source-routed streams forward blocks the proxy cannot parse
-                # byte-identically instead of eating upstream data: the pre-wrap
-                # contract was raw passthrough, and merged model-source routing
-                # tests assert source bytes reach the client.
-                if is_unparseable_data:
-                    # Only unparseable *data* suppresses terminal synthesis;
-                    # valid non-data control blocks (e.g. ``retry:``) keep the
-                    # truncated-stream failure contract intact.
-                    unparseable_forwarded = True
-                yield event_block
-            continue
-        parsed_payload = payload
-        if payload.get(SYNTHETIC_TRANSPORT_FAILURE_MARKER) is True:
-            payload = dict(payload)
-            payload.pop(SYNTHETIC_TRANSPORT_FAILURE_MARKER, None)
-            if preserve_native_failure_lifecycle:
-                raise ProxyResponseError(
-                    502,
-                    openai_error("stream_incomplete", "Native upstream transport ended before a terminal event"),
-                    failure_phase="upstream",
+        def buffered_pre_created_payloads_to_replay(response_id: str | None) -> list[str]:
+            try:
+                if _pre_created_buffer_has_indexed_lifecycle(pre_created_buffer):
+                    return []
+                return _format_legacy_pre_created_payloads(
+                    pre_created_buffer,
+                    response_id=response_id,
+                    seen_text_delta_keys=seen_text_delta_keys,
                 )
-        raw_event_type = payload.get("type")
-        if (
-            enforce_openai_sdk_contract
-            and isinstance(raw_event_type, str)
-            and raw_event_type
-            in (
-                "response.completed",
-                "response.incomplete",
-            )
-        ):
-            response_obj = payload.get("response")
-            if is_json_mapping(response_obj):
-                existing_output = response_obj.get("output")
-                needs_backfill = not (isinstance(existing_output, list) and existing_output)
-                if needs_backfill and output_items:
-                    merged_response = _merge_collected_output_items(response_obj, output_items)
-                    payload = dict(payload)
-                    payload["response"] = merged_response
-        normalized_payload, violation_kind = _normalize_public_stream_payload(
-            payload,
-            enforce_openai_sdk_contract=enforce_openai_sdk_contract,
-        )
-        if violation_kind is not None:
-            contract_violation_kind = contract_violation_kind or violation_kind
-        if normalized_payload is None:
-            continue
-        event_type = classify_event_type(normalized_payload)
-        synthetic_created = None
-        if (
-            enforce_openai_sdk_contract
-            and not created_emitted
-            and isinstance(event_type, str)
-            and event_type != "response.created"
-        ):
-            synthetic_created = _synthetic_response_created_envelope(normalized_payload)
-        normalized_payload, synthetic_created_sequence = normalize_public_failure_sequence(
-            normalized_payload,
-            reserve_created_sequence=synthetic_created is not None,
-        )
-        if synthetic_created is not None and synthetic_created_sequence is not None:
-            synthetic_created["sequence_number"] = synthetic_created_sequence
-        if not enforce_openai_sdk_contract and event_type in {"error", "response.failed"}:
-            terminal_seen = True
-            if normalized_payload is parsed_payload:
-                yield event_block
-            else:
-                yield format_sse_event(normalized_payload)
-            continue
+            finally:
+                pre_created_buffer.clear()
 
-        if enforce_openai_sdk_contract and not created_emitted and isinstance(event_type, str):
-            if event_type == "response.created":
-                created_emitted = True
-                yield format_sse_event(normalized_payload)
-                response_id = _response_id_from_event_payload(normalized_payload)
-                for formatted_payload in buffered_pre_created_payloads_to_replay(response_id):
-                    yield formatted_payload
+        def normalize_public_failure_sequence(
+            payload: dict[str, JsonValue],
+            *,
+            reserve_created_sequence: bool,
+        ) -> tuple[dict[str, JsonValue], int | None]:
+            nonlocal next_sequence_number
+            sequence_number = payload.get("sequence_number")
+            if isinstance(sequence_number, int) and not isinstance(sequence_number, bool):
+                next_sequence_number = max(next_sequence_number, sequence_number + 1)
+                if (
+                    enforce_openai_sdk_contract
+                    and reserve_created_sequence
+                    and payload.get("type") == "response.failed"
+                ):
+                    return payload, sequence_number - 1
+                return payload, None
+            if enforce_openai_sdk_contract and payload.get("type") == "response.failed":
+                created_sequence_number: int | None = None
+                if reserve_created_sequence:
+                    created_sequence_number = next_sequence_number
+                    next_sequence_number += 1
+                normalized_payload = dict(payload)
+                normalized_payload["sequence_number"] = next_sequence_number
+                next_sequence_number += 1
+                return normalized_payload, created_sequence_number
+            return payload, None
+
+        async for event_block in stream:
+            if event_block.strip() == "data: [DONE]":
+                done_seen = True
+                if terminal_seen:
+                    yield event_block
+                continue
+            if _looks_like_sse_comment_block(event_block):
+                yield event_block
+                continue
+            payload = _parse_sse_payload(event_block)
+            if payload is None:
+                is_unparseable_data = _looks_like_sse_data_block(event_block)
+                if is_unparseable_data:
+                    contract_violation_kind = contract_violation_kind or "invalid_json"
+                if forward_unparseable_data:
+                    # Source-routed streams forward blocks the proxy cannot parse
+                    # byte-identically instead of eating upstream data: the pre-wrap
+                    # contract was raw passthrough, and merged model-source routing
+                    # tests assert source bytes reach the client.
+                    if is_unparseable_data:
+                        # Only unparseable *data* suppresses terminal synthesis;
+                        # valid non-data control blocks (e.g. ``retry:``) keep the
+                        # truncated-stream failure contract intact.
+                        unparseable_forwarded = True
+                    yield event_block
+                continue
+            parsed_payload = payload
+            if payload.get(SYNTHETIC_TRANSPORT_FAILURE_MARKER) is True:
+                payload = dict(payload)
+                payload.pop(SYNTHETIC_TRANSPORT_FAILURE_MARKER, None)
+                if preserve_native_failure_lifecycle:
+                    raise ProxyResponseError(
+                        502,
+                        openai_error("stream_incomplete", "Native upstream transport ended before a terminal event"),
+                        failure_phase="upstream",
+                    )
+            raw_event_type = payload.get("type")
+            if (
+                enforce_openai_sdk_contract
+                and isinstance(raw_event_type, str)
+                and raw_event_type
+                in (
+                    "response.completed",
+                    "response.incomplete",
+                )
+            ):
+                response_obj = payload.get("response")
+                if is_json_mapping(response_obj):
+                    existing_output = response_obj.get("output")
+                    needs_backfill = not (isinstance(existing_output, list) and existing_output)
+                    if needs_backfill and output_items:
+                        merged_response = _merge_collected_output_items(response_obj, output_items)
+                        payload = dict(payload)
+                        payload["response"] = merged_response
+            normalized_payload, violation_kind = _normalize_public_stream_payload(
+                payload,
+                enforce_openai_sdk_contract=enforce_openai_sdk_contract,
+            )
+            if violation_kind is not None:
+                contract_violation_kind = contract_violation_kind or violation_kind
+            if normalized_payload is None:
+                continue
+            event_type = classify_event_type(normalized_payload)
+            synthetic_created = None
+            if (
+                enforce_openai_sdk_contract
+                and not created_emitted
+                and isinstance(event_type, str)
+                and event_type != "response.created"
+            ):
+                synthetic_created = _synthetic_response_created_envelope(normalized_payload)
+            normalized_payload, synthetic_created_sequence = normalize_public_failure_sequence(
+                normalized_payload,
+                reserve_created_sequence=synthetic_created is not None,
+            )
+            if synthetic_created is not None and synthetic_created_sequence is not None:
+                synthetic_created["sequence_number"] = synthetic_created_sequence
+            if not enforce_openai_sdk_contract and event_type in {"error", "response.failed"}:
+                terminal_seen = True
+                if normalized_payload is parsed_payload:
+                    yield event_block
+                else:
+                    yield format_sse_event(normalized_payload)
                 continue
 
-            if synthetic_created is not None:
-                yield format_sse_event(synthetic_created)
-                created_emitted = True
-                response_id = _response_id_from_event_payload(synthetic_created)
-                for formatted_payload in buffered_pre_created_payloads_to_replay(response_id):
-                    yield formatted_payload
-            elif _should_buffer_public_pre_created_event(event_type):
-                if len(pre_created_buffer) >= _PUBLIC_RESPONSES_PRE_CREATED_BUFFER_LIMIT:
+            if enforce_openai_sdk_contract and not created_emitted and isinstance(event_type, str):
+                if event_type == "response.created":
+                    created_emitted = True
+                    yield format_sse_event(normalized_payload)
+                    response_id = _response_id_from_event_payload(normalized_payload)
+                    for formatted_payload in buffered_pre_created_payloads_to_replay(response_id):
+                        yield formatted_payload
+                    continue
+
+                if synthetic_created is not None:
+                    yield format_sse_event(synthetic_created)
+                    created_emitted = True
+                    response_id = _response_id_from_event_payload(synthetic_created)
+                    for formatted_payload in buffered_pre_created_payloads_to_replay(response_id):
+                        yield formatted_payload
+                elif _should_buffer_public_pre_created_event(event_type):
+                    if len(pre_created_buffer) >= _PUBLIC_RESPONSES_PRE_CREATED_BUFFER_LIMIT:
+                        error_kind = contract_violation_kind or "upstream_stream_truncated"
+                        for formatted_payload in _public_response_failed_event_blocks(
+                            error_kind,
+                            include_created=True,
+                            sequence_number=next_sequence_number,
+                        ):
+                            yield formatted_payload
+                        return
+                    pre_created_buffer.append(normalized_payload)
+                    continue
+                elif event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
+                    if event_type == "error":
+                        for formatted_payload in _public_response_failed_event_blocks_from_error(
+                            normalized_payload,
+                            include_created=True,
+                            sequence_number=next_sequence_number,
+                        ):
+                            yield formatted_payload
+                        return
                     error_kind = contract_violation_kind or "upstream_stream_truncated"
                     for formatted_payload in _public_response_failed_event_blocks(
                         error_kind,
@@ -10086,83 +10126,66 @@ async def _normalize_public_responses_stream(
                     ):
                         yield formatted_payload
                     return
-                pre_created_buffer.append(normalized_payload)
-                continue
-            elif event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
-                if event_type == "error":
-                    for formatted_payload in _public_response_failed_event_blocks_from_error(
-                        normalized_payload,
-                        include_created=True,
-                        sequence_number=next_sequence_number,
-                    ):
-                        yield formatted_payload
-                    return
-                error_kind = contract_violation_kind or "upstream_stream_truncated"
-                for formatted_payload in _public_response_failed_event_blocks(
-                    error_kind,
-                    include_created=True,
+
+            if enforce_openai_sdk_contract and event_type == "error":
+                for formatted_payload in _public_response_failed_event_blocks_from_error(
+                    normalized_payload,
+                    include_created=not created_emitted,
                     sequence_number=next_sequence_number,
                 ):
                     yield formatted_payload
                 return
 
-        if enforce_openai_sdk_contract and event_type == "error":
-            for formatted_payload in _public_response_failed_event_blocks_from_error(
-                normalized_payload,
-                include_created=not created_emitted,
-                sequence_number=next_sequence_number,
-            ):
+            _collect_output_item_event(normalized_payload, output_items)
+            if event_type == "response.output_text.delta":
+                seen_text_delta_keys.add(_text_delta_stream_key(normalized_payload))
+            # Both the backfill branch and _normalize_public_stream_payload copy
+            # the dict when they change anything, so identity with the parsed
+            # payload proves the event is unmutated. Pass-through additionally
+            # requires the block to already carry the canonical `event: <type>`
+            # framing that format_sse_event would add: bridge rewrite paths can
+            # enqueue data-only blocks, and named-event (EventSource) clients
+            # would otherwise lose the event name re-serialization used to add.
+            unmutated_block = (
+                event_block
+                if normalized_payload is parsed_payload and _has_canonical_event_framing(event_block, event_type)
+                else None
+            )
+            for formatted_payload in formatted_payloads_with_synthetic_deltas(normalized_payload, unmutated_block):
                 yield formatted_payload
+            if isinstance(event_type, str) and event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
+                terminal_seen = True
+        if terminal_seen:
+            if not done_seen and not enforce_openai_sdk_contract:
+                yield "data: [DONE]\n\n"
             return
-
-        _collect_output_item_event(normalized_payload, output_items)
-        if event_type == "response.output_text.delta":
-            seen_text_delta_keys.add(_text_delta_stream_key(normalized_payload))
-        # Both the backfill branch and _normalize_public_stream_payload copy
-        # the dict when they change anything, so identity with the parsed
-        # payload proves the event is unmutated. Pass-through additionally
-        # requires the block to already carry the canonical `event: <type>`
-        # framing that format_sse_event would add: bridge rewrite paths can
-        # enqueue data-only blocks, and named-event (EventSource) clients
-        # would otherwise lose the event name re-serialization used to add.
-        unmutated_block = (
-            event_block
-            if normalized_payload is parsed_payload and _has_canonical_event_framing(event_block, event_type)
-            else None
+        if unparseable_forwarded:
+            # Raw source blocks already reached the client. Synthesizing a
+            # terminal here would mislabel a stream the proxy could not
+            # interpret (for example a successful source stream whose terminal
+            # event was not valid JSON) as a failure.
+            return
+        if preserve_native_failure_lifecycle:
+            # First-party Codex owns transport-failure interpretation. Preserve a
+            # missing terminal by aborting the body instead of manufacturing one
+            # on the LB boundary or completing a successful empty HTTP stream.
+            raise ProxyResponseError(
+                502,
+                openai_error("stream_incomplete", "Native upstream stream ended before a terminal event"),
+                failure_phase="upstream",
+            )
+        error_kind = contract_violation_kind or (
+            "upstream_stream_truncated" if enforce_openai_sdk_contract else "stream_incomplete"
         )
-        for formatted_payload in formatted_payloads_with_synthetic_deltas(normalized_payload, unmutated_block):
+        include_created = enforce_openai_sdk_contract and not created_emitted
+        for formatted_payload in _public_response_failed_event_blocks(
+            error_kind,
+            include_created=include_created,
+            sequence_number=next_sequence_number if enforce_openai_sdk_contract else None,
+        ):
             yield formatted_payload
-        if isinstance(event_type, str) and event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
-            terminal_seen = True
-    if terminal_seen:
-        if not done_seen and not enforce_openai_sdk_contract:
-            yield "data: [DONE]\n\n"
-        return
-    if unparseable_forwarded:
-        # Raw source blocks already reached the client. Synthesizing a
-        # terminal here would mislabel a stream the proxy could not
-        # interpret (for example a successful source stream whose terminal
-        # event was not valid JSON) as a failure.
-        return
-    if preserve_native_failure_lifecycle:
-        # First-party Codex owns transport-failure interpretation. Preserve a
-        # missing terminal by aborting the body instead of manufacturing one
-        # on the LB boundary or completing a successful empty HTTP stream.
-        raise ProxyResponseError(
-            502,
-            openai_error("stream_incomplete", "Native upstream stream ended before a terminal event"),
-            failure_phase="upstream",
-        )
-    error_kind = contract_violation_kind or (
-        "upstream_stream_truncated" if enforce_openai_sdk_contract else "stream_incomplete"
-    )
-    include_created = enforce_openai_sdk_contract and not created_emitted
-    for formatted_payload in _public_response_failed_event_blocks(
-        error_kind,
-        include_created=include_created,
-        sequence_number=next_sequence_number if enforce_openai_sdk_contract else None,
-    ):
-        yield formatted_payload
+    finally:
+        await _close_responses_stream_best_effort(stream, action="public normalizer")
 
 
 def _should_buffer_public_pre_created_event(event_type: str) -> bool:
@@ -10810,68 +10833,72 @@ async def _normalize_reasoning_summary_stream(stream: AsyncIterator[str]) -> Asy
         normalized["delta"] = cleaned
         return [format_sse_event(normalized)]
 
-    async for event_block in stream:
-        payload = _parse_sse_payload(event_block)
-        if payload is None:
-            yield event_block
-            continue
-        # Error frames can omit the discriminator and carry only ``error``;
-        # classify those as terminal so a pending reasoning candidate flushes
-        # before the frame is forwarded.
-        event_type = classify_event_type(payload)
-        event_key = _reasoning_summary_delta_key(payload)
-        if (
-            pending
-            and not _is_reasoning_summary_interleavable_event(event_type)
-            and not (
-                event_type in _REASONING_SUMMARY_DELTA_TYPES | _REASONING_SUMMARY_DONE_TYPES and event_key in pending
-            )
-        ):
-            for pending_key in tuple(pending):
-                for buffered in flush(pending_key):
-                    yield buffered
-        if event_type in _REASONING_SUMMARY_DELTA_TYPES:
-            delta = payload.get("delta")
-            if not isinstance(delta, str):
+    try:
+        async for event_block in stream:
+            payload = _parse_sse_payload(event_block)
+            if payload is None:
                 yield event_block
                 continue
-            key = event_key
-            if key in pending:
-                pending[key].append((payload, event_block))
-                buffered_text = "".join(cast(str, item.get("delta")) for item, _ in pending[key])
-                if _strip_blank_html_comment_lines(buffered_text) != buffered_text:
+            # Error frames can omit the discriminator and carry only ``error``;
+            # classify those as terminal so a pending reasoning candidate flushes
+            # before the frame is forwarded.
+            event_type = classify_event_type(payload)
+            event_key = _reasoning_summary_delta_key(payload)
+            if (
+                pending
+                and not _is_reasoning_summary_interleavable_event(event_type)
+                and not (
+                    event_type in _REASONING_SUMMARY_DELTA_TYPES | _REASONING_SUMMARY_DONE_TYPES
+                    and event_key in pending
+                )
+            ):
+                for pending_key in tuple(pending):
+                    for buffered in flush(pending_key):
+                        yield buffered
+            if event_type in _REASONING_SUMMARY_DELTA_TYPES:
+                delta = payload.get("delta")
+                if not isinstance(delta, str):
+                    yield event_block
+                    continue
+                key = event_key
+                if key in pending:
+                    pending[key].append((payload, event_block))
+                    buffered_text = "".join(cast(str, item.get("delta")) for item, _ in pending[key])
+                    if _strip_blank_html_comment_lines(buffered_text) != buffered_text:
+                        for buffered in flush(key):
+                            yield buffered
+                        continue
+                    if _could_be_blank_html_comment_line(buffered_text):
+                        continue
                     for buffered in flush(key):
                         yield buffered
                     continue
-                if _could_be_blank_html_comment_line(buffered_text):
+                cleaned_delta = _strip_blank_html_comment_lines(delta)
+                if cleaned_delta != delta:
+                    normalized_payload = dict(payload)
+                    normalized_payload["delta"] = cleaned_delta
+                    yield format_sse_event(normalized_payload)
                     continue
+                if _could_be_blank_html_comment_line(delta):
+                    pending[key] = [(payload, event_block)]
+                    continue
+                yield event_block
+                continue
+            if event_type in _REASONING_SUMMARY_DONE_TYPES:
+                key = event_key
                 for buffered in flush(key):
                     yield buffered
-                continue
-            cleaned_delta = _strip_blank_html_comment_lines(delta)
-            if cleaned_delta != delta:
-                normalized_payload = dict(payload)
-                normalized_payload["delta"] = cleaned_delta
-                yield format_sse_event(normalized_payload)
-                continue
-            if _could_be_blank_html_comment_line(delta):
-                pending[key] = [(payload, event_block)]
-                continue
+            elif event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
+                for key in tuple(pending):
+                    for buffered in flush(key):
+                        yield buffered
             yield event_block
-            continue
-        if event_type in _REASONING_SUMMARY_DONE_TYPES:
-            key = event_key
+
+        for key in tuple(pending):
             for buffered in flush(key):
                 yield buffered
-        elif event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
-            for key in tuple(pending):
-                for buffered in flush(key):
-                    yield buffered
-        yield event_block
-
-    for key in tuple(pending):
-        for buffered in flush(key):
-            yield buffered
+    finally:
+        await _close_responses_stream_best_effort(stream, action="reasoning summary")
 
 
 def _is_public_passthrough_output_item_type(item_type: str) -> bool:
