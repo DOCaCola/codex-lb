@@ -41238,6 +41238,62 @@ async def test_adopting_an_expired_replacement_episode_drops_the_stale_lease() -
     )
 
 
+def _durable_circuit_row(*, cooldown_until_epoch: float, updated_at_epoch: float) -> SimpleNamespace:
+    return SimpleNamespace(
+        lookup_retry_circuit=AsyncMock(
+            return_value=SimpleNamespace(
+                consecutive_failures=http_bridge_retry_circuit_module._HTTP_BRIDGE_RETRY_CIRCUIT_FAILURE_THRESHOLD,
+                cooldown_until_epoch=cooldown_until_epoch,
+                last_detail="clean_close",
+                updated_at_epoch=updated_at_epoch,
+            )
+        ),
+        persist_retry_circuit=AsyncMock(return_value=None),
+        clear_retry_circuit=AsyncMock(return_value=None),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cooldown_offset", [None, -30.0], ids=["absent", "elapsed"])
+async def test_loading_an_ended_cooldown_admits_without_arming_a_probe(cooldown_offset: float | None) -> None:
+    # Soju06/codex-lb#2272: an absent or elapsed persisted cooldown was mapped
+    # to "now", which the admission gate reads as a just-expired cooldown. It
+    # then armed a half-open lease and suppressed every sibling for the lease,
+    # though no cooldown was running.
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(key_value=f"bridge-ended-cooldown-{cooldown_offset}")
+    cooldown = 0.0 if cooldown_offset is None else time.time() + cooldown_offset
+    service._durable_bridge = _durable_circuit_row(cooldown_until_epoch=cooldown, updated_at_epoch=time.time())
+
+    assert await service._http_bridge_precreated_retry_allowed(session) is True
+    assert await service._http_bridge_precreated_retry_allowed(session) is True
+    state = cast(Any, service)._http_bridge_retry_circuits[session.key]
+    assert (state.cooldown_until, state.half_open_until) == (0.0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_a_watched_cooldown_expiry_still_admits_exactly_one_probe() -> None:
+    # The worker watched this episode's cooldown run out locally; a reload of
+    # the unchanged row, whose cooldown has also elapsed, keeps that real
+    # expiry, so one probe is admitted and siblings wait for its outcome.
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(key_value="bridge-watched-expiry")
+    now = time.monotonic()
+    updated_at = time.time() - 60.0
+    state = http_bridge_retry_circuit_module._HTTPBridgeRetryCircuitState(last_touched_monotonic=now)
+    state.consecutive_failures = http_bridge_retry_circuit_module._HTTP_BRIDGE_RETRY_CIRCUIT_FAILURE_THRESHOLD
+    state.cooldown_until = now - 1.0
+    state.last_detail = "clean_close"
+    state.persisted_updated_at_epoch = updated_at
+    cast(Any, service)._http_bridge_retry_circuits[session.key] = state
+    cast(Any, service)._http_bridge_retry_circuit_loaded_keys.discard(session.key)
+    service._durable_bridge = _durable_circuit_row(cooldown_until_epoch=time.time() - 1.0, updated_at_epoch=updated_at)
+
+    assert await service._http_bridge_precreated_retry_allowed(session) is True
+    assert state.half_open_until > now
+    assert await service._http_bridge_precreated_retry_allowed(session) is False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("row_detail", ["stream_incomplete", "clean_close"])
 async def test_a_loaded_poison_row_arms_the_local_quarantine(row_detail: str) -> None:
