@@ -21,6 +21,7 @@ from app.core.types import JsonValue
 from app.modules.antigravity.classify import classify
 from app.modules.antigravity.client import CloudCodeClient
 from app.modules.antigravity.errors import AntigravityError, MetadataHTTPError
+from app.modules.antigravity.failures import record_rejection
 from app.modules.antigravity.version import ClientIdentity
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,7 @@ class SearchContext:
     identity: ClientIdentity
     policy: SearchPolicy
     source_id: str
+    credential_generation: int
 
 
 def _stamp(moment: datetime) -> str:
@@ -251,11 +253,13 @@ async def run_search(context: SearchContext, call: SearchCall, *, allowed: bool)
         )
         output = summary(call.query, data, created, datetime.now(UTC))
     except MetadataHTTPError as exc:
-        message = classify(exc.status, exc.body).message
+        rejection = classify(exc.status, exc.body)
+        # Account-level holds only: the search model's quota is not the conversation's.
+        await record_rejection(context.source_id, context.credential_generation, rejection)
         logger.info(
             "antigravity_web_search source_id=%s model=%s status=%d", context.source_id, context.model, exc.status
         )
-        return SearchOutcome(call, failure(created, datetime.now(UTC), message), False)
+        return SearchOutcome(call, failure(created, datetime.now(UTC), rejection.message), False)
     except AntigravityError as exc:
         logger.info("antigravity_web_search source_id=%s model=%s error=%s", context.source_id, context.model, exc.code)
         return SearchOutcome(call, failure(created, datetime.now(UTC), str(exc)), False)

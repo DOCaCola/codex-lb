@@ -282,6 +282,46 @@ async def test_ban_ends_the_request_without_walking_the_pool(async_client, pool,
     assert [hold for source_id, hold in holds.items() if source_id != captured[0][0]] == [None]
 
 
+TOS_FRAME: dict[str, Any] = {
+    "error": {
+        "code": 403,
+        "status": "PERMISSION_DENIED",
+        "message": "Service disabled.",
+        "details": [
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "TOS_VIOLATION",
+                "metadata": {"appeal_url": "https://forms.gle/x"},
+            }
+        ],
+    }
+}
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["collected", "streamed"])
+async def test_suspension_after_output_holds_the_account(async_client, pool, monkeypatch, stream):
+    # Recorded where it is observed, though nothing is retried once output reached the client.
+    captured = install_upstream(monkeypatch, rounds=[[HELLO[0], TOS_FRAME]])
+
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={"model": GEMINI, "input": "Hi", "stream": stream, "prompt_cache_key": "conversation-tos"},
+        headers={"session_id": "conversation-tos"},
+    )
+
+    if stream:
+        assert response.status_code == 200
+        assert "antigravity_account_banned" in response.text
+    else:
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "antigravity_account_banned"
+    assert len(captured) == 1
+    accounts = (await async_client.get("/api/antigravity-accounts")).json()["accounts"]
+    holds = {account["id"]: account["hold"] for account in accounts}
+    assert holds[captured[0][0]] == "banned"
+    assert [hold for source_id, hold in holds.items() if source_id != captured[0][0]] == [None]
+
+
 EMPTY: list[dict[str, Any]] = [
     {
         "response": {

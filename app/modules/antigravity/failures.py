@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
+from app.db.session import get_background_session
 from app.modules.antigravity.classify import UpstreamFailure
 from app.modules.antigravity.repository import AntigravityRepository
 from app.modules.antigravity.schemas import AccountState, QuotaFamily, VerificationNotice
@@ -77,3 +78,24 @@ async def record_failure(
             )
         case _:
             return
+
+
+async def record_rejection(
+    source_id: str,
+    generation: int,
+    failure: UpstreamFailure,
+    *,
+    quota_family: QuotaFamily | None = None,
+    model_family: str | None = None,
+) -> None:
+    """Persist a rejection observed while serving a request, in its own committed session."""
+    async with get_background_session() as session:
+        await record_failure(
+            AntigravityRepository(session),
+            source_id,
+            generation,
+            failure,
+            quota_family=quota_family,
+            model_family=model_family,
+        )
+        await session.commit()

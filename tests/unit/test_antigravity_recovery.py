@@ -17,21 +17,14 @@ from app.modules.antigravity.recovery import (
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
 
 
-@pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> list[UpstreamFailure]:
-    calls: list[UpstreamFailure] = []
-
-    async def record(state: RecoveryState, failure: UpstreamFailure) -> None:
-        calls.append(failure)
-
-    monkeypatch.setattr(recovery, "_record", record)
+@pytest.fixture(autouse=True)
+def fixed_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(recovery, "_jitter", lambda: 0.5)
-    return calls
 
 
 def _state() -> RecoveryState:
     state = RecoveryState()
-    state.bind("src-1", 3, "token-1", "gemini", "gemini-3.8-flash")
+    state.bind("src-1", "token-1")
     return state
 
 
@@ -41,32 +34,29 @@ def _error(kind: FailureKind, *, retry_after: timedelta | None = None, message: 
     )
 
 
-async def test_quota_moves_to_another_account(recorded: list[UpstreamFailure]) -> None:
+async def test_quota_moves_to_another_account() -> None:
     state = _state()
     assert await plan_retry(state, _error("quota")) == 0.0
     assert state.excluded == {"src-1"}
-    assert [failure.kind for failure in recorded] == ["quota"]
 
 
-async def test_ban_is_recorded_and_ends_the_request(recorded: list[UpstreamFailure]) -> None:
+async def test_ban_ends_the_request() -> None:
     state = _state()
     error = _error("banned")
     assert error.status_code == 403
     assert error.upstream_headers == {"x-should-retry": "false"}
     assert error.retry_after is None
     assert await plan_retry(state, error) is None
-    assert [failure.kind for failure in recorded] == ["banned"]
 
 
-async def test_short_rate_limit_waits_once_in_place(recorded: list[UpstreamFailure]) -> None:
+async def test_short_rate_limit_waits_once_in_place() -> None:
     state = _state()
     assert await plan_retry(state, _error("rate_limit", retry_after=timedelta(seconds=2))) == 2.0
     assert state.retry_source_id == "src-1"
     assert not state.excluded
-    state.bind("src-1", 3, "token-1", "gemini", "gemini-3.8-flash")
+    state.bind("src-1", "token-1")
     assert await plan_retry(state, _error("rate_limit", retry_after=timedelta(seconds=2))) == 0.0
     assert state.excluded == {"src-1"}
-    assert recorded
 
 
 def _unexplained(retry_after: str | None) -> AntigravityUpstreamError:
@@ -75,90 +65,84 @@ def _unexplained(retry_after: str | None) -> AntigravityUpstreamError:
     )
 
 
-async def test_unexplained_429_without_retry_after_is_reported(recorded: list[UpstreamFailure]) -> None:
+async def test_unexplained_429_without_retry_after_is_reported() -> None:
     state = _state()
     assert await plan_retry(state, _unexplained(None)) is None
     assert not state.excluded
-    assert not recorded
 
 
-async def test_unexplained_429_never_walks_the_pool(recorded: list[UpstreamFailure]) -> None:
+async def test_unexplained_429_never_walks_the_pool() -> None:
     state = _state()
     assert await plan_retry(state, _unexplained("0")) == 0.5
     assert state.retry_source_id == "src-1"
-    state.bind("src-1", 3, "token-1", "gemini", "gemini-3.8-flash")
+    state.bind("src-1", "token-1")
     assert await plan_retry(state, _unexplained("0")) is None
     assert not state.excluded
-    assert not recorded
 
 
-async def test_unexplained_429_waits_for_the_upstream_hint_and_reports_itself_final(
-    recorded: list[UpstreamFailure],
-) -> None:
+async def test_unexplained_429_waits_for_the_upstream_hint_and_reports_itself_final() -> None:
     error = _unexplained("7")
     assert error.retry_after is None
     assert error.upstream_headers == {"x-should-retry": "false"}
     assert await plan_retry(_state(), error) == 7.0
 
 
-async def test_upstream_429s_are_bounded(recorded: list[UpstreamFailure]) -> None:
+async def test_upstream_429s_are_bounded() -> None:
     state = _state()
     for _ in range(2):
         assert await plan_retry(state, _error("quota")) == 0.0
-        state.bind("src-2", 1, "token-2", "gemini", "gemini-3.8-flash")
+        state.bind("src-2", "token-2")
     assert await plan_retry(state, _error("quota")) is None
 
 
-async def test_overload_retries_once_elsewhere(recorded: list[UpstreamFailure]) -> None:
+async def test_overload_retries_once_elsewhere() -> None:
     state = _state()
     assert await plan_retry(state, _error("overloaded")) == 0.5
     assert state.excluded == {"src-1"}
-    state.bind("src-2", 1, "token-2", "gemini", "gemini-3.8-flash")
+    state.bind("src-2", "token-2")
     assert await plan_retry(state, _error("overloaded")) is None
 
 
-async def test_auth_refreshes_once_then_excludes(recorded: list[UpstreamFailure]) -> None:
+async def test_auth_refreshes_once_then_excludes() -> None:
     state = _state()
     assert await plan_retry(state, _error("auth")) == 0.0
     assert (state.retry_source_id, state.rejected_token) == ("src-1", "token-1")
-    state.bind("src-1", 4, "token-1b", "gemini", "gemini-3.8-flash")
+    state.bind("src-1", "token-1b")
     assert state.rejected_token is None
     assert await plan_retry(state, _error("auth")) == 0.0
     assert state.excluded == {"src-1"}
 
 
-async def test_signature_rejection_repairs_once_unsigned(recorded: list[UpstreamFailure]) -> None:
+async def test_signature_rejection_repairs_once_unsigned() -> None:
     state = _state()
     assert await plan_retry(state, _error("signature")) == 0.0
     assert state.unsigned
-    state.bind("src-1", 3, "token-1", "gemini", "gemini-3.8-flash")
+    state.bind("src-1", "token-1")
     assert await plan_retry(state, _error("signature")) is None
 
 
 @pytest.mark.parametrize("kind", ["invalid_request", "context_length", "upstream"])
-async def test_request_defects_are_reported(kind: FailureKind, recorded: list[UpstreamFailure]) -> None:
+async def test_request_defects_are_reported(kind: FailureKind) -> None:
     assert await plan_retry(_state(), _error(kind)) is None
-    assert not recorded
 
 
-async def test_location_is_recorded_and_reported(recorded: list[UpstreamFailure]) -> None:
+async def test_location_is_reported() -> None:
     assert await plan_retry(_state(), _error("location")) is None
-    assert [failure.kind for failure in recorded] == ["location"]
 
 
-async def test_nothing_replays_after_the_stream_opened(recorded: list[UpstreamFailure]) -> None:
+async def test_nothing_replays_after_the_stream_opened() -> None:
     state = _state()
     state.stream_opened = True
     assert await plan_retry(state, _error("overloaded")) is None
 
 
-async def test_sends_are_bounded(recorded: list[UpstreamFailure]) -> None:
+async def test_sends_are_bounded() -> None:
     state = _state()
     state.sends = MAX_SENDS
     assert await plan_retry(state, _error("quota")) is None
 
 
-async def test_only_pre_dispatch_connection_failures_replay(recorded: list[UpstreamFailure]) -> None:
+async def test_only_pre_dispatch_connection_failures_replay() -> None:
     def failure(pre_dispatch: bool) -> ModelSourceForwardingError:
         return ModelSourceForwardingError(status_code=502, payload={}, pre_dispatch=pre_dispatch)
 

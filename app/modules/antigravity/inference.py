@@ -266,7 +266,7 @@ async def prepare_responses(
         await session.commit()
         source = account.source
         detach_session_objects(session)
-    recovery.bind(account.source_id, snapshot.generation, snapshot.access_token, family.quota_family, family.id)
+    recovery.bind(account.source_id, snapshot.access_token)
     continuation.source_id = source.id
     summary = reasoning.get("summary") if isinstance(reasoning, dict) else None
     display = reasoning.get("display") if isinstance(reasoning, dict) else None
@@ -278,6 +278,7 @@ async def prepare_responses(
             identity=identity,
             policy=projection.search,
             source_id=source.id,
+            credential_generation=snapshot.generation,
         )
         if projection.search is not None and state.search_model is not None
         else None

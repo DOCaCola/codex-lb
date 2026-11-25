@@ -102,6 +102,14 @@ def test_ban_requires_the_exact_sentence() -> None:
     assert classify(403, _error("PERMISSION_DENIED", "Quoted: " + BAN)).kind == "permission"
 
 
+def test_structured_tos_violation_is_a_ban_whatever_the_wording_or_status() -> None:
+    tos = _info("TOS_VIOLATION", appeal_url="https://forms.gle/x", appeal_url_link_text="Submit Appeal")
+    assert classify(403, _error("PERMISSION_DENIED", "Service disabled.", tos)).kind == "banned"
+    # An error frame inside an HTTP 200 stream carries the status in its body code.
+    assert classify(200, _error("PERMISSION_DENIED", "Service disabled.", tos)).kind == "banned"
+    assert classify(403, _error("PERMISSION_DENIED", "Service disabled.", _info("OTHER"))).kind == "permission"
+
+
 def test_verification_trusts_only_google_account_links() -> None:
     trusted = classify(
         403,

@@ -59,6 +59,7 @@ CONTEXT = SearchContext(
     identity=ClientIdentity("1.4.10", "123", "darwin_arm64"),
     policy=SearchPolicy(),
     source_id="src-1",
+    credential_generation=1,
 )
 
 
@@ -218,13 +219,32 @@ async def test_run_search_answers_with_the_grounded_summary(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_run_search_failures_become_the_tool_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: list[tuple[str, int, str]] = []
+
     async def call(self: Any, method: str, access_token: str, body: dict[str, Any]) -> dict[str, Any]:
-        raise MetadataHTTPError("generateContent", 429)
+        raise MetadataHTTPError(
+            "generateContent",
+            403,
+            body={
+                "error": {
+                    "code": 403,
+                    "status": "PERMISSION_DENIED",
+                    "message": "Suspended",
+                    "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TOS_VIOLATION"}],
+                }
+            },
+        )
+
+    async def record(source_id: str, generation: int, failure: Any) -> None:
+        recorded.append((source_id, generation, failure.kind))
 
     monkeypatch.setattr(search_module.CloudCodeClient, "call", call)
+    monkeypatch.setattr(search_module, "record_rejection", record)
     outcome = await run_search(CONTEXT, SearchCall("item-1", "call-1", {"query": "q"}), allowed=True)
     assert not outcome.succeeded
     assert "Encountered error in tool execution:" in outcome.response["error"]
+    # A suspension seen by search holds the account like one seen by inference.
+    assert recorded == [("src-1", 1, "banned")]
 
 
 @pytest.mark.asyncio

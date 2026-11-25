@@ -41,6 +41,9 @@ _BAN = re.compile(
     r"| Please submit an appeal to continue using this product\.)?$"
 )
 _QUOTA_REASONS = frozenset({"QUOTA_EXHAUSTED", "INSUFFICIENT_G1_CREDITS_BALANCE"})
+# The structured suspension signature (CLIProxyAPI #7515): account-terminal on any HTTP status, including an
+# error frame inside an HTTP 200 stream.
+_BAN_REASON = "TOS_VIOLATION"
 _QUOTA_WORDS = (
     "exhausted your capacity",
     "exhausted your quota",
@@ -155,6 +158,8 @@ def classify(status: int, body: JsonValue, *, now: datetime | None = None) -> Up
     ) -> UpstreamFailure:
         return UpstreamFailure(kind, status, message, reason, retry_after, reset_at, verification_url)
 
+    if reason == _BAN_REASON:
+        return failure("banned")
     if status == 401 or rpc_status == "UNAUTHENTICATED":
         return failure("auth")
     if status == 403:

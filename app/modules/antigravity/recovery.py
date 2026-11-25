@@ -3,6 +3,9 @@
 The Codex and Claude Code clients run their own retry loops, so recovery here is
 small and explicit: it never replays after output reached the client, never walks
 the pool for request defects, and spends at most MAX_SENDS upstream sends.
+
+What a rejection proves about its account is recorded by the transport where the
+rejection is observed; recovery only decides the next attempt.
 """
 
 from __future__ import annotations
@@ -14,11 +17,8 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from app.core.types import JsonValue
-from app.db.session import get_background_session
 from app.modules.antigravity.classify import UpstreamFailure
-from app.modules.antigravity.failures import MOVE_THRESHOLD, record_failure
-from app.modules.antigravity.repository import AntigravityRepository
-from app.modules.antigravity.schemas import QuotaFamily
+from app.modules.antigravity.failures import MOVE_THRESHOLD
 from app.modules.model_sources.forwarding import ModelSourceForwardingError, _redact_json_value
 
 logger = logging.getLogger(__name__)
@@ -129,9 +129,6 @@ class RecoveryState:
     rejected_token: str | None = field(default=None, repr=False)
     access_token: str | None = field(default=None, repr=False)
     source_id: str | None = None
-    generation: int | None = None
-    quota_family: QuotaFamily | None = None
-    model_family: str | None = None
     sends: int = 0
     stream_opened: bool = False
     same_account_retried: bool = False
@@ -142,14 +139,9 @@ class RecoveryState:
     upstream_429s: int = 0
     last_error: ModelSourceForwardingError | None = None
 
-    def bind(
-        self, source_id: str, generation: int, access_token: str, quota_family: QuotaFamily, model_family: str
-    ) -> None:
+    def bind(self, source_id: str, access_token: str) -> None:
         self.source_id = source_id
-        self.generation = generation
         self.access_token = access_token
-        self.quota_family = quota_family
-        self.model_family = model_family
         self.retry_source_id = None
         self.rejected_token = None
         self.sends += 1
@@ -159,23 +151,8 @@ def _jitter() -> float:
     return random.uniform(0.25, 2.0)
 
 
-async def _record(state: RecoveryState, failure: UpstreamFailure) -> None:
-    assert state.source_id is not None and state.generation is not None
-    async with get_background_session() as session:
-        repository = AntigravityRepository(session)
-        await record_failure(
-            repository,
-            state.source_id,
-            state.generation,
-            failure,
-            quota_family=state.quota_family,
-            model_family=state.model_family,
-        )
-        await session.commit()
-
-
 async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) -> float | None:
-    """Record what the failure proves and return the delay before the next attempt; None reports it."""
+    """The delay before the next attempt; None reports the failure."""
     state.last_error = error
     if state.stream_opened or state.sends >= MAX_SENDS:
         return None
@@ -200,10 +177,8 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
         case "banned":
             # Google bans the account that submitted this content; replaying it from the next account
             # would submit it again and can take out the pool (CLIProxyAPI #7636, opencodex #8826).
-            await _record(state, failure)
             return None
         case "quota" | "verification" | "not_found" | "permission":
-            await _record(state, failure)
             state.excluded.add(source_id)
             delay = 0.0
         case "rate_limit":
@@ -213,7 +188,6 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
                 state.retry_source_id = source_id
                 delay = max(wait.total_seconds() if wait else 0.0, _jitter())
             else:
-                await _record(state, failure)
                 state.excluded.add(source_id)
                 delay = 0.0
         case "unexplained_429":
@@ -248,7 +222,6 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
             delay = 0.0
         case "location":
             # The server's egress region applies to every account.
-            await _record(state, failure)
             return None
         case _:
             return None

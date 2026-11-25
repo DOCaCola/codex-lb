@@ -8,6 +8,10 @@ from; the response is billed for both attempts.
 
 A round that only called search_web is answered by the gateway on the same
 account; the response then continues with the next upstream round.
+
+Every classified rejection is recorded against its account where it is
+observed: before the stream opens, mid-stream, or on a later round. Recovery
+only decides whether to try again.
 """
 
 from __future__ import annotations
@@ -29,7 +33,8 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.antigravity.classify import classify
 from app.modules.antigravity.constants import GO_SKIP_AUTO_HEADERS
 from app.modules.antigravity.errors import AntigravityError
-from app.modules.antigravity.inference import AntigravityAttempt
+from app.modules.antigravity.failures import record_rejection
+from app.modules.antigravity.inference import AntigravityAttempt, PreparedAntigravityRequest
 from app.modules.antigravity.recovery import AntigravityUpstreamError
 from app.modules.antigravity.responses import EmptyCompletion, Usage
 from app.modules.antigravity.search import SearchOutcome, run_search
@@ -65,6 +70,16 @@ def _stream_error(event: dict[str, JsonValue], secret: str) -> AntigravityUpstre
     code = error.get("code") if isinstance(error, dict) else None
     status = code if isinstance(code, int) and not isinstance(code, bool) else 500
     return AntigravityUpstreamError(classify(status, event), secret=secret, retry_after=None)
+
+
+async def _record(prepared: PreparedAntigravityRequest, error: AntigravityUpstreamError) -> None:
+    await record_rejection(
+        prepared.source.id,
+        prepared.credential_generation,
+        error.failure,
+        quota_family=prepared.family.quota_family,
+        model_family=prepared.family.id,
+    )
 
 
 class _Upstream:
@@ -143,6 +158,8 @@ async def open_responses(
         holder.first_frame_at = clock.monotonic()
     except BaseException as exc:
         await transport.aclose()
+        if isinstance(exc, AntigravityUpstreamError):
+            await _record(prepared, exc)
         if isinstance(exc, (TimeoutError, StopAsyncIteration, StreamIdleTimeoutError)):
             raise _failure("invalid_upstream_response", "Antigravity did not start an SSE response") from exc
         if isinstance(exc, (aiohttp.ClientError, StreamEventTooLargeError)):
@@ -232,7 +249,9 @@ async def open_responses(
                     events = await upstream.open()
                     opening = None
                     projection = prepared.projection(attempt.opaque)
-        except ModelSourceForwardingError:
+        except ModelSourceForwardingError as exc:
+            if isinstance(exc, AntigravityUpstreamError):
+                await _record(prepared, exc)
             if released:
                 for converted in projection.interrupt():
                     encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
