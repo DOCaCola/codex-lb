@@ -29,9 +29,7 @@ def _state() -> RecoveryState:
 
 
 def _error(kind: FailureKind, *, retry_after: timedelta | None = None, message: str = "m") -> AntigravityUpstreamError:
-    return AntigravityUpstreamError(
-        UpstreamFailure(kind, 429, message, retry_after=retry_after), secret="token-1", retry_after=None
-    )
+    return AntigravityUpstreamError(UpstreamFailure(kind, 429, message, retry_after=retry_after), secret="token-1")
 
 
 async def test_quota_moves_to_another_account() -> None:
@@ -59,9 +57,10 @@ async def test_short_rate_limit_waits_once_in_place() -> None:
     assert state.excluded == {"src-1"}
 
 
-def _unexplained(retry_after: str | None) -> AntigravityUpstreamError:
+def _unexplained(seconds: int | None) -> AntigravityUpstreamError:
+    retry_after = timedelta(seconds=seconds) if seconds is not None else None
     return AntigravityUpstreamError(
-        UpstreamFailure("unexplained_429", 429, "m"), secret="token-1", retry_after=retry_after
+        UpstreamFailure("unexplained_429", 429, "m", retry_after=retry_after), secret="token-1"
     )
 
 
@@ -73,15 +72,15 @@ async def test_unexplained_429_without_retry_after_is_reported() -> None:
 
 async def test_unexplained_429_never_walks_the_pool() -> None:
     state = _state()
-    assert await plan_retry(state, _unexplained("0")) == 0.5
+    assert await plan_retry(state, _unexplained(0)) == 0.5
     assert state.retry_source_id == "src-1"
     state.bind("src-1", "token-1")
-    assert await plan_retry(state, _unexplained("0")) is None
+    assert await plan_retry(state, _unexplained(0)) is None
     assert not state.excluded
 
 
 async def test_unexplained_429_waits_for_the_upstream_hint_and_reports_itself_final() -> None:
-    error = _unexplained("7")
+    error = _unexplained(7)
     assert error.retry_after is None
     assert error.upstream_headers == {"x-should-retry": "false"}
     assert await plan_retry(_state(), error) == 7.0
@@ -101,6 +100,21 @@ async def test_overload_retries_once_elsewhere() -> None:
     assert state.excluded == {"src-1"}
     state.bind("src-2", "token-2")
     assert await plan_retry(state, _error("overloaded")) is None
+
+
+async def test_short_capacity_delay_is_waited_out_in_place() -> None:
+    state = _state()
+    assert await plan_retry(state, _error("overloaded", retry_after=timedelta(seconds=2))) == 2.0
+    assert state.retry_source_id == "src-1"
+    assert not state.excluded
+    state.bind("src-1", "token-1")
+    assert await plan_retry(state, _error("overloaded", retry_after=timedelta(seconds=2))) is None
+
+
+async def test_long_capacity_delay_moves_without_waiting() -> None:
+    state = _state()
+    assert await plan_retry(state, _error("overloaded", retry_after=timedelta(seconds=17))) == 0.5
+    assert state.excluded == {"src-1"}
 
 
 async def test_auth_refreshes_once_then_excludes() -> None:
@@ -171,7 +185,6 @@ def test_upstream_error_redacts_the_access_token_and_derives_retry_after() -> No
     error = AntigravityUpstreamError(
         UpstreamFailure("rate_limit", 429, "token token-1 is limited", retry_after=timedelta(seconds=1.2)),
         secret="token-1",
-        retry_after=None,
     )
     assert "token-1" not in str(error.payload)
     assert error.retry_after == "2"

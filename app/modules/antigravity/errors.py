@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from app.core.errors import OpenAIErrorDetail
 from app.core.types import JsonValue
 
@@ -41,11 +39,11 @@ class TokenRejected(AntigravityError):
 
 
 class MetadataHTTPError(AntigravityError):
-    def __init__(self, endpoint: str, status: int, retry_at: datetime | None = None, *, body: JsonValue = None) -> None:
+    def __init__(self, endpoint: str, status: int, retry_after: str | None = None, *, body: JsonValue = None) -> None:
         super().__init__(
             f"Antigravity {endpoint} returned HTTP {status}", code="antigravity_metadata_failed", status_code=502
         )
         self.status = status
-        self.retry_at = retry_at or datetime.now(UTC)
-        # The parsed google.rpc error, for classification only; never shown.
+        # The HTTP Retry-After and the parsed google.rpc error, for classification only; never shown.
+        self.retry_after = retry_after
         self.body = body

@@ -407,6 +407,77 @@ async def test_refused_content_is_reported_final(
     assert [source_id for source_id, _, _ in captured] == [captured[0][0]] * sends
 
 
+def _capacity(*details: dict[str, Any]) -> dict[str, Any]:
+    info = {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "MODEL_CAPACITY_EXHAUSTED"}
+    return {"error": {"code": 503, "status": "UNAVAILABLE", "message": "No capacity", "details": [info, *details]}}
+
+
+@pytest.mark.parametrize(
+    ("rejection", "retry_after"),
+    [
+        (_capacity({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "17s"}), None),
+        (_capacity(), "17"),
+    ],
+    ids=["retry-info", "retry-after"],
+)
+async def test_capacity_delay_cools_the_model_and_moves(async_client, pool, monkeypatch, rejection, retry_after):
+    from app.modules.antigravity import recovery
+
+    monkeypatch.setattr(recovery, "_jitter", lambda: 0.0)
+    captured = install_upstream(
+        monkeypatch, rejections=1, rejection=rejection, rejection_status=503, rejection_retry_after=retry_after
+    )
+
+    await ask(async_client, GEMINI, "conversation-capacity")
+
+    first, second = (source_id for source_id, _, _ in captured)
+    assert first != second
+    accounts = (await async_client.get("/api/antigravity-accounts")).json()["accounts"]
+    ((cooldown,),) = [account["cooldowns"] for account in accounts if account["id"] == first]
+    assert cooldown["scope"].startswith("model:")
+    assert cooldown["reason"] == "capacity_exhausted"
+    remaining = datetime.fromisoformat(cooldown["until"].replace("Z", "+00:00")) - datetime.now(UTC)
+    assert timedelta(seconds=10) < remaining <= timedelta(seconds=17)
+
+
+async def test_explicit_zero_capacity_delay_retries_in_place(async_client, pool, monkeypatch):
+    from app.modules.antigravity import recovery
+
+    monkeypatch.setattr(recovery, "_jitter", lambda: 0.0)
+    captured = install_upstream(
+        monkeypatch, rejections=1, rejection=_capacity(), rejection_status=503, rejection_retry_after="0"
+    )
+
+    await ask(async_client, GEMINI, "conversation-capacity-zero")
+
+    assert [source_id for source_id, _, _ in captured] == [captured[0][0]] * 2
+    accounts = (await async_client.get("/api/antigravity-accounts")).json()["accounts"]
+    assert all(account["cooldowns"] == [] for account in accounts)
+
+
+@pytest.mark.parametrize(("retry_after", "wait"), [(None, None), ("30", timedelta(seconds=30))], ids=["bare", "hinted"])
+async def test_rate_limited_metadata_is_paced_by_google(async_client, pool, monkeypatch, retry_after, wait):
+    from app.modules.antigravity.errors import MetadataHTTPError
+    from app.modules.antigravity.service import INTERVALS
+
+    limited = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Too many requests"}}
+    monkeypatch.setattr(
+        CloudCodeClient,
+        "quota_summary",
+        AsyncMock(side_effect=MetadataHTTPError("retrieveUserQuota", 429, retry_after, body=limited)),
+    )
+
+    before = datetime.now(UTC)
+    response = await async_client.post(f"/api/antigravity-accounts/{pool[0]}/refresh")
+
+    assert response.status_code == 200, response.text
+    quota = response.json()["state"]["metadata"]["quota"]
+    assert quota["rate_limited"] is True
+    retry_at = datetime.fromisoformat(quota["retry_at"].replace("Z", "+00:00"))
+    expected = before + (wait or INTERVALS["quota"])
+    assert expected <= retry_at <= expected + timedelta(seconds=5)
+
+
 @pytest.mark.parametrize(
     ("path", "body", "headers"),
     [

@@ -89,8 +89,7 @@ def client_error(failure: UpstreamFailure) -> tuple[int, dict[str, JsonValue]]:
 class AntigravityUpstreamError(ModelSourceForwardingError):
     """A classified Cloud Code rejection; the payload is the client error, never Google's raw body.
 
-    `upstream_retry_after` is Google's own `Retry-After`; an unexplained 429 keeps it for the same-account retry
-    but reports itself as final.
+    The client's Retry-After is the classified delay; a content-final failure reports none.
     """
 
     def __init__(
@@ -98,13 +97,12 @@ class AntigravityUpstreamError(ModelSourceForwardingError):
         failure: UpstreamFailure,
         *,
         secret: str,
-        retry_after: str | None,
         upstream_headers: dict[str, str] | None = None,
     ) -> None:
         status, payload = client_error(failure)
-        self.upstream_retry_after = retry_after
-        if retry_after is None and failure.retry_after is not None:
-            retry_after = str(max(1, math.ceil(failure.retry_after.total_seconds())))
+        retry_after = (
+            str(max(1, math.ceil(failure.retry_after.total_seconds()))) if failure.retry_after is not None else None
+        )
         if failure.kind in _CONTENT_FINAL:
             retry_after = None
             upstream_headers = {**(upstream_headers or {}), **_FINAL}
@@ -193,18 +191,24 @@ async def plan_retry(state: RecoveryState, error: ModelSourceForwardingError) ->
         case "unexplained_429":
             # A content rejection fails identically on every account: never walk the pool. The same bytes are
             # refused again in place too, so only Google's own Retry-After earns one replay (opencodex #8897).
-            hinted = error.upstream_retry_after
-            if state.same_account_retried or hinted is None or not hinted.isdecimal():
+            hinted = failure.retry_after
+            if state.same_account_retried or hinted is None:
                 return None
             state.same_account_retried = True
             state.retry_source_id = source_id
-            delay = max(float(hinted), _jitter())
+            delay = max(hinted.total_seconds(), _jitter())
         case "overloaded" | "transient":
             if state.overload_retried:
                 return None
             state.overload_retried = True
-            state.excluded.add(source_id)
-            delay = _jitter()
+            wait = failure.retry_after
+            if wait is not None and wait < MOVE_THRESHOLD:
+                # A capacity hint this short is waited out in place, like a short rate limit (CLIProxyAPI #7957).
+                state.retry_source_id = source_id
+                delay = max(wait.total_seconds(), _jitter())
+            else:
+                state.excluded.add(source_id)
+                delay = _jitter()
         case "auth":
             if source_id in state.auth_retried:
                 state.excluded.add(source_id)

@@ -67,10 +67,15 @@ async def record_failure(
         case "quota" if quota_family is not None:
             until = failure.reset_at or now + QUOTA_FALLBACK_COOLDOWN
             await repository.cool_down(source_id, family_scope(quota_family), until, "quota_exhausted")
-        case "rate_limit" if model_family is not None and failure.retry_after is not None:
+        case "rate_limit" | "overloaded" if model_family is not None and failure.retry_after is not None:
+            # Google's delay for this model on this account (CLIProxyAPI #7821, #7957); shorter waits are
+            # absorbed in place by recovery.
             if failure.retry_after >= MOVE_THRESHOLD:
                 await repository.cool_down(
-                    source_id, model_scope(model_family), now + failure.retry_after, "rate_limited"
+                    source_id,
+                    model_scope(model_family),
+                    now + failure.retry_after,
+                    "rate_limited" if failure.kind == "rate_limit" else "capacity_exhausted",
                 )
         case "not_found" if model_family is not None:
             await repository.cool_down(

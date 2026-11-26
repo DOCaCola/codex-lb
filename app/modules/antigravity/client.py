@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
-import re
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -21,7 +18,6 @@ from app.modules.antigravity.version import ClientIdentity
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 ONBOARD_ATTEMPTS = 5
 ONBOARD_INTERVAL_SECONDS = 2.0
-_DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)s\s*$")
 
 
 def native_headers(access_token: str, identity: ClientIdentity) -> dict[str, str]:
@@ -36,26 +32,6 @@ def native_headers(access_token: str, identity: ClientIdentity) -> dict[str, str
 
 def method_url(method: str) -> str:
     return f"{CLOUD_CODE_BASE_URL}/{API_VERSION}:{method}"
-
-
-def retry_seconds(value: str | None) -> float | None:
-    """A google.protobuf.Duration ("2s", "11525.3s") or an integral Retry-After value."""
-    if value is None:
-        return None
-    match = _DURATION.match(value)
-    if match is not None:
-        return float(match.group(1))
-    return float(value) if value.strip().isdecimal() else None
-
-
-def retry_info(body: JsonValue) -> float | None:
-    error = body.get("error") if isinstance(body, dict) else None
-    details = error.get("details") if isinstance(error, dict) else None
-    for detail in details if isinstance(details, list) else []:
-        if isinstance(detail, dict) and str(detail.get("@type", "")).endswith("google.rpc.RetryInfo"):
-            delay = detail.get("retryDelay")
-            return retry_seconds(delay) if isinstance(delay, str) else None
-    return None
 
 
 class Tier(BaseModel):
@@ -136,9 +112,7 @@ class CloudCodeClient:
                     except ValueError:
                         data = None
                     if response.status != 200:
-                        delay = retry_info(data) or retry_seconds(response.headers.get("Retry-After"))
-                        retry_at = datetime.now(UTC) + timedelta(seconds=math.ceil(delay)) if delay else None
-                        raise MetadataHTTPError(method, response.status, retry_at, body=data)
+                        raise MetadataHTTPError(method, response.status, response.headers.get("Retry-After"), body=data)
                     if not isinstance(data, dict):
                         raise AntigravityError(f"Antigravity {method} returned invalid JSON", status_code=502)
                     return data

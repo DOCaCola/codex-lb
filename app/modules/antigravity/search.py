@@ -253,7 +253,7 @@ async def run_search(context: SearchContext, call: SearchCall, *, allowed: bool)
         )
         output = summary(call.query, data, created, datetime.now(UTC))
     except MetadataHTTPError as exc:
-        rejection = classify(exc.status, exc.body)
+        rejection = classify(exc.status, exc.body, retry_after_header=exc.retry_after)
         # Account-level holds only: the search model's quota is not the conversation's.
         await record_rejection(context.source_id, context.credential_generation, rejection)
         logger.info(

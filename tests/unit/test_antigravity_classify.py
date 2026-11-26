@@ -86,6 +86,60 @@ def test_bare_resource_exhausted_is_not_quota() -> None:
     assert classify(429, _error("RESOURCE_EXHAUSTED", "Resource has been exhausted"), now=NOW).kind == "unexplained_429"
 
 
+@pytest.mark.parametrize(
+    ("header", "kind", "delay"),
+    [("2", "rate_limit", timedelta(seconds=2)), ("0", "rate_limit", timedelta(0)), ("600", "quota", None)],
+)
+def test_retry_after_header_is_the_fallback_delay(header: str, kind: str, delay: timedelta | None) -> None:
+    failure = classify(
+        429, _error("RESOURCE_EXHAUSTED", "slow down", _info("RATE_LIMIT_EXCEEDED")), retry_after_header=header, now=NOW
+    )
+    assert failure.kind == kind
+    if delay is not None:
+        assert failure.retry_after == delay
+    else:
+        assert failure.reset_at == NOW + timedelta(minutes=10)
+
+
+def test_retry_info_wins_over_the_retry_after_header() -> None:
+    failure = classify(
+        429,
+        _error("RESOURCE_EXHAUSTED", "slow down", _info("RATE_LIMIT_EXCEEDED"), _retry("1.5s")),
+        retry_after_header="600",
+        now=NOW,
+    )
+    assert (failure.kind, failure.retry_after) == ("rate_limit", timedelta(seconds=1.5))
+
+
+def test_retry_after_http_date_is_relative_to_now() -> None:
+    failure = classify(
+        429,
+        _error("RESOURCE_EXHAUSTED", "slow down", _info("RATE_LIMIT_EXCEEDED")),
+        retry_after_header="Thu, 29 Oct 2026 12:00:02 GMT",
+        now=NOW,
+    )
+    assert failure.retry_after == timedelta(seconds=2)
+
+
+def test_bare_resource_exhausted_keeps_a_long_header_delay_without_becoming_quota() -> None:
+    failure = classify(
+        429, _error("RESOURCE_EXHAUSTED", "Resource has been exhausted"), retry_after_header="600", now=NOW
+    )
+    assert (failure.kind, failure.retry_after) == ("unexplained_429", timedelta(minutes=10))
+
+
+def test_capacity_errors_carry_their_retry_delay() -> None:
+    capacity = _error("UNAVAILABLE", "No capacity available for model", _info("MODEL_CAPACITY_EXHAUSTED"))
+    assert classify(503, capacity, retry_after_header="17", now=NOW).retry_after == timedelta(seconds=17)
+    capacity["error"]["details"].append(_retry("17s"))
+    failure = classify(503, capacity, retry_after_header="90", now=NOW)
+    assert (failure.kind, failure.retry_after) == ("overloaded", timedelta(seconds=17))
+
+
+def test_retry_after_header_is_ignored_on_request_defects() -> None:
+    assert classify(400, _error("INVALID_ARGUMENT", "bad"), retry_after_header="5", now=NOW).retry_after is None
+
+
 @pytest.mark.parametrize("message", ["Too many requests, slow down", "Please try again later"])
 def test_bare_429_with_retry_wording_is_a_rate_limit(message: str) -> None:
     assert classify(429, _error("RESOURCE_EXHAUSTED", message), now=NOW).kind == "rate_limit"

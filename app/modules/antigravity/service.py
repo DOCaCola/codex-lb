@@ -202,7 +202,7 @@ class AntigravityService:
             load = await client.load_code_assist(token)
             project = load.project or await client.onboard(token, load.onboarding_tier())
         except MetadataHTTPError as exc:
-            failure = classify(exc.status, exc.body)
+            failure = classify(exc.status, exc.body, retry_after_header=exc.retry_after)
             raise AntigravityError(f"Antigravity refused the account: {failure.message}") from exc
         return project, load
 
@@ -401,10 +401,13 @@ class AntigravityService:
                         await self.repository.mutate_state(source_id, generation, store_quota)
                         await self.repository.record_quota(source_id, buckets, completed_at)
             except MetadataHTTPError as exc:
-                failure = classify(exc.status, exc.body)
+                failure = classify(exc.status, exc.body, retry_after_header=exc.retry_after)
                 error = f"{endpoint}: {failure.message}"
                 rate_limited = exc.status == 429
-                retry_at = (exc.retry_at if rate_limited else None) or completed_at + INTERVALS[endpoint]
+                # Google's delay paces a rate-limited endpoint; without one it waits its normal interval.
+                retry_at = completed_at + (
+                    failure.retry_after if rate_limited and failure.retry_after is not None else INTERVALS[endpoint]
+                )
                 await record_failure(self.repository, source_id, generation, failure)
                 if failure.kind == "permission" and endpoint == "account":
                     await self.repository.update_account(

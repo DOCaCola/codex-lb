@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -99,6 +100,22 @@ def go_duration(value: str) -> timedelta | None:
     return timedelta(seconds=total)
 
 
+def header_delay(value: str | None, now: datetime) -> timedelta | None:
+    """An HTTP Retry-After: delta seconds, an explicit 0 kept, or an HTTP date (CLIProxyAPI #7821)."""
+    if value is None:
+        return None
+    text = value.strip()
+    if text.isdecimal():
+        return timedelta(seconds=int(text))
+    try:
+        moment = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if moment.tzinfo is None:
+        return None
+    return max(timedelta(0), moment - now)
+
+
 def _timestamp(value: JsonValue) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -131,7 +148,11 @@ def _verification_url(details: list[dict[str, JsonValue]], message: str) -> str 
     return None
 
 
-def classify(status: int, body: JsonValue, *, now: datetime | None = None) -> UpstreamFailure:
+def classify(
+    status: int, body: JsonValue, *, retry_after_header: str | None = None, now: datetime | None = None
+) -> UpstreamFailure:
+    """Classify a rejection; Google's RetryInfo wins over the HTTP Retry-After, which only a 429 or an
+    overload answer falls back to (CLIProxyAPI #7821, #7957)."""
     now = now or datetime.now(UTC)
     error = body.get("error") if isinstance(body, dict) else None
     error = error[0] if isinstance(error, list) and error else error
@@ -169,6 +190,8 @@ def classify(status: int, body: JsonValue, *, now: datetime | None = None) -> Up
             return failure("verification", verification_url=_verification_url(details, message))
         return failure("permission")
     if status == 429 or rpc_status == "RESOURCE_EXHAUSTED":
+        if retry_after is None:
+            retry_after = header_delay(retry_after_header, now)
         reset_delay = metadata.get("quotaResetDelay")
         reset_at = _timestamp(metadata.get("quotaResetTimeStamp"))
         if reset_at is None and isinstance(reset_delay, str) and (delay := go_duration(reset_delay)) is not None:
@@ -178,16 +201,22 @@ def classify(status: int, body: JsonValue, *, now: datetime | None = None) -> Up
             and any(word in lower for word in _QUOTA_WORDS)
             and not any(word in lower for word in _TRANSIENT_WORDS)
         )
+        if (
+            not quota
+            and reason is None
+            and not details
+            and not any(word in lower for word in (*_TRANSIENT_WORDS, *_RETRY_WORDS))
+        ):
+            # A bare RESOURCE_EXHAUSTED may be content-gated (CLIProxyAPI #5751, #6280); it is not quota, and
+            # nothing in it says a replay can succeed (opencodex #8897). Only Google's Retry-After, kept as its
+            # delay, earns one same-account replay.
+            return failure("unexplained_429")
         if not quota and retry_after is not None and retry_after >= QUOTA_RETRY_THRESHOLD:
             quota = True
         if quota:
             if reset_at is None and retry_after is not None:
                 reset_at = now + retry_after
             return failure("quota", reset_at=reset_at)
-        if reason is None and not details and not any(word in lower for word in (*_TRANSIENT_WORDS, *_RETRY_WORDS)):
-            # A bare RESOURCE_EXHAUSTED may be content-gated (CLIProxyAPI #5751, #6280); it is not quota, and
-            # nothing in it says a replay can succeed (opencodex #8897).
-            return failure("unexplained_429")
         return failure("rate_limit")
     if status == 400 or rpc_status in ("INVALID_ARGUMENT", "FAILED_PRECONDITION"):
         if "location" in lower and "not supported" in lower:
@@ -200,6 +229,8 @@ def classify(status: int, body: JsonValue, *, now: datetime | None = None) -> Up
     if status == 404 or rpc_status == "NOT_FOUND":
         return failure("not_found")
     if status in (503, 529) or rpc_status == "UNAVAILABLE" or "overloaded" in lower:
+        if retry_after is None:
+            retry_after = header_delay(retry_after_header, now)
         return failure("overloaded")
     if status >= 500:
         return failure("transient")

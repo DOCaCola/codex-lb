@@ -69,7 +69,7 @@ def _stream_error(event: dict[str, JsonValue], secret: str) -> AntigravityUpstre
     error = event.get("error")
     code = error.get("code") if isinstance(error, dict) else None
     status = code if isinstance(code, int) and not isinstance(code, bool) else 500
-    return AntigravityUpstreamError(classify(status, event), secret=secret, retry_after=None)
+    return AntigravityUpstreamError(classify(status, event), secret=secret)
 
 
 async def _record(prepared: PreparedAntigravityRequest, error: AntigravityUpstreamError) -> None:
@@ -113,9 +113,8 @@ class _Upstream:
             if exc.upstream_status_code is None or exc.upstream_status_code < 400:
                 raise
             raise AntigravityUpstreamError(
-                classify(exc.upstream_status_code, exc.payload),
+                classify(exc.upstream_status_code, exc.payload, retry_after_header=exc.retry_after),
                 secret=prepared.access_token,
-                retry_after=exc.retry_after,
             ) from None
         self.stack = stack
         self.status = response.status
