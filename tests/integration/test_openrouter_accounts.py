@@ -368,6 +368,11 @@ async def test_credit_monitoring_uses_separate_key_and_retains_stale_snapshot(as
     assert created.status_code == 200, created.text
     assert "secret" not in created.text
     assert created.json()["state"]["credits"] == {"total_credits": 100, "total_usage": 30}
+    # Observation times carry UTC so browsers outside UTC display them correctly.
+    assert all(
+        created.json()["state"][key].endswith("Z")
+        for key in ("catalog_updated_at", "key_updated_at", "credits_updated_at")
+    )
     account_id = created.json()["id"]
 
     async def failed(self, key):

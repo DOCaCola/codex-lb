@@ -68,6 +68,7 @@ async def test_account_lifecycle_catalog_and_client_lists(async_client, platform
     assert "sk-test" not in created.text
     account = created.json()
     assert account["state"]["selections"] == []
+    assert account["state"]["catalog_updated_at"].endswith("Z")
     assert [(model["id"], model["kind"]) for model in account["state"]["catalog"]] == [
         ("gpt-image-2.5-sunburst", "image"),
         ("gpt-5.5", "text"),

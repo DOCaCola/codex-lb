@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.crypto import TokenEncryptor
-from app.core.utils.time import utcnow
 from app.db.models import AccountRoutingPolicy, ModelSource, OpenRouterAccount
 from app.modules.model_sources.service import ModelSourceNotFoundError
 from app.modules.openrouter.catalog import project_models
@@ -58,7 +58,7 @@ class OpenRouterService:
             supports_embeddings=False,
             models=[],
         )
-        state = AccountState(key=info, key_updated_at=utcnow())
+        state = AccountState(key=info, key_updated_at=datetime.now(UTC))
         row = OpenRouterAccount(
             source_id=source.id,
             source=source,
@@ -91,11 +91,11 @@ class OpenRouterService:
                 raise OpenRouterError("An inference key is required")
             row.source.api_key_encrypted = self.encryptor.encrypt(key)
             state.key = info
-            state.key_updated_at = utcnow()
+            state.key_updated_at = datetime.now(UTC)
             state.key_error = None
             # Changed identity requires fresh availability before routing.
             state.catalog = (await self.client.catalog(key)).data
-            state.catalog_updated_at = utcnow()
+            state.catalog_updated_at = datetime.now(UTC)
             state.catalog_error = None
         if "management_key" in payload.model_fields_set:
             row.management_key_encrypted = (
@@ -130,7 +130,7 @@ class OpenRouterService:
         key = self.encryptor.decrypt(row.source.api_key_encrypted)
         try:
             state.key = await self.client.key_info(key)
-            state.key_updated_at = utcnow()
+            state.key_updated_at = datetime.now(UTC)
             state.key_error = None
         except OpenRouterError as exc:
             state.key_error = str(exc)
@@ -146,7 +146,7 @@ class OpenRouterService:
                 ]
                 await self._image_endpoints(next_state, key)
                 state.catalog = next_state.catalog
-                state.catalog_updated_at = utcnow()
+                state.catalog_updated_at = datetime.now(UTC)
                 state.catalog_error = None
                 catalog_changed = True
             except OpenRouterError as exc:
@@ -154,7 +154,7 @@ class OpenRouterService:
         if row.management_key_encrypted is not None:
             try:
                 state.credits = await self.client.credits(self.encryptor.decrypt(row.management_key_encrypted))
-                state.credits_updated_at = utcnow()
+                state.credits_updated_at = datetime.now(UTC)
                 state.credits_error = None
             except OpenRouterError as exc:
                 state.credits_error = str(exc)

@@ -397,7 +397,7 @@ def openrouter_pool(*, accounts: Sequence[OpenRouterAccount], models: Sequence[s
             if credits
             else None
         ),
-        updated_at=_aware(max(updated)) if updated else None,
+        updated_at=max(updated) if updated else None,
         stale=any(state.credits_error is not None for state in states),
     )
 

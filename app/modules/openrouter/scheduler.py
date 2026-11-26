@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
 from app.core.scheduling.leader_election import get_leader_election
-from app.core.utils.time import utcnow
 from app.db.models import ModelSource, OpenRouterAccount
 from app.db.session import get_background_session
 from app.modules.openrouter.repository import OpenRouterRepository
@@ -46,7 +46,7 @@ class OpenRouterRefreshScheduler:
                     state = AccountState.model_validate_json(row.state_json)
                     refresh_catalog = (
                         state.catalog_updated_at is None
-                        or (utcnow() - state.catalog_updated_at).total_seconds() >= 6 * 3600
+                        or (datetime.now(UTC) - state.catalog_updated_at).total_seconds() >= 6 * 3600
                     )
                     await OpenRouterService(OpenRouterRepository(session)).refresh(source_id, catalog=refresh_catalog)
             except Exception:

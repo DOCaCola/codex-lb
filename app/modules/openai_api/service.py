@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -61,7 +62,7 @@ class OpenAIApiService:
         )
         state = AccountState(
             catalog=catalog,
-            catalog_updated_at=utcnow(),
+            catalog_updated_at=datetime.now(UTC),
             monthly_credit_usd=payload.monthly_credit_usd,
             credit_renews_on=payload.credit_renews_on,
         )
@@ -90,7 +91,7 @@ class OpenAIApiService:
             key = payload.api_key.get_secret_value().strip()
             # A changed identity needs its own availability before it routes.
             state.catalog = catalog_models(await self.client.models(key))
-            state.catalog_updated_at = utcnow()
+            state.catalog_updated_at = datetime.now(UTC)
             state.catalog_error = None
             row.source.api_key_encrypted = self.encryptor.encrypt(key)
             await clear_cooldowns(self.repository.session, source_id)
@@ -116,7 +117,7 @@ class OpenAIApiService:
             state.catalog = catalog_models(
                 await self.client.models(self.encryptor.decrypt(row.source.api_key_encrypted))
             )
-            state.catalog_updated_at = utcnow()
+            state.catalog_updated_at = datetime.now(UTC)
             state.catalog_error = None
             changed = True
         except OpenAIApiError as exc:

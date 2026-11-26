@@ -3,7 +3,8 @@
 ### Requirement: OpenAI API accounts
 Operators SHALL create, rename, pause, resume, replace the key of and delete OpenAI API accounts using a Platform
 project API key. The key MUST be validated with `GET /v1/models` before the account is created, MUST be encrypted at
-rest, and MUST be absent from dashboard responses.
+rest, and MUST be absent from dashboard responses. The catalog synchronization time MUST be stored and returned as
+UTC with an explicit offset.
 
 #### Scenario: Valid key
 - **WHEN** an operator submits a key that `GET /v1/models` accepts
@@ -12,6 +13,10 @@ rest, and MUST be absent from dashboard responses.
 #### Scenario: Rejected key
 - **WHEN** `GET /v1/models` rejects the key
 - **THEN** no account is created and the dashboard shows the provider's status without the key
+
+#### Scenario: Catalog synchronization time
+- **WHEN** the catalog was synchronized at 09:00 UTC and the dashboard runs in Europe/Berlin during winter time
+- **THEN** the account page shows the catalog as updated at 10:00
 
 ### Requirement: API-key models are published separately
 Selected models SHALL be published as `openai-apikey/<model>` and forwarded upstream with the bare model id. Text

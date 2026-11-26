@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.core.model_routing import ReasoningRestrictions
 from app.db.models import AccountRoutingPolicy
@@ -155,13 +154,13 @@ class AccountState(BaseModel):
     reasoning_restrictions: ReasoningRestrictions = Field(default_factory=dict)
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
-    catalog_updated_at: datetime | None = None
+    catalog_updated_at: AwareDatetime | None = None
     catalog_error: str | None = None
     key: KeyInfo | None = None
-    key_updated_at: datetime | None = None
+    key_updated_at: AwareDatetime | None = None
     key_error: str | None = None
     credits: CreditInfo | None = None
-    credits_updated_at: datetime | None = None
+    credits_updated_at: AwareDatetime | None = None
     credits_error: str | None = None
 
 

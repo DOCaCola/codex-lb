@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
 
 from app.db.models import AccountRoutingPolicy
 from app.modules.shared.schemas import DashboardModel
@@ -45,7 +45,7 @@ class AccountState(BaseModel):
     model_config = ConfigDict(extra="forbid")
     selections: list[ModelSelection] = Field(default_factory=list)
     catalog: list[CatalogModel] = Field(default_factory=list)
-    catalog_updated_at: datetime | None = None
+    catalog_updated_at: AwareDatetime | None = None
     catalog_error: str | None = None
     monthly_credit_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     credit_renews_on: int | None = Field(default=None, ge=1, le=31)

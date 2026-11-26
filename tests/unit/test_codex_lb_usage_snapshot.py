@@ -226,7 +226,7 @@ def test_antigravity_families_are_separate_pools() -> None:
 def test_openrouter_pool_reports_prepaid_credits() -> None:
     state = OpenRouterState(
         credits=CreditInfo(total_credits=10.0, total_usage=4.26),
-        credits_updated_at=NOW - timedelta(minutes=1),
+        credits_updated_at=(NOW - timedelta(minutes=1)).replace(tzinfo=UTC),
     )
     account = OpenRouterAccount(
         source_id="or",

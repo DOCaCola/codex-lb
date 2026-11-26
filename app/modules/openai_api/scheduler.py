@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
 from app.core.scheduling.leader_election import get_leader_election
-from app.core.utils.time import utcnow
 from app.db.models import ModelSource, OpenAIApiAccount
 from app.db.session import get_background_session
 from app.modules.openai_api.repository import OpenAIApiRepository
@@ -45,7 +45,7 @@ class OpenAIApiRefreshScheduler:
                 row.source_id
                 for row in rows
                 if (updated := AccountState.model_validate_json(row.state_json).catalog_updated_at) is None
-                or (utcnow() - updated).total_seconds() >= CATALOG_REFRESH_SECONDS
+                or (datetime.now(UTC) - updated).total_seconds() >= CATALOG_REFRESH_SECONDS
             ]
         for source_id in due:
             try:
