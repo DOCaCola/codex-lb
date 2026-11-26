@@ -36,7 +36,13 @@ def upgrade() -> None:
                 )
             )
         return
-    op.create_index(_INDEX, "request_logs", ["requested_model", "reasoning_effort"], sqlite_where=sa.text(_PREDICATE))
+    op.create_index(
+        _INDEX,
+        "request_logs",
+        ["requested_model", "reasoning_effort"],
+        sqlite_where=sa.text(_PREDICATE),
+        if_not_exists=True,
+    )
 
 
 def downgrade() -> None:
@@ -44,4 +50,4 @@ def downgrade() -> None:
         with op.get_context().autocommit_block():
             op.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {_INDEX}"))
         return
-    op.drop_index(_INDEX, table_name="request_logs")
+    op.drop_index(_INDEX, table_name="request_logs", if_exists=True)

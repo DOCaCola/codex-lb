@@ -3382,6 +3382,8 @@ async def test_bridge_continuity_abandonment_migration_upgrade_and_downgrade(tmp
 
 
 _FORK_BASE_REVISION = "20260919_000000_merge_scim_overflow_heads"
+_MODEL_REDIRECTS_REVISION = "20261120_000000_model_redirects"
+_MODEL_REDIRECTS_PARENT = "20261111_000000_hidden_models"
 
 
 @pytest.mark.asyncio
@@ -3419,6 +3421,15 @@ async def test_fork_revisions_replay_over_their_own_schema_without_rewriting_dat
                     "VALUES ('src', 'claude-opus-5-5', 200000, 1)"
                 )
             )
+            await conn.execute(
+                text("INSERT INTO model_redirects (source_model, target_model) VALUES ('gpt-5', 'gpt-5.4')")
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO request_logs (request_id, requested_at, model, requested_model, status) "
+                    "VALUES ('redirected', '2026-11-20 01:00:00', 'gpt-5.4', 'gpt-5', 'success')"
+                )
+            )
 
         await to_thread.run_sync(lambda: command.stamp(_build_alembic_config(db_url), _FORK_BASE_REVISION, purge=True))
         result = await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
@@ -3428,10 +3439,53 @@ async def test_fork_revisions_replay_over_their_own_schema_without_rewriting_dat
             assert await conn.scalar(text("SELECT state_json FROM claude_accounts")) == state_json
             model_row = (await conn.execute(text("SELECT context_window, is_enabled FROM model_source_models"))).one()
             assert tuple(model_row) == (200000, 1)
+            redirect = (await conn.execute(text("SELECT source_model, target_model FROM model_redirects"))).one()
+            assert tuple(redirect) == ("gpt-5", "gpt-5.4")
+            attribution = await conn.scalar(
+                text("SELECT requested_model FROM request_logs WHERE request_id='redirected'")
+            )
+            assert attribution == "gpt-5"
     finally:
         await engine.dispose()
 
     assert await to_thread.run_sync(lambda: check_schema_drift(db_url)) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_table", [True, False], ids=["missing-table", "missing-column"])
+async def test_model_redirect_revision_resumes_partial_schema(tmp_path, missing_table):
+    from alembic import command
+    from sqlalchemy import inspect
+
+    from app.db.migrate import _build_alembic_config
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'partial-redirect-revision.sqlite'}"
+    config = _build_alembic_config(db_url)
+    await to_thread.run_sync(lambda: run_upgrade(db_url, _MODEL_REDIRECTS_REVISION, bootstrap_legacy=False))
+    engine = create_async_engine(db_url)
+    remove_object = (
+        "DROP TABLE model_redirects" if missing_table else "ALTER TABLE request_logs DROP COLUMN requested_model"
+    )
+
+    def redirect_schema(connection) -> tuple[bool, bool]:
+        inspector = inspect(connection)
+        return inspector.has_table("model_redirects"), any(
+            column["name"] == "requested_model" for column in inspector.get_columns("request_logs")
+        )
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(remove_object))
+        await to_thread.run_sync(lambda: command.stamp(config, _MODEL_REDIRECTS_PARENT, purge=True))
+        await to_thread.run_sync(lambda: run_upgrade(db_url, _MODEL_REDIRECTS_REVISION, bootstrap_legacy=False))
+        async with engine.begin() as conn:
+            assert await conn.run_sync(redirect_schema) == (True, True)
+            await conn.execute(text(remove_object))
+        await to_thread.run_sync(lambda: command.downgrade(config, _MODEL_REDIRECTS_PARENT))
+        async with engine.connect() as conn:
+            assert await conn.run_sync(redirect_schema) == (False, False)
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
