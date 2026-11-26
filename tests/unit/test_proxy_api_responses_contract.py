@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import anyio
 import pytest
+from starlette.requests import Request
 
 import app.modules.proxy.api as proxy_api_module
 from app.core.openai.chat_requests import ChatCompletionsRequest
@@ -690,11 +691,8 @@ async def test_collect_responses_preserves_captured_turn_state_when_stream_raise
 
     service = SimpleNamespace(stream_responses=lambda *_args, **_kwargs: failing_stream())
     context = SimpleNamespace(service=service)
-    request = SimpleNamespace(
-        headers={},
-        method="POST",
-        url=SimpleNamespace(path="/backend-api/codex/responses"),
-        client=None,
+    request = Request(
+        {"type": "http", "method": "POST", "path": "/backend-api/codex/responses", "headers": []},
     )
     monkeypatch.setattr(proxy_api_module, "_opportunistic_admission_denial", AsyncMock(return_value=None))
     monkeypatch.setattr(proxy_api_module, "_enforce_request_limits", AsyncMock(return_value=None))
@@ -702,7 +700,7 @@ async def test_collect_responses_preserves_captured_turn_state_when_stream_raise
     monkeypatch.setattr(proxy_api_module, "_release_reservation", AsyncMock())
 
     response = await proxy_api_module._collect_responses(
-        cast(Any, request),
+        request,
         ResponsesRequest.model_validate({"model": "gpt-5.5", "instructions": "test", "input": []}),
         cast(Any, context),
         None,

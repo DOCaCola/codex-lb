@@ -4240,7 +4240,9 @@ async def test_responses_route_preserves_selection_cap_429_after_startup_wait(
 
 
 @pytest.mark.asyncio
-async def test_opportunistic_admission_uses_api_key_enforced_model():
+async def test_opportunistic_admission_uses_api_key_enforced_model(monkeypatch):
+    from app.modules.proxy import request_policy
+
     api_key = ApiKeyData(
         id="key_opportunistic_enforced_model",
         name="opportunistic enforced model",
@@ -4258,16 +4260,22 @@ async def test_opportunistic_admission_uses_api_key_enforced_model():
     selection = AccountSelection(account=_make_account("acc"), error_message=None)
     service = SimpleNamespace(check_opportunistic_admission=AsyncMock(return_value=selection))
     context = SimpleNamespace(service=service)
-    request = Request({"type": "http", "method": "GET", "path": "/v1/opportunistic/admission", "headers": []})
-
-    response = await proxy_api._opportunistic_admission_denial(
-        request,
-        cast(proxy_api.ProxyContext, context),
-        api_key,
-        model="gpt-5.1",
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/backend-api/codex/opportunistic/admission", "headers": []}
+    )
+    monkeypatch.setattr(
+        request_policy, "get_model_redirects_cache", lambda: SimpleNamespace(get=AsyncMock(return_value={}))
     )
 
-    assert response is None
+    response = await proxy_api.opportunistic_admission(
+        request,
+        model="gpt-5.1",
+        context=cast(proxy_api.ProxyContext, context),
+        api_key=api_key,
+    )
+
+    assert response.status_code == 200
+    assert json.loads(bytes(response.body)) == {"admitted": True}
     service.check_opportunistic_admission.assert_awaited_once_with(
         api_key=api_key,
         model="gpt-5.2",

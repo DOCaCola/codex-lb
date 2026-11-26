@@ -2340,6 +2340,9 @@ async def test_model_context_window_overrides_round_trip_with_provenance(async_c
         "defaultContextWindow": 272_000,
         "maxContextWindow": 1_000_000,
         "listed": True,
+        "retired": False,
+        "redirectTargetModel": None,
+        "redirectTargetOverrideTokens": None,
     }
     # A synthesized parseability ceiling is not a real one.
     assert models["gpt-5.5"]["maxContextWindow"] is None
