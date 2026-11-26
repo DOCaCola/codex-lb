@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import TypeVar, cast
@@ -31,7 +31,7 @@ _POOLED_SECONDARY_PERCENT = (7560.0 * 40.0 / 100.0) / (7560.0 + 1134.0) * 100.0
 
 
 @pytest.fixture(autouse=True)
-async def _isolated_client_usage(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+async def _isolated_client_usage(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[None]:
     async def no_claude_accounts(windows: object) -> dict[str, str]:
         del windows
         return {}
@@ -209,7 +209,7 @@ def _service_and_guard(
     }
 
     @asynccontextmanager
-    async def repo_factory() -> AsyncIterator[ProxyRepositories]:
+    async def repo_factory() -> AsyncGenerator[ProxyRepositories]:
         yield ProxyRepositories(
             accounts=cast(
                 AccountsRepository,

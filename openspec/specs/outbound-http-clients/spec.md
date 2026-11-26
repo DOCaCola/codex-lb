@@ -1415,6 +1415,13 @@ Messages that a native upstream WebSocket's pump forwards to its consumer MUST b
 - **WHEN** its queued message payload exceeds 32 MiB
 - **THEN** the WebSocket fails with `consumer_backpressure` for `websocket_messages`
 
+#### Scenario: Saturation fails only the stalled WebSocket
+
+- **GIVEN** two native WebSockets share one helper and one consumer stops draining
+- **WHEN** the stalled WebSocket exceeds its byte budget
+- **THEN** only that WebSocket is failed and cancelled and its queued bytes are released
+- **AND** the other WebSocket and the shared helper process keep working
+
 ### Requirement: Native helper command bodies are framed as raw bytes
 
 A native helper command that carries a body (an HTTP request body, or a WebSocket text or binary send) MUST declare the body length as `payload_bytes` on its newline-terminated JSON command line, followed by exactly that many raw bytes. The body MUST NOT be base64-encoded or embedded in the JSON line. The helper MUST advertise the `framed_payload_v1` capability, and the Python adapter MUST require it during negotiation. The helper MUST reject a WebSocket text payload that is not valid UTF-8.

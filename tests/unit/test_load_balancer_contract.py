@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -166,7 +166,7 @@ async def _repositories(
     accounts: _AccountsRepository,
     usage: _UsageRepository,
     sticky_sessions: _StickySessionsRepository,
-) -> AsyncIterator[ProxyRepositories]:
+) -> AsyncGenerator[ProxyRepositories]:
     yield ProxyRepositories(
         accounts=cast(AccountsRepository, accounts),
         usage=cast(UsageRepository, usage),

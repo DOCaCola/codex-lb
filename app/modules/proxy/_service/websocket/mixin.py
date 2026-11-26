@@ -5,12 +5,13 @@ import json
 import logging
 import sys
 from collections import deque
+from collections.abc import Generator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Iterator, Mapping, NoReturn, cast
+from typing import Any, Mapping, NoReturn, cast
 from uuid import uuid4
 
 import aiohttp
@@ -729,7 +730,7 @@ async def _close_downstream_after_sequenced_replay_refusal(
 
 
 @contextmanager
-def _websocket_archive_request_context(request_id: str | None) -> Iterator[None]:
+def _websocket_archive_request_context(request_id: str | None) -> Generator[None]:
     token = set_request_id(request_id)
     try:
         yield
