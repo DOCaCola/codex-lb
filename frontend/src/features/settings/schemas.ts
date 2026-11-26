@@ -576,6 +576,7 @@ export const ModelRedirectsSchema = z.object({
       slug: z.string().min(1),
       displayName: z.string(),
       hidden: z.boolean(),
+      image: z.boolean(),
     })),
   })),
 });

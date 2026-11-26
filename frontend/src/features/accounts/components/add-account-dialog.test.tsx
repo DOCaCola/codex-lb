@@ -9,6 +9,7 @@ const props = () => ({
   codex: { onSignIn: vi.fn(), onImport: vi.fn() },
   claude: { onSignIn: vi.fn(), onImport: vi.fn() },
   antigravity: { onSignIn: vi.fn(), onImport: vi.fn() },
+  onOpenAIApi: vi.fn(),
   onOpenRouter: vi.fn(),
   onOpenAICompatible: vi.fn(),
 });
@@ -25,12 +26,12 @@ describe("AddAccountDialog", () => {
       expect(group.querySelector("legend img")).toHaveAttribute("data-provider");
     }
     expect(within(groups[3]!).getAllByRole("button").map((button) => button.querySelector("img")?.dataset.provider))
-      .toEqual(["openrouter", "openai_compatible"]);
+      .toEqual(["openai_apikey", "openrouter", "openai_compatible"]);
   });
 
   it("omits unavailable providers", () => {
     render(<AddAccountDialog {...props()} claude={undefined} antigravity={undefined}
-      onOpenRouter={undefined} onOpenAICompatible={undefined} />);
+      onOpenAIApi={undefined} onOpenRouter={undefined} onOpenAICompatible={undefined} />);
     expect(screen.getAllByRole("group")).toHaveLength(1);
     expect(screen.getByRole("group", { name: "Codex" })).toBeVisible();
   });
@@ -42,6 +43,7 @@ describe("AddAccountDialog", () => {
     ["Claude", "Import file", (p: ReturnType<typeof props>) => p.claude.onImport],
     ["Antigravity", "Sign in", (p: ReturnType<typeof props>) => p.antigravity.onSignIn],
     ["Antigravity", "Import file", (p: ReturnType<typeof props>) => p.antigravity.onImport],
+    ["API providers", "OpenAI API", (p: ReturnType<typeof props>) => p.onOpenAIApi],
     ["API providers", "OpenRouter", (p: ReturnType<typeof props>) => p.onOpenRouter],
     ["API providers", "OpenAI-compatible", (p: ReturnType<typeof props>) => p.onOpenAICompatible],
   ] as const)("hands off %s / %s after closing", async (group, option, action) => {

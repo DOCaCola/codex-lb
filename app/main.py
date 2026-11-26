@@ -116,6 +116,8 @@ from app.modules.fleet import api as fleet_api
 from app.modules.health import api as health_api
 from app.modules.model_sources import api as model_sources_api
 from app.modules.oauth import api as oauth_api
+from app.modules.openai_api import api as openai_api_api
+from app.modules.openai_api.scheduler import OpenAIApiRefreshScheduler
 from app.modules.openrouter import api as openrouter_api
 from app.modules.openrouter.scheduler import OpenRouterRefreshScheduler
 from app.modules.proxy import api as proxy_api
@@ -713,6 +715,7 @@ async def lifespan(app: FastAPI):
     api_key_last_used_flush_scheduler = build_api_key_last_used_flush_scheduler()
     model_scheduler = build_model_refresh_scheduler()
     openrouter_scheduler = OpenRouterRefreshScheduler()
+    openai_api_scheduler = OpenAIApiRefreshScheduler()
     claude_scheduler = build_claude_refresh_scheduler()
     antigravity_scheduler = build_antigravity_refresh_scheduler()
     quota_webhook_worker = build_quota_webhook_scheduler()
@@ -734,6 +737,7 @@ async def lifespan(app: FastAPI):
     await api_key_last_used_flush_scheduler.start()
     await model_scheduler.start()
     await openrouter_scheduler.start()
+    await openai_api_scheduler.start()
     await claude_scheduler.start()
     await antigravity_scheduler.start()
     await quota_webhook_worker.start()
@@ -957,6 +961,7 @@ async def lifespan(app: FastAPI):
         await metadata_scheduler.stop()
         await model_scheduler.stop()
         await openrouter_scheduler.stop()
+        await openai_api_scheduler.stop()
         await claude_scheduler.stop()
         await antigravity_scheduler.stop()
         await quota_webhook_worker.stop()
@@ -1107,6 +1112,7 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_api.router)
     app.include_router(model_sources_api.router)
     app.include_router(openrouter_api.router)
+    app.include_router(openai_api_api.router)
     app.include_router(claude_api.router)
     app.include_router(antigravity_api.router)
     app.include_router(quota_webhook_api.router)

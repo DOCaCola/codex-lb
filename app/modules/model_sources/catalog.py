@@ -13,6 +13,12 @@ from app.core.utils.json_guards import is_json_list, is_json_mapping
 from app.db.models import ModelSource, ModelSourceModel
 
 DEFAULT_SOURCE_CONTEXT_WINDOW = 128_000
+# Sources whose catalog is synchronized from an account rather than written by an operator.
+_CATALOG_SOURCE_KINDS = frozenset(
+    {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter", "openai_apikey", "claude", "antigravity"}
+)
+# Sources serving Chat Completions on their own wire (translating adapters serve it through Responses).
+_CHAT_WIRE_SOURCE_KINDS = frozenset({MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter", "openai_apikey"})
 
 # ``web_search_preview`` is the legacy alias for ``web_search``; request
 # validation normalizes it, but accept both here so operator opt-in covers
@@ -25,7 +31,7 @@ def source_models_to_upstream_models(sources: list[ModelSource]) -> list[Upstrea
     for source in sources:
         if not source.is_enabled:
             continue
-        if source.kind not in {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter", "claude", "antigravity"}:
+        if source.kind not in _CATALOG_SOURCE_KINDS:
             continue
         for source_model in source.models:
             if not source_model.is_enabled:
@@ -34,11 +40,10 @@ def source_models_to_upstream_models(sources: list[ModelSource]) -> list[Upstrea
     return models
 
 
-def is_openrouter_image_only(model: UpstreamModel) -> bool:
-    return (
-        model.source_kind == "openrouter"
-        and "image" in model.raw
-        and not (is_json_list(modalities := model.raw.get("output_modalities")) and "text" in modalities)
+def is_image_only_source_model(model: UpstreamModel) -> bool:
+    """A synchronized image model: served on the Images routes, never on Responses or Chat."""
+    return "image" in model.raw and not (
+        is_json_list(modalities := model.raw.get("output_modalities")) and "text" in modalities
     )
 
 
@@ -69,17 +74,32 @@ async def source_redirect_targets(*, require_responses: bool = False) -> dict[st
                 or (
                     not require_responses
                     and source.supports_chat_completions
-                    and source.kind in {MODEL_SOURCE_KIND_OPENAI_COMPATIBLE, "openrouter"}
+                    and source.kind in _CHAT_WIRE_SOURCE_KINDS
                 )
             ]
         )
     targets: dict[str, UpstreamModel] = {}
     for model in models:
-        if not is_openrouter_image_only(model) and (
+        if not is_image_only_source_model(model) and (
             not require_responses or model.raw.get("supports_streaming") is True
         ):
             targets.setdefault(model.slug, model)
     return targets
+
+
+async def image_redirect_targets() -> dict[str, UpstreamModel]:
+    """Image models an image redirect may serve: OpenAI API image models take the native Images body unchanged."""
+    from app.db.session import get_background_session
+    from app.modules.model_sources.repository import ModelSourcesRepository
+
+    async with get_background_session() as session:
+        sources = await ModelSourcesRepository(session).list_enabled_sources()
+        models = source_models_to_upstream_models([source for source in sources if source.kind == "openai_apikey"])
+    return {model.slug: model for model in models if is_image_only_source_model(model)}
+
+
+# The image models clients request natively, such as Codex's image backend.
+IMAGE_REDIRECT_SOURCE_PREFIX = "gpt-image-"
 
 
 async def list_redirect_target_catalogue() -> dict[str, UpstreamModel]:
@@ -372,13 +392,15 @@ def source_model_cost_usd(
             resolved[1],
         )
         return breakdown.total_usd if breakdown is not None else None
-    if source.kind == "antigravity":
+    if source.kind in ("antigravity", "openai_apikey"):
         from app.core.usage.pricing import UsageTokens, calculate_cost_from_usage, get_pricing_for_model
         from app.modules.antigravity.constants import MODEL_PREFIX
+        from app.modules.openai_api.schemas import OPENAI_API_MODEL_PREFIX
 
-        # The Gemini API (or Anthropic) list price of the model family: an API-equivalent estimate
-        # that keeps the published context tiers.
-        resolved = get_pricing_for_model(model.removeprefix(MODEL_PREFIX))
+        # Antigravity: the Gemini API (or Anthropic) list price of the model family, an API-equivalent
+        # estimate that keeps the published context tiers. OpenAI API: the price the credit is charged.
+        prefix = MODEL_PREFIX if source.kind == "antigravity" else OPENAI_API_MODEL_PREFIX
+        resolved = get_pricing_for_model(model.removeprefix(prefix))
         if resolved is None:
             return None
         return calculate_cost_from_usage(

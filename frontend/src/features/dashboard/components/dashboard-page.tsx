@@ -17,6 +17,7 @@ import { ResetCreditConfirmDialog } from "@/features/accounts/components/reset-c
 import { listApiKeys } from "@/features/api-keys/api";
 import { useKeyColors } from "@/features/apis/key-summary";
 import { useOpenRouter, useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
+import { useOpenAIApi, useOpenAIApiAccounts } from "@/features/openai-api/use-openai-api";
 import { useClaude, useClaudeAccounts } from "@/features/claude/use-claude";
 import { useAntigravity, useAntigravityAccounts } from "@/features/antigravity/use-antigravity";
 import { ActivityStrip } from "@/features/dashboard/components/activity-strip";
@@ -87,14 +88,17 @@ export function DashboardPage() {
   });
   const keyColors = useKeyColors(apiKeysQuery.data ?? []);
   const openRouterQuery = useOpenRouterAccounts();
+  const openAIApiQuery = useOpenAIApiAccounts();
   const claudeQuery = useClaudeAccounts();
   const antigravityQuery = useAntigravityAccounts();
   const claudeAccounts = useMemo(() => claudeQuery.data?.accounts ?? [], [claudeQuery.data]);
   const antigravityAccounts = useMemo(() => antigravityQuery.data?.accounts ?? [], [antigravityQuery.data]);
   const openRouterAccounts = useMemo(() => openRouterQuery.data?.accounts ?? [], [openRouterQuery.data]);
+  const openAIApiAccounts = useMemo(() => openAIApiQuery.data?.accounts ?? [], [openAIApiQuery.data]);
   const claude = useClaude();
   const antigravity = useAntigravity();
   const openRouter = useOpenRouter();
+  const openAIApi = useOpenAIApi();
   const overviewTimeframe = useMemo(
     () => parseOverviewTimeframe(searchParams.get("overviewTimeframe")),
     [searchParams],
@@ -136,10 +140,10 @@ export function DashboardPage() {
   const summaries = useMemo(
     () =>
       summarizeSources(
-        { accounts: codexAccounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources: [] },
+        { accounts: codexAccounts, claudeAccounts, antigravityAccounts, openAIApiAccounts, openRouterAccounts, modelSources: [] },
         { ...summaryContext, quotaDisplay: "both" },
       ),
-    [codexAccounts, claudeAccounts, antigravityAccounts, openRouterAccounts, summaryContext],
+    [codexAccounts, claudeAccounts, antigravityAccounts, openAIApiAccounts, openRouterAccounts, summaryContext],
   );
   const summariesById = useMemo(
     () => new Map(summaries.map((summary) => [summary.id, summary])),
@@ -161,6 +165,9 @@ export function DashboardPage() {
           case "antigravity":
             antigravity.update.mutate({ id: summary.id, body });
             break;
+          case "openai_apikey":
+            openAIApi.update.mutate({ id: summary.id, body });
+            break;
           case "openrouter":
             openRouter.update.mutate({ id: summary.id, body });
             break;
@@ -172,7 +179,7 @@ export function DashboardPage() {
           availableResetCredits: account.availableResetCredits ?? 0,
         }),
     }),
-    [antigravity.update, canWriteAccounts, claude.update, openRouter.update, resetCreditDialog, resumeMutation],
+    [antigravity.update, canWriteAccounts, claude.update, openAIApi.update, openRouter.update, resetCreditDialog, resumeMutation],
   );
 
   const view = useMemo(() => {

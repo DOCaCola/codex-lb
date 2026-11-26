@@ -75,7 +75,11 @@ from app.db.models import (
 )
 from app.dependencies import SettingsContext, get_proxy_service_for_app, get_settings_context
 from app.modules.dashboard_users.break_glass import BreakGlassRequiresTotpError
-from app.modules.model_sources.catalog import list_redirect_target_catalogue
+from app.modules.model_sources.catalog import (
+    IMAGE_REDIRECT_SOURCE_PREFIX,
+    image_redirect_targets,
+    list_redirect_target_catalogue,
+)
 from app.modules.proxy.account_cache import (
     clear_account_routing_unavailable,
     get_account_selection_cache,
@@ -979,7 +983,8 @@ MODEL_REDIRECTS_PATH = "/model-redirects"
 
 async def _model_redirects_response(context: SettingsContext) -> ModelRedirectsResponse:
     redirects = await ModelRedirectsRepository(context.session).list_all()
-    catalogue = await list_redirect_target_catalogue()
+    images = await image_redirect_targets()
+    catalogue = {**await list_redirect_target_catalogue(), **images}
     hidden = await HiddenModelsRepository(context.session).slugs()
     groups: dict[str, list[ModelRedirectTargetResponse]] = {}
     for slug, model in catalogue.items():
@@ -989,6 +994,7 @@ async def _model_redirects_response(context: SettingsContext) -> ModelRedirectsR
                     slug=slug,
                     display_name=model.display_name,
                     hidden=slug in hidden or model.raw.get("visibility", "list") != "list",
+                    image=slug in images,
                 )
             )
     return ModelRedirectsResponse(
@@ -1025,7 +1031,14 @@ async def put_model_redirect(
     target = _validate_model_slug(payload.target_model, code="model_redirect_invalid")
     if source == target:
         raise DashboardBadRequestError("A model can't redirect to itself.", code="model_redirect_invalid")
-    catalogue = await list_redirect_target_catalogue()
+    images = await image_redirect_targets()
+    catalogue = {**await list_redirect_target_catalogue(), **images}
+    image_redirect = source.startswith(IMAGE_REDIRECT_SOURCE_PREFIX)
+    if image_redirect != (target in images):
+        raise DashboardBadRequestError(
+            "Image models (gpt-image-*) redirect only to OpenAI API image models, and text models only to text models.",
+            code="model_redirect_invalid",
+        )
     repository = ModelRedirectsRepository(context.session)
     await repository.acquire_model_route_write_intent()
     redirects = await repository.list_all()
@@ -1039,14 +1052,19 @@ async def put_model_redirect(
             f"{source} is served for {', '.join(feeding)}. Redirects can't chain.", code="model_redirect_invalid"
         )
     if target not in catalogue:
-        raise DashboardBadRequestError(f"{target} is not in the text model catalogue.", code="model_redirect_invalid")
+        raise DashboardBadRequestError(f"{target} is not in the model catalogue.", code="model_redirect_invalid")
     routes = await ModelCompactionRoutesRepository(context.session).list_all()
     if any(source in (route.slug, route.compaction_model) for route in routes):
         raise DashboardBadRequestError(
             f"{source} is part of a compaction route. Change that route first.", code="model_redirect_conflict"
         )
     original = catalogue.get(source) or get_model_registry().get_models_with_fallback().get(source)
-    if source not in redirects and (original is None or original.raw.get("visibility", "list") != "list"):
+    # A retired or unlisted text model stays out of client model lists; image models are never listed there.
+    if (
+        not image_redirect
+        and source not in redirects
+        and (original is None or original.raw.get("visibility", "list") != "list")
+    ):
         await HiddenModelsRepository(context.session).hide(source, commit=False)
     await repository.upsert(source, target)
     await get_hidden_models_cache().invalidate(propagate=False)

@@ -1113,10 +1113,7 @@ def _record_services(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("configure_redirect", [False, True])
-async def test_v1_images_generations_forwards_native_request_unchanged(
-    async_client, monkeypatch, caplog, configure_redirect
-):
+async def test_v1_images_generations_forwards_native_request_unchanged(async_client, monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger="app.modules.proxy.api")
     await _import_account(async_client, "v1-native", "v1-native@example.com")
     services = _record_services(monkeypatch)
@@ -1145,11 +1142,6 @@ async def test_v1_images_generations_forwards_native_request_unchanged(
         "background": "transparent",
         "size": "3000x1000",
     }
-    if configure_redirect:
-        redirect = await async_client.put(
-            "/api/settings/model-redirects/gpt-image-2.6-flare", json={"targetModel": "gpt-6-astra"}
-        )
-        assert redirect.status_code == 200, redirect.text
     response = await async_client.post("/v1/images/generations", json=payload)
 
     assert response.status_code == 200, response.text

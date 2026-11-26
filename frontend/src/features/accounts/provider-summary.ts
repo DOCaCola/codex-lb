@@ -21,6 +21,15 @@ import type { ClaudeAccount } from "@/features/claude/api";
 import { claudeStatus } from "@/features/claude/display-values";
 import type { ModelSource } from "@/features/model-sources/schemas";
 import { OPENAI_COMPATIBLE_LABEL, modelCountLabel, modelSourceStatus } from "@/features/model-sources/display-values";
+import type { OpenAIApiAccount } from "@/features/openai-api/api";
+import {
+  OPENAI_API_LABEL,
+  creditExhausted,
+  creditPercentLeft,
+  money as creditMoney,
+  openAIApiStatus,
+  selectionCounts,
+} from "@/features/openai-api/display-values";
 import type { OpenRouterAccount } from "@/features/openrouter/api";
 import { keyAllowance, money, openRouterBalance, openRouterStatus } from "@/features/openrouter/display-values";
 import type { AccountQuotaDisplayPreference } from "@/hooks/use-account-quota-display";
@@ -30,21 +39,30 @@ import { formatPercentNullable, formatQuotaResetLabel, formatSlug, parseDate, ty
 export type ProviderKind = AccountProvider;
 
 /** Display order of the provider groups on the Providers page and in its account rail. */
-export const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claude", "antigravity", "openrouter", "openai_compatible"];
+export const PROVIDER_ORDER: readonly ProviderKind[] = [
+  "codex",
+  "claude",
+  "antigravity",
+  "openai_apikey",
+  "openrouter",
+  "openai_compatible",
+];
 
 export const PROVIDER_LABELS: Record<ProviderKind, string> = {
   codex: "Codex",
   claude: "Claude",
   antigravity: "Antigravity",
+  openai_apikey: OPENAI_API_LABEL,
   openrouter: "OpenRouter",
   openai_compatible: OPENAI_COMPATIBLE_LABEL,
 };
 
-/** Column captions of the two limit columns, per provider. */
-export const PROVIDER_LIMIT_CAPTIONS: Record<ProviderKind, readonly [string, string] | null> = {
+/** Column captions of the two limit columns, per provider; a single caption spans both. */
+export const PROVIDER_LIMIT_CAPTIONS: Record<ProviderKind, readonly [string, string] | readonly [string] | null> = {
   codex: ["Weekly", "5 hours"],
   claude: ["Weekly", "5 hours"],
   antigravity: ["Lowest model", "Second lowest"],
+  openai_apikey: ["Monthly credit (estimate)"],
   openrouter: ["Balance", "Key allowance"],
   openai_compatible: null,
 };
@@ -53,6 +71,7 @@ export type ProviderSources = {
   accounts: AccountSummary[];
   claudeAccounts: ClaudeAccount[];
   antigravityAccounts: AntigravityAccount[];
+  openAIApiAccounts: OpenAIApiAccount[];
   openRouterAccounts: OpenRouterAccount[];
   modelSources: ModelSource[];
 };
@@ -61,6 +80,7 @@ export type ProviderEntry =
   | { kind: "codex"; account: AccountSummary }
   | { kind: "claude"; account: ClaudeAccount }
   | { kind: "antigravity"; account: AntigravityAccount }
+  | { kind: "openai_apikey"; account: OpenAIApiAccount }
   | { kind: "openrouter"; account: OpenRouterAccount }
   | { kind: "openai_compatible"; account: ModelSource };
 
@@ -419,6 +439,58 @@ function antigravitySummary(account: AntigravityAccount, context: SummaryContext
   };
 }
 
+function openAIApiSummary(account: OpenAIApiAccount, context: SummaryContext, now: number): ProviderSummary {
+  const { credit } = account;
+  const exhausted = creditExhausted(account, now);
+  const creditLimit: LimitSummary = {
+    key: "credit",
+    label: "Credit",
+    short: "Credit",
+    percentLeft: exhausted ? 0 : creditPercentLeft(account),
+    value: credit.monthlyCreditUsd === null ? "Not set" : creditMoney(credit.remainingUsd),
+    resetAt: credit.monthlyCreditUsd === null ? null : credit.cycleEnd,
+    caption: `${creditMoney(credit.spentUsd)} spent this cycle`,
+    pacePercent: null,
+    recent: null,
+    stale: false,
+  };
+  const status = normalizeStatus(openAIApiStatus(account, now));
+  const counts = selectionCounts(account);
+  const target = { modelSourceId: account.id };
+  return {
+    entry: { kind: "openai_apikey", account },
+    kind: "openai_apikey",
+    id: account.id,
+    name: account.name,
+    blurName: true,
+    subtitle: null,
+    blurSubtitle: false,
+    plan: null,
+    planKey: "unknown",
+    status,
+    tone: STATUS_TONE[status],
+    notice:
+      statusNotice(status, context.t) ??
+      (exhausted && credit.exhaustedUntil
+        ? notice("bad", `Credit used up · back ${formatQuotaResetLabel(credit.exhaustedUntil, now)}`, "Credit used up · back", {
+            at: credit.exhaustedUntil,
+            kind: "cooldown",
+          })
+        : null) ??
+      (account.state.catalog_error ? notice("warn", context.t("providers.notice.monitoringStale")) : null),
+    limits: [creditLimit],
+    routingPolicy: account.routingPolicy,
+    models: `${counts.text} ${counts.text === 1 ? "model" : "models"} · ${counts.image} image`,
+    resetCredits: 0,
+    trustedAccess: false,
+    warmupEnabled: null,
+    colorTarget: target,
+    logsAccountId: `source:${account.id}`,
+    activityKey: `source:${account.id}`,
+    searchText: `${account.name} ${account.id} openai api platform key`,
+  };
+}
+
 function openRouterSummary(account: OpenRouterAccount, context: SummaryContext): ProviderSummary {
   const { key, key_error, credits, credits_error } = account.state;
   const balance = openRouterBalance(account);
@@ -566,6 +638,8 @@ export function summarizeEntry(entry: ProviderEntry, context: SummaryContext): P
       return claudeSummary(entry.account, context, now);
     case "antigravity":
       return antigravitySummary(entry.account, context, now);
+    case "openai_apikey":
+      return openAIApiSummary(entry.account, context, now);
     case "openrouter":
       return openRouterSummary(entry.account, context);
     case "openai_compatible":
@@ -580,6 +654,7 @@ export function summarizeSources(sources: ProviderSources, context: SummaryConte
     codex: sources.accounts.map((account) => codexSummary(account, context, now)),
     claude: sources.claudeAccounts.map((account) => claudeSummary(account, context, now)),
     antigravity: sources.antigravityAccounts.map((account) => antigravitySummary(account, context, now)),
+    openai_apikey: sources.openAIApiAccounts.map((account) => openAIApiSummary(account, context, now)),
     openrouter: sources.openRouterAccounts.map((account) => openRouterSummary(account, context)),
     openai_compatible: sources.modelSources.map((source) => modelSourceSummary(source, context)),
   };
@@ -594,6 +669,7 @@ export function buildProviderGroups(sources: ProviderSources, sortMode: AccountS
     codex: sortAccountsForDisplay(sources.accounts, context.quotaDisplay, sortMode).map((account) => codexSummary(account, context, now)),
     claude: sources.claudeAccounts.map((account) => claudeSummary(account, context, now)).sort(compare),
     antigravity: sources.antigravityAccounts.map((account) => antigravitySummary(account, context, now)).sort(compare),
+    openai_apikey: sources.openAIApiAccounts.map((account) => openAIApiSummary(account, context, now)).sort(compare),
     openrouter: sources.openRouterAccounts.map((account) => openRouterSummary(account, context)).sort(compare),
     openai_compatible: sources.modelSources.map((source) => modelSourceSummary(source, context)).sort(compare),
   };

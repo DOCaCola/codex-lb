@@ -72,7 +72,7 @@ class ModelSourcesRepository:
             .where(
                 or_(
                     and_(
-                        ModelSource.kind.in_(("openai_compatible", "openrouter")),
+                        ModelSource.kind.in_(("openai_compatible", "openrouter", "openai_apikey")),
                         ModelSource.supports_chat_completions.is_(True),
                     ),
                     # Translating adapters serve Chat through their Responses wire.
@@ -110,7 +110,7 @@ class ModelSourcesRepository:
             select(ModelSource)
             .options(selectinload(ModelSource.models))
             .join(ModelSourceModel, ModelSourceModel.source_id == ModelSource.id)
-            .where(ModelSource.kind.in_(("openai_compatible", "openrouter", "claude", "antigravity")))
+            .where(ModelSource.kind.in_(("openai_compatible", "openrouter", "openai_apikey", "claude", "antigravity")))
             .where(ModelSource.supports_responses.is_(True))
             .where(ModelSourceModel.model == model)
             .where(_enablement_filter(only_disabled))
@@ -145,7 +145,7 @@ class ModelSourcesRepository:
         excluded_source_ids: set[str] | None = None,
         advance_rotation: bool = True,
     ) -> ModelSource | None:
-        from app.modules.openrouter.routing import select_available
+        from app.modules.model_sources.pooled_accounts import select_available
 
         sources = [source for source in sources if source.id not in (excluded_source_ids or set())]
         if only_disabled:

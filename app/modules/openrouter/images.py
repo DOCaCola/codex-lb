@@ -23,10 +23,10 @@ from app.core.utils.shared_future import _await_cleanup_deferring_cancellation
 from app.db.models import ModelSource
 from app.db.session import detach_session_objects, get_background_session
 from app.modules.api_keys.service import ApiKeyData
+from app.modules.model_sources import pooled_accounts as routing
 from app.modules.model_sources.forwarding import SourceStreamTransport, SourceUsage, _read_error_body
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.selection import allowed_source_ids_for_api_key
-from app.modules.openrouter import routing
 from app.modules.openrouter.errors import normalize_error
 from app.modules.openrouter.schemas import ImageEndpoint, ImageModel
 
@@ -324,7 +324,11 @@ async def image_response(
             message = str(error.get("message", "OpenRouter image request failed")).replace(token, "[redacted]")
             if response.status in {401, 402, 429} or response.status >= 500:
                 await routing.record_failure(
-                    source.id, payload.model, response.status, response.headers.get("Retry-After")
+                    source.id,
+                    payload.model,
+                    response.status,
+                    response.headers.get("Retry-After"),
+                    str(error["code"]) if error.get("code") is not None else None,
                 )
             raise ImageError(
                 response.status if response.status >= 400 else 502,

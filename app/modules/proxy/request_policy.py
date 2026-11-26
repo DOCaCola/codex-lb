@@ -37,6 +37,7 @@ from app.core.utils.request_id import get_request_id
 from app.db.models import ModelSource
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.model_sources.catalog import (
+    image_redirect_targets,
     native_redirect_targets,
     source_model_reasoning_levels,
     source_redirect_targets,
@@ -202,6 +203,21 @@ async def resolve_request_model(
     if target not in catalogue and target not in redirects:
         catalogue = await source_redirect_targets()
     if model_redirect_inactivity(target, redirects, catalogue) is not None:
+        raise ProxyModelRedirectUnavailable(
+            f"Model '{resolution.requested_model}' redirects to '{target}', which is unavailable",
+            param="model",
+        )
+    return replace(resolution, model=target, raw_source_model=target)
+
+
+async def resolve_image_request_model(model: str, api_key: ApiKeyData | None) -> ModelResolution:
+    """An image request's served model: image redirects select an OpenAI API image model."""
+    resolution = resolve_model_without_redirect(model, api_key)
+    target = (await get_model_redirects_cache().get()).get(resolution.requested_model)
+    if target is None:
+        return resolution
+    validate_model_access(api_key, resolution.requested_model)
+    if target not in await image_redirect_targets():
         raise ProxyModelRedirectUnavailable(
             f"Model '{resolution.requested_model}' redirects to '{target}', which is unavailable",
             param="model",

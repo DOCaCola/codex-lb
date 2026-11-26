@@ -40,6 +40,7 @@ from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.model_sources.repository import ModelSourcesRepository
 from app.modules.model_sources.service import ModelSourcesService
 from app.modules.oauth.service import OauthService
+from app.modules.openai_api.service import OpenAIApiService
 from app.modules.openrouter.service import OpenRouterService
 from app.modules.proxy.capability_lineage_repository import CapabilityLineageRepository
 from app.modules.proxy.repo_bundle import ProxyRepositories
@@ -402,6 +403,12 @@ def get_openrouter_service(session: AsyncSession = Depends(get_session)) -> Open
     from app.modules.openrouter.repository import OpenRouterRepository
 
     return OpenRouterService(OpenRouterRepository(session))
+
+
+def get_openai_api_service(session: AsyncSession = Depends(get_session)) -> OpenAIApiService:
+    from app.modules.openai_api.repository import OpenAIApiRepository
+
+    return OpenAIApiService(OpenAIApiRepository(session))
 
 
 def get_request_logs_context(

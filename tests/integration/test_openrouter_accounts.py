@@ -16,8 +16,8 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.db.models import ModelSource, RequestLog
 from app.db.session import SessionLocal
 from app.dependencies import get_proxy_service_for_app
+from app.modules.model_sources import pooled_accounts as routing
 from app.modules.model_sources.continuation import SourceContinuation
-from app.modules.openrouter import routing
 from app.modules.openrouter.client import OpenRouterClient, OpenRouterError
 from app.modules.openrouter.schemas import CatalogResponse, CreditInfo, KeyInfo
 from tests.integration.model_source_helpers import _enable_api_key_auth, stub_source_upstreams
@@ -138,7 +138,7 @@ async def test_all_mode_retains_curated_choices_and_applies_priority_after_coold
     from datetime import timedelta
 
     from app.core.utils.time import utcnow
-    from app.db.models import OpenRouterCooldown
+    from app.db.models import SourceCooldown
 
     ids = []
     for name in ("First", "Second", "Reserve"):
@@ -160,7 +160,7 @@ async def test_all_mode_retains_curated_choices_and_applies_priority_after_coold
         assert all(source.models[0].max_output_tokens == 32_000 for source in sources)
         assert (await routing.select_available(session, sources, "openrouter/vendor/test")).id == ids[0]
         session.add(
-            OpenRouterCooldown(source_id=ids[0], model="openrouter/vendor/test", until=utcnow() + timedelta(minutes=1))
+            SourceCooldown(source_id=ids[0], model="openrouter/vendor/test", until=utcnow() + timedelta(minutes=1))
         )
         await session.commit()
         assert (await routing.select_available(session, sources, "openrouter/vendor/test")).id == ids[1]

@@ -1,7 +1,7 @@
 import type { RequestLog } from "./schemas";
 
 /** Gateways whose streams codex-lb translates; their speed is measured at the gateway. */
-const GATEWAY_KINDS = new Set(["openrouter", "claude", "antigravity"]);
+const GATEWAY_KINDS = new Set(["openrouter", "openai_apikey", "claude", "antigravity"]);
 
 export function isGatewayMeasuredSpeed(request: RequestLog): boolean {
   return request.modelSourceKind != null && GATEWAY_KINDS.has(request.modelSourceKind);

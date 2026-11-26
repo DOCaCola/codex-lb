@@ -573,7 +573,7 @@ function modelRedirectsResponse(): ModelRedirects {
   const groups = new Map<string, ModelRedirects["targets"][number]["models"]>();
   for (const model of state.modelContextWindowOverrides.models) {
     if (state.modelRedirects.some((redirect) => redirect.sourceModel === model.slug)) continue;
-    const option = { slug: model.slug, displayName: model.displayName, hidden: !model.listed };
+    const option = { slug: model.slug, displayName: model.displayName, hidden: !model.listed, image: false };
     groups.set(model.provider, [...(groups.get(model.provider) ?? []), option]);
   }
   return {
@@ -1029,6 +1029,8 @@ export const handlers = [
   http.get("/api/openrouter-accounts/:id/trends", () => HttpResponse.json({ series: [] })),
   http.get("/api/model-sources/:sourceId/trends", () => HttpResponse.json({ series: [] })),
   http.get("/api/openrouter-accounts", () => HttpResponse.json({ accounts: [] })),
+  http.get("/api/openai-api-accounts", () => HttpResponse.json({ accounts: [] })),
+  http.get("/api/openai-api-accounts/:id/trends", () => HttpResponse.json({ series: [] })),
   // Activity of every account on the Providers page.
   http.get("/api/reports", () => HttpResponse.json(EMPTY_REPORT)),
   http.get("/health", () => {

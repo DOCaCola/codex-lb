@@ -14,13 +14,19 @@ from starlette.requests import ClientDisconnect
 
 from app.core.clients.proxy import NativeImageStream, ProxyResponseError
 from app.core.errors import OpenAIErrorEnvelope, openai_error
-from app.core.exceptions import ProxyModelNotAllowed, ProxyRateLimitError
+from app.core.exceptions import ProxyModelNotAllowed, ProxyModelRedirectUnavailable, ProxyRateLimitError
+from app.core.openai.model_redirects import set_request_model_redirect
 from app.core.request_locality import resolve_request_client_host
 from app.dependencies import ProxyContext
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
+from app.modules.openai_api.schemas import OPENAI_API_MODEL_PREFIX
 from app.modules.proxy.images_observability import IMAGE_ROUTE_STARTED_AT_STATE, record_images_route_observability
 from app.modules.proxy.native_image_usage import NativeImageAccounting
-from app.modules.proxy.request_policy import api_key_enforced_model, openai_validation_error
+from app.modules.proxy.request_policy import (
+    log_model_redirect,
+    openai_validation_error,
+    resolve_image_request_model,
+)
 
 ImageOperation = Literal["generations", "edits"]
 DEFAULT_IMAGE_MODEL = "gpt-image-2"
@@ -39,7 +45,8 @@ class NativeImageRequest(BaseModel):
     """Validate the routing envelope without narrowing the upstream image API."""
 
     model_config = ConfigDict(extra="allow", strict=True)
-    model: str = Field(default=DEFAULT_IMAGE_MODEL, pattern=r"^gpt-image-")
+    # Native image models, or an OpenAI API account's image model.
+    model: str = Field(default=DEFAULT_IMAGE_MODEL, pattern=r"^(gpt-image-|openai-apikey/)")
     prompt: str = Field(min_length=1)
     images: list[NativeImageUrl] | None = None
 
@@ -154,11 +161,11 @@ async def forward_native_image(
     started_at: float,
     rate_limit_headers: Mapping[str, str],
 ) -> Response:
-    """Send an Images request to the native ChatGPT image endpoint.
+    """Send an Images request to the native ChatGPT image endpoint or an OpenAI API account.
 
-    The request is forwarded unchanged apart from the enforced or default
-    public image model; the native status, body and event stream reach the
-    client unchanged.
+    The request is forwarded unchanged apart from the enforced, default or
+    redirected image model; the upstream status, body and event stream reach
+    the client unchanged.
     """
     from app.modules.proxy import api
 
@@ -193,7 +200,22 @@ async def forward_native_image(
                 image_invalid_request_error("At least one images[].image_url is required.", param="images"),
                 headers=dict(rate_limit_headers),
             )
-        model = api_key_enforced_model(api_key) or payload.model
+        resolution = await resolve_image_request_model(payload.model, api_key)
+        model = resolution.model
+        if redirect := resolution.redirect:
+            set_request_model_redirect(redirect)
+            log_model_redirect(redirect, request.url.path)
+        if model.startswith(OPENAI_API_MODEL_PREFIX):
+            from app.modules.openai_api.images import image_response
+
+            api.validate_model_access(api_key, resolution.requested_model if redirect else model)
+            body["model"] = model
+            result_response = await image_response(
+                request, body, api_key, operation=operation, model=model, rate_limit_headers=rate_limit_headers
+            )
+            status = result_response.status_code
+            outcome = "success" if 200 <= status < 300 else "image_error"
+            return result_response
         if not model.startswith("gpt-image-"):
             status = 400
             return api._logged_error_json_response(
@@ -247,6 +269,10 @@ async def forward_native_image(
     except ProxyModelNotAllowed:
         status = 403
         outcome = "model_not_allowed"
+        raise
+    except ProxyModelRedirectUnavailable:
+        status = 400
+        outcome = "invalid_request"
         raise
     except ProxyRateLimitError:
         status = 429

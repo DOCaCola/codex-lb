@@ -17,6 +17,7 @@ export type AddAccountDialogProps = {
   codex: EnrollmentHandlers;
   claude?: EnrollmentHandlers;
   antigravity?: EnrollmentHandlers;
+  onOpenAIApi?: () => void;
   onOpenRouter?: () => void;
   onOpenAICompatible?: () => void;
 };
@@ -69,7 +70,7 @@ function SubscriptionProvider({ provider, name, handlers, signInDescription, imp
 }
 
 export function AddAccountDialog({
-  open, onOpenChange, codex, claude, antigravity, onOpenRouter, onOpenAICompatible,
+  open, onOpenChange, codex, claude, antigravity, onOpenAIApi, onOpenRouter, onOpenAICompatible,
 }: AddAccountDialogProps) {
   const { t } = useTranslation();
   // Close first so Radix releases its pointer lock before the next modal opens.
@@ -77,7 +78,7 @@ export function AddAccountDialog({
     onOpenChange(false);
     requestAnimationFrame(() => action());
   };
-  const apiProviders = onOpenRouter || onOpenAICompatible;
+  const apiProviders = onOpenAIApi || onOpenRouter || onOpenAICompatible;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -111,6 +112,10 @@ export function AddAccountDialog({
                 {t("accounts.addDialog.apiProviders")}
               </legend>
               <div className="grid gap-2 sm:grid-cols-2">
+                {onOpenAIApi ? (
+                  <AccountOption icon={<ProviderLogo provider="openai_apikey" />} title="OpenAI API"
+                    description={t("accounts.addDialog.openAIApi")} onClick={() => select(onOpenAIApi)} />
+                ) : null}
                 {onOpenRouter ? (
                   <AccountOption icon={<ProviderLogo provider="openrouter" />} title="OpenRouter"
                     description={t("accounts.addDialog.openRouter")} onClick={() => select(onOpenRouter)} />

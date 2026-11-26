@@ -11,10 +11,11 @@ const schema = z.object({ series: z.array(z.object({
   dashed: z.boolean(), colorIndex: z.number().int().nonnegative(),
 })) });
 
-type TrendProvider = "openrouter" | "claude" | "antigravity" | "openai_compatible";
+type TrendProvider = "openrouter" | "openai_apikey" | "claude" | "antigravity" | "openai_compatible";
 
 const TRENDS_COLLECTION: Record<TrendProvider, string> = {
   openrouter: "/api/openrouter-accounts",
+  openai_apikey: "/api/openai-api-accounts",
   claude: "/api/claude-accounts",
   antigravity: "/api/antigravity-accounts",
   openai_compatible: "/api/model-sources",
@@ -25,6 +26,7 @@ const TREND_SCOPE: Record<TrendProvider, { label: string; note: string | null }>
   claude: { label: "Claude quota history", note: null },
   antigravity: { label: "Antigravity quota history", note: null },
   openrouter: { label: "OpenRouter activity", note: "Other OpenRouter activity is not included" },
+  openai_apikey: { label: "OpenAI API activity", note: "Usage of this organization outside codex-lb is not included" },
   openai_compatible: { label: "Provider activity", note: "Requests sent to this provider by other clients are not included" },
 };
 

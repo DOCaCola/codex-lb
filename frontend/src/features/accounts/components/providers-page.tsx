@@ -45,6 +45,8 @@ import { getErrorMessageOrNull } from "@/utils/errors";
 import { cn } from "@/lib/utils";
 import { OpenRouterAccountControls } from "@/features/openrouter/account-controls";
 import { useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
+import { OpenAIApiAccountControls } from "@/features/openai-api/account-controls";
+import { useOpenAIApiAccounts } from "@/features/openai-api/use-openai-api";
 import { ClaudeAccountControls } from "@/features/claude/account-controls";
 import { useClaudeAccounts } from "@/features/claude/use-claude";
 import { AntigravityAccountControls } from "@/features/antigravity/account-controls";
@@ -92,6 +94,7 @@ export function ProvidersPage() {
   const { settingsQuery } = useSettings();
   const canWrite = usePermission("accounts:write");
   const openRouterQuery = useOpenRouterAccounts();
+  const openAIApiQuery = useOpenAIApiAccounts();
   const claudeQuery = useClaudeAccounts();
   const claudeAccounts = useMemo(
     () => claudeQuery.data?.accounts ?? [],
@@ -105,6 +108,10 @@ export function ProvidersPage() {
   const openRouterAccounts = useMemo(
     () => openRouterQuery.data?.accounts ?? [],
     [openRouterQuery.data],
+  );
+  const openAIApiAccounts = useMemo(
+    () => openAIApiQuery.data?.accounts ?? [],
+    [openAIApiQuery.data],
   );
   const modelSourcesQuery = useModelSourcesList();
   const modelSources = useMemo(
@@ -148,16 +155,17 @@ export function ProvidersPage() {
   const groups = useMemo(
     () =>
       buildProviderGroups(
-        { accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources },
+        { accounts, claudeAccounts, antigravityAccounts, openAIApiAccounts, openRouterAccounts, modelSources },
         accountSortMode,
         { t: summaryT, quotaDisplay, subscriptionEnds },
       ),
-    [accounts, claudeAccounts, antigravityAccounts, openRouterAccounts, modelSources, accountSortMode, summaryT, quotaDisplay, subscriptionEnds],
+    [accounts, claudeAccounts, antigravityAccounts, openAIApiAccounts, openRouterAccounts, modelSources, accountSortMode, summaryT, quotaDisplay, subscriptionEnds],
   );
   const summaries = groups.flatMap((group) => group.summaries);
   const selectedSummary = summaries.find((summary) => summary.id === selectedId) ?? null;
   const selectedClaudeAccount = selectedSummary?.entry.kind === "claude" ? selectedSummary.entry.account : null;
   const selectedAntigravityAccount = selectedSummary?.entry.kind === "antigravity" ? selectedSummary.entry.account : null;
+  const selectedOpenAIApiAccount = selectedSummary?.entry.kind === "openai_apikey" ? selectedSummary.entry.account : null;
   const selectedOpenRouterAccount = selectedSummary?.entry.kind === "openrouter" ? selectedSummary.entry.account : null;
   const selectedModelSource = selectedSummary?.entry.kind === "openai_compatible" ? selectedSummary.entry.account : null;
   const selectedAccount = selectedSummary?.entry.kind === "codex" ? selectedSummary.entry.account : null;
@@ -168,6 +176,7 @@ export function ProvidersPage() {
     !accountsQuery.data ||
     claudeQuery.isLoading ||
     antigravityQuery.isLoading ||
+    openAIApiQuery.isLoading ||
     openRouterQuery.isLoading ||
     modelSourcesQuery.isLoading;
   const openAccount = (id: string) => navigate(accountHref(id));
@@ -226,6 +235,12 @@ export function ProvidersPage() {
           readOnly={!canWrite}
         >
           {({ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport, detail: antigravityDetail }) => (
+            <OpenAIApiAccountControls
+              account={selectedOpenAIApiAccount}
+              onCreated={openAccount}
+              readOnly={!canWrite}
+            >
+              {({ onAdd: onAddOpenAIApi, detail: openAIApiDetail }) => (
             <OpenRouterAccountControls
               account={selectedOpenRouterAccount}
               onCreated={openAccount}
@@ -364,6 +379,8 @@ export function ProvidersPage() {
                             claudeDetail
                           ) : selectedAntigravityAccount ? (
                             antigravityDetail
+                          ) : selectedOpenAIApiAccount ? (
+                            openAIApiDetail
                           ) : selectedOpenRouterAccount ? (
                             detail
                           ) : selectedModelSource ? (
@@ -480,6 +497,7 @@ export function ProvidersPage() {
                         }}
                         claude={{ onSignIn: onClaudeSignIn, onImport: onClaudeImport }}
                         antigravity={{ onSignIn: onAntigravitySignIn, onImport: onAntigravityImport }}
+                        onOpenAIApi={onAddOpenAIApi}
                         onOpenRouter={onAdd}
                         onOpenAICompatible={onAddOpenAICompatible}
                       />
@@ -604,6 +622,8 @@ export function ProvidersPage() {
                 </ModelSourceAccountControls>
               )}
             </OpenRouterAccountControls>
+              )}
+            </OpenAIApiAccountControls>
           )}
         </AntigravityAccountControls>
       )}

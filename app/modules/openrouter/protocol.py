@@ -5,7 +5,7 @@ import json
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 from app.db.models import ModelSource
-from app.modules.openrouter.schemas import OPENROUTER_KIND
+from app.modules.model_sources.provider_projection import stateless_responses
 
 # Codex requests OpenAI output ciphertext when its provider is named OpenAI, and
 # retains that ciphertext in history after a model switch. OpenRouter cannot
@@ -31,8 +31,6 @@ def _without_output_replay(payload: dict[str, JsonValue]) -> dict[str, JsonValue
 
 
 def project_request(source: ModelSource, payload: dict[str, JsonValue], *, responses: bool) -> dict[str, JsonValue]:
-    if source.kind != OPENROUTER_KIND:
-        return payload
     model = next((row for row in source.models if row.model == payload.get("model")), None)
     if model is None:
         raise ClientPayloadError("OpenRouter model is not configured", param="model", code="model_not_found")
@@ -50,16 +48,7 @@ def project_request(source: ModelSource, payload: dict[str, JsonValue], *, respo
             )
         projected.pop("parallel_tool_calls", None)
     if responses:
-        projected = _without_output_replay(projected)
-        if projected.get("previous_response_id") or projected.get("conversation"):
-            raise ClientPayloadError(
-                "Resend complete history without previous_response_id or conversation",
-                param="previous_response_id",
-                code="previous_response_not_found",
-            )
-        projected.pop("previous_response_id", None)
-        projected.pop("conversation", None)
-        projected["store"] = False
+        projected = stateless_responses(_without_output_replay(projected))
     reasoning = projected.get("reasoning")
     if metadata.get("reasoning_mandatory") and isinstance(reasoning, dict):
         if reasoning.get("effort") == "none" or reasoning.get("enabled") is False:

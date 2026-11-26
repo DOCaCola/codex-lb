@@ -6,7 +6,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.usage.logs import SUCCESS_STATUS
 from app.db.models import RequestLog
 
-GATEWAY_THROUGHPUT_KINDS = ("openrouter", "claude", "antigravity")
+GATEWAY_THROUGHPUT_KINDS = ("openrouter", "openai_apikey", "claude", "antigravity")
 MIN_GATEWAY_GENERATION_MS = 1000
 
 

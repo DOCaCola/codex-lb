@@ -19,7 +19,10 @@ import { cn } from "@/lib/utils";
 
 type Draft = { source: string; target: string; editing: boolean };
 type FieldErrors = { source?: string; target?: string };
-type ModelOption = { slug: string; displayName: string; hidden: boolean; redirected: boolean };
+type ModelOption = { slug: string; displayName: string; hidden: boolean; image: boolean; redirected: boolean };
+
+/** Image redirects serve gpt-image-* requests from an image model; text redirects stay text-only. */
+const IMAGE_REDIRECT_SOURCE_PREFIX = "gpt-image-";
 
 function FieldError({ id, message }: { id: string; message?: string }) {
   if (!message) return null;
@@ -54,7 +57,7 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
   }
   for (const model of models) {
     if (!model.redirectTargetModel || model.retired) continue;
-    const option = { slug: model.slug, displayName: model.displayName, hidden: !model.listed, redirected: true };
+    const option = { slug: model.slug, displayName: model.displayName, hidden: !model.listed, image: false, redirected: true };
     groups.set(model.provider, [...(groups.get(model.provider) ?? []), option]);
   }
 
@@ -124,7 +127,12 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
   }
 
   const arrow = <ArrowRight className="mx-auto size-3.5 text-muted-foreground" aria-hidden="true" />;
-  const formRow = (current: Draft) => (
+  const formRow = (current: Draft) => {
+    const imageSource = current.source.trim().startsWith(IMAGE_REDIRECT_SOURCE_PREFIX);
+    const targetGroups = [...groups]
+      .map(([provider, options]) => [provider, options.filter((option) => option.image === imageSource)] as const)
+      .filter(([, options]) => options.length > 0);
+    return (
     <TableRow key={current.editing ? current.source : undefined} className="bg-muted/40">
       <TableCell className="align-top">
         {current.editing ? modelCell(current.source) : (
@@ -158,7 +166,7 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
           disabled={busy}
         >
           <option value="">{t("settings.modelRedirects.chooseModel")}</option>
-          {[...groups].map(([provider, options]) => (
+          {targetGroups.map(([provider, options]) => (
             <optgroup key={provider} label={t(`settings.modelCatalogue.provider.${provider}`, provider)}>
               {options.filter((option) => option.slug !== current.source.trim() || option.slug === current.target).map((option) => (
                 <option key={option.slug} value={option.slug} disabled={option.redirected}>
@@ -180,7 +188,8 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
         <Button size="sm" disabled={busy} onClick={() => void save(current)}>{t("common.actions.save")}</Button>
       </TableCell>
     </TableRow>
-  );
+    );
+  };
 
   const redirectRow = (redirect: ModelRedirect) => {
     const { sourceModel, targetModel, status, reason } = redirect;

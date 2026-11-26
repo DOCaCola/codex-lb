@@ -425,7 +425,10 @@ function GroupRow({ kind, count, readOnly, onAdd }: { kind: ProviderKind; count:
       <span className="hidden lg:block" />
       {captions ? (
         captions.map((caption) => (
-          <span key={caption} className="hidden text-[11.5px] text-muted-foreground lg:block">
+          <span
+            key={caption}
+            className={cn("hidden text-[11.5px] text-muted-foreground lg:block", captions.length === 1 && "lg:col-span-2")}
+          >
             {caption}
           </span>
         ))

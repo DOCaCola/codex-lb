@@ -2227,8 +2227,10 @@ class ClaudeResetOperation(Base):
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class OpenRouterCooldown(Base):
-    __tablename__ = "openrouter_cooldowns"
+class SourceCooldown(Base):
+    """Pooled API-key accounts (OpenRouter, OpenAI API) skipped for one model, or ``*`` for the whole account."""
+
+    __tablename__ = "source_cooldowns"
 
     source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
     model: Mapped[str] = mapped_column(String, primary_key=True)
@@ -2241,6 +2243,17 @@ class OpenRouterAccount(Base):
     routing_policy: Mapped[str] = mapped_column(String, default="normal", server_default="normal", nullable=False)
     source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
     management_key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    state_json: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    source: Mapped[ModelSource] = relationship(lazy="selectin")
+    __mapper_args__ = {"version_id_col": version}
+
+
+class OpenAIApiAccount(Base):
+    __tablename__ = "openai_api_accounts"
+
+    source_id: Mapped[str] = mapped_column(String, ForeignKey("model_sources.id", ondelete="CASCADE"), primary_key=True)
+    routing_policy: Mapped[str] = mapped_column(String, default="normal", server_default="normal", nullable=False)
     state_json: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     source: Mapped[ModelSource] = relationship(lazy="selectin")

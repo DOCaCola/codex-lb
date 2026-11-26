@@ -481,6 +481,8 @@ class ModelRedirectTargetResponse(DashboardModel):
     slug: str
     display_name: str
     hidden: bool
+    # Image models serve only image redirects, whose source is a gpt-image-* slug.
+    image: bool = False
 
 
 class ModelRedirectProviderResponse(DashboardModel):

@@ -269,7 +269,7 @@ from app.modules.model_sources.catalog import (
     is_codex_backend_catalog_model as _is_codex_backend_catalog_model,
 )
 from app.modules.model_sources.catalog import (
-    is_openrouter_image_only as _is_openrouter_image_only,
+    is_image_only_source_model as _is_image_only_source_model,
 )
 from app.modules.model_sources.catalog import (
     native_redirect_targets,
@@ -3535,7 +3535,8 @@ async def _build_codex_models_response_body(
     source_models = [
         model
         for model in await _list_enabled_source_catalog_models(api_key, require_responses=True)
-        if model.raw.get("supports_streaming") is True
+        # OpenAI's monthly API credit does not cover Codex usage; API-key models serve /v1 only.
+        if model.raw.get("supports_streaming") is True and model.source_kind != "openai_apikey"
     ]
     models, source_models, context_window_overrides, redirects = await _catalog_redirects(
         models, source_models, context_window_overrides, require_responses=True
@@ -3758,14 +3759,16 @@ async def _build_models_response_body(
 
 _ANTHROPIC_LIST_PROVIDERS: Final[Mapping[str, str]] = {
     MODEL_SOURCE_KIND_SUBSCRIPTION: "OpenAI account",
+    "openai_apikey": "OpenAI API",
     "claude": "Claude account",
     "antigravity": "Antigravity account",
     "openrouter": "OpenRouter",
 }
 # Subscription providers list after OpenAI's own models, then other sources.
 _SOURCE_KIND_ORDER: Final[Mapping[str, int]] = {"claude": 0, "antigravity": 1}
-# Sources whose adapter expands local history: they never continue an upstream response by ID.
-_STATELESS_ADAPTER_KINDS: Final = frozenset({"openrouter", "claude", "antigravity"})
+# Sources whose adapter expands local history: they never continue an upstream response by ID, so any
+# account of the pool can serve the next turn.
+_STATELESS_ADAPTER_KINDS: Final = frozenset({"openrouter", "openai_apikey", "claude", "antigravity"})
 # Sources whose adapter translates Responses itself: tools, namespaces and item IDs stay intact.
 _TRANSLATING_ADAPTER_KINDS: Final = frozenset({"claude", "antigravity"})
 # Tool types the Antigravity adapter declares; web_search runs as the native CLI's search_web.
@@ -3946,7 +3949,7 @@ async def _list_enabled_source_catalog_models(
     if assigned_source_ids is not None:
         sources = [source for source in sources if source.id in assigned_source_ids]
     models = source_models_to_upstream_models(sources)
-    return [model for model in models if not require_responses or not _is_openrouter_image_only(model)]
+    return [model for model in models if not require_responses or not _is_image_only_source_model(model)]
 
 
 def _dump_v1_models_response(response: ModelListResponse) -> dict[str, JsonValue]:
@@ -4001,7 +4004,7 @@ def _canonical_model_slug(model: str) -> str:
 def _to_model_list_item(
     slug: str, model: UpstreamModel, *, created: int, context_window_overrides: Mapping[str, int]
 ) -> ModelListItem:
-    if _is_openrouter_image_only(model):
+    if _is_image_only_source_model(model):
         return ModelListItem.model_validate(
             {
                 "id": slug,
@@ -4219,7 +4222,7 @@ async def list_model_catalogue() -> list[UpstreamModel]:
     ]
     seen = {model.slug for model in models}
     for model in await _list_enabled_source_catalog_models(None):
-        if model.slug not in seen and not _is_openrouter_image_only(model):
+        if model.slug not in seen and not _is_image_only_source_model(model):
             models.append(model)
             seen.add(model.slug)
     return models
@@ -5268,20 +5271,38 @@ async def _source_responses_response(
     require_complete_history: bool = False,
 ) -> Response:
     from app.core.routing_diagnostics import RoutingExclusion, explain_unavailable
-    from app.modules.openrouter.routing import cooldown_remaining, record_failure
+    from app.modules.model_sources.pooled_accounts import (
+        BILLING_EXHAUSTION_CODES,
+        POOLED_KINDS,
+        cooldown_remaining,
+        record_failure,
+    )
 
+    if source.kind == "openai_apikey" and request.url.path.startswith(router.prefix + "/"):
+        return _logged_error_json_response(
+            request,
+            400,
+            openai_error(
+                "unsupported_model",
+                "OpenAI API models are served on /v1 only; OpenAI's API credit does not cover Codex usage.",
+                error_type="invalid_request_error",
+            ),
+            headers=rate_limit_headers,
+        )
     attempted: set[str] = set()
     exclusions: list[RoutingExclusion] = []
     while True:
         attempted.add(source.id)
-        remaining = await cooldown_remaining(source.id, payload.model) if source.kind == "openrouter" else 0
+        remaining = await cooldown_remaining(source.id, payload.model) if source.kind in POOLED_KINDS else 0
         if remaining:
             exclusions.append("cooldown")
             error = ModelSourceForwardingError(
                 status_code=429,
                 payload=cast(
                     dict[str, JsonValue],
-                    openai_error("rate_limit_exceeded", "OpenRouter account is cooling down; retry later."),
+                    openai_error(
+                        "rate_limit_exceeded", f"{source_label(source)} account is cooling down; retry later."
+                    ),
                 ),
                 retry_after=str(remaining),
             )
@@ -5306,20 +5327,25 @@ async def _source_responses_response(
                 error = exc
                 # Only explicit provider rejections permit another account.
                 # Network failures may have already caused paid generation.
-                if source.kind != "openrouter" or exc.upstream_status_code not in (401, 402, 429):
+                if source.kind not in POOLED_KINDS or exc.upstream_status_code not in (401, 402, 429):
                     return _logged_error_json_response(
                         request,
                         exc.status_code,
                         exc.payload,
                         headers=_source_error_response_headers(rate_limit_headers, exc),
                     )
-                await record_failure(source.id, payload.model, exc.upstream_status_code, exc.retry_after)
+                detail = exc.payload.get("error")
+                code = detail.get("code") if isinstance(detail, dict) else None
+                code = code if isinstance(code, str) else None
+                await record_failure(source.id, payload.model, exc.upstream_status_code, exc.retry_after, code)
                 rejection_reasons: dict[int, RoutingExclusion] = {
                     401: "authentication",
                     402: "balance",
                     429: "rate_limit",
                 }
-                exclusions.append(rejection_reasons[exc.upstream_status_code])
+                exclusions.append(
+                    "balance" if code in BILLING_EXHAUSTION_CODES else rejection_reasons[exc.upstream_status_code]
+                )
         try:
             selected = await select_responses_model_source(
                 payload.model,
@@ -5332,7 +5358,7 @@ async def _source_responses_response(
             # A remaining account that rejects this effort cannot recover the
             # provider refusal. Preserve the original status and retry headers.
             selected = None
-        if selected is None or selected[0].kind != "openrouter":
+        if selected is None or selected[0].kind != source.kind:
             detail = error.payload.get("error")
             message = detail.get("message") if isinstance(detail, dict) else None
             if isinstance(detail, dict) and isinstance(message, str):
@@ -5703,7 +5729,7 @@ async def _dispatch_source_responses_attempt(
                     claude_recovery.budget.remaining,
                 )
         # Validate before acquiring usage or admission; forwarding owns projection.
-        from app.modules.openrouter.protocol import project_request
+        from app.modules.model_sources.provider_projection import project_request
 
         project_request(source, source_payload, responses=True)
     except ClientPayloadError as exc:

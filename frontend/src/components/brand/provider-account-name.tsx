@@ -5,7 +5,7 @@ import type { AccountProvider } from "./account-provider";
 export type { AccountProvider };
 
 function providerLogoUrl(provider: AccountProvider): string {
-  return `/images/providers/${provider === "codex" ? "openai" : provider}.svg`;
+  return `/images/providers/${provider === "codex" || provider === "openai_apikey" ? "openai" : provider}.svg`;
 }
 
 const LOGO_SIZES = { sm: "size-4", md: "size-5", lg: "size-7" } as const;

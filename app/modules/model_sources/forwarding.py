@@ -71,7 +71,14 @@ SOURCE_ERROR_MESSAGE_LIMIT = 1000
 TimeoutPhase = Literal["connect", "header", "first_frame", "idle"]
 FrameKind = Literal["non_content", "content", "success_terminal", "failure_terminal"]
 
-_SOURCE_LABELS = {"claude": "Claude", "antigravity": "Antigravity", "openrouter": "OpenRouter"}
+_SOURCE_LABELS = {
+    "claude": "Claude",
+    "antigravity": "Antigravity",
+    "openrouter": "OpenRouter",
+    "openai_apikey": "OpenAI API",
+}
+# Upstreams that report no timings of their own: the gateway measures first token and generation.
+_GATEWAY_TIMED_KINDS = frozenset({"openrouter", "openai_apikey"})
 
 
 def source_label(source: ModelSource) -> str:
@@ -333,7 +340,7 @@ async def forward_chat_completion(
     *,
     encryptor: TokenEncryptor | None = None,
 ) -> SourceChatCompletion:
-    from app.modules.openrouter.protocol import project_request
+    from app.modules.model_sources.provider_projection import project_request
 
     payload = project_request(source, payload, responses=False)
     tool_names = ToolNames()
@@ -362,7 +369,7 @@ async def forward_chat_completion(
             usage=_usage_from_chat_payload(data),
             timings=(
                 SourceTimings(None, round((REAL_CLOCK.monotonic() - started_at) * 1000))
-                if source.kind == "openrouter"
+                if source.kind in _GATEWAY_TIMED_KINDS
                 else _timings_from_payload(data)
             ),
             upstream_status_code=response.status,
@@ -388,7 +395,7 @@ async def stream_chat_completion(
     scheduler: Scheduler = REAL_SCHEDULER,
     clock: Clock = REAL_CLOCK,
 ) -> SourceChatStream:
-    from app.modules.openrouter.protocol import project_request
+    from app.modules.model_sources.provider_projection import project_request
 
     payload = project_request(source, payload, responses=False)
     tool_names = ToolNames()
@@ -396,7 +403,7 @@ async def stream_chat_completion(
         payload = tool_names.project(payload, responses=False)
     usage_holder = SourceUsageHolder()
     usage_parser = SourceStreamUsageParser(
-        usage_holder, response_shape="chat", clock=clock if source.kind == "openrouter" else None
+        usage_holder, response_shape="chat", clock=clock if source.kind in _GATEWAY_TIMED_KINDS else None
     )
     # Chat completions keep the source's own 401/403 envelope (recode is a
     # Responses-dispatch decision) and return at the source's headers exactly
@@ -445,7 +452,7 @@ async def forward_responses(
     encryptor: TokenEncryptor | None = None,
     recode_credential_failures: bool = True,
 ) -> SourceResponsesCompletion:
-    from app.modules.openrouter.protocol import project_request
+    from app.modules.model_sources.provider_projection import project_request
 
     # Source models are advertised without Responses Lite (catalog.py), so Lite history is projected onto tools.
     payload = project_request(source, merge_additional_tools(payload), responses=True)
@@ -481,7 +488,7 @@ async def forward_responses(
                     usage=_usage_from_responses_payload(data),
                     timings=(
                         SourceTimings(None, round((REAL_CLOCK.monotonic() - started_at) * 1000))
-                        if source.kind == "openrouter"
+                        if source.kind in _GATEWAY_TIMED_KINDS
                         else _timings_from_payload(data)
                     ),
                     upstream_status_code=response.status,
@@ -578,7 +585,7 @@ async def stream_responses(
     scheduler: Scheduler = REAL_SCHEDULER,
     clock: Clock = REAL_CLOCK,
 ) -> SourceResponsesStream:
-    from app.modules.openrouter.protocol import project_request
+    from app.modules.model_sources.provider_projection import project_request
 
     # Source models are advertised without Responses Lite (catalog.py), so Lite history is projected onto tools.
     payload = project_request(source, merge_additional_tools(payload), responses=True)
@@ -588,7 +595,7 @@ async def stream_responses(
         payload = tool_names.project(payload, responses=True)
     usage_holder = SourceUsageHolder()
     usage_parser = SourceStreamUsageParser(
-        usage_holder, response_shape="responses", clock=clock if source.kind == "openrouter" else None
+        usage_holder, response_shape="responses", clock=clock if source.kind in _GATEWAY_TIMED_KINDS else None
     )
     stack, response, first_chunk = await _open_source_stream(
         source,
@@ -890,8 +897,11 @@ _CREDENTIAL_REJECTION_STATUSES = frozenset({401, 403})
 
 
 def _recode_credentials(source: ModelSource, status: int) -> bool:
-    # OpenRouter 403 also covers key funding and provider policy, not just auth.
-    return status in _CREDENTIAL_REJECTION_STATUSES and not (source.kind == "openrouter" and status == 403)
+    # A 403 from OpenRouter also covers key funding and provider policy; from OpenAI it is model access or
+    # region policy. Neither is a credential rejection.
+    return status in _CREDENTIAL_REJECTION_STATUSES and not (
+        source.kind in ("openrouter", "openai_apikey") and status == 403
+    )
 
 
 def _phase_deadline(scheduler: Scheduler, seconds: float | None) -> AbstractContextManager[Any]:

@@ -11,7 +11,15 @@ export function summaryContext(overrides: Partial<SummaryContext> = {}): Summary
 }
 
 export function providerSources(sources: Partial<ProviderSources>): ProviderSources {
-  return { accounts: [], claudeAccounts: [], antigravityAccounts: [], openRouterAccounts: [], modelSources: [], ...sources };
+  return {
+    accounts: [],
+    claudeAccounts: [],
+    antigravityAccounts: [],
+    openAIApiAccounts: [],
+    openRouterAccounts: [],
+    modelSources: [],
+    ...sources,
+  };
 }
 
 /** Renders the Providers table for the given accounts in a router. */
