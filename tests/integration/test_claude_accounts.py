@@ -442,7 +442,7 @@ async def test_oauth_flow_is_single_use(async_client, monkeypatch):
     assert exchange.await_count == 1
 
 
-async def test_refresh_owned_across_workers_and_rotation_survives_restart(async_client):
+async def test_refresh_is_shared_and_rotation_survives_restart(async_client):
     import asyncio
 
     source_id = (await async_client.post("/api/claude-accounts/import", json=import_body(expired=True))).json()["id"]
@@ -469,11 +469,11 @@ async def test_refresh_owned_across_workers_and_rotation_survives_restart(async_
     owner = asyncio.create_task(worker())
     try:
         await asyncio.wait_for(entered.wait(), timeout=5)
-        with pytest.raises(ClaudeError, match="progress"):
-            await worker()
+        joined = asyncio.create_task(worker())
+        await asyncio.sleep(0.05)
     finally:
         release.set()
-        await owner
+    assert await owner == await joined == rotated
     assert await worker() == rotated
     assert provider.refresh.await_count == 1
     async with SessionLocal() as session:

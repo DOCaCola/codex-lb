@@ -107,7 +107,7 @@ async def test_stale_401_reuses_new_generation_and_cannot_backoff_it(pool):
     client.refresh.assert_awaited_once()
 
 
-async def test_concurrent_401_cannot_exchange_same_grant_twice(pool):
+async def test_concurrent_401_shares_one_refresh(pool):
     started, release = asyncio.Event(), asyncio.Event()
     client = ClaudeClient()
 
@@ -127,12 +127,29 @@ async def test_concurrent_401_cannot_exchange_same_grant_twice(pool):
     task = asyncio.create_task(recover())
     try:
         await asyncio.wait_for(started.wait(), 5)
-        with pytest.raises(ClaudeError):
-            await recover()
+        joined = asyncio.create_task(recover())
+        await asyncio.sleep(0.05)
     finally:
         release.set()
-        await task
+    first, second = await task, await joined
+    assert first == second and first.generation == 2
     client.refresh.assert_awaited_once()
+
+
+async def test_refresh_owned_by_another_worker_is_never_stolen(pool):
+    client = ClaudeClient()
+    client.refresh = AsyncMock(side_effect=rotated)
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, pool[0])
+        row.refresh_intent = "other-worker"
+        row.refresh_started_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
+        await session.commit()
+    async with SessionLocal() as session:
+        with pytest.raises(ClaudeError, match="in progress"):
+            await ClaudeAuth(ClaudeRepository(session), client, TokenEncryptor()).snapshot(
+                pool[0], rejected_generation=1
+            )
+    client.refresh.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -202,7 +219,42 @@ async def test_non_auth_refusal_does_not_refresh(async_client, pool, monkeypatch
     refresh.assert_not_awaited()
 
 
-async def test_canceled_forced_refresh_retains_intent(pool):
+async def test_canceled_caller_does_not_strand_its_refresh(pool):
+    from app.modules.claude import auth
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    client = ClaudeClient()
+
+    async def refresh(credentials):
+        entered.set()
+        await release.wait()
+        return rotated(credentials)
+
+    client.refresh = AsyncMock(side_effect=refresh)
+
+    async def recover():
+        async with SessionLocal() as session:
+            await ClaudeAuth(ClaudeRepository(session), client, TokenEncryptor()).snapshot(
+                pool[0], rejected_generation=1
+            )
+
+    caller = asyncio.create_task(recover())
+    await asyncio.wait_for(entered.wait(), 5)
+    detached = auth._REFRESHES[(pool[0], 1)]
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    release.set()
+    await detached
+    client.refresh.assert_awaited_once()
+    async with SessionLocal() as session:
+        row = await session.get(ClaudeAccount, pool[0])
+        assert row.refresh_intent is None and row.generation == 2 and row.credential_status == "ready"
+
+
+async def test_shutdown_during_refresh_retains_intent(pool):
+    from app.modules.claude import auth
+
     entered = asyncio.Event()
     client = ClaudeClient()
 
@@ -218,13 +270,12 @@ async def test_canceled_forced_refresh_retains_intent(pool):
                 pool[0], rejected_generation=1
             )
 
-    task = asyncio.create_task(recover())
-    try:
-        await asyncio.wait_for(entered.wait(), 5)
-    finally:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+    caller = asyncio.create_task(recover())
+    await asyncio.wait_for(entered.wait(), 5)
+    # Only the refresh itself being cancelled, as at shutdown, leaves its outcome unknown.
+    auth._REFRESHES[(pool[0], 1)].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
     with pytest.raises(ClaudeError):
         await recover()
     client.refresh.assert_awaited_once()
