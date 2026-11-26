@@ -5,11 +5,34 @@ from typing import Any
 import pytest
 
 from app.core.openai.exceptions import ClientPayloadError
-from app.modules.antigravity.tool_schema import compile_tool_schema
+from app.modules.antigravity.tool_schema import (
+    MAX_COPIED_REQUEST_BYTES,
+    MAX_COPIED_SCHEMA_BYTES,
+    ReferenceCopyBudget,
+    compile_tool_schema,
+)
 
 
-def _compile(schema: dict[str, Any]):
-    return compile_tool_schema(schema, tool_name="tool", param="tools[0].parameters")  # type: ignore[arg-type]
+def _compile(schema: dict[str, Any], budget: ReferenceCopyBudget | None = None):
+    return compile_tool_schema(
+        schema,  # type: ignore[arg-type]
+        tool_name="tool",
+        param="tools[0].parameters",
+        budget=budget or ReferenceCopyBudget(),
+    )
+
+
+def _shared(definition: dict[str, Any], references: int) -> dict[str, Any]:
+    """An object whose properties all reference one shared definition."""
+    return {
+        "type": "object",
+        "$defs": {"shared": definition},
+        "properties": {f"p{index:04d}": {"$ref": "#/$defs/shared"} for index in range(references)},
+    }
+
+
+# About 14 KB of literal enum data per copy.
+_LARGE_ENUM = {"type": "string", "enum": [f"value_{index:04d}" for index in range(1_000)]}
 
 
 def test_openapi_dialect_with_nullable_and_formats() -> None:
@@ -87,3 +110,58 @@ def test_inexpressible_schemas_are_rejected(schema: dict[str, Any]) -> None:
     with pytest.raises(ClientPayloadError) as raised:
         _compile(schema)
     assert raised.value.param == "tools[0].parameters"
+
+
+def test_reference_fan_out_beyond_the_schema_limit_is_rejected() -> None:
+    schema = _shared(_LARGE_ENUM, 400)
+    assert len(str(schema).encode()) < 40_000
+
+    with pytest.raises(ClientPayloadError, match="schema references expand beyond the size limit") as raised:
+        _compile(schema)
+    assert raised.value.param == "tools[0].parameters"
+    assert raised.value.code == "unsupported_parameter"
+
+
+def test_schemas_without_references_are_never_charged() -> None:
+    budget = ReferenceCopyBudget()
+    literal = {"type": "string", "enum": [f"value_{index:05d}" for index in range(30_000)]}
+    parameters, _ = _compile({"type": "object", "properties": {"mode": literal}}, budget)
+
+    assert parameters is not None
+    assert len(str(parameters).encode()) > MAX_COPIED_SCHEMA_BYTES
+    assert budget == ReferenceCopyBudget()
+
+
+def test_copies_within_the_limit_are_charged_and_compiled() -> None:
+    budget = ReferenceCopyBudget()
+    parameters, _ = _compile(_shared(_LARGE_ENUM, 16), budget)
+
+    assert parameters is not None
+    assert len(parameters["properties"]) == 16  # type: ignore[arg-type, index]
+    assert budget.nodes == 16
+    assert 16 * 14_000 < budget.bytes <= MAX_COPIED_SCHEMA_BYTES
+
+
+def test_request_byte_limit_spans_declarations() -> None:
+    schema = _shared(_LARGE_ENUM, 16)
+    single = ReferenceCopyBudget()
+    _compile(schema, single)
+
+    budget = ReferenceCopyBudget()
+    compiled = 0
+    with pytest.raises(ClientPayloadError, match="in this request expand beyond the size limit"):
+        while True:
+            _compile(schema, budget)
+            compiled += 1
+    assert compiled == MAX_COPIED_REQUEST_BYTES // single.bytes
+
+
+def test_request_node_limit_spans_declarations() -> None:
+    budget = ReferenceCopyBudget()
+    schema = _shared({"type": "string"}, 3_000)
+    for _ in range(16):
+        _compile(schema, budget)
+    assert budget.nodes == 48_000
+
+    with pytest.raises(ClientPayloadError, match="in this request expand beyond the size limit"):
+        _compile(schema, budget)

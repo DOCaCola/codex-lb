@@ -8,11 +8,17 @@ rewritten (CLIProxyAPI's past whole-request sanitizer corrupted tool outputs).
 Constraints Gemini cannot express are reported to the model in the description,
 and the client still validates every call. A root union is relocated into the
 validated "arguments" envelope shared with the Claude adapter.
+
+Gemini has no $ref, so every local reference is copied into place. Shared
+definitions fan out once per reference, so a small schema can expand by orders of
+magnitude; the material copied this way is bounded per schema and per request
+(OmniRoute schemaBudget). Schemas without references are never charged.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import cast
 from urllib.parse import unquote
 
@@ -35,10 +41,35 @@ _TYPES = {
 _FORMATS = {"STRING": {"date-time", "enum"}, "NUMBER": {"float", "double"}, "INTEGER": {"int32", "int64"}}
 _BOUNDS = ("minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum", "minProperties", "maxProperties")
 _ARGUMENT_KEY = "arguments"
+_CHILD_SCHEMAS = ("items", "anyOf")
+
+MAX_COPIED_SCHEMA_BYTES = 256 * 1024
+MAX_COPIED_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_COPIED_REQUEST_NODES = 50_000
+
+
+@dataclass
+class ReferenceCopyBudget:
+    """Schema material copied out of $ref targets so far by one request's declarations."""
+
+    nodes: int = 0
+    bytes: int = 0
 
 
 def _literal(value: JsonValue) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _own_bytes(compiled: dict[str, JsonValue]) -> int:
+    """UTF-8 size of a compiled node's own fields; child schemas are charged where they compile."""
+    size = 0
+    for key, value in compiled.items():
+        size += len(key)
+        if key == "properties" and isinstance(value, dict):
+            size += sum(len(name.encode()) for name in value)
+        elif key not in _CHILD_SCHEMAS:
+            size += len(_literal(value).encode())
+    return size
 
 
 def _type_name(schema: JsonValue) -> str:
@@ -46,9 +77,12 @@ def _type_name(schema: JsonValue) -> str:
 
 
 def compile_tool_schema(
-    schema: dict[str, JsonValue], *, tool_name: str, param: str
+    schema: dict[str, JsonValue], *, tool_name: str, param: str, budget: ReferenceCopyBudget
 ) -> tuple[dict[str, JsonValue] | None, ToolArguments | None]:
-    """Gemini parameters for a function (None when it takes no arguments) and its envelope codec."""
+    """Gemini parameters for a function (None when it takes no arguments) and its envelope codec.
+
+    budget is shared by every declaration of the request and charged with referenced copies.
+    """
 
     def invalid(reason: str) -> ClientPayloadError:
         return ClientPayloadError(
@@ -61,6 +95,18 @@ def compile_tool_schema(
     except (SchemaError, RecursionError) as exc:
         raise invalid("invalid JSON Schema") from exc
     remaining = MAX_SCHEMA_NODES
+    copied_bytes = 0
+
+    def charge_copy(compiled: dict[str, JsonValue]) -> None:
+        nonlocal copied_bytes
+        size = _own_bytes(compiled)
+        copied_bytes += size
+        budget.bytes += size
+        budget.nodes += 1
+        if copied_bytes > MAX_COPIED_SCHEMA_BYTES:
+            raise invalid("schema references expand beyond the size limit")
+        if budget.bytes > MAX_COPIED_REQUEST_BYTES or budget.nodes > MAX_COPIED_REQUEST_NODES:
+            raise invalid("tool schema references in this request expand beyond the size limit")
 
     def resolve(reference: JsonValue, resolving: tuple[str, ...]) -> tuple[dict[str, JsonValue], tuple[str, ...]]:
         if not isinstance(reference, str) or not reference.startswith("#"):
@@ -119,6 +165,8 @@ def compile_tool_schema(
         if not isinstance(value, dict):
             raise invalid("schema nodes must be objects")
         node, resolving = flatten(value, resolving)
+        # A non-empty resolution chain means this node, or an ancestor, was copied from a $ref target.
+        copied = bool(resolving)
         notes: list[str] = []
         result: dict[str, JsonValue] = {}
         nullable = False
@@ -149,6 +197,8 @@ def compile_tool_schema(
             if len(kept) == 1 and isinstance(kept[0], dict):
                 base = {key: item for key, item in node.items() if key not in ("anyOf", "oneOf")}
                 result = compile_node({**kept[0], **base}, resolving, depth + 1)
+                # The merged branch was compiled, and charged, as this node.
+                copied = False
             else:
                 result["anyOf"] = [compile_node(branch, resolving, depth + 1) for branch in kept]
         elif len(types) > 1:
@@ -228,6 +278,8 @@ def compile_tool_schema(
             result["description"] = text
         if nullable:
             result["nullable"] = True
+        if copied:
+            charge_copy(result)
         return result
 
     root, _ = flatten(schema, ())

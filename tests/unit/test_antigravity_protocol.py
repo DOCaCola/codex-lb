@@ -255,6 +255,25 @@ def test_unsupported_requests_fail_explicitly(payload: dict[str, Any], param: st
     assert raised.value.param == param
 
 
+def test_reference_copies_are_bounded_across_the_request() -> None:
+    """Each tool stays under the per-schema limit; together they exceed the request's 2 MiB."""
+    shared = {"type": "string", "enum": [f"value_{index:04d}" for index in range(1_000)]}
+    tool = {
+        "type": "function",
+        "parameters": {
+            "type": "object",
+            "$defs": {"shared": shared},
+            "properties": {f"p{index:02d}": {"$ref": "#/$defs/shared"} for index in range(16)},
+        },
+    }
+    tools = [{**tool, "name": f"tool_{index}"} for index in range(12)]
+
+    _project({"input": "x", "tools": tools[:9]})
+    with pytest.raises(ClientPayloadError, match="in this request expand beyond the size limit") as raised:
+        _project({"input": "x", "tools": tools})
+    assert raised.value.param == "tools[9].parameters"
+
+
 @pytest.mark.parametrize("family", [GEMINI, CLAUDE], ids=["gemini", "claude"])
 def test_input_recorded_while_a_tool_runs_follows_its_result(family: CatalogFamily) -> None:
     """Codex records a goal-status notice where it arrived, before the running call's result."""

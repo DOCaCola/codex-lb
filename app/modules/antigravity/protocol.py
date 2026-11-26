@@ -37,7 +37,7 @@ from app.modules.antigravity.search import (
     search_policy,
 )
 from app.modules.antigravity.tool_names import GoogleToolNames
-from app.modules.antigravity.tool_schema import compile_tool_schema
+from app.modules.antigravity.tool_schema import ReferenceCopyBudget, compile_tool_schema
 from app.modules.claude.code_mode import code_mode_contract
 from app.modules.claude.protocol import _custom_tool_input_schema as custom_tool_input_schema
 from app.modules.claude.task_input import is_external_task_input
@@ -202,6 +202,7 @@ def project_responses(
             system.append({"text": instructions})
     tools = GoogleToolNames()
     declarations: list[JsonValue] = []
+    schema_budget = ReferenceCopyBudget()
 
     def declare(tool: JsonValue, namespace: str | None = None, *, param: str) -> None:
         if not isinstance(tool, dict):
@@ -216,7 +217,9 @@ def project_responses(
             schema = tool.get("parameters")
             if not isinstance(schema, dict):
                 raise invalid("Tool search requires a JSON object schema", f"{param}.parameters")
-            parameters, arguments = compile_tool_schema(schema, tool_name="tool_search", param=f"{param}.parameters")
+            parameters, arguments = compile_tool_schema(
+                schema, tool_name="tool_search", param=f"{param}.parameters", budget=schema_budget
+            )
             identity = replace(identity, arguments=arguments)
             declarations.append(_declaration(tools.add(identity), tool.get("description"), parameters))
             return
@@ -243,11 +246,13 @@ def project_responses(
             schema = tool.get("parameters", {"type": "object", "properties": {}})
             if not isinstance(schema, dict):
                 raise invalid(f"Tool '{name}' requires a JSON object schema", f"{param}.parameters")
-            parameters, arguments = compile_tool_schema(schema, tool_name=qualified, param=f"{param}.parameters")
+            parameters, arguments = compile_tool_schema(
+                schema, tool_name=qualified, param=f"{param}.parameters", budget=schema_budget
+            )
             identity = replace(identity, arguments=arguments)
         else:
             parameters, _ = compile_tool_schema(
-                custom_tool_input_schema(tool, param=param), tool_name=qualified, param=param
+                custom_tool_input_schema(tool, param=param), tool_name=qualified, param=param, budget=schema_budget
             )
         declarations.append(_declaration(tools.add(identity), tool.get("description"), parameters))
 
