@@ -994,10 +994,12 @@ class _HTTPBridgeRequestSubmitMixin:
         else:
             updated_text = _text_with_account_stamp(text_data, stamp)
         fresh_text = request_state.fresh_upstream_request_text
+        fresh_stamps: list[tuple[str, str]] = []
         if fresh_text is not None and not (memo_valid and fresh_text is request_state.account_stamp_fresh_text):
             updated_fresh_text = _text_with_account_stamp(fresh_text, stamp)
             _enforce_http_bridge_response_create_text_size(request_state, updated_fresh_text)
             request_state.fresh_upstream_request_text = updated_fresh_text
+            fresh_stamps.append((fresh_text, updated_fresh_text))
         if updated_text == text_data:
             updated_text = text_data
         else:
@@ -1005,8 +1007,7 @@ class _HTTPBridgeRequestSubmitMixin:
             _enforce_response_create_size_limit(request_state)
         _inherit_stamped_request_body_account_neutrality(
             request_state,
-            [(text_data, updated_text)]
-            + ([(fresh_text, request_state.fresh_upstream_request_text)] if fresh_text is not None else []),
+            [(text_data, updated_text), *fresh_stamps],
             stamp.codex_installation_id,
         )
         request_state.account_stamp = stamp

@@ -13,8 +13,6 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from typing import cast
 
-from pydantic import JsonValue
-
 from app.core.openai.additional_tools import (
     ADDITIONAL_TOOLS,
     additional_tool_bundles,
@@ -23,6 +21,7 @@ from app.core.openai.additional_tools import (
 )
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.tool_argument_encryption import declares_encrypted_arguments
+from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.capabilities import (
     EFFORT_LEVELS,
@@ -353,7 +352,7 @@ def project_responses(
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
     # Responses Lite history carries tool declarations as additional_tools items.
-    raw_tools = cast(list[JsonValue], collect_responses_tools(raw_tools, additional_tool_bundles(items)))
+    raw_tools = collect_responses_tools(raw_tools, additional_tool_bundles(items))
     # Loaded tools stay deferred behind the search tool. A request without one (a tool-less
     # compaction) declares them as ordinary tools: Claude rejects a request whose tools are all deferred.
     searchable = any(isinstance(tool, dict) and tool.get("type") == "tool_search" for tool in raw_tools)
@@ -472,7 +471,7 @@ def project_responses(
             content = _content(item.get("content"))
             if role in ("system", "developer"):
                 (pending_system if messages else system).extend(content)
-            elif role in ("user", "assistant"):
+            elif isinstance(role, str) and role in ("user", "assistant"):
                 if not content:
                     # Codex replays empty messages; Claude rejects a message without content.
                     continue

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import cast
 
-from pydantic import JsonValue as PydanticJsonValue
 from starlette.requests import Request
 
 from app.core.crypto import TokenEncryptor
@@ -62,9 +60,7 @@ async def prepare_responses(
     client_scope = api_key.id if api_key else "anonymous"
     opaque = ClaudeOpaqueState(TokenEncryptor())
     payload = await omit_refused_output(payload, client_scope)
-    logical = project_foreign_replay(
-        cast(dict[str, PydanticJsonValue], payload), require_complete_history=require_complete_history
-    )
+    logical = project_foreign_replay(payload, require_complete_history=require_complete_history)
     raw_instructions = payload.get("instructions")
     instructions = raw_instructions if isinstance(raw_instructions, str) else ""
     chat_plan = (
@@ -105,10 +101,7 @@ async def prepare_responses(
                     excluded_source_ids=excluded_source_ids,
                     reasoning_effort=requested_effort,
                 )
-            logical = cast(
-                dict[str, PydanticJsonValue],
-                {**payload, "input": chat_plan.project(source_id=account.source_id)},
-            )
+            logical = {**payload, "input": chat_plan.project(source_id=account.source_id)}
             replay = authenticate_replay(
                 logical,
                 opaque,
@@ -141,7 +134,7 @@ async def prepare_responses(
             logical, source_id=account.source_id, model=model, identity_generation=identity_generation
         )
         if chat_history is not None:
-            continuation.payload["input"] = cast(JsonValue, projected["input"])
+            continuation.payload["input"] = projected["input"]
             continuation.chat_input = chat_history.items
             continuation.chat_instructions = instructions
         projection = project_responses(

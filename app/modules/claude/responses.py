@@ -12,9 +12,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import cast
 
-from pydantic import BaseModel, Field, JsonValue, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.openai.memory_citation import MemoryCitationEscaper, escape_memory_citation_mentions
+from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.claude.code_mode import CODE_MODE_EXEC, code_mode_helper, custom_tool_input
 from app.modules.claude.credentials import ClaudeError

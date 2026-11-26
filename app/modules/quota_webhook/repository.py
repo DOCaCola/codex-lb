@@ -37,7 +37,7 @@ def now_utc() -> datetime:
 
 async def lock_config(session: AsyncSession, *, create: bool = False) -> QuotaWebhookConfig | None:
     if create:
-        insert = sqlite_insert if session.bind.dialect.name == "sqlite" else pg_insert
+        insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
         await session.execute(
             insert(QuotaWebhookConfig)
             .values(

@@ -111,11 +111,7 @@ def test_every_source_request_passes_the_constructed_headers_only() -> None:
     # No request is issued with a positional/unknown header mapping either.
     for call in http_calls:
         assert not any(isinstance(arg, ast.Starred) for arg in call.args), call.lineno
-        for keyword in call.keywords:
-            if keyword.arg is None:
-                assert ast.dump(keyword.value) == ast.dump(
-                    ast.parse('{"allow_redirects": False} if prepared_headers is not None else {}', mode="eval").body
-                ), call.lineno
+        assert all(keyword.arg is not None for keyword in call.keywords), call.lineno
 
     # Prepared headers come only from the provider transports' typed prepared
     # requests (Claude, Antigravity), whose dispatch builders construct provider headers.

@@ -20,10 +20,8 @@ import contextlib
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import AsyncExitStack
-from typing import cast
 
 import aiohttp
-from pydantic import JsonValue as PydanticJsonValue
 
 from app.core.clients.proxy import _iter_sse_events
 from app.core.clients.stream_errors import StreamEventTooLargeError, StreamIdleTimeoutError
@@ -194,8 +192,8 @@ async def open_responses(
                 try:
                     async with contextlib.aclosing(lines(events, opening)) as source:
                         async for line in source:
-                            for converted in projection.consume(cast(dict[str, PydanticJsonValue], line)):
-                                encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                            for converted in projection.consume(line):
+                                encoded = format_sse_event(converted).encode()
                                 observer.feed(encoded)
                                 if released:
                                     yield encoded
@@ -224,7 +222,7 @@ async def open_responses(
                         outcomes.append(await run_search(context, call, allowed=executed < context.policy.max_uses))
                         executed += 1
                     for converted in projection.complete_searches(outcomes):
-                        encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                        encoded = format_sse_event(converted).encode()
                         observer.feed(encoded)
                         yield encoded
                     if projection.stopped:
@@ -253,7 +251,7 @@ async def open_responses(
                 await _record(prepared, exc)
             if released:
                 for converted in projection.interrupt():
-                    encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                    encoded = format_sse_event(converted).encode()
                     observer.feed(encoded)
                     yield encoded
             raise

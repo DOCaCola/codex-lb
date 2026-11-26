@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.types import JsonValue
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.resources import ResourceOriginMissing, ResourceScope, record_keys, resolve_origins
 from app.modules.model_sources.forwarding import ModelSourceForwardingError

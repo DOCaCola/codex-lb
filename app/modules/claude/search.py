@@ -2,9 +2,8 @@
 
 from copy import deepcopy
 
-from pydantic import JsonValue
-
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.types import JsonValue
 from app.modules.claude.credentials import ClaudeError
 
 

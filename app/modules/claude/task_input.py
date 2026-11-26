@@ -1,6 +1,6 @@
 """Identify Codex task envelopes without relaxing genuine tool-result pairing."""
 
-from pydantic import JsonValue
+from app.core.types import JsonValue
 
 
 def task_metadata_complete(item: dict[str, JsonValue]) -> bool:

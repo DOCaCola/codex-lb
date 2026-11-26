@@ -14,8 +14,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import cast
 
-from pydantic import JsonValue as PydanticJsonValue
-
 from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import ANTIGRAVITY_REASONING_PREFIX
@@ -103,7 +101,7 @@ class AntigravityAttempt:
         payload: dict[str, JsonValue] = {**prepared.logical, "input": [*items, *deepcopy(outputs)]}
         payload.pop("tool_choice", None)
         projection = project_responses(
-            cast(dict[str, PydanticJsonValue], payload),
+            payload,
             family=prepared.family,
             max_output_tokens=prepared.max_output_tokens,
             scope=prepared.scope,
@@ -112,7 +110,7 @@ class AntigravityAttempt:
             searchable=True,
         )
         return envelope(
-            cast(dict[str, JsonValue], projection.request),
+            projection.request,
             family=prepared.family,
             wire=prepared.wire_model,
             project_id=prepared.project_id,
@@ -209,7 +207,7 @@ async def prepare_responses(
     requested = reasoning.get("effort") if isinstance(reasoning, dict) else None
     requested_effort = requested if isinstance(requested, str) else None
     logical = project_foreign_replay(
-        cast(dict[str, PydanticJsonValue], payload),
+        payload,
         require_complete_history=require_complete_history,
         native_prefix=ANTIGRAVITY_REASONING_PREFIX,
         provider="antigravity",
@@ -253,7 +251,7 @@ async def prepare_responses(
         )
         cascade = cascade_id(client_scope, conversation_id)
         body = envelope(
-            cast(dict[str, JsonValue], projection.request),
+            projection.request,
             family=family,
             wire=wire,
             project_id=snapshot.project_id,
@@ -300,7 +298,7 @@ async def prepare_responses(
             tools=projection.tools,
             show_summary=(summary not in (None, "none")) or (chat_reasoning and display != "omitted"),
             model=model,
-            logical=cast(dict[str, JsonValue], logical),
+            logical=logical,
             max_output_tokens=max_output_tokens,
             session_id=session_id,
             cascade=cascade,

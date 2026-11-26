@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from app.db.models import ModelSourceModel
 from app.modules.openrouter.schemas import AccountState, CatalogModel, ModelSelection
@@ -25,7 +26,7 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
 
 
 def _project(
-    selection: ModelSelection, model: CatalogModel | None, allowed_efforts: list[str] | None
+    selection: ModelSelection, model: CatalogModel | None, allowed_efforts: Sequence[str] | None
 ) -> ModelSourceModel:
     # Retain a disabled routing claim when a selected model disappears. It must
     # never fall through to a subscription account or a different paid model.

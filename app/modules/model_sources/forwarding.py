@@ -847,7 +847,7 @@ async def _open_source_stream(
                         else None,
                         json=None if compact_json else payload,
                         timeout=_source_client_timeout(source),
-                        **({"allow_redirects": False} if prepared_headers is not None else {}),
+                        allow_redirects=prepared_headers is None,
                     )
                 )
         except aiohttp.ConnectionTimeoutError as exc:

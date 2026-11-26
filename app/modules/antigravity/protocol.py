@@ -16,8 +16,6 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import cast
 
-from pydantic import JsonValue
-
 from app.core.openai.additional_tools import (
     ADDITIONAL_TOOLS,
     additional_tool_bundles,
@@ -25,6 +23,7 @@ from app.core.openai.additional_tools import (
     collect_responses_tools,
 )
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.antigravity.constants import SKIP_SIGNATURE
 from app.modules.antigravity.opaque import PREFIX, AntigravityOpaqueState, SealedThought, ThoughtScope
@@ -266,7 +265,7 @@ def project_responses(
     raw_tools = payload.get("tools", [])
     if not isinstance(raw_tools, list):
         raise invalid("Tools must be an array", "tools")
-    raw_tools = cast(list[JsonValue], collect_responses_tools(raw_tools, additional_tool_bundles(items)))
+    raw_tools = collect_responses_tools(raw_tools, additional_tool_bundles(items))
     hosted = [
         (index, tool)
         for index, tool in enumerate(raw_tools)

@@ -16,10 +16,11 @@ import os
 import sqlite3
 import tempfile
 from collections import OrderedDict
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, cast
+from typing import cast
 
 import anyio
 
@@ -109,7 +110,7 @@ class HTTPFallbackReplayStore:
         return self.directory / (hashlib.sha256(key).hexdigest() + ".replay")
 
     @contextmanager
-    def _locked(self) -> Iterator[None]:
+    def _locked(self) -> Generator[None]:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock_path = self.directory / "cache.lock"
         os.close(os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600))

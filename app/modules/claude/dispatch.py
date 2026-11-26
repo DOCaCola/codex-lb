@@ -8,9 +8,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Literal
 
-from pydantic import JsonValue
-
 from app.core.crypto import TokenEncryptor
+from app.core.types import JsonValue
 from app.db.models import ModelSource
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.claude.auth import ClaudeAuth
@@ -97,11 +96,12 @@ class ClaudeDispatchPreparer:
         session = self.repository.session
         if not translated:
             output_config = logical.get("output_config")
+            configured_effort = output_config.get("effort") if isinstance(output_config, dict) else None
             thinking = logical.get("thinking")
             if isinstance(thinking, dict) and thinking.get("type") == "disabled":
                 reasoning_effort = "none"
-            elif isinstance(output_config, dict) and isinstance(output_config.get("effort"), str):
-                reasoning_effort = output_config["effort"]
+            elif isinstance(configured_effort, str):
+                reasoning_effort = configured_effort
             elif isinstance(thinking, dict) and thinking.get("type") == "enabled":
                 reasoning_effort = {4096: "low", 8192: "medium", 16384: "high", 32000: "max"}.get(
                     thinking.get("budget_tokens"), "custom"

@@ -7,8 +7,9 @@ import json
 from collections.abc import Mapping
 from uuid import UUID, uuid4
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import TypeAdapter
 
+from app.core.types import JsonValue
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import RequestProfile, session_identity
 from app.modules.claude.resources import resource_ids

@@ -22,8 +22,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from pydantic import JsonValue
-
+from app.core.types import JsonValue
 from app.modules.claude.freeform import (
     FreeformBody,
     freeform_body,

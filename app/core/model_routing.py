@@ -1,5 +1,6 @@
 """Operator reasoning policy, independent of model membership/capabilities."""
 
+from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field
@@ -17,5 +18,5 @@ AllowedEfforts = Annotated[list[ReasoningEffort], Field(min_length=1), AfterVali
 ReasoningRestrictions = dict[str, AllowedEfforts]
 
 
-def reasoning_allowed(allowed: list[str] | None, requested: str | None, default: str | None) -> bool:
+def reasoning_allowed(allowed: Sequence[str] | None, requested: str | None, default: str | None) -> bool:
     return allowed is None or (requested if requested is not None else default) in allowed

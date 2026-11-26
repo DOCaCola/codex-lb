@@ -17,7 +17,7 @@ rolling breakpoint, so a developer message after the last user turn is cached
 on the request that sends it.
 """
 
-from pydantic import JsonValue
+from app.core.types import JsonValue
 
 EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
 CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"

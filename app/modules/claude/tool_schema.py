@@ -11,9 +11,9 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
-from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.types import JsonValue
 from app.modules.claude.credentials import ClaudeError
 
 MAX_SCHEMA_DEPTH = 64

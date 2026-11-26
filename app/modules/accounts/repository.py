@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import extract_id_token_claims, resolve_seat_identity
 from app.core.crypto import TokenEncryptor
+from app.core.model_routing import ReasoningRestrictions
 from app.core.upstream_proxy.cache import get_upstream_route_cache
 from app.core.utils.time import utcnow
 from app.db.account_identity_lock import advisory_lock_key, lock_postgresql_account_identities
@@ -1019,7 +1020,7 @@ class AccountsRepository:
         *,
         all_models: bool,
         selected_models: list[str],
-        reasoning_restrictions: dict[str, list[str]],
+        reasoning_restrictions: ReasoningRestrictions,
     ) -> bool:
         async with sqlite_writer_section():
             result = await self._session.execute(

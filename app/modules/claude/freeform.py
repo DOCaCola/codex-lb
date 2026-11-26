@@ -16,7 +16,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from pydantic import JsonValue
+from app.core.types import JsonValue
 
 PATCH_BEGIN = "*** Begin Patch"
 PATCH_END = "*** End Patch"

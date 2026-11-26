@@ -10,8 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from pydantic import JsonValue
-
+from app.core.types import JsonValue
 from app.modules.claude.capabilities import rejects_forced_tool_choice, supports_mid_system
 from app.modules.claude.credentials import ClaudeError
 from app.modules.claude.profile import CLI_IDENTITY, MID_SYSTEM_BETA, RequestProfile
@@ -46,12 +45,9 @@ def has_native_identity(body: dict[str, JsonValue]) -> bool:
     # Claude Code's volatile billing marker must stay first: moving it into
     # the ordinary cached prefix changes every subsequent cache key. Identity
     # recognition still requires the software/OAuth signals in recognize_native.
-    billing_first = bool(
-        blocks
-        and isinstance(blocks[0], dict)
-        and isinstance(blocks[0].get("text"), str)
-        and blocks[0]["text"].startswith("x-anthropic-billing-header:")
-    )
+    first_block = blocks[0] if blocks else None
+    first_text = first_block.get("text") if isinstance(first_block, dict) else None
+    billing_first = isinstance(first_text, str) and first_text.startswith("x-anthropic-billing-header:")
     return billing_first or any(isinstance(block, dict) and block.get("text") == CLI_IDENTITY for block in blocks)
 
 
@@ -168,12 +164,15 @@ def _project_request(
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ClaudeError("Claude requests require a nonempty messages array")
-    if any(not isinstance(message, dict) for message in messages):
-        raise ClaudeError("Invalid Claude message")
+    # Conversation-positioned system turns (translated developer messages) need the same beta.
+    system_turns: tuple[str, ...] = ()
+    for message in messages:
+        if not isinstance(message, dict):
+            raise ClaudeError("Invalid Claude message")
+        if message.get("role") == "system":
+            system_turns = (MID_SYSTEM_BETA,)
     if endpoint == "messages":
         body["system"] = [{"type": "text", "text": CLI_IDENTITY}]
-    # Conversation-positioned system turns (translated developer messages) need the same beta.
-    system_turns = (MID_SYSTEM_BETA,) if any(message.get("role") == "system" for message in messages) else ()
     if not blocks:
         return RequestProjection(body, system_turns, ("oauth_identity",) if endpoint == "messages" else ())
 
@@ -213,10 +212,8 @@ def _project_request(
                 if isinstance(message, dict)
                 and message.get("role") == "user"
                 and not (
-                    isinstance(message.get("content"), list)
-                    and any(
-                        isinstance(block, dict) and block.get("type") == "tool_result" for block in message["content"]
-                    )
+                    isinstance(content := message.get("content"), list)
+                    and any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
                 )
             ),
             None,

@@ -553,6 +553,7 @@ class _FakeSession:
         timeout: aiohttp.ClientTimeout,
         data: bytes | None = None,
         skip_auto_headers: Collection[str] = (),
+        allow_redirects: bool = True,
     ) -> _PostContext:
         self.calls.append(
             {
@@ -562,6 +563,7 @@ class _FakeSession:
                 "json": json,
                 "timeout": timeout,
                 "skip_auto_headers": skip_auto_headers,
+                "allow_redirects": allow_redirects,
             }
         )
         return self._context
@@ -984,6 +986,7 @@ async def test_open_source_stream_sends_compact_json_bytes_when_requested(monkey
 
     default, compact_call = session.calls
     assert (default["data"], default["json"]) == (None, payload)
+    assert default["allow_redirects"] is True
     assert compact_call["json"] is None
     assert compact_call["data"] == '{"model":"m","input":["héllo",{"a":1}]}'.encode()
 

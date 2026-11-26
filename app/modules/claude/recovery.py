@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 
-from pydantic import JsonValue as WireValue
-
 from app.core.types import JsonValue
 from app.modules.claude.capabilities import accepts_thinking_binding
 from app.modules.model_sources.forwarding import ModelSourceForwardingError
@@ -15,7 +13,7 @@ _SIGNATURE_ERROR = re.compile(r"invalid\s+[`'\" ]*signature[`'\" ]*\s+in\s+[`'\"
 THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
 
-def _signed(block: WireValue) -> bool:
+def _signed(block: JsonValue) -> bool:
     if not isinstance(block, dict):
         return False
     kind = block.get("type")
@@ -24,7 +22,7 @@ def _signed(block: WireValue) -> bool:
     )
 
 
-def bind_replayed_thinking(body: dict[str, WireValue]) -> bool:
+def bind_replayed_thinking(body: dict[str, JsonValue]) -> bool:
     """Let preserved-thinking models drop prefix-mismatched blocks instead of rejecting the request.
 
     Anthropic validates a signed block against the system, tools, and earlier

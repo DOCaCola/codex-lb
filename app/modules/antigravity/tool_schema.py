@@ -25,9 +25,9 @@ from urllib.parse import unquote
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
-from pydantic import JsonValue
 
 from app.core.openai.exceptions import ClientPayloadError
+from app.core.types import JsonValue
 from app.modules.claude.tool_schema import MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, ToolArguments
 
 _TYPES = {

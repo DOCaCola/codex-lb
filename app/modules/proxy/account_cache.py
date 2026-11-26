@@ -13,7 +13,7 @@ from app.core.cache.invalidation import (
     NAMESPACE_ACCOUNT_SELECTION,
     get_cache_invalidation_poller,
 )
-from app.core.model_routing import reasoning_allowed
+from app.core.model_routing import ReasoningRestrictions, reasoning_allowed
 from app.core.openai.model_registry import get_model_registry
 from app.db.models import Account, AccountCreditPolicy, AccountStatus
 from app.db.session import SessionLocal, close_session
@@ -135,14 +135,14 @@ class RoutingAvailabilityCache:
         self._local_marks: set[str] = set()
         self._models: dict[str, tuple[bool, tuple[str, ...]]] = {}
         self._local_models: dict[str, tuple[bool, tuple[str, ...]]] = {}
-        self._reasoning: dict[str, dict[str, list[str]]] = {}
-        self._local_reasoning: dict[str, dict[str, list[str]]] = {}
+        self._reasoning: dict[str, ReasoningRestrictions] = {}
+        self._local_reasoning: dict[str, ReasoningRestrictions] = {}
 
-    def set_reasoning_restrictions(self, account_id: str, restrictions: dict[str, list[str]]) -> None:
+    def set_reasoning_restrictions(self, account_id: str, restrictions: ReasoningRestrictions) -> None:
         self._local_reasoning[account_id] = {model: list(levels) for model, levels in restrictions.items()}
         _request_account_routing_bump()
 
-    def reasoning_restrictions(self, account: Account) -> dict[str, list[str]]:
+    def reasoning_restrictions(self, account: Account) -> ReasoningRestrictions:
         if account.id in self._local_reasoning:
             return self._local_reasoning[account.id]
         if account.id in self._reasoning:

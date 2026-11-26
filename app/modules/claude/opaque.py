@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from cryptography.fernet import InvalidToken
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.core.crypto import TokenEncryptor
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX
+from app.core.types import JsonValue
 
 PREFIX = CLAUDE_REASONING_PREFIX
 

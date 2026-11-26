@@ -26,9 +26,8 @@ from collections import Counter, OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from pydantic import JsonValue
-
 from app.core.clock import REAL_CLOCK, Clock
+from app.core.types import JsonValue
 
 logger = logging.getLogger(__name__)
 

@@ -30,6 +30,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.auth.dashboard_session_ttl import DEFAULT_DASHBOARD_SESSION_TTL_SECONDS
+from app.core.model_routing import ReasoningRestrictions
 from app.core.types import JsonObject
 
 
@@ -125,7 +126,7 @@ class Account(Base):
     selected_models: Mapped[list[str]] = mapped_column(
         JsonDocument, default=list, server_default=text("'[]'"), nullable=False
     )
-    reasoning_restrictions: Mapped[dict[str, list[str]]] = mapped_column(
+    reasoning_restrictions: Mapped[ReasoningRestrictions] = mapped_column(
         JsonDocument, default=dict, server_default=text("'{}'"), nullable=False
     )
     reserve_usage: Mapped[JsonObject | None] = mapped_column(JsonDocument, nullable=True)

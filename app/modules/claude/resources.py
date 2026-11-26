@@ -7,11 +7,11 @@ import json
 from dataclasses import dataclass
 from datetime import timedelta
 
-from pydantic import JsonValue
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.types import JsonValue
 from app.core.utils.time import utcnow
 from app.db.models import ClaudeAccount, ClaudeResourceOrigin
 from app.db.session import get_background_session

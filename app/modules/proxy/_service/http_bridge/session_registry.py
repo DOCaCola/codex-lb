@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
 
+import anyio
+
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clock import scheduler_for
 from app.core.config.dashboard_overrides import effective_settings
@@ -84,6 +86,9 @@ def _requires_durable_recovery_alias_serialization(session: _HTTPBridgeSession) 
 
 
 class _HTTPBridgeSessionRegistryMixin:
+    _http_bridge_lock: anyio.Lock
+    _http_bridge_inflight_sessions: dict[_HTTPBridgeSessionKey, asyncio.Future[_HTTPBridgeSession]]
+
     async def _fail_http_bridge_inflight_session_creation(
         self,
         key: "_HTTPBridgeSessionKey",

@@ -5,11 +5,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from pydantic import JsonValue
-
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX
-from app.core.types import JsonValue as NativeJsonValue
+from app.core.types import JsonValue
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
 from app.modules.claude.search import (
     assistant_history_message,
@@ -131,7 +129,7 @@ def project_foreign_replay(
     return {**payload, "input": projected}
 
 
-def has_claude_replay(items: NativeJsonValue) -> bool:
+def has_claude_replay(items: JsonValue) -> bool:
     return isinstance(items, list) and any(
         isinstance(item, dict)
         and isinstance(token := item.get("encrypted_content"), str)
@@ -141,11 +139,11 @@ def has_claude_replay(items: NativeJsonValue) -> bool:
 
 
 def project_native_replay(
-    items: list[NativeJsonValue],
+    items: list[JsonValue],
     opaque: ClaudeOpaqueState,
     *,
     client_scope: str,
-) -> list[NativeJsonValue]:
+) -> list[JsonValue]:
     """Translate Claude state for OpenAI; never relabel opaque Claude state as OpenAI."""
     envelopes: dict[int, SignedBlock] = {}
     # Search call item ID -> (envelope index, readable projection).
@@ -175,7 +173,7 @@ def project_native_replay(
             else:
                 searches[item_id] = (index, claude_search_text(blocks))
         envelopes[index] = envelope
-    projected: list[NativeJsonValue] = []
+    projected: list[JsonValue] = []
     omitted = searched = unanswered = 0
     for index, item in enumerate(items):
         envelope = envelopes.get(index)

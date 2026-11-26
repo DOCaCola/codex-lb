@@ -5629,7 +5629,7 @@ async def _dispatch_source_responses_attempt(
                 payload, source, api_key=api_key, require_complete_history=require_complete_history
             )
             if native_request is None
-            else cast(dict[str, JsonValue], native_request.body)
+            else native_request.body
         )
         if native_request is not None:
             from app.modules.claude.inference import ClaudeAttempt
@@ -5765,8 +5765,9 @@ async def _dispatch_source_responses_attempt(
         if source.kind == "claude" and claude_attempt is not None:
             if native_request is not None:
                 requested_output = native_request.logical_body.get("output_config")
-                if isinstance(requested_output, dict) and isinstance(requested_output.get("effort"), str):
-                    requested_effort = requested_output["effort"]
+                effort = requested_output.get("effort") if isinstance(requested_output, dict) else None
+                if isinstance(effort, str):
+                    requested_effort = effort
             else:
                 requested_effort = payload._codex_lb_client_reasoning_effort
                 if requested_effort is None and (api_key is None or api_key.enforced_reasoning_effort is None):
@@ -5775,8 +5776,9 @@ async def _dispatch_source_responses_attempt(
                     if isinstance(reasoning_effort, str):
                         requested_effort = reasoning_effort
             upstream_output = claude_attempt.prepared.body.get("output_config")
-            if isinstance(upstream_output, dict) and isinstance(upstream_output.get("effort"), str):
-                upstream_effort = upstream_output["effort"]
+            effort = upstream_output.get("effort") if isinstance(upstream_output, dict) else None
+            if isinstance(effort, str):
+                upstream_effort = effort
             # Record what was sent, not a guessed effective value: an absent
             # ``thinking`` block runs adaptive on newer models and no thinking on
             # older ones, and the effort default is model-dependent too, so both

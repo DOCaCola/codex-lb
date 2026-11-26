@@ -21,9 +21,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import cast
 
-from pydantic import JsonValue
-
 from app.core.openai.memory_citation import MemoryCitationEscaper
+from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.antigravity.errors import AntigravityError
 from app.modules.antigravity.opaque import AntigravityOpaqueState, ThoughtScope
@@ -411,8 +410,9 @@ class GeminiProjection:
         except ClaudeError as exc:
             raise AntigravityError(str(exc), code="invalid_upstream_response") from exc
         events: list[dict[str, JsonValue]] = []
+        item: dict[str, JsonValue]
         if identity.search:
-            item: dict[str, JsonValue] = {
+            item = {
                 "id": item_id,
                 "type": "tool_search_call",
                 "call_id": call_id,

@@ -77,9 +77,7 @@ async def open_responses(
     try:
         return await _open_responses(prepared, projection, scheduler=scheduler, clock=clock)
     except ModelSourceForwardingError as exc:
-        recovered = historical_recovery(
-            cast(dict[str, JsonValue], prepared.body), exc, readable_history=prepared.require_complete_history
-        )
+        recovered = historical_recovery(prepared.body, exc, readable_history=prepared.require_complete_history)
         if recovered is None or prepared.budget.remaining == 0:
             raise
     logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
@@ -105,7 +103,7 @@ async def _open_responses(
     await require_current_identity(prepared.source.id, prepared.identity_generation)
     # SSE is also used for downstream non-stream requests. It provides native
     # liveness pings during long thinking without inventing output progress.
-    payload = cast(dict[str, JsonValue], {**prepared.body, "stream": True})
+    payload = {**prepared.body, "stream": True}
     prepared.budget.consume()
     secret = prepared.headers["authorization"].removeprefix("Bearer ")
     requested_at = datetime.now(UTC)
@@ -233,7 +231,7 @@ async def _open_responses(
             # The client keeps output it saw completed; Claude's finished text closes before the error.
             if projection is not None:
                 for converted in projection.interrupt():
-                    encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                    encoded = format_sse_event(converted).encode()
                     observer.feed(encoded)
                     yield encoded
             raise
@@ -267,15 +265,14 @@ async def _open_responses(
                             source_id=prepared.source.id,
                             diagnostics=delta.get("diagnostics"),
                         )
-                    from pydantic import JsonValue as PydanticJsonValue
 
                     safe_event = (
-                        cast(dict[str, PydanticJsonValue], _redact_json_value(event, secret))
+                        cast(dict[str, JsonValue], _redact_json_value(event, secret))
                         if event.get("type") == "error"
-                        else cast(dict[str, PydanticJsonValue], event)
+                        else event
                     )
                     if projection is None:
-                        native_observer.consume(cast(dict[str, JsonValue], safe_event))
+                        native_observer.consume(safe_event)
                         if prepared.native_binding is not None:
                             if thread is not None and event.get("type") == "message_start":
                                 await record_message(
@@ -291,9 +288,7 @@ async def _open_responses(
                                 identity_generation=prepared.identity_generation,
                             )
                         yield (
-                            format_sse_event(cast(dict[str, JsonValue], safe_event)).encode()
-                            if event.get("type") == "error"
-                            else frame.encode()
+                            format_sse_event(safe_event).encode() if event.get("type") == "error" else frame.encode()
                         )
                         if native_observer.stopped:
                             return
@@ -306,7 +301,7 @@ async def _open_responses(
                                 prepared.source.id,
                                 identity_generation=prepared.identity_generation,
                             )
-                        encoded = format_sse_event(cast(dict[str, JsonValue], converted)).encode()
+                        encoded = format_sse_event(converted).encode()
                         observer.feed(encoded)
                         yield encoded
                     if projection.stopped:
@@ -384,11 +379,7 @@ async def forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool 
     try:
         return await _forward_native(prepared, count_tokens=count_tokens)
     except ModelSourceForwardingError as exc:
-        recovered = (
-            None
-            if count_tokens
-            else historical_recovery(cast(dict[str, JsonValue], prepared.body), exc, readable_history=False)
-        )
+        recovered = None if count_tokens else historical_recovery(prepared.body, exc, readable_history=False)
         if recovered is None or prepared.budget.remaining == 0:
             raise
     logger.info("claude_signature_recovery source_id=%s attempt=1", prepared.source.id)
@@ -464,19 +455,17 @@ async def _forward_native(prepared: PreparedClaudeRequest, *, count_tokens: bool
                     )
                 )
                 if not count_tokens and prepared.native_binding is not None:
-                    from pydantic import JsonValue as PydanticJsonValue
-
                     await record_origins(
                         prepared.native_binding.resource_scope,
                         prepared.source.id,
-                        cast(dict[str, PydanticJsonValue], data),
+                        data,
                         identity_generation=prepared.identity_generation,
                     )
                     if thread is not None:
                         await record_message(
                             prepared.native_binding.resource_scope,
                             prepared.source.id,
-                            cast(dict[str, PydanticJsonValue], data),
+                            data,
                             identity_generation=prepared.identity_generation,
                         )
                 if not count_tokens:
