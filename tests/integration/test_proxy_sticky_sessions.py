@@ -12,6 +12,7 @@ from sqlalchemy import select, text, update
 
 import app.modules.proxy.service as proxy_module
 from app.core.clients import proxy as core_proxy
+from app.core.clock import RealScheduler
 from app.core.crypto import TokenEncryptor
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import naive_utc_to_epoch, utcnow
@@ -26,6 +27,7 @@ from app.modules.proxy._service.realtime_live import (
 )
 from app.modules.proxy.affinity import _codex_backend_identity, _codex_session_selection_key
 from app.modules.usage.repository import UsageRepository
+from tests.simulation.virtual_time import VirtualClock
 
 pytestmark = pytest.mark.integration
 
@@ -672,11 +674,13 @@ async def test_codex_goal_restart_cas_miss_reloads_concurrently_rebound_raw_owne
 @pytest.mark.asyncio
 async def test_codex_goal_restart_cannot_retire_owner_outside_api_key_scope(
     async_client,
+    app_instance,
     monkeypatch,
 ):
     from sqlalchemy import select
 
     from app.db.models import StickySession
+    from app.dependencies import get_proxy_service_for_app
     from app.modules.proxy.sticky_repository import StickySessionsRepository
 
     settings_response = await async_client.put(
@@ -725,10 +729,23 @@ async def test_codex_goal_restart_cannot_retire_owner_outside_api_key_scope(
             )
         )
 
+    # The hard owner recovery loop must exhaust its budget without an upstream send.
+    budget_seconds = 75.0
     _install_proxy_settings_cache(
-        monkeypatch,
-        sticky_threads_enabled=False,
+        monkeypatch, sticky_threads_enabled=False, proxy_request_budget_seconds=budget_seconds
     )
+    service = get_proxy_service_for_app(app_instance)
+    clock = VirtualClock()
+    recovery_delays: list[float] = []
+
+    class RecoveryScheduler(RealScheduler):
+        async def sleep(self, delay, result=None):
+            recovery_delays.append(delay)
+            clock.advance(budget_seconds)
+            return result
+
+    monkeypatch.setattr(service, "_clock", clock)
+    monkeypatch.setattr(service, "_scheduler", RecoveryScheduler())
 
     async def fail_stream(*args, **kwargs):
         del args, kwargs
@@ -760,6 +777,7 @@ async def test_codex_goal_restart_cannot_retire_owner_outside_api_key_scope(
     )
 
     assert response.status_code == 200
+    assert recovery_delays
     events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()

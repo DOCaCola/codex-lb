@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import ExitStack, asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import patch
 
@@ -25,11 +25,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.audit.service import AuditActor, drain_audit_log_tasks
+from app.core.auth import totp as totp_module
 from app.core.auth.dashboard_access import PRESET_ROLE_IDS, PresetRoleSlug
 from app.core.auth.dashboard_mode import DashboardAuthMode
 from app.core.auth.dashboard_users_cache import get_dashboard_users_cache
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
+from app.core.rate_limiter import db_rate_limiter
 from app.db.migrate import _build_alembic_config, inspect_migration_state, run_upgrade
 from app.db.models import (
     AuditLog,
@@ -74,6 +76,7 @@ def _attempt(username: str) -> dict[str, str]:
 
 _PARENT_REVISION = "20260911_020000_add_http_bridge_terminal_append_phase"
 _TARGET_REVISION = "20260911_030000_add_local_login_policy"
+_TOTP_TEST_EPOCH = 1_800_000_015
 
 
 # --- helpers ---
@@ -95,6 +98,12 @@ def _isolate_settings_cache():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _freeze_totp_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Keep generated and verified codes in the same step while requests run.
+    monkeypatch.setattr(totp_module, "time", lambda: _TOTP_TEST_EPOCH)
+
+
 @asynccontextmanager
 async def _client(app) -> AsyncGenerator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -106,7 +115,7 @@ def _error(response) -> str:
 
 
 def _code(secret: str, *, steps: int = 0) -> str:
-    return pyotp.TOTP(secret).at(datetime.now(UTC) + timedelta(seconds=30 * steps))
+    return pyotp.TOTP(secret).at(_TOTP_TEST_EPOCH + 30 * steps)
 
 
 async def _rows(action: str) -> list[AuditLog]:
@@ -744,7 +753,9 @@ async def test_a_successful_login_clears_its_own_bucket_and_not_the_address_ceil
 
 
 @pytest.mark.asyncio
-async def test_one_valid_account_cannot_reset_the_address_ceiling(async_client: AsyncClient, app_instance) -> None:
+async def test_one_valid_account_cannot_reset_the_address_ceiling(
+    async_client: AsyncClient, app_instance, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Clearing the coarse bucket on success would hand its ceiling to any insider.
 
     Seven guesses at someone else's username, one sign-in of their own, seven
@@ -753,6 +764,15 @@ async def test_one_valid_account_cannot_reset_the_address_ceiling(async_client: 
     on the loop that also serves the proxy.
     """
 
+    # Keep all attempts in the same window even when parallel bcrypt work is slow.
+    window_time = datetime.now(UTC)
+
+    class WindowDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None) -> datetime:
+            return window_time.astimezone(tz)
+
+    monkeypatch.setattr(db_rate_limiter, "datetime", WindowDateTime)
     await _setup_admin(async_client)
     await _clear_rate_limits()
     ceiling = get_password_address_rate_limiter().max_attempts

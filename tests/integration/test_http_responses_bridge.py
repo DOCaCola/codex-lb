@@ -70,6 +70,7 @@ from app.modules.proxy.load_balancer import (
 from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.usage.repository import AdditionalUsageRepository
 from tests.account_helpers import account_fixture
+from tests.simulation.virtual_time import VirtualClock, VirtualScheduler
 
 pytestmark = pytest.mark.integration
 _TEST_SYNC_TIMEOUT_SECONDS = 5.0
@@ -12073,7 +12074,18 @@ async def test_v1_responses_http_bridge_singleflights_same_session_key_during_cr
 
     create_started: list[str] = []
     create_started_event = asyncio.Event()
+    waiter_joined = asyncio.Event()
     release_create = asyncio.Event()
+    scheduler = VirtualScheduler(VirtualClock())
+    monkeypatch.setattr(service, "_scheduler", scheduler)
+    await_registry_wait = service._await_http_bridge_registry_wait
+
+    async def observe_registry_wait(future, *, timeout):
+        assert future is service._http_bridge_inflight_sessions[key]
+        waiter_joined.set()
+        return await await_registry_wait(future, timeout=timeout)
+
+    monkeypatch.setattr(service, "_await_http_bridge_registry_wait", observe_registry_wait)
 
     async def fake_create_http_bridge_session(
         self,
@@ -12110,40 +12122,32 @@ async def test_v1_responses_http_bridge_singleflights_same_session_key_during_cr
 
     key = proxy_module._HTTPBridgeSessionKey("request", "bridge-singleflight", None)
 
+    async def get_session():
+        return await service._get_or_create_http_bridge_session(
+            key,
+            headers={},
+            affinity=proxy_module._AffinityPolicy(),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+        )
+
     try:
-        first = asyncio.create_task(
-            service._get_or_create_http_bridge_session(
-                key,
-                headers={},
-                affinity=proxy_module._AffinityPolicy(),
-                api_key=None,
-                request_model="gpt-5.4",
-                idle_ttl_seconds=120.0,
-                max_sessions=8,
-            )
-        )
-        await _wait_for_event(create_started_event)
-        assert create_started == ["bridge-singleflight"]
-        assert key in service._http_bridge_inflight_sessions
+        async with asyncio.TaskGroup() as requests:
+            first = requests.create_task(get_session())
+            await _wait_for_event(create_started_event)
+            assert create_started == ["bridge-singleflight"]
+            assert key in service._http_bridge_inflight_sessions
 
-        second = asyncio.create_task(
-            service._get_or_create_http_bridge_session(
-                key,
-                headers={},
-                affinity=proxy_module._AffinityPolicy(),
-                api_key=None,
-                request_model="gpt-5.4",
-                idle_ttl_seconds=120.0,
-                max_sessions=8,
-            )
-        )
-        await asyncio.sleep(0)
-        assert create_started == ["bridge-singleflight"]
-        assert not second.done()
+            second = requests.create_task(get_session())
+            await _wait_for_event(waiter_joined)
+            assert create_started == ["bridge-singleflight"]
+            assert not second.done()
 
-        release_create.set()
-        session_one, session_two = await asyncio.gather(first, second)
+            release_create.set()
 
+        session_one, session_two = first.result(), second.result()
         assert create_started == ["bridge-singleflight"]
         assert session_one is session_two
         assert service._http_bridge_sessions[key] is session_one

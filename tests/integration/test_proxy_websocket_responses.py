@@ -9,6 +9,7 @@ import threading
 import time
 import tomllib
 from collections import deque
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -318,6 +319,7 @@ def _websocket_settings(**overrides):
     return SimpleNamespace(**values)
 
 
+@pytest.mark.timeout(30)
 def test_responses_websocket_route_drain_preserves_terminal_ownership_and_rejects_late_admission(
     app_instance,
     monkeypatch,
@@ -327,11 +329,12 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
     terminal_waiting = threading.Event()
     settlement_started = threading.Event()
     settlement_release = threading.Event()
-    cleanup_timer = threading.Timer(
-        5.0,
-        lambda: (terminal_release.set(), settlement_release.set()),
-    )
-    cleanup_timer.daemon = True
+
+    def receive_lifecycle_event(websocket):
+        event = json.loads(websocket.receive_text())
+        while event["type"] == "codex.keepalive":
+            event = json.loads(websocket.receive_text())
+        return event
 
     class _ControlledUpstreamWebSocket:
         def __init__(self) -> None:
@@ -349,8 +352,8 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
 
         async def receive(self) -> _FakeUpstreamMessage:
             await self.request_sent.wait()
-            self.receive_count += 1
-            if self.receive_count == 1:
+            if self.receive_count == 0:
+                self.receive_count += 1
                 return _FakeUpstreamMessage(
                     "text",
                     text=json.dumps(
@@ -364,9 +367,10 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
                         separators=(",", ":"),
                     ),
                 )
-            if self.receive_count == 2:
+            if self.receive_count == 1:
                 terminal_waiting.set()
                 await asyncio.to_thread(terminal_release.wait)
+                self.receive_count += 1
                 return _FakeUpstreamMessage(
                     "text",
                     text=json.dumps(
@@ -536,14 +540,17 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
         no_api_key_heartbeat,
     )
     monkeypatch.setattr(proxy_module.LoadBalancer, "record_success", fake_record_success)
+    # Drain begins after the accepted prelude has reached the client.
+    _expire_prelude_hold(monkeypatch)
 
-    cleanup_timer.start()
     shutdown_state.reset()
     try:
         with TestClient(app_instance) as client:
             assert client.portal is not None
             api_key, reservation = client.portal.call(prepare_persistence_rows)
-            with client.websocket_connect("/backend-api/codex/responses") as websocket:
+            with client.websocket_connect("/backend-api/codex/responses") as websocket, ExitStack() as release_gates:
+                release_gates.callback(terminal_release.set)
+                release_gates.callback(settlement_release.set)
                 assert shutdown_state.get_in_flight() == 1
                 websocket.send_text(
                     json.dumps(
@@ -555,14 +562,14 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
                         }
                     )
                 )
-                created = json.loads(websocket.receive_text())
+                created = receive_lifecycle_event(websocket)
                 assert created["type"] == "response.created"
-                assert terminal_waiting.wait(timeout=1)
+                assert terminal_waiting.wait(timeout=5)
 
                 shutdown_state.set_draining(True)
                 assert shutdown_state.get_in_flight() == 1
                 terminal_release.set()
-                assert settlement_started.wait(timeout=1)
+                assert settlement_started.wait(timeout=5)
 
                 with pytest.raises(WebSocketDenialResponse) as late_denial:
                     with client.websocket_connect("/backend-api/codex/responses"):
@@ -575,19 +582,16 @@ def test_responses_websocket_route_drain_preserves_terminal_ownership_and_reject
                 assert shutdown_state.get_in_flight() == 1
 
                 settlement_release.set()
-                completed = json.loads(websocket.receive_text())
+                completed = receive_lifecycle_event(websocket)
                 assert completed["type"] == "response.completed"
 
                 with pytest.raises(WebSocketDisconnect) as drained_disconnect:
-                    websocket.receive_text()
+                    receive_lifecycle_event(websocket)
                 assert drained_disconnect.value.code == 1012
         assert shutdown_state.get_in_flight() == 0
         assert reservation is not None
         persisted_log, persisted_reservation = asyncio.run(read_persisted_results(reservation.reservation_id))
     finally:
-        terminal_release.set()
-        settlement_release.set()
-        cleanup_timer.cancel()
         shutdown_state.reset()
 
     assert upstream.closed is True
