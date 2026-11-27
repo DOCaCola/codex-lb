@@ -43,6 +43,7 @@ export type DashboardAccountActions = {
   readOnly: boolean;
   onResume: (summary: ProviderSummary) => void;
   onResetCredit: (account: AccountSummary) => void;
+  onClaudeResetGrants: (accountId: string) => void;
 };
 
 export type DashboardAccountsProps = {
@@ -200,21 +201,32 @@ function AccountSubtitle({ summary }: { summary: ProviderSummary }) {
   );
 }
 
-function ResetCreditButton({ account, actions }: { account: AccountSummary; actions: DashboardAccountActions }) {
+/** The reset button of any account with banked resets: Codex reset credits or Claude reset grants. */
+function ResetCreditButton({
+  count,
+  expiresAt,
+  status,
+  readOnly,
+  onClick,
+}: {
+  count: number;
+  expiresAt: string | null | undefined;
+  status: string;
+  readOnly: boolean;
+  onClick: () => void;
+}) {
   const { t } = useTranslation();
   const dateDisplayFormat = useDateDisplayFormatStore((s) => s.dateDisplayFormat);
-  const count = account.availableResetCredits ?? 0;
-  const status = account.status;
   const blocked = status === "paused" || status === "reauth" || status === "deactivated";
-  const expiry = account.resetCreditNearestExpiresAt ? formatTimeRemaining(account.resetCreditNearestExpiresAt) : null;
+  const expiry = expiresAt ? formatTimeRemaining(expiresAt) : null;
   const title = blocked
     ? t(status === "paused" ? "dashboard.accounts.resetCreditTitles.resumeRequired" : "dashboard.accounts.resetCreditTitles.reauthRequired")
-    : actions.readOnly
+    : readOnly
       ? t("dashboard.accounts.resetCreditTitles.unavailable")
       : expiry
         ? t("dashboard.accounts.resetCreditTitles.withExpiry", {
             count,
-            time: formatDateTimeInline(account.resetCreditNearestExpiresAt, dateDisplayFormat),
+            time: formatDateTimeInline(expiresAt, dateDisplayFormat),
           })
         : t("dashboard.accounts.resetCreditTitles.redeem", { count });
   return (
@@ -224,8 +236,8 @@ function ResetCreditButton({ account, actions }: { account: AccountSummary; acti
       variant="outline"
       className="relative z-10 h-6 shrink-0 gap-1 bg-card px-2 text-xs font-normal"
       title={title}
-      disabled={actions.readOnly || blocked}
-      onClick={() => actions.onResetCredit(account)}
+      disabled={readOnly || blocked}
+      onClick={onClick}
     >
       <RotateCcw className="h-3 w-3" aria-hidden />
       {t("dashboard.accounts.resets", { count })}
@@ -235,6 +247,34 @@ function ResetCreditButton({ account, actions }: { account: AccountSummary; acti
         </span>
       ) : null}
     </Button>
+  );
+}
+
+function CodexResetButton({ account, actions }: { account: AccountSummary; actions: DashboardAccountActions }) {
+  return (
+    <ResetCreditButton
+      count={account.availableResetCredits ?? 0}
+      expiresAt={account.resetCreditNearestExpiresAt}
+      status={account.status}
+      readOnly={actions.readOnly}
+      onClick={() => actions.onResetCredit(account)}
+    />
+  );
+}
+
+const hasClaudeResetGrants = (summary: ProviderSummary) => summary.entry.kind === "claude" && summary.resetCredits > 0;
+
+/** The reset button of a Claude account with banked reset grants; null without grants. */
+function ClaudeResetButton({ summary, actions }: { summary: ProviderSummary; actions: DashboardAccountActions }) {
+  if (summary.entry.kind !== "claude" || !hasClaudeResetGrants(summary)) return null;
+  return (
+    <ResetCreditButton
+      count={summary.resetCredits}
+      expiresAt={summary.entry.account.resetGrantNearestExpiresAt}
+      status={summary.status}
+      readOnly={actions.readOnly}
+      onClick={() => actions.onClaudeResetGrants(summary.id)}
+    />
   );
 }
 
@@ -269,13 +309,14 @@ function StatusAction({ summary, actions }: { summary: ProviderSummary; actions:
   return null;
 }
 
-/** A list row has no credits line, so a Codex account with reset credits offers them next to its status remedy. */
+/** A list row has no credits line, so an account with banked resets offers them next to its status remedy. */
 function ListRowAction({ summary, actions }: { summary: ProviderSummary; actions: DashboardAccountActions }) {
   const resettable = summary.entry.kind === "codex" && summary.resetCredits > 0 ? summary.entry.account : null;
   return (
     <>
       <StatusAction summary={summary} actions={actions} />
-      {resettable ? <ResetCreditButton account={resettable} actions={actions} /> : null}
+      {resettable ? <CodexResetButton account={resettable} actions={actions} /> : null}
+      <ClaudeResetButton summary={summary} actions={actions} />
     </>
   );
 }
@@ -295,7 +336,7 @@ function CodexFooter({ account, actions }: { account: AccountSummary; actions: D
         })}
       </span>
       <span className="flex-1" />
-      {showReset ? <ResetCreditButton account={account} actions={actions} /> : null}
+      {showReset ? <CodexResetButton account={account} actions={actions} /> : null}
     </div>
   );
 }
@@ -304,7 +345,7 @@ function CodexFooter({ account, actions }: { account: AccountSummary; actions: D
  * One account of any provider. Every card has the same slots: header and limits at the top, then a bottom group pinned
  * to the card's bottom edge: the provider footer (the Codex credits line and reset-credit button) and a status-strip
  * slot that is reserved whether or not the account needs attention. Footer, reset button and strip therefore sit at the
- * same place on every card.
+ * same place on every card. Claude cards have no footer, so their reset-grant button sits in the strip slot.
  */
 export function DashboardAccountCard({
   summary,
@@ -321,7 +362,9 @@ export function DashboardAccountCard({
   const dim = summary.status === "paused";
   const codex = summary.entry.kind === "codex" ? summary.entry.account : null;
   const strip = summary.notice;
-  const stripAction = strip ? <StatusAction summary={summary} actions={actions} /> : null;
+  const remedy = summary.status === "paused" || summary.status === "reauth" || summary.status === "deactivated";
+  const claudeReset = hasClaudeResetGrants(summary) ? <ClaudeResetButton summary={summary} actions={actions} /> : null;
+  const stripAction = remedy ? <StatusAction summary={summary} actions={actions} /> : claudeReset;
   return (
     <article
       data-testid="dashboard-account-card"
@@ -363,6 +406,8 @@ export function DashboardAccountCard({
               <span className="flex-1" />
               {stripAction}
             </div>
+          ) : claudeReset ? (
+            <div className="flex h-full items-center justify-end">{claudeReset}</div>
           ) : null}
         </div>
       </div>

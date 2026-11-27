@@ -10,6 +10,7 @@ from app.core.scheduling.leader_election import get_leader_election
 from app.db.models import ClaudeAccount, ModelSource
 from app.db.session import get_background_session
 from app.modules.claude.repository import ClaudeRepository
+from app.modules.claude.reset_auto import auto_redeem_enabled, redeem_expiring_grants
 from app.modules.claude.service import ClaudeService
 from app.modules.claude.version import ClaudeVersionService
 
@@ -50,6 +51,11 @@ class ClaudeRefreshScheduler:
             except Exception:
                 # Never emit exception bodies from credential-bearing operations.
                 logger.warning("claude_metadata_refresh_failed source_id=%s", source_id)
+        if await auto_redeem_enabled():
+            try:
+                await redeem_expiring_grants(ids)
+            except Exception:
+                logger.warning("claude_reset_auto_redeem_failed")
 
     async def _run(self) -> None:
         while True:

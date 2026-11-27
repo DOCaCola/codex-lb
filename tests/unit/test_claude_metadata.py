@@ -142,6 +142,27 @@ def test_usage_snapshot_reads_fable_weekly_from_scoped_limits():
     assert other.seven_day_overage_included is None
 
 
+def test_usage_snapshot_keeps_grants_and_treats_a_malformed_block_as_unknown():
+    window = {"utilization": 40, "resets_at": "2026-11-07T22:00:00+00:00"}
+    grant = {
+        "id": "fable-reset",
+        "label": "Fable reset",
+        "resets_total": 1,
+        "resets_left": 1,
+        "clears": ["five_hour", "seven_day_overage_included"],
+        "paused": False,
+        "usable_now": True,
+        "use_requires_limit": False,
+    }
+    usage = UsageSnapshot.model_validate(
+        {"five_hour": window, "cedar_ember": {"eligible": True, "at_limit": False, "grants": [grant]}}
+    )
+    assert usage.cedar_ember is not None and usage.cedar_ember.grants[0].id == "fable-reset"
+    malformed = UsageSnapshot.model_validate({"five_hour": window, "cedar_ember": {"eligible": "maybe"}})
+    assert malformed.cedar_ember is None
+    assert malformed.five_hour == usage.five_hour
+
+
 @pytest.mark.parametrize(
     "endpoint,path",
     [

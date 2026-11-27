@@ -1,8 +1,9 @@
-import { screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { renderDashboardAccounts } from "@/features/dashboard/test-utils";
 import { noticeHeadline, type ProviderNotice } from "@/features/accounts/provider-summary";
+import { createClaudeAccount } from "@/features/claude/test-fixtures";
 import { createOpenRouterAccount } from "@/features/openrouter/test-fixtures";
 import { money } from "@/features/openrouter/display-values";
 import { createAccountSummary } from "@/test/mocks/factories";
@@ -35,6 +36,23 @@ describe("dashboard account card layout", () => {
     const card = screen.getByTestId("dashboard-account-card");
     expect(within(card).getByTestId("account-card-strip-slot")).toBeEmptyDOMElement();
     expect(within(card).queryByTestId("account-card-footer")).not.toBeInTheDocument();
+  });
+
+  it("offers banked Claude reset grants in the strip slot", () => {
+    const onClaudeResetGrants = vi.fn();
+    renderDashboardAccounts(
+      {
+        claudeAccounts: [
+          createClaudeAccount({ id: "claude_banked", availableResetGrants: 2, resetGrantNearestExpiresAt: null }),
+          createClaudeAccount({ id: "claude_none", availableResetGrants: 0, resetGrantNearestExpiresAt: null }),
+        ],
+      },
+      { actions: { onClaudeResetGrants } },
+    );
+    const [banked, none] = screen.getAllByTestId("dashboard-account-card");
+    fireEvent.click(within(within(banked).getByTestId("account-card-strip-slot")).getByRole("button"));
+    expect(onClaudeResetGrants).toHaveBeenCalledWith("claude_banked");
+    expect(within(none).getByTestId("account-card-strip-slot")).toBeEmptyDOMElement();
   });
 
   it("shows the time left until a notice ends", () => {

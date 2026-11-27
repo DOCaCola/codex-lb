@@ -1,9 +1,11 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.db.models import ClaudeAccount, ClaudeCooldown, ClaudeResetOperation
 from app.db.session import SessionLocal
@@ -365,3 +367,85 @@ async def test_changed_profile_prevents_spend(async_client, reset_account, monke
     )
     response = await async_client.post(f"/api/claude-accounts/{source}/reset-grants/consume", json=request())
     assert response.status_code == 400 and claim.await_count == 0
+
+
+def expiring_usage(minutes: float, *, extra_grants=()):
+    ends_at = datetime.now(UTC) + timedelta(minutes=minutes)
+    grant = {
+        "id": "test-grant",
+        "label": "Test reset",
+        "resets_total": 2,
+        "resets_left": 2,
+        "ends_at": ends_at.isoformat(),
+        "clears": ["five_hour"],
+        "paused": False,
+        "usable_now": True,
+        "use_requires_limit": True,
+    }
+    return UsageSnapshot.model_validate(
+        {"cedar_ember": {"eligible": True, "at_limit": True, "grants": [grant, *extra_grants]}}
+    ), ends_at
+
+
+async def test_usage_read_summarises_banked_grants(async_client, reset_account, monkeypatch):
+    source, _ = reset_account
+    paused = {
+        "id": "paused-grant",
+        "label": "Paused",
+        "resets_total": 1,
+        "resets_left": 1,
+        "ends_at": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+        "clears": ["seven_day"],
+        "paused": True,
+        "usable_now": False,
+        "use_requires_limit": False,
+    }
+    usage, ends_at = expiring_usage(600, extra_grants=(paused,))
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=usage))
+    refreshed = await async_client.post(f"/api/claude-accounts/{source}/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+    body = refreshed.json()
+    assert body["availableResetGrants"] == 2
+    assert datetime.fromisoformat(body["resetGrantNearestExpiresAt"]) == ends_at
+
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=UsageSnapshot()))
+    unknown = await async_client.post(f"/api/claude-accounts/{source}/refresh")
+    assert unknown.json()["availableResetGrants"] is None
+    assert unknown.json()["resetGrantNearestExpiresAt"] is None
+
+
+async def test_auto_redeem_spends_an_expiring_grant_once(async_client, reset_account, monkeypatch):
+    from app.modules.claude.reset_auto import redeem_expiring_grants
+
+    source, claim = reset_account
+    later, _ = expiring_usage(60)
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=later))
+    assert (await async_client.post(f"/api/claude-accounts/{source}/refresh")).status_code == 200
+    await redeem_expiring_grants([source])
+    assert claim.await_count == 0
+
+    soon, _ = expiring_usage(3)
+    monkeypatch.setattr(ClaudeClient, "usage", AsyncMock(return_value=soon))
+    assert (await async_client.post(f"/api/claude-accounts/{source}/refresh")).status_code == 200
+    await redeem_expiring_grants([source])
+    await redeem_expiring_grants([source])
+    assert claim.await_count == 1
+    async with SessionLocal() as session:
+        rows = (await session.scalars(select(ClaudeResetOperation))).all()
+    assert len(rows) == 1 and rows[0].grant_id == "test-grant"
+
+
+async def test_auto_redeem_follows_the_codex_setting_and_polling_toggle(async_client, monkeypatch):
+    from app.modules.claude import reset_auto
+
+    settings = SimpleNamespace(auto_redeem_reset_credits_before_expiry=True)
+    monkeypatch.setattr(reset_auto, "get_settings_cache", lambda: SimpleNamespace(get=AsyncMock(return_value=settings)))
+    polling = AsyncMock(return_value=True)
+    monkeypatch.setattr(reset_auto, "background_job_enabled", polling)
+    assert await reset_auto.auto_redeem_enabled()
+    settings.auto_redeem_reset_credits_before_expiry = False
+    assert not await reset_auto.auto_redeem_enabled()
+    settings.auto_redeem_reset_credits_before_expiry = True
+    polling.return_value = False
+    assert not await reset_auto.auto_redeem_enabled()
+    polling.assert_awaited_with("rate_limit_reset_credits_refresh_enabled")

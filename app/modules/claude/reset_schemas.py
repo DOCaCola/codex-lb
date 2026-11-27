@@ -1,4 +1,4 @@
-"""Wire and dashboard contracts for manual cedar_ember redemption."""
+"""Wire and dashboard contracts for cedar_ember reset grants."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -61,6 +61,22 @@ class GrantStatus(BaseModel):
                 for g in self.grants
             )
         )
+
+    def banked(self, now: datetime) -> list[Grant]:
+        """Grants held for spending: started, unexpired, unpaused and with resets left.
+
+        At-limit requirements and cooldowns are checked at redemption, as for Codex reset credits.
+        """
+        if not self.eligible:
+            return []
+        return [
+            g
+            for g in self.grants
+            if not g.paused
+            and g.resets_left > 0
+            and (g.starts_at is None or g.starts_at <= now)
+            and (g.ends_at is None or now < g.ends_at)
+        ]
 
 
 class GrantEnvelope(BaseModel):

@@ -3,12 +3,23 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.model_routing import ReasoningRestrictions
 from app.db.models import AccountRoutingPolicy
 from app.modules.claude.capabilities import CatalogCapabilities
 from app.modules.claude.model_limits import ModelTokenLimits, resolve_token_limits
+from app.modules.claude.reset_schemas import GrantStatus
 from app.modules.shared.schemas import DashboardModel
 
 CLAUDE_KIND = "claude"
@@ -236,6 +247,17 @@ class UsageSnapshot(BaseModel):
     seven_day_overage_included: QuotaWindow | None = None
     limits: list[UsageLimit] = Field(default_factory=list)
     extra_usage: ExtraUsage | None = None
+    # Reset grants, requested with the usage read (agent-lb anthropic_usage.py). A missing or
+    # malformed block is unknown, never zero grants, and never fails the usage read itself.
+    cedar_ember: GrantStatus | None = None
+
+    @field_validator("cedar_ember", mode="wrap")
+    @classmethod
+    def unknown_grants(cls, value: object, handler: ValidatorFunctionWrapHandler) -> GrantStatus | None:
+        try:
+            return handler(value)
+        except ValidationError:
+            return None
 
     @model_validator(mode="after")
     def fable_weekly(self) -> UsageSnapshot:
@@ -361,6 +383,9 @@ class ClaudeAccountResponse(DashboardModel):
     credential_status: str
     expires_at: datetime
     extra_usage_enabled: bool
+    # Banked reset grants from the last usage read, like Codex reset credits; null when unknown.
+    available_reset_grants: int | None
+    reset_grant_nearest_expires_at: datetime | None
     state: AccountState
     quota: QuotaStatus
 

@@ -1,10 +1,12 @@
+import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 import { server } from "@/test/mocks/server";
-import { ClaudeResetGrants } from "./reset-grants";
+import { ClaudeResetGrantsDialog } from "./reset-grants";
+import { grantKind } from "./reset-grant-kind";
 
 const grant = {
   id: "grant",
@@ -26,18 +28,45 @@ const status = {
   grants: [grant],
 };
 
+function Harness({ readOnly }: { readOnly: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Reset grants
+      </button>
+      <ClaudeResetGrantsDialog accountId="test" readOnly={readOnly} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
 function show(readOnly = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <ClaudeResetGrants accountId="test" readOnly={readOnly} />
+      <Harness readOnly={readOnly} />
     </QueryClientProvider>,
   );
 }
 
 describe("Claude reset grants", () => {
+  it("names a grant by the windows it clears and keeps Anthropic's label", async () => {
+    expect(grantKind(["five_hour", "seven_day"])).toBe("Full reset");
+    expect(grantKind(["five_hour", "seven_day_overage_included"])).toBe("Fable reset");
+    expect(grantKind(["five_hour"])).toBe("5-hour reset");
+    server.use(
+      http.get("/api/claude-accounts/test/reset-grants", () =>
+        HttpResponse.json({ status, error: null, operations: [] }),
+      ),
+    );
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Reset grants" }));
+    expect(await screen.findByText("Full reset")).toBeInTheDocument();
+    expect(screen.getByText("Claude launch reset")).toBeInTheDocument();
+  });
+
   it("requires explicit confirmation and recovers the same operation", async () => {
     const bodies: {
       grantId: string;

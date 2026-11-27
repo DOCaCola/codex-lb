@@ -302,9 +302,15 @@ qualification. No schema migration or operator setting is needed.
 ### Manual reset grants
 
 The account dialog explicitly discovers cedar_ember grants and requires confirmation
-before spending. Discovery failure is unknown, not zero availability. There is no
-automatic redemption, failover or juniper_tide support. Existing management headers
-and the runtime Claude Code version are reused.
+before spending. Discovery failure is unknown, not zero availability. Grants are read
+with the usage call (agent-lb's `?cedar_ember=1` piggyback), counted in the shared
+Codex reset surfaces and labelled by the windows they clear (agent-lb's
+ResetCreditsView.kind). Following the Codex reset-credit setting, the leader spends a
+banked grant within five minutes of expiry through the same journal, under a uuid5
+operation ID of identity, grant and expiry. OmniRoute is the only reference with an
+auto-apply job (opt-in); opencodex auto-redeems only Codex credits. There is no
+failover or juniper_tide support. Existing management headers and the runtime Claude
+Code version are reused.
 
 A SQL journal persists intent before POST, bound to verified account/organization
 identity and the selected grant. A 90-second lease prevents concurrent claims;

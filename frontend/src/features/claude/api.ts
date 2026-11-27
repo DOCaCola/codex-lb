@@ -23,6 +23,9 @@ export const ClaudeAccountSchema = z.object({
   credentialStatus: z.string(),
   expiresAt: z.string(),
   extraUsageEnabled: z.boolean(),
+  /** Banked reset grants from the last usage read; null when unknown. */
+  availableResetGrants: z.number().int().nonnegative().nullable(),
+  resetGrantNearestExpiresAt: z.string().nullable(),
   state: z.object({
     subscription: z.object({
       subscription_type: z.string().nullable(),

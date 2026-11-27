@@ -140,7 +140,7 @@ class ClaudeClient:
         raise ClaudeError("Claude catalog exceeded the page limit")
 
     async def usage(self, token: str, version: str) -> UsageSnapshot:
-        return await self._get("/api/oauth/usage", token, version, UsageSnapshot)
+        return await self._get("/api/oauth/usage?cedar_ember=1", token, version, UsageSnapshot)
 
     async def profile(self, token: str, version: str) -> AuthenticatedProfile:
         return await self._get("/api/oauth/profile", token, version, AuthenticatedProfile)

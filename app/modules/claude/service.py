@@ -609,6 +609,9 @@ class ClaudeService:
         if row.refresh_intent and row.refresh_started_at and row.refresh_started_at < utcnow() - timedelta(minutes=1):
             status = "uncertain"
         plan = subscription_plan(state.subscription)
+        grants = state.usage.cedar_ember if state.usage is not None else None
+        banked = grants.banked(now.replace(tzinfo=UTC)) if grants is not None else []
+        expiries = [grant.ends_at for grant in banked if grant.ends_at is not None]
         return ClaudeAccountResponse(
             plan_type=plan,
             quota_weights=quota_weights(plan),
@@ -622,6 +625,8 @@ class ClaudeService:
             credential_status=status,
             expires_at=row.expires_at.replace(tzinfo=UTC),
             extra_usage_enabled=extra_usage_enabled(state),
+            available_reset_grants=sum(grant.resets_left for grant in banked) if grants is not None else None,
+            reset_grant_nearest_expires_at=min(expiries, default=None),
             state=state,
             quota=with_recent_usage(quota_status(state, now=now.replace(tzinfo=UTC)), baselines, lookbacks, now),
         )

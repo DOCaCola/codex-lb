@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -11,22 +10,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { consumeGrant, readGrants, type ResetRequest } from "./reset-api";
+import { grantKind } from "./reset-grant-kind";
 
 const windowLabel = (name: string) =>
   ({
     five_hour: "5-hour",
     seven_day: "Weekly",
-    seven_day_overage_included: "Model overage",
+    seven_day_overage_included: "Fable weekly",
   })[name] ?? name;
 
-export function ClaudeResetGrants({
+export function ClaudeResetGrantsDialog({
   accountId,
   readOnly,
+  open,
+  onOpenChange,
 }: {
   accountId: string;
   readOnly: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState<ResetRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -94,16 +97,14 @@ export function ClaudeResetGrants({
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Ticket className="h-4 w-4" /> Reset grants
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Claude reset grants</DialogTitle>
             <DialogDescription>
-              Manually spend an available grant. Only the listed usage windows
-              are reset. Nothing is spent automatically.
+              Spend an available grant. Only the listed usage windows are
+              reset. With automatic redemption on, a grant is spent shortly
+              before it expires.
             </DialogDescription>
           </DialogHeader>
           <Button
@@ -200,7 +201,10 @@ export function ClaudeResetGrants({
                 Date.parse(status.cooldown_until) <= now);
             return (
               <div key={grant.id} className="rounded-lg border p-3 space-y-2">
-                <p className="font-medium">{grant.label || grant.id}</p>
+                <p className="font-medium">{grantKind(grant.clears)}</p>
+                {grant.label && grant.label !== grantKind(grant.clears) ? (
+                  <p className="text-sm text-muted-foreground">{grant.label}</p>
+                ) : null}
                 <p className="text-sm tabular-nums">
                   {grant.resets_left} of {grant.resets_total} resets remaining
                 </p>

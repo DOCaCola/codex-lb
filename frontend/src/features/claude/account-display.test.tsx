@@ -32,6 +32,8 @@ const account: ClaudeAccount = {
   credentialStatus: "ready",
   expiresAt: "2026-09-25T20:00:00Z",
   extraUsageEnabled: false,
+  availableResetGrants: null,
+  resetGrantNearestExpiresAt: null,
   state: {
     subscription: null,
     subscription_updated_at: null,

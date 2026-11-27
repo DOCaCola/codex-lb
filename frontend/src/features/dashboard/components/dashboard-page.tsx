@@ -19,6 +19,7 @@ import { useKeyColors } from "@/features/apis/key-summary";
 import { useOpenRouter, useOpenRouterAccounts } from "@/features/openrouter/use-openrouter";
 import { useOpenAIApi, useOpenAIApiAccounts } from "@/features/openai-api/use-openai-api";
 import { useClaude, useClaudeAccounts } from "@/features/claude/use-claude";
+import { ClaudeResetGrantsDialog } from "@/features/claude/reset-grants";
 import { useAntigravity, useAntigravityAccounts } from "@/features/antigravity/use-antigravity";
 import { ActivityStrip } from "@/features/dashboard/components/activity-strip";
 import { AccountViewModeToggle } from "@/features/dashboard/components/account-view-mode-toggle";
@@ -113,6 +114,7 @@ export function DashboardPage() {
   );
   const { resumeMutation } = useAccountMutations();
   const resetCreditDialog = useDialogState<ResetCreditDialogTarget>();
+  const claudeResetDialog = useDialogState<{ accountId: string }>();
 
   const isRefreshing =
     dashboardQuery.isFetching || projectionsQuery.isFetching;
@@ -178,8 +180,18 @@ export function DashboardPage() {
           accountId: account.accountId,
           availableResetCredits: account.availableResetCredits ?? 0,
         }),
+      onClaudeResetGrants: (accountId: string) => claudeResetDialog.show({ accountId }),
     }),
-    [antigravity.update, canWriteAccounts, claude.update, openAIApi.update, openRouter.update, resetCreditDialog, resumeMutation],
+    [
+      antigravity.update,
+      canWriteAccounts,
+      claude.update,
+      claudeResetDialog,
+      openAIApi.update,
+      openRouter.update,
+      resetCreditDialog,
+      resumeMutation,
+    ],
   );
 
   const view = useMemo(() => {
@@ -390,6 +402,14 @@ export function DashboardPage() {
           accountId={resetCreditDialog.data.accountId}
           summaryAvailableCount={resetCreditDialog.data.availableResetCredits}
           onOpenChange={resetCreditDialog.onOpenChange}
+        />
+      ) : null}
+      {claudeResetDialog.data ? (
+        <ClaudeResetGrantsDialog
+          accountId={claudeResetDialog.data.accountId}
+          readOnly={!canWriteAccounts}
+          open={claudeResetDialog.open}
+          onOpenChange={claudeResetDialog.onOpenChange}
         />
       ) : null}
     </div>

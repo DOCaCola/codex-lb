@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Clock, KeyRound, Layers, PauseCircle, RefreshCw, Trash2 } from "lucide-react";
+import { Clock, KeyRound, Layers, PauseCircle, RefreshCw, RotateCcw, Ticket, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { AccountPauseButton } from "@/components/account-pause-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -11,7 +11,7 @@ import type { ClaudeAccount } from "./api";
 import { useIdentityConfirmation } from "./use-identity-confirmation";
 import { ClaudeVersionControls } from "./version-controls";
 import { ClaudeCapacitySettings } from "./capacity-settings";
-import { ClaudeResetGrants } from "./reset-grants";
+import { ClaudeResetGrantsDialog } from "./reset-grants";
 import { ModelSelection } from "./model-selection";
 import { AccountRoutingPolicyControl } from "@/features/accounts/components/routing-policy";
 import { AccountNameEditor } from "@/features/accounts/components/account-name-editor";
@@ -30,13 +30,14 @@ import {
 import { useCommonMenuItems } from "@/features/accounts/hooks/use-common-menu-items";
 import { useAccountColorHexes } from "@/features/accounts/account-colors";
 import { useSummaryContext } from "@/features/accounts/hooks/use-summary-context";
+import { useSettings } from "@/features/settings/hooks/use-settings";
 import { summarizeEntry } from "@/features/accounts/provider-summary";
 import { CredentialImportDialog } from "@/features/accounts/components/credential-import-dialog";
 import { ProviderSignInDialog } from "@/features/accounts/components/provider-sign-in-dialog";
 import { ReauthenticateMenu } from "@/features/accounts/components/reauthenticate-menu";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { cn } from "@/lib/utils";
-import { formatDateTimeInline, formatSlug } from "@/utils/formatters";
+import { formatDateTimeInline, formatSlug, formatTimeRemaining } from "@/utils/formatters";
 import { useDateDisplayFormatStore } from "@/hooks/use-date-format";
 
 type Enrollment = { method: "signIn" | "import"; reauth: ClaudeAccount | null };
@@ -201,6 +202,41 @@ function ClaudeDetail({
   const commonMenu = useCommonMenuItems(account.id, summary.logsAccountId);
   const color = accountColors.modelSources.get(account.id);
   const disabled = readOnly || busy;
+  const { settingsQuery } = useSettings();
+  const [resetOpen, setResetOpen] = useState(false);
+  const paused = summary.status === "paused";
+  const recovery = summary.status === "reauth";
+  const limitReached = summary.status === "limited" || summary.status === "exceeded";
+  const resetCountdown =
+    (settingsQuery.data?.showResetCreditExpiryBadge ?? true) && account.resetGrantNearestExpiresAt
+      ? formatTimeRemaining(account.resetGrantNearestExpiresAt)
+      : null;
+  // The Codex account page's reset button (account-detail.tsx), opening the grant dialog.
+  const resetButton =
+    summary.resetCredits > 0 ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className={cn("relative h-8 gap-1.5 text-xs", resetCountdown && "pr-8")}
+        onClick={() => setResetOpen(true)}
+        disabled={disabled || paused || recovery}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+        {t("accounts.actions.resetWithCount", { count: summary.resetCredits })}
+        {resetCountdown ? (
+          <span
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute -top-1 right-1 text-[10px] tabular-nums",
+              resetCountdown.expiringSoon ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {resetCountdown.label}
+          </span>
+        ) : null}
+      </Button>
+    ) : null;
   const update = (body: Parameters<typeof api.update.mutateAsync>[0]["body"]) =>
     run(() => api.update.mutateAsync({ id: account.id, body }));
   const reauthenticate = <ReauthenticateMenu disabled={disabled} onSignIn={onSignIn} onImport={onImport} />;
@@ -213,8 +249,8 @@ function ClaudeDetail({
       <DetailBanner tone="off" icon={<PauseCircle />}>
         {t("providers.banner.paused")}
       </DetailBanner>
-    ) : summary.status === "limited" || summary.status === "exceeded" ? (
-      <DetailBanner tone={summary.tone === "bad" ? "bad" : "warn"} icon={<Clock />}>
+    ) : limitReached ? (
+      <DetailBanner tone={summary.tone === "bad" ? "bad" : "warn"} icon={<Clock />} action={resetButton}>
         {summary.notice?.text ?? t("providers.banner.limited")}
       </DetailBanner>
     ) : null;
@@ -267,6 +303,7 @@ function ClaudeDetail({
             <RefreshCw className="h-3.5 w-3.5" />
             {t("providers.detail.refresh")}
           </Button>
+          {limitReached && !recovery && !paused ? null : resetButton}
         </>
       }
       menu={[
@@ -297,7 +334,9 @@ function ClaudeDetail({
           <DetailCard title={t("accounts.usage.title")} data-testid="account-usage">
             <div className="min-w-0 space-y-4">
               <ClaudeQuota account={account} />
-              <ClaudeResetGrants accountId={account.id} readOnly={readOnly} />
+              <Button variant="outline" size="sm" onClick={() => setResetOpen(true)}>
+                <Ticket className="h-4 w-4" /> Reset grants
+              </Button>
               <ProviderAccountTrends provider="claude" accountId={account.id} embedded />
               <p className="text-xs text-muted-foreground">
                 Quota observations are provider-reported. Recorded API-equivalent costs
@@ -358,6 +397,7 @@ function ClaudeDetail({
           <DetailCard title={t("providers.detail.claudeVersion")} hint={t("providers.detail.allClaudeAccounts")}>
             <ClaudeVersionControls readOnly={readOnly} />
           </DetailCard>
+          <ClaudeResetGrantsDialog accountId={account.id} readOnly={readOnly} open={resetOpen} onOpenChange={setResetOpen} />
         </>
       }
     />

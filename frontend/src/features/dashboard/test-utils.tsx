@@ -32,7 +32,7 @@ export function renderDashboardAccounts(
         colors={NO_ACCOUNT_COLORS}
         activity={undefined}
         activityAvailable={false}
-        actions={{ readOnly: false, onResume: () => {}, onResetCredit: () => {}, ...actions }}
+        actions={{ readOnly: false, onResume: () => {}, onResetCredit: () => {}, onClaudeResetGrants: () => {}, ...actions }}
         {...props}
       />
     </MemoryRouter>,

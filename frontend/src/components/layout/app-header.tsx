@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { listAccounts } from "@/features/accounts/api";
 import { hasPermission, useAuthStore } from "@/features/auth/hooks/use-auth";
+import { useClaudeAccounts } from "@/features/claude/use-claude";
 import { getSettings } from "@/features/settings/api";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { cn } from "@/lib/utils";
@@ -60,11 +61,11 @@ export function AppHeader({
     queryKey: ["settings", "detail"],
     queryFn: getSettings,
   });
+  const claudeAccounts = useClaudeAccounts().data?.accounts ?? [];
   const showResetCreditBadges = settings?.showResetCreditBadges ?? true;
-  const totalAvailableResetCredits = accounts.reduce(
-    (total, account) => total + Math.max(0, account.availableResetCredits ?? 0),
-    0,
-  );
+  const totalAvailableResetCredits =
+    accounts.reduce((total, account) => total + Math.max(0, account.availableResetCredits ?? 0), 0) +
+    claudeAccounts.reduce((total, account) => total + (account.availableResetGrants ?? 0), 0);
   const accountsResetBadge = !showResetCreditBadges
     ? null
     : totalAvailableResetCredits > 99

@@ -370,7 +370,7 @@ function claudeSummary(account: ClaudeAccount, context: SummaryContext, now: num
     limits: preferredWindows(weekly, short, context.quotaDisplay),
     routingPolicy: account.routingPolicy,
     models: account.state.all_models ? "All models" : `${account.state.selections.length} ${account.state.selections.length === 1 ? "model" : "models"}`,
-    resetCredits: 0,
+    resetCredits: account.availableResetGrants ?? 0,
     trustedAccess: false,
     warmupEnabled: null,
     colorTarget: target,
