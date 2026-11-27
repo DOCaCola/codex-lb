@@ -71,6 +71,9 @@ _PRESERVED_THINKING_MODELS = frozenset(
 )
 # These accept a block binding only with adaptive thinking; the others also with manual budgets.
 _ADAPTIVE_ONLY_BINDING_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-5"})
+# Models whose signed thinking Anthropic reads only on the producing account and drops silently elsewhere;
+# thinking from every other model is readable on any account (preserved-thinking guide, read 2026-10-16).
+_ACCOUNT_BOUND_THINKING_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-5"})
 # Models Claude Code asks for progress updates with ``thinking.display: "updates"`` when no display
 # was chosen (CLIProxyAPI claudeModelUsesProgressDisplay, measured on Claude Code 2.1.321 in b4e7dbd).
 _PROGRESS_DISPLAY_MODELS = frozenset(
@@ -136,6 +139,11 @@ def accepts_thinking_binding(model: str, thinking_type: object) -> bool:
     if base not in _PRESERVED_THINKING_MODELS:
         return False
     return thinking_type == "adaptive" or (thinking_type == "enabled" and base not in _ADAPTIVE_ONLY_BINDING_MODELS)
+
+
+def account_bound_thinking(model: str) -> bool:
+    """Whether this model's signed thinking is readable only on the account that produced it."""
+    return _base_model(model) in _ACCOUNT_BOUND_THINKING_MODELS
 
 
 class CatalogCapabilities(BaseModel):

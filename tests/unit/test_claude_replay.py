@@ -11,9 +11,12 @@ from tests.unit.test_claude_protocol import TASK_INPUT, codec, scope
 
 pytestmark = pytest.mark.unit
 
+# Sonnet 5.5 thinking is readable only on the account that produced it; Opus thinking on any account.
+BOUND = OpaqueScope("source-a", "anthropic/claude-sonnet-5-5", "key-a")
 
-def history(opaque, *, kind="thinking", completed=True):
-    token = opaque.encode(scope(), {"type": kind, "thinking": "private", "signature": "signed"})
+
+def history(opaque, *, kind="thinking", completed=True, owner=None):
+    token = opaque.encode(owner or scope(), {"type": kind, "thinking": "private", "signature": "signed"})
     items = [{"type": "reasoning", "encrypted_content": token}, {"role": "assistant", "content": "answer"}]
     if completed:
         items.append({"role": "user", "content": "next"})
@@ -228,20 +231,28 @@ def test_active_thinking_does_not_bind_its_account():
 @pytest.mark.parametrize("completed", [True, False], ids=["new_user_turn", "closed_assistant_turn"])
 def test_compaction_prefers_signed_owner_and_reads_thinking_elsewhere(caplog, completed):
     opaque = codec()
-    payload = compact(history(opaque, completed=completed))
+    payload = compact(history(opaque, completed=completed, owner=BOUND))
     original = deepcopy(payload)
-    replay = read(payload, opaque, require_complete_history=True)
+    replay = read(payload, opaque, model=BOUND.model, require_complete_history=True)
     assert replay.owner_source_id is None
     assert replay.preferred_source_id == "source-a"
-    assert replay.project(payload, source_id="source-a", model=scope().model) == payload
+    assert replay.project(payload, source_id="source-a", model=BOUND.model) == payload
     with caplog.at_level("INFO"):
-        moved = replay.project(payload, source_id="source-b", model=scope().model)
+        moved = replay.project(payload, source_id="source-b", model=BOUND.model)
     assert moved["input"] == [READABLE, *payload["input"][1:]]
     assert "converted=1 omitted=0" in caplog.text
     assert "private" not in caplog.text
     switched = read(payload, opaque, model="other", require_complete_history=True)
     assert switched.project(payload, source_id="source-a", model="other")["input"] == moved["input"]
     assert payload == original
+
+
+def test_compaction_keeps_portable_thinking_signed_on_another_account():
+    opaque = codec()
+    payload = compact(history(opaque))
+    replay = read(payload, opaque, require_complete_history=True)
+    assert replay.project(payload, source_id="source-b", model=scope().model) == payload
+    assert replay.project(payload, source_id="source-a", model=scope().model, identity_generation=2) == payload
 
 
 @pytest.mark.parametrize("block", [{"type": "redacted_thinking", "data": "x"}, {"type": "thinking", "thinking": ""}])
@@ -255,13 +266,13 @@ def test_compaction_omits_unreadable_completed_state(block):
 
 def test_compaction_reads_conflicting_completed_owners():
     opaque = codec()
-    payload = history(opaque)
-    other = opaque.encode(OpaqueScope("source-b", scope().model, "key-a"), {"type": "thinking", "thinking": "second"})
+    payload = history(opaque, owner=BOUND)
+    other = opaque.encode(OpaqueScope("source-b", BOUND.model, "key-a"), {"type": "thinking", "thinking": "second"})
     payload["input"].insert(1, {"type": "reasoning", "encrypted_content": other})
     payload = compact(payload)
-    replay = read(payload, opaque, require_complete_history=True)
+    replay = read(payload, opaque, model=BOUND.model, require_complete_history=True)
     assert replay.owner_source_id is None
-    projected = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    projected = replay.project(payload, source_id="source-b", model=BOUND.model)["input"]
     assert projected[:2] == [READABLE, payload["input"][1]]
 
 
@@ -337,8 +348,8 @@ def _copy(text=PROGRESS["thinking"], **fields):
     return {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}], **fields}
 
 
-def progress_history(opaque, copy, *, presented=True, completed=True):
-    token = opaque.encode(scope(), PROGRESS, presented=presented)
+def progress_history(opaque, copy, *, presented=True, completed=True, owner=None):
+    token = opaque.encode(owner or scope(), PROGRESS, presented=presented)
     items = [{"role": "user", "content": "inspect"}, {"type": "reasoning", "encrypted_content": token}]
     items += [copy] if copy is not None else []
     items += [CALL, {"type": "function_call_output", "call_id": "call", "output": "ok"}]
@@ -382,18 +393,18 @@ def test_progress_history_without_an_exact_copy_replays_as_sent(copy, presented)
 
 def test_compaction_on_another_account_keeps_the_update_text_once():
     opaque = codec()
-    payload = compact(progress_history(opaque, _copy(phase="commentary")))
-    replay = read(payload, opaque, require_complete_history=True)
-    projected = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    payload = compact(progress_history(opaque, _copy(phase="commentary"), owner=BOUND))
+    replay = read(payload, opaque, model=BOUND.model, require_complete_history=True)
+    projected = replay.project(payload, source_id="source-b", model=BOUND.model)["input"]
     assert projected == [payload["input"][0], *payload["input"][2:]]
     assert str(projected).count(PROGRESS["thinking"]) == 1
 
 
 def test_compaction_without_the_copy_converts_the_update_to_text():
     opaque = codec()
-    payload = compact(progress_history(opaque, None))
-    replay = read(payload, opaque, require_complete_history=True)
-    projected = replay.project(payload, source_id="source-b", model=scope().model)["input"]
+    payload = compact(progress_history(opaque, None, owner=BOUND))
+    replay = read(payload, opaque, model=BOUND.model, require_complete_history=True)
+    projected = replay.project(payload, source_id="source-b", model=BOUND.model)["input"]
     assert projected[1] == {
         "type": "message",
         "role": "assistant",

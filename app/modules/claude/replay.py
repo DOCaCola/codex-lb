@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.reasoning import CLAUDE_REASONING_PREFIX
 from app.core.types import JsonValue
+from app.modules.claude.capabilities import account_bound_thinking
 from app.modules.claude.opaque import ClaudeOpaqueState, SignedBlock
 from app.modules.claude.search import (
     assistant_history_message,
@@ -246,7 +247,7 @@ class ClaudeReplay:
     # Only active server search binds the account; signed thinking is portable.
     owner_source_id: str | None
     preferred_source_id: str | None
-    # Summarization reads completed thinking that cannot keep its signature.
+    # Summarization reads completed thinking the target cannot read as text.
     readable_history: bool
 
     def project(
@@ -264,11 +265,8 @@ class ClaudeReplay:
         foreign_deferred: set[str] = set()
         for block in self.blocks:
             envelope = block.envelope
-            native = (envelope.source_id, envelope.model, envelope.identity_generation) == (
-                source_id,
-                model,
-                identity_generation,
-            )
+            same_account = (envelope.source_id, envelope.identity_generation) == (source_id, identity_generation)
+            native = same_account and envelope.model == model
             if envelope.block["type"] == "web_search":
                 if native:
                     native_searches.add(search_replay(envelope.block)[0])
@@ -289,9 +287,12 @@ class ClaudeReplay:
                 continue
             # Anthropic accepts signed thinking from any Claude model or account and drops
             # blocks the target cannot read, so forwarding it keeps the history append-only.
-            # Only a summarizer must read completed thinking another route produced.
+            # Only a summarizer must read completed thinking the target would drop: another
+            # model's, or an account-bound model's from another account. Converting readable
+            # thinking would rewrite the cached prefix and unbind the signed blocks after it.
+            readable = envelope.model == model and (same_account or not account_bound_thinking(model))
             copy = _presented_copy(items, block)
-            if native or block.strict or not self.readable_history:
+            if readable or block.strict or not self.readable_history:
                 if copy is not None:
                     # The signed block carries the update; its visible copy would repeat it as text.
                     replaced[copy] = None
