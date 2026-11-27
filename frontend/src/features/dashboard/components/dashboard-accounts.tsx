@@ -321,31 +321,40 @@ function ListRowAction({ summary, actions }: { summary: ProviderSummary; actions
   );
 }
 
-/** The credits line every Codex card shows, with the reset-credit button, at the same place on every Codex card. */
+/** The footer line above the status strip; its reset button sits in the right corner on every card that has one. */
+function CardFooter({ children, action }: { children?: ReactNode; action: ReactNode }) {
+  return (
+    <div className="flex min-h-[34px] items-center gap-2 border-t pt-[9px] text-xs text-muted-foreground" data-testid="account-card-footer">
+      {children}
+      <span className="flex-1" />
+      {action}
+    </div>
+  );
+}
+
+/** The credits line every Codex card shows, with the reset-credit button. */
 function CodexFooter({ account, actions }: { account: AccountSummary; actions: DashboardAccountActions }) {
   const { t } = useTranslation();
   const subscription = Math.max(0, Math.round(accountSubscriptionCredits(account) ?? 0));
   const purchased = Math.max(0, Math.round(account.creditsBalance ?? 0));
   const showReset = (account.availableResetCredits ?? 0) > 0;
   return (
-    <div className="flex min-h-[34px] items-center gap-2 border-t pt-[9px] text-xs text-muted-foreground" data-testid="account-card-footer">
+    <CardFooter action={showReset ? <CodexResetButton account={account} actions={actions} /> : null}>
       <span className="min-w-0 truncate whitespace-nowrap" title={t("dashboard.accounts.creditsTitle")}>
         {t("dashboard.accounts.credits", {
           subscription: formatNumber(subscription),
           purchased: account.creditsUnlimited ? t("common.states.unlimited") : formatNumber(purchased),
         })}
       </span>
-      <span className="flex-1" />
-      {showReset ? <CodexResetButton account={account} actions={actions} /> : null}
-    </div>
+    </CardFooter>
   );
 }
 
 /**
  * One account of any provider. Every card has the same slots: header and limits at the top, then a bottom group pinned
- * to the card's bottom edge: the provider footer (the Codex credits line and reset-credit button) and a status-strip
- * slot that is reserved whether or not the account needs attention. Footer, reset button and strip therefore sit at the
- * same place on every card. Claude cards have no footer, so their reset-grant button sits in the strip slot.
+ * to the card's bottom edge: the footer (the Codex credits line, and the reset button of Codex credits or Claude
+ * grants) and a status-strip slot that is reserved whether or not the account needs attention. Footer, reset button and
+ * strip therefore sit at the same place on every card.
  */
 export function DashboardAccountCard({
   summary,
@@ -363,8 +372,7 @@ export function DashboardAccountCard({
   const codex = summary.entry.kind === "codex" ? summary.entry.account : null;
   const strip = summary.notice;
   const remedy = summary.status === "paused" || summary.status === "reauth" || summary.status === "deactivated";
-  const claudeReset = hasClaudeResetGrants(summary) ? <ClaudeResetButton summary={summary} actions={actions} /> : null;
-  const stripAction = remedy ? <StatusAction summary={summary} actions={actions} /> : claudeReset;
+  const stripAction = remedy ? <StatusAction summary={summary} actions={actions} /> : null;
   return (
     <article
       data-testid="dashboard-account-card"
@@ -394,6 +402,7 @@ export function DashboardAccountCard({
       ) : null}
       <div className="mt-auto flex flex-col gap-[11px]" data-testid="account-card-bottom">
         {codex ? <CodexFooter account={codex} actions={actions} /> : null}
+        {hasClaudeResetGrants(summary) ? <CardFooter action={<ClaudeResetButton summary={summary} actions={actions} />} /> : null}
         <div className="h-8" data-testid="account-card-strip-slot">
           {strip ? (
             <div
@@ -406,8 +415,6 @@ export function DashboardAccountCard({
               <span className="flex-1" />
               {stripAction}
             </div>
-          ) : claudeReset ? (
-            <div className="flex h-full items-center justify-end">{claudeReset}</div>
           ) : null}
         </div>
       </div>

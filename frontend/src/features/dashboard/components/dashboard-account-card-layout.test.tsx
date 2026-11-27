@@ -38,7 +38,7 @@ describe("dashboard account card layout", () => {
     expect(within(card).queryByTestId("account-card-footer")).not.toBeInTheDocument();
   });
 
-  it("offers banked Claude reset grants in the strip slot", () => {
+  it("offers banked Claude reset grants in the footer corner, outside the status strip", () => {
     const onClaudeResetGrants = vi.fn();
     renderDashboardAccounts(
       {
@@ -50,9 +50,10 @@ describe("dashboard account card layout", () => {
       { actions: { onClaudeResetGrants } },
     );
     const [banked, none] = screen.getAllByTestId("dashboard-account-card");
-    fireEvent.click(within(within(banked).getByTestId("account-card-strip-slot")).getByRole("button"));
+    expect(within(banked).getByTestId("account-card-strip-slot")).toBeEmptyDOMElement();
+    fireEvent.click(within(within(banked).getByTestId("account-card-footer")).getByRole("button"));
     expect(onClaudeResetGrants).toHaveBeenCalledWith("claude_banked");
-    expect(within(none).getByTestId("account-card-strip-slot")).toBeEmptyDOMElement();
+    expect(within(none).queryByTestId("account-card-footer")).not.toBeInTheDocument();
   });
 
   it("shows the time left until a notice ends", () => {
