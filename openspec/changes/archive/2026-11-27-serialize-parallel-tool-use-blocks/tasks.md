@@ -7,4 +7,4 @@
 
 - [x] 2.1 Regression tests: two overlapping calls finishing in order and in reverse, and a queued call unfinished at completion, each yield one sequential block per call (all fail without the fix)
 - [x] 2.2 Unit suite, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

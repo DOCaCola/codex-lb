@@ -8,4 +8,4 @@
 
 - [x] 2.1 Migration test: naive values become UTC, the state validates, and downgrade and re-upgrade round-trip
 - [x] 2.2 Unit and OpenRouter integration tests, migration topology, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

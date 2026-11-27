@@ -10,4 +10,4 @@
 
 - [x] 2.1 Regression tests: header fallback, body precedence, explicit 0, HTTP date, bare 429 with a long header, 503 capacity delays, overload pacing, cooldown recording, capacity rejection end to end, metadata pacing (fail without the fix)
 - [x] 2.2 Unit suite, Antigravity integration tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

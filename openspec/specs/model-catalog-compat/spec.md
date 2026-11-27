@@ -1382,58 +1382,6 @@ present in the snapshot yet source-routed.
 - **WHEN** a model-catalog request omits the required-capability carrier
 - **THEN** the existing deployment-level authentication and catalog behavior remains in effect
 
-### Requirement: Per-model context window overrides are dashboard settings
-
-The per-model reported context window override (`model_context_window_overrides`, `slug -> window`) MUST be managed from the dashboard as one row per slug in the `model_context_window_overrides` table (`slug`, `context_window`), resolved per slug as environment entry < dashboard row: a slug with a row reports the row's window, a slug without a row inherits the `CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES` entry for that slug, and a slug with neither has no override (the catalog reports the upstream window). The migration and the first boot MUST NOT copy the environment dict into rows. The settings API MUST expose under `GET /api/settings/model-context-window-overrides` the catalogue of enabled text models offered to clients (`models`: each with `slug`, `display_name`, `provider`, `default_context_window` and `max_context_window`, the latter being the model's context-window ceiling or `null` when none is known) and the overrides (`overrides`) as the merged per-slug list, each entry carrying `slug`, the effective `context_window`, a `source` of `"dashboard"` or `"env"`, and `env_value` (the environment entry for the slug, `null` when none); `PUT /api/settings/model-context-window-overrides/{slug}` with `{"context_window": n}` MUST create or replace the row for `slug` in a single upsert, so concurrent creates of the same absent slug both succeed, and `DELETE /api/settings/model-context-window-overrides/{slug}` MUST remove it (404 when no row exists, including for a slug that only the environment knows). A write MUST reject with 400 `model_not_in_catalogue` a slug that is not in that catalogue and with 400 `context_window_above_maximum` a value above the model's ceiling. A write MUST reject a `context_window` that is not an integer between 1 and 2147483647 (the width of the stored column) — a float, a numeric string and a boolean are rejected, not coerced — and a slug that is empty, longer than 256 characters, or contains whitespace or non-printable characters; a slug MUST NOT be trimmed into validity, and the slug segment MUST accept `/`. The catalog endpoints (`GET /v1/models`, `GET /backend-api/codex/models`) MUST resolve the merged overrides once per catalog build from a cached snapshot of the rows that the settings API invalidates durably through the cross-replica `settings` cache namespace on every write — an invalidation MUST NOT be overwritten by a load that was already in flight when it happened —, MUST NOT read the database per model entry, and MUST apply the ceiling clamp to an environment value. Each store and delete MUST be recorded as a `settings_changed` audit event naming `model_context_window_overrides` and the slug. A stored or deleted row takes effect on the next catalog request on every replica without a restart; when the database is unreachable past the snapshot's TTL the catalog MUST keep serving the last known rows rather than failing the request. The environment variable remains as a deprecated per-slug fallback for one release and is removed in the next minor.
-
-#### Scenario: Dashboard row overrides the environment entry for its slug
-
-- **GIVEN** the process environment sets `CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES={"gpt-5.4": 300000}` and the upstream catalog reports `gpt-5.4` with `context_window=272000`
-- **WHEN** `PUT /api/settings/model-context-window-overrides/gpt-5.4` stores `{"context_window": 515000}`
-- **THEN** the next `GET /backend-api/codex/models` reports `gpt-5.4` with `context_window=515000` without a restart
-- **AND** `GET /api/settings/model-context-window-overrides` lists `gpt-5.4` with `context_window=515000`, `source="dashboard"` and `env_value=300000`
-
-#### Scenario: Deleted row returns the slug to the environment entry
-
-- **GIVEN** a dashboard row `gpt-5.4 -> 515000` while the environment entry for `gpt-5.4` is `300000`
-- **WHEN** `DELETE /api/settings/model-context-window-overrides/gpt-5.4` succeeds
-- **THEN** the next catalog request reports `gpt-5.4` with `context_window=300000`
-- **AND** the settings API lists `gpt-5.4` with `source="env"` and `env_value=300000`
-
-#### Scenario: Slug known only to the environment has no row to delete
-
-- **GIVEN** the environment entry `gpt-5.4 -> 300000` and no dashboard row for `gpt-5.4`
-- **WHEN** `DELETE /api/settings/model-context-window-overrides/gpt-5.4` is called
-- **THEN** the response is 404 with code `model_context_window_override_not_found`
-- **AND** the environment entry keeps applying
-
-#### Scenario: Dashboard value is clamped like an environment value
-
-- **GIVEN** the upstream catalog reports a model with `context_window=272000` and `max_context_window=872000`
-- **WHEN** the environment entry for that slug is `1000000`
-- **THEN** `GET /v1/models` and `GET /backend-api/codex/models` report `872000` for every context budget field of that model
-- **WHEN** `PUT /api/settings/model-context-window-overrides/{slug}` sends `{"context_window": 1000000}` for that model
-- **THEN** the response is 400 with code `context_window_above_maximum` and no row is written
-
-#### Scenario: Invalid window or slug is rejected
-
-- **WHEN** `PUT /api/settings/model-context-window-overrides/gpt-5.4` sends `{"context_window": 0}`, `-1`, `1.5`, `515000.0`, `"515000"`, `true` or `2147483648`
-- **THEN** the response is 422 and no row is written
-- **WHEN** the slug segment is empty, longer than 256 characters, or contains whitespace (including leading or trailing whitespace) or a control character
-- **THEN** the response is 400 with code `invalid_model_slug` and no row is written
-
-#### Scenario: Catalog build reads one cached snapshot
-
-- **WHEN** `GET /v1/models` or `GET /backend-api/codex/models` builds its entries
-- **THEN** the merged overrides are resolved once before the per-model loop from the cached row snapshot and the process settings
-- **AND** no database read happens per model entry
-
-#### Scenario: Catalogue lists only enabled text models
-
-- **WHEN** a source model is disabled or an OpenRouter model only produces images
-- **THEN** `GET /api/settings/model-context-window-overrides` omits it from `models`
-- **AND** `PUT` for its slug returns 400 with code `model_not_in_catalogue`
-
 ### Requirement: Native models precede external models in the Codex picker
 
 The Codex-native catalog MUST preserve native OpenAI model priorities and assign external model entries, including OpenRouter entries, consecutive priorities greater than every emitted native priority. External entries MUST retain their existing relative catalog order. This ordering MUST NOT change visibility, authorization, model identity, or routing. A catalog with no native entries MUST assign external priorities starting at zero.
@@ -1764,8 +1712,9 @@ Hidden slugs SHALL be stored one row per slug in `hidden_models`. `GET /api/sett
 
 Redirects MUST be stored one row per requested model in `model_redirects` (`source_model`, `target_model`).
 A write MUST be rejected with 400 `model_redirect_invalid` and a reason, without writing, unless the source
-is a valid slug different from the target, the target is a catalogue model servable for text generation, and
-the target is not itself a redirect source.
+is a valid slug different from the target, the target is not itself a redirect source, and either the target is a
+catalogue model servable for text generation and the source is not an image model slug, or the source is a
+`gpt-image-*` slug and the target is an enabled OpenAI API image model.
 
 #### Scenario: Redirecting a retired model
 - **GIVEN** `gpt-5.4` is not in the model registry and `gpt-5.5` is a native catalogue model
@@ -1777,10 +1726,21 @@ the target is not itself a redirect source.
 - **WHEN** `gpt-5.3 -> gpt-5.4` or `gpt-5.5 -> gpt-5.5` is stored
 - **THEN** the response is 400 with code `model_redirect_invalid` and no row is written
 
+#### Scenario: Redirecting the image backend
+- **GIVEN** `openai-apikey/gpt-image-2.5-sunburst` is an enabled OpenAI API image model
+- **WHEN** a redirect `gpt-image-2 -> openai-apikey/gpt-image-2.5-sunburst` is stored
+- **THEN** it is accepted
+
+#### Scenario: Mixed redirects are rejected
+- **WHEN** `gpt-image-2 -> gpt-5.5` or `gpt-5.4 -> openai-apikey/gpt-image-2.5-sunburst` is stored
+- **THEN** the response is 400 with code `model_redirect_invalid`
+
 ### Requirement: Operators manage redirects through the settings API
 
 `GET /api/settings/model-redirects` MUST list each redirect with `status` (`active`/`inactive`), its
-`reason` and the eligible targets by provider. `PUT .../{source}` MUST create or replace a redirect;
+`reason` and the eligible targets by provider. It MUST also list `imageSources`, the image models clients request
+from the image backend, and `disabledModels`, the text models each connected provider account offers but does not
+publish, grouped by provider. `PUT .../{source}` MUST create or replace a redirect;
 `DELETE` MUST remove it (404 `model_redirect_not_found` when absent). Writes MUST require dashboard write
 access, be audited as `settings_changed` naming `model_redirects`, and invalidate the cross-replica snapshot.
 
@@ -1792,6 +1752,12 @@ access, be audited as `settings_changed` naming `model_redirects`, and invalidat
 #### Scenario: Deleting an absent redirect
 - **WHEN** `DELETE /api/settings/model-redirects/gpt-5.4` is called without a stored redirect
 - **THEN** the response is 404 with code `model_redirect_not_found`
+
+#### Scenario: Listing redirect sources
+- **GIVEN** an OpenRouter account offering a text model that is not enabled
+- **WHEN** `GET /api/settings/model-redirects` is called
+- **THEN** `imageSources` contains `gpt-image-2`
+- **AND** `disabledModels` lists the OpenRouter model under its provider
 
 ### Requirement: Redirects and compaction routes do not overlap
 
@@ -1837,8 +1803,8 @@ separately. Each applied redirect MUST be logged with both models and the surfac
 
 Redirects MUST apply to Codex Responses over HTTP and WebSocket (owner-forwarded, non-streaming,
 `/responses/compact`, compaction-trigger turns and client prewarm), `/v1/responses`, `/v1/chat/completions`,
-and Anthropic `/v1/messages` and `count_tokens`. Images, transcriptions, embeddings, realtime and internal
-jobs MUST NOT be redirected.
+and Anthropic `/v1/messages` and `count_tokens`. The Codex and `/v1` image routes MUST apply image redirects.
+Transcriptions, embeddings, realtime and internal jobs MUST NOT be redirected.
 
 #### Scenario: Chat completions
 - **GIVEN** a redirect `gpt-5.4 -> gpt-5.5`
@@ -1846,9 +1812,9 @@ jobs MUST NOT be redirected.
 - **THEN** `gpt-5.5` serves it
 
 #### Scenario: Image requests
-- **GIVEN** a redirect whose source is an image model slug
-- **WHEN** a client calls the images API with that slug
-- **THEN** the request is not redirected
+- **GIVEN** a redirect `gpt-image-2 -> openai-apikey/gpt-image-2.5-sunburst`
+- **WHEN** a Codex client generates an image with `gpt-image-2`
+- **THEN** the OpenAI API account serves it with `gpt-image-2.5-sunburst`
 
 ### Requirement: An inactive redirect fails explicitly
 
@@ -1908,3 +1874,130 @@ MUST restore the source's own entry when the registry has one. The target's own 
 - **GIVEN** a redirect `gpt-5.5 -> gpt-6-sol` where `gpt-5.5` is a registry model
 - **WHEN** the redirect is deleted
 - **THEN** the next catalog on every replica serves `gpt-5.5` with its own metadata
+
+### Requirement: Operators name models in the model catalogue
+
+Operator model names MUST be stored one row per slug in `model_display_names`. A name MUST replace the provider's
+display name in the Codex catalog, `/v1/models`, the Anthropic models list, the dashboard model list and the settings
+pickers, resolved once per build from a snapshot invalidated across replicas on every write. Routing, upstream request
+bodies and the identity sent to a routed source model MUST keep the provider's name.
+
+#### Scenario: Renaming an OpenRouter model
+- **GIVEN** `openrouter/z-ai/glm-5.3-flash` is enabled
+- **WHEN** `PUT /api/settings/model-display-names/openrouter/z-ai/glm-5.3-flash` stores "GLM Flash"
+- **THEN** the next Codex and `/v1` model lists on every replica show "GLM Flash"
+- **AND** requests for the model still reach OpenRouter as `z-ai/glm-5.3-flash`
+
+#### Scenario: Removing a name
+- **WHEN** the name for a renamed slug is deleted
+- **THEN** the lists show the provider's name again
+
+### Requirement: Model names are not stored per account
+
+Provider account selections and model-source models MUST NOT carry display names. The upgrade MUST move existing
+OpenRouter, OpenAI API and model-source names into `model_display_names`, keeping the first account's name when
+accounts disagree, and remove them from the stored selections.
+
+#### Scenario: Existing account names are migrated
+- **GIVEN** an OpenRouter selection stored with a display name before the upgrade
+- **WHEN** the migration runs
+- **THEN** the name is stored for `openrouter/<model>` and removed from the stored selection
+
+### Requirement: Operators manage model names through the settings API
+
+`PUT /api/settings/model-display-names/{slug}` with `{"display_name": "..."}` (trimmed, 1–255 characters) MUST
+create or replace the name of a catalogue model or redirect source. `DELETE` MUST remove it. Writes MUST require
+dashboard write access and be audited as `settings_changed` naming `model_display_names`.
+
+#### Scenario: Unknown slug
+- **WHEN** a name is stored for a slug that is neither in the catalogue nor a redirect source
+- **THEN** the response is 400 with code `model_not_in_catalogue`
+
+#### Scenario: Deleting an absent name
+- **WHEN** `DELETE` is called for a slug without a name
+- **THEN** the response is 404 with code `model_display_name_not_found`
+
+### Requirement: Per-model context window overrides resolve dashboard rows over the environment
+
+Per-model reported context window overrides MUST be stored one row per slug in `model_context_window_overrides` and
+resolved per slug as environment entry < dashboard row; a slug with neither reports the upstream window. The migration
+and first boot MUST NOT copy the environment dict into rows. A stored or deleted row MUST take effect on the next
+catalog request on every replica. The `CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES` variable remains as a deprecated
+per-slug fallback for one release.
+
+#### Scenario: Dashboard row overrides the environment entry for its slug
+
+- **GIVEN** the process environment sets `CODEX_LB_MODEL_CONTEXT_WINDOW_OVERRIDES={"gpt-5.4": 300000}` and the upstream catalog reports `gpt-5.4` with `context_window=272000`
+- **WHEN** `PUT /api/settings/model-context-window-overrides/gpt-5.4` stores `{"context_window": 515000}`
+- **THEN** the next `GET /backend-api/codex/models` reports `gpt-5.4` with `context_window=515000` without a restart
+- **AND** `GET /api/settings/model-context-window-overrides` lists `gpt-5.4` with `context_window=515000`, `source="dashboard"` and `env_value=300000`
+
+#### Scenario: Deleted row returns the slug to the environment entry
+
+- **GIVEN** a dashboard row `gpt-5.4 -> 515000` while the environment entry for `gpt-5.4` is `300000`
+- **WHEN** `DELETE /api/settings/model-context-window-overrides/gpt-5.4` succeeds
+- **THEN** the next catalog request reports `gpt-5.4` with `context_window=300000`
+- **AND** the settings API lists `gpt-5.4` with `source="env"` and `env_value=300000`
+
+### Requirement: Settings API lists the model catalogue and overrides
+
+`GET /api/settings/model-context-window-overrides` MUST list the enabled text and image models offered to clients
+(`models`: `slug`, `display_name`, `provider_display_name`, `renamed`, `image`, `provider`, `default_context_window` and
+`max_context_window`, both windows `null` for image models) and the merged `overrides` (`slug`, effective
+`context_window`, `source` `"dashboard"` or `"env"`, and `env_value`).
+
+#### Scenario: Catalogue lists enabled models only
+
+- **WHEN** a source model is disabled
+- **THEN** `GET /api/settings/model-context-window-overrides` omits it from `models`
+- **AND** `PUT` for its slug returns 400 with code `model_not_in_catalogue`
+
+#### Scenario: Image models are listed without a window
+
+- **GIVEN** an enabled OpenAI API image model `openai-apikey/gpt-image-2.6-sunburst`
+- **WHEN** `GET /api/settings/model-context-window-overrides` is called
+- **THEN** it is listed with `image=true` and `null` default and maximum windows
+- **AND** `PUT` of a context window for it returns 400 with code `model_has_no_context_window`
+
+### Requirement: Context window override writes are validated
+
+`PUT /api/settings/model-context-window-overrides/{slug}` MUST upsert the row for a catalogue text model, so concurrent
+creates both succeed; `DELETE` MUST remove it, returning 404 when no row exists. Writes MUST reject windows above the
+model's ceiling, non-integer windows outside 1–2147483647 without coercion, and invalid slugs without trimming; the
+slug segment MUST accept `/`. Each write MUST be audited as `settings_changed` naming
+`model_context_window_overrides`.
+
+#### Scenario: Slug known only to the environment has no row to delete
+
+- **GIVEN** the environment entry `gpt-5.4 -> 300000` and no dashboard row for `gpt-5.4`
+- **WHEN** `DELETE /api/settings/model-context-window-overrides/gpt-5.4` is called
+- **THEN** the response is 404 with code `model_context_window_override_not_found`
+- **AND** the environment entry keeps applying
+
+#### Scenario: Dashboard value is clamped like an environment value
+
+- **GIVEN** the upstream catalog reports a model with `context_window=272000` and `max_context_window=872000`
+- **WHEN** the environment entry for that slug is `1000000`
+- **THEN** `GET /v1/models` and `GET /backend-api/codex/models` report `872000` for every context budget field of that model
+- **WHEN** `PUT /api/settings/model-context-window-overrides/{slug}` sends `{"context_window": 1000000}` for that model
+- **THEN** the response is 400 with code `context_window_above_maximum` and no row is written
+
+#### Scenario: Invalid window or slug is rejected
+
+- **WHEN** `PUT /api/settings/model-context-window-overrides/gpt-5.4` sends `{"context_window": 0}`, `-1`, `1.5`, `515000.0`, `"515000"`, `true` or `2147483648`
+- **THEN** the response is 422 and no row is written
+- **WHEN** the slug segment is empty, longer than 256 characters, or contains whitespace (including leading or trailing whitespace) or a control character
+- **THEN** the response is 400 with code `invalid_model_slug` and no row is written
+
+### Requirement: Catalog builds resolve overrides from a cached snapshot
+
+`GET /v1/models` and `GET /backend-api/codex/models` MUST resolve the merged overrides once per build from a cached row
+snapshot that every write invalidates through the cross-replica `settings` namespace, without being overwritten by an
+in-flight load. They MUST NOT read the database per entry, MUST clamp environment values to the ceiling, and MUST keep
+serving the last known rows when the database is unreachable.
+
+#### Scenario: Catalog build reads one cached snapshot
+
+- **WHEN** `GET /v1/models` or `GET /backend-api/codex/models` builds its entries
+- **THEN** the merged overrides are resolved once before the per-model loop from the cached row snapshot and the process settings
+- **AND** no database read happens per model entry

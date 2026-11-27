@@ -5003,13 +5003,21 @@ Compaction route model pickers SHALL keep offering hidden models and mark them a
 ### Requirement: Model catalogue manages redirects
 
 Settings > Models > Model catalogue MUST include a Redirects card listing requested model, served model and
-status (active, or inactive with its reason) with add, change and delete actions. The requested model MUST
-accept any slug and suggest catalogue models; the served-model picker MUST group eligible targets by provider
-and mark hidden ones.
+status (active, or inactive with its reason) with add, change and delete actions. Both model fields MUST use a
+searchable model picker with sections. The requested-model picker MUST accept any slug, list client-requested image
+models in a separate highlighted section ahead of the provider catalogues, and offer a "Show disabled models" switch
+that adds unpublished provider models, marked as not enabled. The served-model picker MUST stay disabled until a
+requested model is chosen, group eligible targets by provider, mark hidden ones, and offer image targets for image
+sources and text targets otherwise.
 
 #### Scenario: Adding a redirect for a retired model
 - **WHEN** the operator adds `gpt-5.4` redirecting to `gpt-5.5`
 - **THEN** the card lists it as active
+
+#### Scenario: Redirecting the image backend
+- **GIVEN** an OpenAI API account with `gpt-image-2.6-sunburst` enabled
+- **WHEN** the operator chooses `gpt-image-2` from the client requests section
+- **THEN** the served-model picker offers `openai-apikey/gpt-image-2.6-sunburst` and no text models
 
 ### Requirement: Catalogue rows mark redirect sources
 
@@ -5030,3 +5038,32 @@ The request-log model cell MUST show `requested -> served` for redirected reques
 - **GIVEN** a logged request for `gpt-5.4` served by `gpt-5.5`
 - **WHEN** the logs page renders it
 - **THEN** the model cell reads `gpt-5.4 -> gpt-5.5`
+
+### Requirement: Model catalogue edits names and context windows
+
+Each Settings model catalogue row SHALL have an Edit action opening an inline editor for name and context window, with
+"Use provider name" and "Use default" (or "Use environment value") resets, Enter to save and Escape to cancel. A name
+equal to the provider name SHALL remove the stored name. Image models and redirect sources SHALL show a note instead
+of the window input. Provider account dialogs and the model-source editor SHALL NOT offer name fields.
+
+#### Scenario: Renaming a model
+- **WHEN** an operator edits `openrouter/z-ai/glm-5.3-flash`, enters "GLM Flash" and presses Enter
+- **THEN** the row shows "GLM Flash" with the provider name beneath it
+
+#### Scenario: Image model
+- **WHEN** an operator edits an image model
+- **THEN** only the name can be changed
+
+#### Scenario: Read-only user
+- **WHEN** a read-only user opens the model catalogue
+- **THEN** every Edit action is disabled
+
+### Requirement: Model catalogue search and provider filter
+
+The Settings model catalogue SHALL offer a search box matching slug and name and a provider filter. Renamed rows SHALL
+show the provider's name beneath the operator's name.
+
+#### Scenario: Searching by provider name
+- **GIVEN** `openrouter/z-ai/glm-5.3-flash` is renamed "GLM Flash"
+- **WHEN** the operator selects the OpenRouter filter and searches "glm"
+- **THEN** only matching OpenRouter rows remain

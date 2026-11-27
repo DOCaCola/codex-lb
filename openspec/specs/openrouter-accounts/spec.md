@@ -7,19 +7,19 @@ Provide native OpenRouter account management, selected model discovery and truth
 ## Requirements
 
 ### Requirement: Grouped account enrollment
-The add-account chooser SHALL group actions under Codex, Claude, Antigravity, OpenRouter and
-OpenAI-compatible in that order. Codex SHALL offer OAuth and file import; the
-OpenAI-compatible group SHALL offer an API endpoint. Optional provider groups
-SHALL be absent when unavailable. All options SHALL share icon sizing, alignment
-and focus styling, and preserve close-before-open action handoff.
+The add-account chooser SHALL list the subscription providers Codex, Claude and Antigravity first, each with OAuth
+and file import, followed by the API providers OpenAI API, OpenRouter and OpenAI-compatible in that order. The
+OpenAI API and OpenRouter options SHALL take an API key; the OpenAI-compatible option SHALL take an API endpoint.
+Optional providers SHALL be absent when unavailable. All options SHALL share icon sizing, alignment and focus
+styling, and preserve close-before-open action handoff.
 
 #### Scenario: All providers available
 - **WHEN** an operator opens the account chooser with all providers available
-- **THEN** Codex options appear first, followed by Claude, Antigravity, OpenRouter and OpenAI-compatible groups
+- **THEN** Codex, Claude and Antigravity appear first, followed by OpenAI API, OpenRouter and OpenAI-compatible
 
 #### Scenario: Optional provider unavailable
 - **WHEN** a provider has no enrollment callback
-- **THEN** its group is not rendered
+- **THEN** its option is not rendered
 
 ### Requirement: Native OpenRouter accounts
 Operators SHALL create, rename, enable, disable and delete OpenRouter accounts in the Accounts dashboard using an inference key and optional separate management key. Credentials MUST be encrypted at rest and absent from dashboard responses. Invalid inference keys MUST prevent account creation.
@@ -29,11 +29,11 @@ Operators SHALL create, rename, enable, disable and delete OpenRouter accounts i
 - **THEN** the account is created with no models enabled and its credentials are not returned
 
 ### Requirement: Synchronized model selection
-The system SHALL synchronize the authenticated model catalog on creation, periodically and on manual refresh. It MUST preserve explicit selections and display names, mark removed models unavailable, and retain the last successful snapshot on synchronization failure. Selected mode SHALL keep new models disabled and advertise/route only selected available models. Explicit all-model mode SHALL advertise/route all eligible conversation models while retaining curated choices and keeping image selections explicit. Context and output limits MUST follow the provider catalog, using `top_provider` limits when they are stricter; selections MUST NOT carry context or output caps, and a selection update containing them is rejected. Reasoning and tool metadata MUST match upstream capabilities.
+The system SHALL synchronize the authenticated model catalog on creation, periodically and on manual refresh. It MUST preserve explicit selections, mark removed models unavailable, and retain the last successful snapshot on synchronization failure. Selections MUST NOT carry display names; models are named in the model catalogue. Selected mode SHALL keep new models disabled and advertise/route only selected available models. Explicit all-model mode SHALL advertise/route all eligible conversation models while retaining curated choices and keeping image selections explicit. Context and output limits MUST follow the provider catalog, using `top_provider` limits when they are stricter; selections MUST NOT carry context or output caps, and a selection update containing them is rejected. Reasoning and tool metadata MUST match upstream capabilities.
 
 #### Scenario: Refresh preserves operator intent
 - **WHEN** a refresh changes prices and adds a model in selected mode
-- **THEN** prices update, existing selections and display names remain, and the new model is disabled
+- **THEN** prices update, existing selections remain, and the new model is disabled
 
 #### Scenario: Removed model
 - **WHEN** a successful refresh omits a selected model
@@ -51,6 +51,10 @@ The system SHALL synchronize the authenticated model catalog on creation, period
 - **WHEN** an account's stored selections contain context or output caps from before this change
 - **THEN** the migration removes them and the next synchronization re-projects provider limits
 
+#### Scenario: Stored names after upgrade
+- **WHEN** an account's stored selections contain display names from before this change
+- **THEN** the migration moves them into the model catalogue and removes them from the selections
+
 ### Requirement: OpenRouter manual routing policy
 OpenRouter accounts SHALL persist normal, burn_first or preserve policy, defaulting to normal. Selection MUST apply cooldowns, model availability, exclusions and client-key restrictions before preferring burn_first over normal over preserve. Rotation SHALL occur within the highest-priority usable pool, without falling through to subscription accounts when sources are cooling down.
 
@@ -59,11 +63,15 @@ OpenRouter accounts SHALL persist normal, burn_first or preserve policy, default
 - **THEN** the normal account is selected
 
 ### Requirement: Truthful OpenRouter monitoring
-The dashboard SHALL separately display account credit balance, key allowance, provider usage, free-request quota and observation timestamps when known. Unavailable monitoring MUST be shown as unknown or stale, never zero or unlimited. Account credits MUST use the management credential when configured.
+The dashboard SHALL separately display account credit balance, key allowance, provider usage, free-request quota and observation timestamps when known. Unavailable monitoring MUST be shown as unknown or stale, never zero or unlimited. Account credits MUST use the management credential when configured. Observation timestamps MUST be stored and returned as UTC with an explicit offset.
 
 #### Scenario: No management credential
 - **WHEN** an inference key is configured without a management key
 - **THEN** key monitoring remains available and account credit balance is unavailable
+
+#### Scenario: Observation time in a non-UTC browser
+- **WHEN** the catalog was synchronized at 09:00 UTC and the dashboard runs in Europe/Berlin during winter time
+- **THEN** the account page shows the catalog as updated at 10:00
 
 ### Requirement: Provider protocol and account selection
 OpenRouter requests MUST preserve supported custom tools, namespaces, reasoning and terminal events, use the selected upstream model id, and report provider-supplied cost when available. Selection and retries MUST remain within client-key source restrictions, preserve the requested model, and MUST NOT retry after content delivery. A model-specific failure MUST NOT disable unrelated models.

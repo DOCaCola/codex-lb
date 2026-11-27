@@ -9,4 +9,4 @@
 
 - [x] 2.1 Regression tests: structured TOS reason with other wording and on HTTP 200; a suspension frame after visible output, collected and streamed, holds the account without walking the pool (fails without the fix); a search-call suspension is recorded
 - [x] 2.2 Unit suite, Antigravity and model-source integration tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

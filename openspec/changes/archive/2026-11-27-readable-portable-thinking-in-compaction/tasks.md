@@ -7,4 +7,4 @@
 
 - [x] 2.1 Unit tests: account-bound thinking on another account converts; portable thinking on another account or identity generation stays signed; model switches still convert
 - [x] 2.2 Unit suite, Claude integration tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

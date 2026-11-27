@@ -11861,3 +11861,29 @@ frame MUST NOT carry the internal synthetic-failure marker.
 - **WHEN** the client receives `response.failed`
 - **THEN** the frame carries no internal synthetic-failure marker
 - **AND** the request log records `upstream_transport` `http` with the failure's phase and detail
+
+### Requirement: Account-backed stream wrappers close the stream they wrap
+Every async-generator wrapper that consumes an account-backed upstream stream on its way to the response body MUST close the stream it wraps when it exits, whether it completes, raises or is closed. A wrapper that raises an error from the middle of the chain MUST therefore release the account stream lease before the error leaves the chain, and closing the outermost stream MUST reach the generator that holds the lease. Release MUST NOT depend on garbage collection of abandoned generators.
+
+#### Scenario: Native transport failure raised by the normalizer
+- **GIVEN** a native Codex HTTP Responses stream on an account
+- **WHEN** the upstream transport fails and the public normalizer raises `stream_incomplete`
+- **THEN** the account's stream lease is released before the error reaches the response layer
+
+#### Scenario: Client closes the stream early
+- **GIVEN** an account-backed Responses or chat-completions stream that has delivered its first event
+- **WHEN** the outermost stream is closed before the upstream finishes
+- **THEN** the account's stream lease is released
+
+### Requirement: HTTP bridge retry circuits do not manufacture cooldown expiries
+A persisted retry-circuit cooldown that is missing, zero or elapsed SHALL load as no cooldown and MUST NOT arm a half-open probe. An expiry the worker observed for an unchanged episode SHALL still admit exactly one probe.
+
+#### Scenario: Ended cooldown loaded from the durable row
+- **GIVEN** a hard-affinity bridge key whose persisted row is at the failure threshold with an absent or elapsed cooldown
+- **WHEN** requests on that key are admitted
+- **THEN** each is admitted and no half-open lease is armed
+
+#### Scenario: Watched expiry
+- **GIVEN** a worker whose local cooldown for the key has run out and whose reload returns the same episode with an elapsed cooldown
+- **WHEN** two requests are admitted in turn
+- **THEN** the first is admitted as the probe and the second is refused while the probe is in flight

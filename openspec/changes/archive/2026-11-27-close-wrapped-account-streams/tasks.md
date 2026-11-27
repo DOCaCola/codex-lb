@@ -7,4 +7,4 @@
 
 - [x] 2.1 Regression tests on the real wrapper chain: a mid-chain synthetic transport failure and an early close each release the lease-holding root; each prepend and fallback helper closes its root on early close (all fail without the fix)
 - [x] 2.2 Unit and integration suites, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

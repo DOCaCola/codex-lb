@@ -11,4 +11,4 @@
 - [x] 2.1 Integration test for the new settings response fields
 - [x] 2.2 Picker and redirect-form tests, frontend typecheck, lint and build
 - [x] 2.3 Backend suite, ruff, ty and strict OpenSpec validation
-- [ ] 2.4 Archive after deployment
+- [x] 2.4 Archive after deployment

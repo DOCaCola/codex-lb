@@ -11,4 +11,4 @@
 - [x] 2.1 Integration tests for names, migration, image entries and endpoint errors
 - [x] 2.2 Catalogue, picker and model-source editor tests; frontend typecheck, lint and build
 - [x] 2.3 Backend suite, ruff, ty, migration topology and strict OpenSpec validation
-- [ ] 2.4 Archive after deployment
+- [x] 2.4 Archive after deployment

@@ -8,4 +8,4 @@
 
 - [x] 2.1 Regression tests: fan-out over the schema limit, reference-free schemas uncharged, charged copies under the limit, request byte and node limits across declarations, protocol-level shared budget
 - [x] 2.2 Unit suite, Antigravity integration tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

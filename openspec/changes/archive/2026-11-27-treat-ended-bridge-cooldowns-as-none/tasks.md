@@ -7,4 +7,4 @@
 
 - [x] 2.1 Regression tests: loading an absent or elapsed at-threshold row admits repeatedly without a probe lease (fails without the fix); a watched local expiry still admits exactly one probe
 - [x] 2.2 Unit suite, bridge integration tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment

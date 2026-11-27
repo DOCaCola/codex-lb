@@ -390,7 +390,7 @@ text or conversation content.
 - **THEN** it is reused only after checking its recorded model against current key permissions
 
 ### Requirement: Independent dashboard model editing
-The dashboard SHALL separate source connection settings from per-model settings in source creation and editing. Each model SHALL have independently editable ID, display name, enabled state, context and output limits, capabilities, reasoning efforts and token/audio pricing. Editing one model MUST NOT change another model or unrelated raw metadata. Blank prices SHALL represent unknown pricing and zero SHALL represent a free rate. Invalid numeric values and duplicate or empty model IDs MUST prevent submission.
+The dashboard SHALL separate source connection settings from per-model settings in source creation and editing. Each model SHALL have independently editable ID, enabled state, context and output limits, capabilities, reasoning efforts and token/audio pricing; model names SHALL be set in the model catalogue. Editing one model MUST NOT change another model or unrelated raw metadata. Blank prices SHALL represent unknown pricing and zero SHALL represent a free rate. Invalid numeric values and duplicate or empty model IDs MUST prevent submission.
 
 #### Scenario: Edit one model price
 - **GIVEN** a source with two differently configured models

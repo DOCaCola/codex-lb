@@ -186,11 +186,15 @@ in account responses.
 - **THEN** it completes immediately, preserves continuation ownership and follows ordinary credential rotation
 
 ### Requirement: Refresh rotation ownership
-Refresh MUST use durable cross-worker ownership and generation checks. Explicit invalidation MUST require reauthentication; definitive transient rejections MUST permit a later retry after backoff. Uncertain consumption MUST NOT blindly replay the refresh token, and known expired access tokens MUST NOT be dispatched.
+Refresh MUST use durable cross-worker ownership and generation checks. A dispatched refresh MUST settle independently of the request that started it; requests in the same worker SHALL share it. Explicit invalidation MUST require reauthentication; definitive transient rejections MUST permit a later retry after backoff. Uncertain consumption MUST NOT blindly replay the refresh token, and known expired access tokens MUST NOT be dispatched.
 
 #### Scenario: Ambiguous refresh outcome
 - **WHEN** a refresh dispatch times out or the worker dies with a recorded intent
 - **THEN** later workers report uncertain credential state instead of rotating the same grant again
+
+#### Scenario: Caller cancelled during refresh
+- **WHEN** the client request that started a refresh disconnects before Anthropic answers
+- **THEN** the refresh still completes and settles, and the account stays ready with the rotated credentials
 
 ### Requirement: Selected catalog and pooled routing
 Explicitly selected available models, or all discovered models with resolved capabilities when All models is enabled, on enabled, credential-healthy and client-authorized accounts SHALL be routed. Selected mode SHALL be the default and synchronization MUST preserve curated choices across mode switches. Catalog synchronization MUST paginate atomically and retain the previous snapshot on failure. Quota monitoring SHALL represent observed shared and model-specific windows and unknown/stale state truthfully. Pool attempts MUST preserve model, opaque-state ownership, admission and exactly-once settlement; no retry SHALL occur after visible output or ambiguous dispatch.
@@ -427,7 +431,7 @@ Translated Responses SHALL produce deterministic ephemeral cache boundaries for 
 - **THEN** those markers and the caller's TTLs are forwarded unchanged
 
 ### Requirement: Translated completed reasoning recovery
-The gateway SHALL authenticate historical Claude state against the client scope before routing. Conversation identity SHALL govern session identity, routing affinity and retained continuation but MUST NOT authorize history, so a forked or other conversation of the same client SHALL replay authenticated state under the same rules. Authenticated signed and redacted thinking SHALL be forwarded verbatim to the selected Claude account and model, whichever produced it, in completed and active turns alike; Anthropic drops blocks the target cannot read. Thinking SHALL provide only a preferred eligible account, the producer of the latest authenticated block. Completed server search SHALL provide only a preferred eligible account; when the selected account or model differs, the gateway SHALL project it as portable hosted-search history, while preserving visible text and paired tools and leaving retained history unchanged. Compaction SHALL instead project completed thinking produced on another account or model as readable historical assistant text, omit such redacted thinking and project completed search the same way, while forwarding all other thinking verbatim. It SHALL record conversion, omission and search-projection counts without content or credentials. Active server search SHALL remain account/model-bound. A subsequent explicit user message or canonical external task input, not a paired tool output, SHALL mark earlier thinking and search completed; compaction SHALL determine this on the client-supplied history excluding its summarization instruction. Invalid authentication, active search for another model and conflicting active search owners MUST fail before dispatch with code invalid_provider_history or nonportable_provider_history, the input index and their specific message.
+The gateway SHALL authenticate historical Claude state against the client scope before routing. Conversation identity SHALL govern session identity, routing affinity and retained continuation but MUST NOT authorize history, so a forked or other conversation of the same client SHALL replay authenticated state under the same rules. Authenticated signed and redacted thinking SHALL be forwarded verbatim to the selected Claude account and model, whichever produced it, in completed and active turns alike; Anthropic drops blocks the target cannot read. Thinking SHALL provide only a preferred eligible account, the producer of the latest authenticated block. Completed server search SHALL provide only a preferred eligible account; when the selected account or model differs, the gateway SHALL project it as portable hosted-search history, while preserving visible text and paired tools and leaving retained history unchanged. Compaction SHALL instead project completed thinking the selected route cannot read as readable historical assistant text: thinking produced by another model, or by Sonnet 5.5 or Haiku 5.5, including dated aliases, on another account or account identity generation. It SHALL omit such redacted thinking and project completed search the same way, while forwarding all other thinking verbatim, so readable thinking keeps the cached prefix and the binding of later signed blocks. It SHALL record conversion, omission and search-projection counts without content or credentials. Active server search SHALL remain account/model-bound. A subsequent explicit user message or canonical external task input, not a paired tool output, SHALL mark earlier thinking and search completed; compaction SHALL determine this on the client-supplied history excluding its summarization instruction. Invalid authentication, active search for another model and conflicting active search owners MUST fail before dispatch with code invalid_provider_history or nonportable_provider_history, the input index and their specific message.
 
 #### Scenario: Historical account unavailable
 - **WHEN** only thinking belongs to an unavailable account
@@ -446,8 +450,12 @@ The gateway SHALL authenticate historical Claude state against the client scope 
 - **THEN** the selected route receives the projected search text without the original call and encrypted result
 
 #### Scenario: Compaction on another route
-- **WHEN** compaction selects another account or model than completed thinking
+- **WHEN** compaction selects another model than completed thinking, or another account for Sonnet 5.5 or Haiku 5.5 thinking
 - **THEN** the summarizer receives that thinking as readable assistant text in its original position, without a signature
+
+#### Scenario: Compaction of portable thinking on another account
+- **WHEN** compaction selects another account for completed thinking of the same model, and that model is not Sonnet 5.5 or Haiku 5.5
+- **THEN** the summarizer receives the signed thinking verbatim, and the request keeps the cached prefix of the preceding turns
 
 #### Scenario: Active tool cycle
 - **WHEN** server search belongs to the active tool turn and the selected model differs or its owner is unavailable
@@ -932,7 +940,7 @@ Translated Claude Responses over HTTP and WebSocket SHALL recognize a function_c
 Canonical external task input SHALL count as a new user turn when classifying completed versus active signed thinking and server search, using the same classifier as protocol projection. All opaque blocks MUST be authenticated before conversion or projection. Tool results and malformed task envelopes MUST NOT close active thinking or search. Server resource state SHALL retain its existing strict account/model ownership. Rejected tool-output diagnostics SHALL include identifier presence/type and metadata completeness without raw metadata or content.
 
 #### Scenario: Completed thinking before a new task
-- **WHEN** authenticated thinking precedes canonical external task input and compaction runs on another account or model
+- **WHEN** authenticated thinking precedes canonical external task input and compaction runs on a route that cannot read it
 - **THEN** that thinking is completed and becomes readable assistant text, and task content remains intact
 
 #### Scenario: Search ownership is not relaxed by a task
@@ -1786,7 +1794,7 @@ delivered, never their content.
 - **THEN** the client receives neither the carrier's done event nor the commentary copy
 
 #### Scenario: Compaction across accounts
-- **WHEN** compaction projects history with a presented update produced on another account as readable text
+- **WHEN** compaction projects history with a presented Sonnet 5.5 update produced on another account as readable text
 - **THEN** the update text appears once, carried by its commentary copy
 
 ### Requirement: Translated Claude requests carry no blank text

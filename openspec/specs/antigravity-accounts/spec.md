@@ -186,3 +186,54 @@ limit and SHALL otherwise run immediately.
 #### Scenario: Manual check while rate limited
 - **WHEN** Google answered 429 with a retry delay
 - **THEN** manual and scheduled checks send nothing until that time
+
+### Requirement: Antigravity retry delays
+For 429 and overload rejections the retry delay SHALL come from `google.rpc.RetryInfo`, falling back to the HTTP `Retry-After` (seconds, an explicit 0, or an HTTP date). A bare `RESOURCE_EXHAUSTED` MUST stay unexplained whatever its header delay. A rate limit or overload delay of at least 3 seconds SHALL cool that model on that account; shorter ones are waited out in place.
+
+#### Scenario: Capacity delay
+- **WHEN** Cloud Code answers 503 `MODEL_CAPACITY_EXHAUSTED` with a 17-second delay in RetryInfo or `Retry-After`
+- **THEN** the model is cooled on that account for 17 seconds and the request moves once to another account
+
+#### Scenario: Header-only rate limit
+- **WHEN** a `RATE_LIMIT_EXCEEDED` 429 carries no RetryInfo and `Retry-After: 600`
+- **THEN** it is classified as quota exhaustion resetting in 10 minutes
+
+### Requirement: Rate-limited Antigravity metadata pacing
+A rate-limited metadata endpoint SHALL next be due after Google's classified delay, or after its normal refresh interval when Google gives none.
+
+#### Scenario: Metadata 429 without a delay
+- **WHEN** the quota endpoint answers 429 without RetryInfo or `Retry-After`
+- **THEN** it is not due again before the quota refresh interval
+
+### Requirement: Bounded Antigravity schema reference expansion
+Schema material copied out of `$ref` targets while compiling tool schemas SHALL be measured by its UTF-8 size and node count; schemas without references MUST NOT be charged. A tool schema copying more than 256 KiB, or a request whose tool schemas together copy more than 2 MiB or 50,000 nodes, SHALL be rejected as `unsupported_parameter` on the tool that exceeded the limit. Schemas MUST NOT be weakened to fit.
+
+#### Scenario: Shared definition fan-out
+- **WHEN** a 30 KB tool schema references a 14 KB enum definition from 400 properties
+- **THEN** the request is rejected before it is sent, naming that tool
+
+#### Scenario: Limit spans declarations
+- **WHEN** ten tools each copy about 230 KB of referenced definitions
+- **THEN** the request is rejected at the tenth tool
+
+#### Scenario: Large schema without references
+- **WHEN** a tool declares a 330 KB enum inline without references
+- **THEN** it compiles unchanged
+
+### Requirement: Structured Antigravity suspension signature
+A `google.rpc.ErrorInfo` reason of `TOS_VIOLATION` SHALL classify as a terms-of-service ban regardless of HTTP status and message wording, including an error frame inside an HTTP 200 stream.
+
+#### Scenario: Structured suspension with other wording
+- **WHEN** Cloud Code returns a 403 whose ErrorInfo reason is `TOS_VIOLATION` and whose message is not the known sentence
+- **THEN** the account is marked banned and the request ends with `antigravity_account_banned`
+
+### Requirement: Antigravity rejections are recorded where observed
+What a classified rejection proves about its account SHALL be recorded when the rejection is observed: on the HTTP response, on the first event, mid-stream after output reached the client, and on a later round of the same response. Recording MUST NOT depend on whether the request is retried. A rejection of the gateway's web search call SHALL record account-level holds and MUST NOT cool the conversation's quota family or model.
+
+#### Scenario: Suspension after output
+- **WHEN** a response has delivered visible output and the stream then carries a `TOS_VIOLATION` error frame
+- **THEN** the account is marked banned, no other account receives the request, and the client receives the ban error
+
+#### Scenario: Suspension seen by web search
+- **WHEN** the gateway's search call on the account is rejected with `TOS_VIOLATION`
+- **THEN** the account is marked banned and the model receives the search tool error

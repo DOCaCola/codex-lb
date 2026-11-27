@@ -7,4 +7,4 @@
 
 - [x] 2.1 Regression tests: a cancelled caller's refresh still settles; concurrent callers share one refresh; another worker's intent is never stolen; a refresh cancelled by shutdown keeps its intent (fail without the fix where behaviour changed)
 - [x] 2.2 Unit suite, Claude integration tests, ruff, ty and strict OpenSpec validation
-- [ ] 2.3 Archive after deployment
+- [x] 2.3 Archive after deployment
