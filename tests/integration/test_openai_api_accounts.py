@@ -287,6 +287,50 @@ async def test_image_redirect_serves_codex_image_backend(async_client, platform)
         assert logs[0].cost_usd == pytest.approx(10 / 1e6 * 5 + 1000 / 1e6 * 30)
 
 
+async def test_image_response_arriving_in_chunks_is_relayed_whole(async_client, platform):
+    # A real image reply is several megabytes and reaches us over many network reads.
+    body = json.dumps(
+        {"created": 1, "data": [{"b64_json": "A" * 3_000_000}], "usage": {"input_tokens": 3, "output_tokens": 7}}
+    ).encode()
+
+    async def upstream(request):
+        response = web.StreamResponse(headers={"Content-Type": "application/json", "Content-Length": str(len(body))})
+        await response.prepare(request)
+        for start in range(0, len(body), 64 * 1024):
+            await response.write(body[start : start + 64 * 1024])
+        await response.write_eof()
+        return response
+
+    async with stub_source_upstreams() as start:
+        account_id = await _account(async_client, "Platform", await start(upstream))
+        result = await async_client.post(
+            "/backend-api/codex/images/generations", json={"model": IMAGE_MODEL, "prompt": "Large"}
+        )
+        assert result.status_code == 200, result.text
+        assert result.content == body
+        async with SessionLocal() as session:
+            log = (await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id))).one()
+        assert (log.status, log.input_tokens, log.output_tokens) == ("success", 3, 7)
+
+
+async def test_image_with_unreadable_usage_is_delivered_with_unknown_cost(async_client, platform):
+    png = base64.b64encode(b"png").decode()
+
+    async def upstream(request):
+        return web.json_response({"created": 1, "data": [{"b64_json": png}], "usage": {"total_tokens": 12}})
+
+    async with stub_source_upstreams() as start:
+        account_id = await _account(async_client, "Platform", await start(upstream))
+        result = await async_client.post(
+            "/backend-api/codex/images/generations", json={"model": IMAGE_MODEL, "prompt": "Odd usage"}
+        )
+        assert result.status_code == 200, result.text
+        assert result.json()["data"][0]["b64_json"] == png
+        async with SessionLocal() as session:
+            log = (await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id))).one()
+        assert (log.status, log.input_tokens, log.cost_usd) == ("success", None, None)
+
+
 async def test_image_stream_passes_through(async_client, platform):
     frames = [
         {"type": "image_generation.partial_image", "b64_json": "cGFy", "partial_image_index": 0},

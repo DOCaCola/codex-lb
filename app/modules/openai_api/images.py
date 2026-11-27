@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AsyncExitStack
 from typing import Literal
@@ -11,7 +12,7 @@ import aiohttp
 from fastapi import Request, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.core.clients.http import lease_model_source_session
+from app.core.clients.http import lease_model_source_session, read_capped
 from app.core.clock import REAL_SCHEDULER
 from app.core.crypto import TokenEncryptor
 from app.core.errors import openai_error
@@ -35,6 +36,8 @@ from app.modules.openrouter.images import OwnedImageStream
 
 MAX_IMAGE_RESPONSE_BYTES = 100 * 1024 * 1024
 _COMPLETED_EVENTS = frozenset({"image_generation.completed", "image_edit.completed"})
+
+logger = logging.getLogger(__name__)
 
 
 class _TokenDetails(BaseModel):
@@ -170,7 +173,18 @@ async def image_response(
 
     def capture_usage(raw: JsonValue) -> None:
         nonlocal usage, completed
-        usage = ImageUsage.model_validate(raw).source_usage() if raw is not None else None
+        # The image is already generated and paid for: a usage block we can't read leaves the cost
+        # unknown instead of discarding the result, unless the API key's budget needs the usage.
+        usage = None
+        if raw is not None:
+            try:
+                usage = ImageUsage.model_validate(raw).source_usage()
+            except ValidationError as exc:
+                logger.warning(
+                    "openai_api_image_usage_unreadable model=%s fields=%s",
+                    model,
+                    sorted({".".join(map(str, error["loc"])) for error in exc.errors()}),
+                )
         if usage is None and api._reservation_requires_usage(reservation):
             raise ImageFailure(502, "usage_unavailable", "OpenAI image response lacks usage for a limited API key")
         completed = True
@@ -238,7 +252,10 @@ async def image_response(
             streamed = OwnedImageStream(events(), finish)
             streamed.headers.update(headers)
             return streamed
-        raw = await response.content.read(MAX_IMAGE_RESPONSE_BYTES + 1)
+        declared = response.content_length
+        if declared is not None and declared > MAX_IMAGE_RESPONSE_BYTES:
+            raise ImageFailure(502, "upstream_error", "OpenAI image response exceeds the allowed size")
+        raw = await read_capped(response, MAX_IMAGE_RESPONSE_BYTES)
         if len(raw) > MAX_IMAGE_RESPONSE_BYTES:
             raise ImageFailure(502, "upstream_error", "OpenAI image response exceeds the allowed size")
         result = json.loads(raw)
