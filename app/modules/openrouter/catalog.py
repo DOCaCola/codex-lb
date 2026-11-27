@@ -14,7 +14,7 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
     selections = {selection.model: selection for selection in state.selections}
     if state.all_models:
         for model in state.catalog:
-            if model.image is None and "text" in model.architecture.output_modalities:
+            if _is_text_model(model):
                 selections.setdefault(model.id, ModelSelection(model=model.id))
         for model in state.reasoning_restrictions:
             if model not in catalog:
@@ -23,6 +23,15 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
         _project(selection, catalog.get(selection.model), state.reasoning_restrictions.get(selection.model))
         for selection in selections.values()
     ]
+
+
+def publishable_text_models(state: AccountState) -> dict[str, str]:
+    """Every text catalog model under its published slug, enabled or not."""
+    return {f"openrouter/{model.id}": model.name for model in state.catalog if _is_text_model(model)}
+
+
+def _is_text_model(model: CatalogModel) -> bool:
+    return model.image is None and "text" in model.architecture.output_modalities
 
 
 def _project(

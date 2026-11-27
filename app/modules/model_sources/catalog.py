@@ -100,6 +100,8 @@ async def image_redirect_targets() -> dict[str, UpstreamModel]:
 
 # The image models clients request natively, such as Codex's image backend.
 IMAGE_REDIRECT_SOURCE_PREFIX = "gpt-image-"
+# The image model Codex's image backend requests, and the Images routes' default.
+DEFAULT_IMAGE_MODEL = "gpt-image-2"
 
 
 async def list_redirect_target_catalogue() -> dict[str, UpstreamModel]:

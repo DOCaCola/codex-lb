@@ -191,6 +191,29 @@ async def test_billing_exhaustion_fails_over_until_refresh(async_client, platfor
         assert refreshed.json()["credit"]["exhaustedUntil"] is None
 
 
+async def test_redirect_settings_offer_client_and_disabled_requested_models(async_client, platform):
+    created = await async_client.post("/api/openai-api-accounts", json={"name": "Platform", "apiKey": "sk-test"})
+    assert created.status_code == 200, created.text
+
+    settings = (await async_client.get("/api/settings/model-redirects")).json()
+    assert settings["imageSources"] == ["gpt-image-2"]
+    # The catalogue's text model is offered while disabled; its image model is never a requested model.
+    assert settings["disabledModels"] == [
+        {
+            "provider": "openai_apikey",
+            "models": [{"slug": TEXT_MODEL, "displayName": "gpt-5.5", "hidden": False, "image": False}],
+        }
+    ]
+
+    selected = await async_client.patch(
+        f"/api/openai-api-accounts/{created.json()['id']}", json={"selections": [{"model": "gpt-5.5"}]}
+    )
+    assert selected.status_code == 200, selected.text
+    settings = (await async_client.get("/api/settings/model-redirects")).json()
+    assert settings["disabledModels"] == []
+    assert TEXT_MODEL in [target["slug"] for group in settings["targets"] for target in group["models"]]
+
+
 async def test_image_redirect_serves_codex_image_backend(async_client, platform):
     calls = []
     png = base64.b64encode(b"png").decode()

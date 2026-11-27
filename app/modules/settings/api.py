@@ -74,12 +74,29 @@ from app.db.models import (
     ProxyPoolMember,
 )
 from app.dependencies import SettingsContext, get_proxy_service_for_app, get_settings_context
+from app.modules.antigravity.catalog import publishable_text_models as antigravity_text_models
+from app.modules.antigravity.constants import ANTIGRAVITY_KIND
+from app.modules.antigravity.repository import AntigravityRepository
+from app.modules.antigravity.schemas import AccountState as AntigravityState
+from app.modules.claude.model_selection import publishable_text_models as claude_text_models
+from app.modules.claude.repository import ClaudeRepository
+from app.modules.claude.schemas import CLAUDE_KIND
+from app.modules.claude.schemas import AccountState as ClaudeState
 from app.modules.dashboard_users.break_glass import BreakGlassRequiresTotpError
 from app.modules.model_sources.catalog import (
+    DEFAULT_IMAGE_MODEL,
     IMAGE_REDIRECT_SOURCE_PREFIX,
     image_redirect_targets,
     list_redirect_target_catalogue,
 )
+from app.modules.openai_api.catalog import publishable_text_models as openai_api_text_models
+from app.modules.openai_api.repository import OpenAIApiRepository
+from app.modules.openai_api.schemas import OPENAI_API_KIND
+from app.modules.openai_api.schemas import AccountState as OpenAIApiState
+from app.modules.openrouter.catalog import publishable_text_models as openrouter_text_models
+from app.modules.openrouter.repository import OpenRouterRepository
+from app.modules.openrouter.schemas import OPENROUTER_KIND
+from app.modules.openrouter.schemas import AccountState as OpenRouterState
 from app.modules.proxy.account_cache import (
     clear_account_routing_unavailable,
     get_account_selection_cache,
@@ -1011,7 +1028,48 @@ async def _model_redirects_response(context: SettingsContext) -> ModelRedirectsR
         targets=[
             ModelRedirectProviderResponse(provider=provider, models=models) for provider, models in groups.items()
         ],
+        image_sources=[DEFAULT_IMAGE_MODEL],
+        disabled_models=await _disabled_redirect_sources(context, published={*catalogue, *redirects}),
     )
+
+
+async def _disabled_redirect_sources(
+    context: SettingsContext, *, published: set[str]
+) -> list[ModelRedirectProviderResponse]:
+    """Catalogue text models that no account publishes, by provider: a client may still request them."""
+    session = context.session
+    catalogues = {
+        CLAUDE_KIND: [
+            claude_text_models(ClaudeState.model_validate_json(row.state_json))
+            for row in await ClaudeRepository(session).list_accounts()
+        ],
+        ANTIGRAVITY_KIND: [
+            antigravity_text_models(AntigravityState.model_validate_json(row.state_json))
+            for row in await AntigravityRepository(session).list_accounts()
+        ],
+        OPENAI_API_KIND: [
+            openai_api_text_models(OpenAIApiState.model_validate_json(row.state_json))
+            for row in await OpenAIApiRepository(session).list_accounts()
+        ],
+        OPENROUTER_KIND: [
+            openrouter_text_models(OpenRouterState.model_validate_json(row.state_json))
+            for row in await OpenRouterRepository(session).list_accounts()
+        ],
+    }
+    groups: list[ModelRedirectProviderResponse] = []
+    for provider, accounts in catalogues.items():
+        models = {slug: name for account in accounts for slug, name in account.items() if slug not in published}
+        if models:
+            groups.append(
+                ModelRedirectProviderResponse(
+                    provider=provider,
+                    models=[
+                        ModelRedirectTargetResponse(slug=slug, display_name=name, hidden=False)
+                        for slug, name in sorted(models.items(), key=lambda item: item[1].lower())
+                    ],
+                )
+            )
+    return groups
 
 
 @router.get(MODEL_REDIRECTS_PATH, response_model=ModelRedirectsResponse)

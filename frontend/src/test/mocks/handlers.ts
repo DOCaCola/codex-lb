@@ -579,6 +579,11 @@ function modelRedirectsResponse(): ModelRedirects {
   return {
     redirects: state.modelRedirects,
     targets: [...groups].map(([provider, models]) => ({ provider, models })),
+    imageSources: ["gpt-image-2"],
+    disabledModels: [{
+      provider: "openrouter",
+      models: [{ slug: "openrouter/deepseek/deepseek-v4", displayName: "DeepSeek V4", hidden: false, image: false }],
+    }],
   };
 }
 

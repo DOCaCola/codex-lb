@@ -9,12 +9,29 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.types import JsonValue
+from app.modules.antigravity.constants import MODEL_PREFIX
 from app.modules.antigravity.errors import AntigravityError
-from app.modules.antigravity.schemas import EFFORTS, CatalogFamily, Effort, ModelQuotaReading, QuotaFamily
+from app.modules.antigravity.schemas import (
+    EFFORTS,
+    AccountState,
+    CatalogFamily,
+    Effort,
+    ModelQuotaReading,
+    QuotaFamily,
+)
 
 _TIERED = re.compile(r"^(?P<family>.+)-(?P<effort>low|medium|high)$")
 _DISPLAY_TIER = re.compile(r"\s*\((?:low|medium|high)\)\s*$", re.IGNORECASE)
 _ARGON = re.compile(r"argon|gemini[-_\s]*4\b", re.IGNORECASE)
+
+
+def publishable_text_models(state: AccountState) -> dict[str, str]:
+    """Every servable catalog family under its published slug, enabled or not."""
+    return {
+        MODEL_PREFIX + family.id: family.display_name
+        for family in state.catalog
+        if family.max_output_tokens is not None
+    }
 
 
 class QuotaInfo(BaseModel):

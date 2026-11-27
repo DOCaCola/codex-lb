@@ -493,6 +493,10 @@ class ModelRedirectProviderResponse(DashboardModel):
 class ModelRedirectsResponse(DashboardModel):
     redirects: list[ModelRedirectResponse]
     targets: list[ModelRedirectProviderResponse]
+    # Image models clients request natively; offered as requested models for image redirects.
+    image_sources: list[str]
+    # Provider catalogue text models no account has enabled; requested models only, never served.
+    disabled_models: list[ModelRedirectProviderResponse]
 
 
 class ModelRedirectUpsertRequest(DashboardModel):

@@ -19,6 +19,7 @@ from app.core.openai.model_redirects import set_request_model_redirect
 from app.core.request_locality import resolve_request_client_host
 from app.dependencies import ProxyContext
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
+from app.modules.model_sources.catalog import DEFAULT_IMAGE_MODEL
 from app.modules.openai_api.schemas import OPENAI_API_MODEL_PREFIX
 from app.modules.proxy.images_observability import IMAGE_ROUTE_STARTED_AT_STATE, record_images_route_observability
 from app.modules.proxy.native_image_usage import NativeImageAccounting
@@ -29,7 +30,6 @@ from app.modules.proxy.request_policy import (
 )
 
 ImageOperation = Literal["generations", "edits"]
-DEFAULT_IMAGE_MODEL = "gpt-image-2"
 _PASSTHROUGH_RESPONSE_HEADERS = frozenset({"x-codex-imagegen-request-id", "retry-after"})
 _INTEGER_FORM_FIELDS = frozenset({"n", "output_compression", "partial_images"})
 

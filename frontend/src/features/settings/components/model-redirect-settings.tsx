@@ -3,9 +3,9 @@ import { ArrowLeftRight, ArrowRight, CircleAlert, Info, Plus } from "lucide-reac
 import { useTranslation } from "react-i18next";
 
 import { AlertMessage } from "@/components/alert-message";
+import { ModelPicker, type ModelPickerGroup, type ModelPickerOption } from "@/components/model-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { SpinnerBlock } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -41,10 +41,12 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
   const { routesQuery } = useModelCompactionRoutes();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const inputId = useId();
+  const [showDisabled, setShowDisabled] = useState(false);
   const sourceErrorId = useId();
   const targetErrorId = useId();
   const redirects = redirectsQuery.data?.redirects ?? [];
+  const imageSources = redirectsQuery.data?.imageSources ?? [];
+  const disabledModels = redirectsQuery.data?.disabledModels ?? [];
   const routes = routesQuery.data?.routes ?? [];
   const models = overridesQuery.data?.models ?? [];
   const busy = disabled || upsertMutation.isPending || deleteMutation.isPending;
@@ -55,18 +57,76 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
     groups.set(group.provider, group.models.map((model) => ({ ...model, redirected: false })));
     for (const model of group.models) modelsBySlug.set(model.slug, model.displayName);
   }
+  for (const group of disabledModels) {
+    for (const model of group.models) modelsBySlug.set(model.slug, model.displayName);
+  }
   for (const model of models) {
     if (!model.redirectTargetModel || model.retired) continue;
     const option = { slug: model.slug, displayName: model.displayName, hidden: !model.listed, image: false, redirected: true };
     groups.set(model.provider, [...(groups.get(model.provider) ?? []), option]);
   }
 
+  const providerLabel = (provider: string) => t(`settings.modelCatalogue.provider.${provider}`, provider);
+  const toOption = (option: ModelOption): ModelPickerOption => ({
+    value: option.slug,
+    label: option.displayName,
+    note: option.redirected
+      ? t("settings.modelRedirects.note.redirected")
+      : option.hidden
+        ? t("settings.modelRedirects.note.hidden")
+        : undefined,
+    disabled: option.redirected,
+  });
+  const disabledByProvider = new Map(disabledModels.map((group) => [group.provider, group.models]));
+  const disabledCount = disabledModels.reduce((count, group) => count + group.models.length, 0);
+  // Names clients send natively stay apart from the providers' catalogues.
+  const sourceGroups: ModelPickerGroup[] = [
+    {
+      id: "client-requests",
+      label: t("settings.modelRedirects.clientRequests"),
+      caption: t("settings.modelRedirects.clientRequestsCaption"),
+      highlighted: true,
+      options: imageSources.map((slug) => ({
+        value: slug,
+        label: slug,
+        detail: t("settings.modelRedirects.clientImageDetail"),
+        badge: t("settings.modelRedirects.imageBadge"),
+      })),
+    },
+    ...[...new Set([...groups.keys(), ...(showDisabled ? disabledByProvider.keys() : [])])].map((provider) => ({
+      id: provider,
+      label: providerLabel(provider),
+      options: [
+        ...(groups.get(provider) ?? []).filter((option) => !option.image).map(toOption),
+        ...(showDisabled ? (disabledByProvider.get(provider) ?? []) : []).map((model) => ({
+          value: model.slug,
+          label: model.displayName,
+          badge: t("settings.modelRedirects.notEnabledBadge"),
+          dimmed: true,
+        })),
+      ],
+    })),
+  ];
+  // Image requests are served by image models, text requests by text models.
+  const targetGroups = (source: string): ModelPickerGroup[] => {
+    const image = source.startsWith(IMAGE_REDIRECT_SOURCE_PREFIX);
+    return [...groups].map(([provider, options]) => ({
+      id: provider,
+      label: providerLabel(provider),
+      options: options.filter((option) => option.image === image && option.slug !== source).map(toOption),
+    }));
+  };
+
   const displayName = (slug: string) => modelsBySlug.get(slug) ?? slug;
   const modelCell = (slug: string) => (
     <span className="flex flex-col overflow-hidden">
       <span className="truncate text-xs font-medium" title={slug}>{displayName(slug)}</span>
       <span className={cn("truncate text-[11px] text-muted-foreground", modelsBySlug.has(slug) && "font-mono")}>
-        {modelsBySlug.has(slug) ? slug : t("settings.modelRedirects.notInCatalogue")}
+        {modelsBySlug.has(slug)
+          ? slug
+          : imageSources.includes(slug)
+            ? t("settings.modelRedirects.clientImageModel")
+            : t("settings.modelRedirects.notInCatalogue")}
       </span>
     </span>
   );
@@ -128,58 +188,52 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
 
   const arrow = <ArrowRight className="mx-auto size-3.5 text-muted-foreground" aria-hidden="true" />;
   const formRow = (current: Draft) => {
-    const imageSource = current.source.trim().startsWith(IMAGE_REDIRECT_SOURCE_PREFIX);
-    const targetGroups = [...groups]
-      .map(([provider, options]) => [provider, options.filter((option) => option.image === imageSource)] as const)
-      .filter(([, options]) => options.length > 0);
+    const imageSource = current.source.startsWith(IMAGE_REDIRECT_SOURCE_PREFIX);
     return (
     <TableRow key={current.editing ? current.source : undefined} className="bg-muted/40">
       <TableCell className="align-top">
         {current.editing ? modelCell(current.source) : (
-          <Input
-            aria-label={t("settings.modelRedirects.requestedModel")}
-            list={inputId}
+          <ModelPicker
+            label={t("settings.modelRedirects.requestedModel")}
             value={current.source}
+            onChange={(source) => setDraft({
+              ...current,
+              source,
+              target: source.startsWith(IMAGE_REDIRECT_SOURCE_PREFIX) === imageSource ? current.target : "",
+            })}
+            groups={sourceGroups}
             placeholder={t("settings.modelRedirects.sourcePlaceholder")}
-            onChange={(event) => setDraft({ ...current, source: event.target.value })}
-            aria-invalid={Boolean(fieldErrors.source)}
-            aria-describedby={fieldErrors.source ? sourceErrorId : undefined}
+            searchPlaceholder={t("settings.modelRedirects.searchSource")}
+            emptyText={t("settings.modelRedirects.noTargets")}
+            allowCustom
+            toggle={disabledCount > 0 ? {
+              label: t("settings.modelRedirects.showDisabled"),
+              checked: showDisabled,
+              count: disabledCount,
+              onCheckedChange: setShowDisabled,
+            } : undefined}
+            invalid={Boolean(fieldErrors.source)}
+            describedBy={fieldErrors.source ? sourceErrorId : undefined}
             disabled={busy}
             autoFocus
-            className="h-8 min-w-[160px] font-mono text-xs"
           />
         )}
         <FieldError id={sourceErrorId} message={fieldErrors.source} />
       </TableCell>
       <TableCell className="w-7 px-0">{arrow}</TableCell>
       <TableCell className="align-top">
-        <select
-          aria-label={t("settings.modelRedirects.servedModel")}
+        <ModelPicker
+          label={t("settings.modelRedirects.servedModel")}
           value={current.target}
-          onChange={(event) => setDraft({ ...current, target: event.target.value })}
-          aria-invalid={Boolean(fieldErrors.target)}
-          aria-describedby={fieldErrors.target ? targetErrorId : undefined}
-          className={cn(
-            "h-8 w-full min-w-[160px] rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring",
-            fieldErrors.target && "border-destructive",
-          )}
-          disabled={busy}
-        >
-          <option value="">{t("settings.modelRedirects.chooseModel")}</option>
-          {targetGroups.map(([provider, options]) => (
-            <optgroup key={provider} label={t(`settings.modelCatalogue.provider.${provider}`, provider)}>
-              {options.filter((option) => option.slug !== current.source.trim() || option.slug === current.target).map((option) => (
-                <option key={option.slug} value={option.slug} disabled={option.redirected}>
-                  {option.redirected
-                    ? t("settings.modelRedirects.redirectedOption", { model: option.displayName })
-                    : option.hidden
-                      ? t("settings.compactionRoutes.hiddenModel", { model: option.displayName })
-                      : option.displayName}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+          onChange={(target) => setDraft({ ...current, target })}
+          groups={current.source ? targetGroups(current.source) : []}
+          placeholder={current.source ? t("settings.modelRedirects.chooseModel") : t("settings.modelRedirects.chooseSourceFirst")}
+          searchPlaceholder={t("settings.modelRedirects.searchTarget")}
+          emptyText={imageSource ? t("settings.modelRedirects.noImageTargets") : t("settings.modelRedirects.noTargets")}
+          invalid={Boolean(fieldErrors.target)}
+          describedBy={fieldErrors.target ? targetErrorId : undefined}
+          disabled={busy || !current.source}
+        />
         <FieldError id={targetErrorId} message={fieldErrors.target} />
       </TableCell>
       <TableCell />
@@ -279,9 +333,6 @@ export function ModelRedirectSettings({ disabled = false }: { disabled?: boolean
           </Table>
         </div>
       )}
-      <datalist id={inputId}>
-        {[...modelsBySlug].map(([slug, name]) => <option key={slug} value={slug}>{name}</option>)}
-      </datalist>
       <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
         <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
         {t("settings.modelRedirects.cacheNote")}

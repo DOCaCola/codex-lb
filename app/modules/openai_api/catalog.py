@@ -70,6 +70,11 @@ def project_models(state: AccountState) -> list[ModelSourceModel]:
     ]
 
 
+def publishable_text_models(state: AccountState) -> dict[str, str]:
+    """Every text catalog model under its published slug, enabled or not."""
+    return {OPENAI_API_MODEL_PREFIX + model.id: model.id for model in state.catalog if model.kind == "text"}
+
+
 def _project(model_id: str, display_name: str | None, model: CatalogModel | None) -> ModelSourceModel:
     # A selected model that left the catalog keeps a disabled routing claim, so it never falls
     # through to a subscription account or another model.

@@ -568,17 +568,23 @@ export const ModelRedirectSchema = z.object({
   reason: z.string().nullable(),
 });
 
+const ModelRedirectProviderSchema = z.object({
+  provider: z.string(),
+  models: z.array(z.object({
+    slug: z.string().min(1),
+    displayName: z.string(),
+    hidden: z.boolean(),
+    image: z.boolean(),
+  })),
+});
+
 export const ModelRedirectsSchema = z.object({
   redirects: z.array(ModelRedirectSchema),
-  targets: z.array(z.object({
-    provider: z.string(),
-    models: z.array(z.object({
-      slug: z.string().min(1),
-      displayName: z.string(),
-      hidden: z.boolean(),
-      image: z.boolean(),
-    })),
-  })),
+  targets: z.array(ModelRedirectProviderSchema),
+  // Image models clients request natively, such as the Codex image backend's.
+  imageSources: z.array(z.string().min(1)),
+  // Provider catalogue text models no account has enabled: requested models only.
+  disabledModels: z.array(ModelRedirectProviderSchema),
 });
 
 export const ModelRedirectUpsertRequestSchema = z.object({ targetModel: z.string().min(1) });
