@@ -170,10 +170,10 @@ async def test_all_mode_retains_curated_choices_and_applies_priority_after_coold
     capped = [{"model": "vendor/test", "contextWindow": 100000}]
     rejected = await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"selections": capped})
     assert rejected.status_code == 422
-    selected = [{"model": "vendor/test", "displayName": "Curated"}]
+    selected = [{"model": "vendor/test"}]
     await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"selections": selected})
     off = await async_client.patch(f"/api/openrouter-accounts/{ids[0]}", json={"allModels": False})
-    assert off.json()["state"]["selections"][0]["displayName"] == "Curated"
+    assert off.json()["state"]["selections"] == selected
     refreshed = await async_client.post(f"/api/openrouter-accounts/{ids[0]}/refresh")
     assert refreshed.json()["state"]["all_models"] is False
     assert refreshed.json()["routingPolicy"] == "burn_first"
@@ -306,7 +306,7 @@ async def test_account_lifecycle_selection_and_disappearance(async_client, provi
         },
     )
     assert selected.status_code == 200, selected.text
-    assert selected.json()["state"]["selections"][0] == {"model": "vendor/test", "displayName": None}
+    assert selected.json()["state"]["selections"][0] == {"model": "vendor/test"}
     original_catalog = provider.data
     provider.data = []
     refreshed = await async_client.post(f"/api/openrouter-accounts/{account_id}/refresh")

@@ -72,8 +72,6 @@ describe("ModelSourceEditDialog", () => {
       />,
     );
     await user.selectOptions(screen.getByLabelText("Model to edit"), "2");
-    await user.clear(screen.getByLabelText("Display name"));
-    await user.type(screen.getByLabelText("Display name"), "Friendly model");
     await user.clear(screen.getByLabelText("Input"));
     await user.type(screen.getByLabelText("Input"), "0");
     await user.clear(screen.getByLabelText("Output"));
@@ -90,7 +88,6 @@ describe("ModelSourceEditDialog", () => {
     });
     expect(second).toMatchObject({
       model: "second",
-      displayName: "Friendly model",
       inputPer1M: 0,
       outputPer1M: null,
       isEnabled: false,

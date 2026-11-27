@@ -32,7 +32,11 @@ describe("ModelRedirectSettings", () => {
     const sourceRow = (await screen.findByText("Redirects to GPT-5.5")).closest("tr")!;
     expect(within(sourceRow).getByText("Not in registry")).toBeInTheDocument();
     expect(within(sourceRow).getByText("400,000 · Served model")).toBeInTheDocument();
-    expect(within(sourceRow).getByRole("button", { name: "Override" })).toBeDisabled();
+    // A redirected model can be renamed; its window is the served model's.
+    await user.click(within(sourceRow).getByRole("button", { name: "Edit retired/model" }));
+    expect(screen.getByText("Uses the served model's context window while redirected")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Context window for retired/model")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     const listed = within(sourceRow).getByRole("switch", { name: "Show retired/model in client model lists" });
     expect(listed).not.toBeChecked();
     await user.click(listed);

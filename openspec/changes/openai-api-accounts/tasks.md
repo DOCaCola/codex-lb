@@ -4,6 +4,8 @@
 - [x] 1.2 Implement key validation, catalog synchronization, selection projection, scheduled refresh and the
       dashboard API.
 - [x] 1.3 Price API-key usage from the API price table.
+- [x] 1.4 Name unnamed selections after the native model registry, then models.dev's OpenAI text-model names (cached
+      with the price catalogs), then the model id.
 
 ## 2. Routing
 

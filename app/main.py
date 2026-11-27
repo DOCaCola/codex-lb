@@ -588,6 +588,7 @@ async def lifespan(app: FastAPI):
     from app.core.middleware.firewall_cache import get_firewall_ip_cache
     from app.core.openai.compaction_routes import get_model_compaction_routes_cache
     from app.core.openai.hidden_models import get_hidden_models_cache
+    from app.core.openai.model_display_names import get_model_display_names_cache
     from app.core.openai.model_redirects import get_model_redirects_cache
     from app.core.upstream_proxy.cache import get_upstream_route_cache
     from app.modules.proxy.account_cache import get_account_selection_cache, get_routing_availability_cache
@@ -645,6 +646,10 @@ async def lifespan(app: FastAPI):
     cache_poller.on_invalidation(
         NAMESPACE_SETTINGS,
         lambda: get_hidden_models_cache().invalidate(propagate=False),
+    )
+    cache_poller.on_invalidation(
+        NAMESPACE_SETTINGS,
+        lambda: get_model_display_names_cache().invalidate(propagate=False),
     )
     cache_poller.on_invalidation(
         NAMESPACE_SETTINGS,

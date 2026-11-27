@@ -602,6 +602,8 @@ function catalogueSettingsResponse(): ModelContextWindowOverrides {
           ...target,
           slug: sourceModel,
           displayName: source?.displayName ?? sourceModel,
+          providerDisplayName: source?.providerDisplayName ?? sourceModel,
+          renamed: source?.renamed ?? false,
           listed: source?.listed ?? state.listedRetiredModels.has(sourceModel),
           redirectTargetModel: targetModel,
           redirectTargetOverrideTokens: override === undefined ? null : Math.min(override, target.maxContextWindow ?? override),
@@ -2050,6 +2052,48 @@ export const handlers = [
       ),
     };
     if (model.retired) state.listedRetiredModels.add(slug);
+    return HttpResponse.json(catalogueSettingsResponse());
+  }),
+
+  http.put("/api/settings/model-display-names/:slug*", async ({ params, request }) => {
+    const slug = decodeURIComponent(String(params.slug));
+    const payload = await parseJsonBody(request, z.object({ displayName: z.string().trim().min(1).max(255) }));
+    if (!payload) {
+      return HttpResponse.json(
+        { error: { code: "validation_error", message: "displayName must be 1-255 characters" } },
+        { status: 422 },
+      );
+    }
+    if (!state.modelContextWindowOverrides.models.some((entry) => entry.slug === slug)) {
+      return HttpResponse.json(
+        { error: { code: "model_not_in_catalogue", message: "Model is not offered to clients" } },
+        { status: 400 },
+      );
+    }
+    state.modelContextWindowOverrides = {
+      ...state.modelContextWindowOverrides,
+      models: state.modelContextWindowOverrides.models.map((entry) =>
+        entry.slug === slug ? { ...entry, displayName: payload.displayName.trim(), renamed: true } : entry,
+      ),
+    };
+    return HttpResponse.json(catalogueSettingsResponse());
+  }),
+
+  http.delete("/api/settings/model-display-names/:slug*", ({ params }) => {
+    const slug = decodeURIComponent(String(params.slug));
+    const model = state.modelContextWindowOverrides.models.find((entry) => entry.slug === slug);
+    if (!model?.renamed) {
+      return HttpResponse.json(
+        { error: { code: "model_display_name_not_found", message: "Model is not renamed" } },
+        { status: 404 },
+      );
+    }
+    state.modelContextWindowOverrides = {
+      ...state.modelContextWindowOverrides,
+      models: state.modelContextWindowOverrides.models.map((entry) =>
+        entry.slug === slug ? { ...entry, displayName: entry.providerDisplayName, renamed: false } : entry,
+      ),
+    };
     return HttpResponse.json(catalogueSettingsResponse());
   }),
 

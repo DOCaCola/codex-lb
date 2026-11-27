@@ -777,7 +777,6 @@ async def _disable_source_model(async_client, source_id: str, model: str) -> Non
             "models": [
                 {
                     "model": model,
-                    "displayName": model,
                     "contextWindow": 8192,
                     "maxOutputTokens": 1024,
                     "supportsStreaming": True,
@@ -999,7 +998,6 @@ async def test_patch_model_source_returns_updated_model_list(async_client):
             "models": [
                 {
                     "model": "new-model",
-                    "displayName": "new-model",
                     "supportsStreaming": True,
                     "supportsTools": False,
                 }

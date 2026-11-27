@@ -3,7 +3,6 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 const SelectionSchema = z.object({
   model: z.string(),
-  displayName: z.string().nullable(),
 });
 export type Selection = z.infer<typeof SelectionSchema>;
 const CatalogModelSchema = z.object({
@@ -34,6 +33,7 @@ const AccountSchema = z.object({
     monthly_credit_usd: z.number().nullable(),
     credit_renews_on: z.number().int().nullable(),
   }),
+  modelNames: z.record(z.string(), z.string()),
   credit: CreditSchema,
 });
 export type OpenAIApiAccount = z.infer<typeof AccountSchema>;

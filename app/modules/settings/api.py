@@ -58,6 +58,7 @@ from app.core.openai.compaction_routes import (
     native_route_model,
 )
 from app.core.openai.hidden_models import get_hidden_models_cache
+from app.core.openai.model_display_names import get_model_display_names_cache
 from app.core.openai.model_redirects import get_model_redirects_cache, model_redirect_inactivity
 from app.core.openai.model_registry import get_model_registry
 from app.core.resilience.toggles import RESILIENCE_TOGGLE_SETTINGS
@@ -87,6 +88,7 @@ from app.modules.model_sources.catalog import (
     DEFAULT_IMAGE_MODEL,
     IMAGE_REDIRECT_SOURCE_PREFIX,
     image_redirect_targets,
+    is_image_only_source_model,
     list_redirect_target_catalogue,
 )
 from app.modules.openai_api.catalog import publishable_text_models as openai_api_text_models
@@ -107,6 +109,7 @@ from app.modules.settings.repository import (
     HiddenModelsRepository,
     ModelCompactionRoutesRepository,
     ModelContextWindowOverridesRepository,
+    ModelDisplayNamesRepository,
     ModelRedirectsRepository,
 )
 from app.modules.settings.schemas import (
@@ -125,6 +128,7 @@ from app.modules.settings.schemas import (
     ModelContextWindowOverrideResponse,
     ModelContextWindowOverridesResponse,
     ModelContextWindowOverrideUpsertRequest,
+    ModelDisplayNameUpsertRequest,
     ModelRedirectProviderResponse,
     ModelRedirectResponse,
     ModelRedirectsResponse,
@@ -823,21 +827,28 @@ async def _model_context_window_overrides_response(context: SettingsContext) -> 
     dashboard = await ModelContextWindowOverridesRepository(context.session).by_slug()
     resolved = resolve_context_window_overrides(dashboard, get_app_settings().model_context_window_overrides)
     hidden = await HiddenModelsRepository(context.session).slugs()
+    names = await ModelDisplayNamesRepository(context.session).by_slug()
     redirects = await ModelRedirectsRepository(context.session).list_all()
     catalogue = {model.slug: model for model in await list_model_catalogue()}
     targets = await list_redirect_target_catalogue() if redirects else {}
-    models = [
-        ModelCatalogueEntryResponse(
-            slug=slug,
-            display_name=model.display_name,
-            provider=model.source_kind,
-            default_context_window=model.context_window,
-            max_context_window=context_window_ceiling(model),
-            listed=slug not in hidden,
+    models = []
+    for slug, model in catalogue.items():
+        if slug in redirects:
+            continue
+        image = is_image_only_source_model(model)
+        models.append(
+            ModelCatalogueEntryResponse(
+                slug=slug,
+                display_name=names.get(slug, model.display_name),
+                provider_display_name=model.display_name,
+                renamed=slug in names,
+                image=image,
+                provider=model.source_kind,
+                default_context_window=None if image else model.context_window,
+                max_context_window=None if image else context_window_ceiling(model),
+                listed=slug not in hidden,
+            )
         )
-        for slug, model in catalogue.items()
-        if slug not in redirects
-    ]
     for source, target in redirects.items():
         original = targets.get(source)
         active = model_redirect_inactivity(target, redirects, targets) is None
@@ -846,10 +857,14 @@ async def _model_context_window_overrides_response(context: SettingsContext) -> 
             continue
         target_override = resolved.get(target) if active else None
         ceiling = context_window_ceiling(model)
+        provider_name = original.display_name if original is not None else source
         models.append(
             ModelCatalogueEntryResponse(
                 slug=source,
-                display_name=original.display_name if original is not None else source,
+                display_name=names.get(source, provider_name),
+                provider_display_name=provider_name,
+                renamed=source in names,
+                image=False,
                 provider=model.source_kind,
                 default_context_window=model.context_window,
                 max_context_window=ceiling,
@@ -905,6 +920,8 @@ async def put_model_context_window_override(
             "Model is not offered to clients; enable it before overriding its context window",
             code="model_not_in_catalogue",
         )
+    if is_image_only_source_model(model):
+        raise DashboardBadRequestError("Image models have no context window", code="model_has_no_context_window")
     ceiling = context_window_ceiling(model)
     if ceiling is not None and payload.context_window > ceiling:
         raise DashboardBadRequestError(
@@ -993,6 +1010,54 @@ async def delete_hidden_model(
     return await _model_context_window_overrides_response(context)
 
 
+# The operator's model names (model_display_names), shown wherever a model is presented.
+MODEL_DISPLAY_NAMES_PATH = "/model-display-names"
+
+
+@router.put(MODEL_DISPLAY_NAMES_PATH + "/{slug:path}", response_model=ModelContextWindowOverridesResponse)
+async def put_model_display_name(
+    request: Request,
+    slug: str,
+    payload: ModelDisplayNameUpsertRequest,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    normalized = _validate_model_slug(slug)
+    redirects = await ModelRedirectsRepository(context.session).list_all()
+    if normalized not in redirects and not any(model.slug == normalized for model in await list_model_catalogue()):
+        raise DashboardBadRequestError(
+            "Model is not offered to clients; enable it before renaming it",
+            code="model_not_in_catalogue",
+        )
+    await ModelDisplayNamesRepository(context.session).upsert(normalized, payload.display_name)
+    await get_model_display_names_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_display_names"], "slug": normalized},
+    )
+    return await _model_context_window_overrides_response(context)
+
+
+@router.delete(MODEL_DISPLAY_NAMES_PATH + "/{slug:path}", response_model=ModelContextWindowOverridesResponse)
+async def delete_model_display_name(
+    request: Request,
+    slug: str,
+    _write_access=Depends(require_dashboard_write_access),
+    context: SettingsContext = Depends(get_settings_context),
+) -> ModelContextWindowOverridesResponse:
+    normalized = _validate_model_slug(slug)
+    if not await ModelDisplayNamesRepository(context.session).delete(normalized):
+        raise DashboardNotFoundError("Model is not renamed", code="model_display_name_not_found")
+    await get_model_display_names_cache().invalidate()
+    AuditService.log_async(
+        "settings_changed",
+        actor_ip=request.client.host if request.client else None,
+        details={"changed_fields": ["model_display_names"], "slug": normalized},
+    )
+    return await _model_context_window_overrides_response(context)
+
+
 # Native compaction model routes (model_compaction_routes).
 MODEL_COMPACTION_ROUTES_PATH = "/model-compaction-routes"
 MODEL_REDIRECTS_PATH = "/model-redirects"
@@ -1003,13 +1068,14 @@ async def _model_redirects_response(context: SettingsContext) -> ModelRedirectsR
     images = await image_redirect_targets()
     catalogue = {**await list_redirect_target_catalogue(), **images}
     hidden = await HiddenModelsRepository(context.session).slugs()
+    names = await ModelDisplayNamesRepository(context.session).by_slug()
     groups: dict[str, list[ModelRedirectTargetResponse]] = {}
     for slug, model in catalogue.items():
         if slug not in redirects:
             groups.setdefault(model.source_kind, []).append(
                 ModelRedirectTargetResponse(
                     slug=slug,
-                    display_name=model.display_name,
+                    display_name=names.get(slug, model.display_name),
                     hidden=slug in hidden or model.raw.get("visibility", "list") != "list",
                     image=slug in images,
                 )
@@ -1029,12 +1095,12 @@ async def _model_redirects_response(context: SettingsContext) -> ModelRedirectsR
             ModelRedirectProviderResponse(provider=provider, models=models) for provider, models in groups.items()
         ],
         image_sources=[DEFAULT_IMAGE_MODEL],
-        disabled_models=await _disabled_redirect_sources(context, published={*catalogue, *redirects}),
+        disabled_models=await _disabled_redirect_sources(context, published={*catalogue, *redirects}, names=names),
     )
 
 
 async def _disabled_redirect_sources(
-    context: SettingsContext, *, published: set[str]
+    context: SettingsContext, *, published: set[str], names: Mapping[str, str]
 ) -> list[ModelRedirectProviderResponse]:
     """Catalogue text models that no account publishes, by provider: a client may still request them."""
     session = context.session
@@ -1058,7 +1124,12 @@ async def _disabled_redirect_sources(
     }
     groups: list[ModelRedirectProviderResponse] = []
     for provider, accounts in catalogues.items():
-        models = {slug: name for account in accounts for slug, name in account.items() if slug not in published}
+        models = {
+            slug: names.get(slug, name)
+            for account in accounts
+            for slug, name in account.items()
+            if slug not in published
+        }
         if models:
             groups.append(
                 ModelRedirectProviderResponse(
@@ -1187,6 +1258,7 @@ async def _compaction_routes_response(context: SettingsContext) -> CompactionRou
     hidden = await HiddenModelsRepository(context.session).slugs()
     redirects = await ModelRedirectsRepository(context.session).list_all()
     client_windows = await effective_client_windows()
+    names = await ModelDisplayNamesRepository(context.session).by_slug()
     models = [
         native
         for model in await list_model_catalogue()
@@ -1210,7 +1282,7 @@ async def _compaction_routes_response(context: SettingsContext) -> CompactionRou
         models=[
             CompactionRouteModelResponse(
                 slug=model.slug,
-                display_name=model.display_name,
+                display_name=names.get(model.slug, model.display_name),
                 reasoning_efforts=[level.effort for level in model.supported_reasoning_levels],
                 listed=model.slug not in hidden,
             )

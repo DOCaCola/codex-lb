@@ -4,8 +4,10 @@ from datetime import datetime
 
 import pytest
 
-from app.modules.openai_api.catalog import model_kind
+from app.core.usage import pricing_catalog
+from app.modules.openai_api.catalog import default_model_names, model_kind
 from app.modules.openai_api.credit import credit_cycle
+from app.modules.openai_api.schemas import AccountState, CatalogModel, ModelSelection
 
 pytestmark = pytest.mark.unit
 
@@ -50,3 +52,21 @@ def test_credit_cycle_clamps_renewal_day_to_month_length(renews_on, now, expecte
 )
 def test_model_kind_classifies_conversation_and_image_models(model_id, kind):
     assert model_kind(model_id) == kind
+
+
+def test_default_names_prefer_registry_then_models_dev_then_id(monkeypatch):
+    # models.dev also names gpt-5.5; the native registry's name wins.
+    monkeypatch.setattr(pricing_catalog, "_names", {"gpt-5.5": "models.dev GPT-5.5", "gpt-5.5-pro": "GPT-5.5 Pro"})
+    state = AccountState(
+        catalog=[
+            CatalogModel(id=model_id, kind=model_kind(model_id) or "text")
+            for model_id in ("gpt-5.5", "gpt-5.5-pro", "gpt-image-2.5-sunburst")
+        ],
+        selections=[ModelSelection(model="gpt-retired")],
+    )
+    assert default_model_names(state) == {
+        "gpt-5.5": "GPT-5.5",
+        "gpt-5.5-pro": "GPT-5.5 Pro",
+        "gpt-image-2.5-sunburst": "gpt-image-2.5-sunburst",
+        "gpt-retired": "gpt-retired",
+    }

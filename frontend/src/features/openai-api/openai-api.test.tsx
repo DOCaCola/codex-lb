@@ -77,20 +77,20 @@ describe("OpenAI API accounts", () => {
       <ModelPicker account={account} kind="text" busy={false} onClose={vi.fn()} onSave={onSave} />,
     );
     const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByText("gpt-6.2-astra")).toBeInTheDocument();
+    expect(dialog.getByText("GPT-6.2 Astra")).toBeInTheDocument();
     expect(dialog.queryByText("gpt-image-2.5-sunburst")).not.toBeInTheDocument();
-    await userEvent.click(dialog.getByRole("checkbox", { name: "gpt-6-luna" }));
+    await userEvent.click(dialog.getByRole("checkbox", { name: "GPT-6 Luna" }));
     await userEvent.click(dialog.getByRole("button", { name: "Save 2 models" }));
     expect(onSave).toHaveBeenCalledWith([
-      { model: "gpt-6.2-astra", displayName: null },
-      { model: "gpt-image-2.5-sunburst", displayName: null },
-      { model: "gpt-6-luna", displayName: null },
+      { model: "gpt-6.2-astra" },
+      { model: "gpt-image-2.5-sunburst" },
+      { model: "gpt-6-luna" },
     ]);
     picker.unmount();
 
     render(<ModelPicker account={account} kind="image" busy={false} onClose={vi.fn()} onSave={onSave} />);
     const images = within(screen.getByRole("dialog"));
     expect(images.getByText("gpt-image-2.5-sunburst")).toBeInTheDocument();
-    expect(images.queryByText("gpt-6.2-astra")).not.toBeInTheDocument();
+    expect(images.queryByText("GPT-6.2 Astra")).not.toBeInTheDocument();
   });
 });

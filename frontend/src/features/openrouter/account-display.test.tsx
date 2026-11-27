@@ -26,7 +26,7 @@ describe("Unified provider accounts", () => {
     const account = createOpenRouterAccount();
     account.state.all_models = allModels;
     account.state.selections = ["model-a", "model-b"].map((model) => ({
-      model, displayName: null,
+      model,
     }));
     const view = renderDashboardAccounts({ openRouterAccounts: [account] });
     expect(screen.queryByText(/2 models|All models/)).not.toBeInTheDocument();

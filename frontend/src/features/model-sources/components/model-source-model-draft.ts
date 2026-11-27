@@ -12,7 +12,6 @@ import {
 export type ModelRow = {
   key: string;
   model: string;
-  displayName: string;
   isEnabled: boolean;
   draft: ModelSourceDraft;
   initialDraft: ModelSourceDraft;
@@ -23,7 +22,6 @@ export function newRow(): ModelRow {
   return {
     key: crypto.randomUUID(),
     model: "",
-    displayName: "",
     isEnabled: true,
     draft: { ...initialModelSourceDraft },
     initialDraft: { ...initialModelSourceDraft },
@@ -39,7 +37,6 @@ export function useModelRows(source?: ModelSource) {
           return {
             key: String(model.id),
             model: model.model,
-            displayName: model.displayName ?? "",
             isEnabled: model.isEnabled,
             draft,
             initialDraft: draft,
@@ -54,13 +51,7 @@ export function validateModelRows(rows: ModelRow[]): boolean {
   const ids = rows.map((row) => row.model.trim());
   if (!ids.length || new Set(ids).size !== ids.length) return false;
   return rows.every((row) => {
-    if (
-      !row.model.trim() ||
-      row.model.trim().length > 255 ||
-      /[,\n]/.test(row.model) ||
-      row.displayName.length > 255
-    )
-      return false;
+    if (!row.model.trim() || row.model.trim().length > 255 || /[,\n]/.test(row.model)) return false;
     for (const key of ["contextWindow", "maxOutputTokens"] as const) {
       const value = row.draft[key].trim();
       if (value && (!Number.isSafeInteger(Number(value)) || Number(value) <= 0))
@@ -93,7 +84,6 @@ export function modelRowsToInputs(rows: ModelRow[]): ModelSourceModelInput[] {
       supportsStreaming: row.draft.supportsStreaming,
       supportsTools: row.draft.supportsTools,
       supportsVision: row.draft.supportsVision,
-      displayName: row.displayName.trim() || null,
       isEnabled: row.isEnabled,
       contextWindow: row.draft.contextWindow.trim()
         ? Number(row.draft.contextWindow)

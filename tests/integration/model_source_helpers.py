@@ -44,7 +44,6 @@ async def _create_model_source(
 ) -> str:
     model_entry: dict[str, object] = {
         "model": model,
-        "displayName": model,
         "contextWindow": 8192,
         "maxOutputTokens": 1024,
         "supportsStreaming": supports_streaming,

@@ -59,34 +59,19 @@ export function ModelSourceModelEditor({
             >
               {rows.map((row) => (
                 <option key={row.key} value={row.key}>
-                  {row.displayName ||
-                    row.model ||
-                    t("modelSources.modelEditor.newModel")}
+                  {row.model || t("modelSources.modelEditor.newModel")}
                 </option>
               ))}
             </select>
           </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-sm font-medium">
-              <span>{t("modelSources.modelEditor.id")}</span>
-              <Input
-                value={selected.model}
-                maxLength={255}
-                onChange={(event) => update({ model: event.target.value })}
-              />
-            </label>
-            <label className="space-y-1 text-sm font-medium">
-              <span>{t("modelSources.modelEditor.displayName")}</span>
-              <Input
-                value={selected.displayName}
-                maxLength={255}
-                placeholder={selected.model}
-                onChange={(event) =>
-                  update({ displayName: event.target.value })
-                }
-              />
-            </label>
-          </div>
+          <label className="block space-y-1 text-sm font-medium">
+            <span>{t("modelSources.modelEditor.id")}</span>
+            <Input
+              value={selected.model}
+              maxLength={255}
+              onChange={(event) => update({ model: event.target.value })}
+            />
+          </label>
           <div className="flex items-center justify-between">
             <label className="flex items-center gap-2 text-sm">
               <Checkbox

@@ -145,7 +145,6 @@ class CreditResponse(BaseModel):
 class ModelSelection(DashboardModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1, max_length=255)
-    display_name: str | None = Field(default=None, max_length=255)
 
 
 class AccountState(BaseModel):

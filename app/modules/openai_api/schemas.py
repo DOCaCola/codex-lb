@@ -38,7 +38,6 @@ class CatalogModel(BaseModel):
 class ModelSelection(DashboardModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1, max_length=255)
-    display_name: str | None = Field(default=None, max_length=255)
 
 
 class AccountState(BaseModel):
@@ -87,6 +86,8 @@ class OpenAIApiAccountResponse(DashboardModel):
     name: str
     is_enabled: bool
     state: AccountState
+    # Published name per model id when the selection sets none.
+    model_names: dict[str, str]
     credit: CreditEstimate
 
 

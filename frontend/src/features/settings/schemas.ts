@@ -508,14 +508,19 @@ export const ModelContextWindowOverrideSchema = z.object({
   envValue: z.number().int().positive().nullable().optional().default(null),
 });
 
-// A text model currently offered to clients. `maxContextWindow` is the largest
-// override the backend accepts for it (null when its provider declares none).
+// A model currently offered to clients. `displayName` is the name clients see:
+// the operator's name when `renamed`, otherwise `providerDisplayName`.
+// `maxContextWindow` is the largest override the backend accepts (null when
+// the provider declares none); image models have no context window at all.
 // `listed` is false when it is hidden from client model lists.
 export const ModelCatalogueEntrySchema = z.object({
   slug: z.string().min(1),
   displayName: z.string(),
+  providerDisplayName: z.string(),
+  renamed: z.boolean(),
+  image: z.boolean(),
   provider: z.string(),
-  defaultContextWindow: z.number().int().positive(),
+  defaultContextWindow: z.number().int().positive().nullable(),
   maxContextWindow: z.number().int().positive().nullable(),
   listed: z.boolean(),
   redirectTargetModel: z.string().nullable(),
@@ -530,6 +535,10 @@ export const ModelContextWindowOverridesSchema = z.object({
 
 export const ModelContextWindowOverrideUpsertRequestSchema = z.object({
   contextWindow: z.number().int().positive(),
+});
+
+export const ModelDisplayNameUpsertRequestSchema = z.object({
+  displayName: z.string().trim().min(1).max(255),
 });
 
 // Native compaction model routes: a coding model's compaction runs on another

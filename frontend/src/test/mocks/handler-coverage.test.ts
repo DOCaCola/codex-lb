@@ -142,6 +142,8 @@ const EXPECTED_ENDPOINTS = [
 	"DELETE /api/settings/model-redirects/:source*",
 	"PUT /api/settings/hidden-models/:slug*",
 	"DELETE /api/settings/hidden-models/:slug*",
+	"PUT /api/settings/model-display-names/:slug*",
+	"DELETE /api/settings/model-display-names/:slug*",
 	"GET /api/settings/quota-reset-webhook",
 	"GET /api/settings/quota-reset-webhook/destination",
 	"GET /api/sticky-sessions",

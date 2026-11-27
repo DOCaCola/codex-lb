@@ -169,6 +169,7 @@ from app.core.openai.compaction import (
 from app.core.openai.compaction_routes import compaction_routes_for
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.hidden_models import get_hidden_models_cache
+from app.core.openai.model_display_names import get_model_display_names_cache, named_by_slug, named_models
 from app.core.openai.model_redirects import (
     ModelRedirectAttribution,
     get_model_redirects_cache,
@@ -3541,6 +3542,10 @@ async def _build_codex_models_response_body(
     models, source_models, context_window_overrides, redirects = await _catalog_redirects(
         models, source_models, context_window_overrides, require_responses=True
     )
+    names = await get_model_display_names_cache().get()
+    models = named_by_slug(models, names)
+    metadata_models = named_by_slug(metadata_models, names)
+    source_models = named_models(source_models, names)
     visible_source_models = []
     for source_model in source_models:
         if visibility_allowed_models is None and not _source_catalog_model_allowed(
@@ -3732,6 +3737,9 @@ async def _build_models_response_body(
     models, source_models, context_window_overrides, redirects = await _catalog_redirects(
         models, source_models, context_window_overrides
     )
+    names = await get_model_display_names_cache().get()
+    models = named_by_slug(models, names)
+    source_models = named_models(source_models, names)
 
     if not models and not source_models:
         return JSONResponse(content=_dump_v1_models_response(ModelListResponse(data=[])))
@@ -3805,6 +3813,9 @@ async def _build_anthropic_models_response_body(api_key: ApiKeyData | None, *, n
     native_models, source_models, context_window_overrides, redirects = await _catalog_redirects(
         native_models, source_models, context_window_overrides, require_responses=True
     )
+    names = await get_model_display_names_cache().get()
+    native_models = named_by_slug(native_models, names)
+    source_models = named_models(source_models, names)
     listed = [model for model in native_models.values() if is_public_model(model, allowed_models)]
     source_models = [
         model
@@ -4212,7 +4223,7 @@ def context_window_ceiling(model: UpstreamModel) -> int | None:
 
 
 async def list_model_catalogue() -> list[UpstreamModel]:
-    """Text models currently offered to clients, for the Settings model catalogue."""
+    """Models currently offered to clients, for the Settings model catalogue, under their provider names."""
     registry = get_model_registry()
     native = await _operator_available_native_models(registry.get_models_with_fallback(), None)
     models = [
@@ -4222,7 +4233,7 @@ async def list_model_catalogue() -> list[UpstreamModel]:
     ]
     seen = {model.slug for model in models}
     for model in await _list_enabled_source_catalog_models(None):
-        if model.slug not in seen and not _is_image_only_source_model(model):
+        if model.slug not in seen:
             models.append(model)
             seen.add(model.slug)
     return models

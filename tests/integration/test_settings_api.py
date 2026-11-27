@@ -2336,6 +2336,9 @@ async def test_model_context_window_overrides_round_trip_with_provenance(async_c
     assert models["gpt-5.4"] == {
         "slug": "gpt-5.4",
         "displayName": models["gpt-5.4"]["displayName"],
+        "providerDisplayName": models["gpt-5.4"]["displayName"],
+        "renamed": False,
+        "image": False,
         "provider": "subscription",
         "defaultContextWindow": 272_000,
         "maxContextWindow": 1_000_000,

@@ -179,7 +179,6 @@ async def _create_model_source(
 ) -> str:
     model_payload: dict[str, object] = {
         "model": model,
-        "displayName": model,
         "maxOutputTokens": 1024,
         "supportsStreaming": supports_streaming,
         "supportsTools": True,

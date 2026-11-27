@@ -8,6 +8,7 @@ from app.core.auth.dependencies import (
     set_dashboard_error_format,
     validate_dashboard_session,
 )
+from app.core.openai.model_display_names import get_model_display_names_cache
 from app.core.openai.model_registry import get_model_registry, is_public_model
 from app.core.usage.recent import RecentLookbacks, recent_lookbacks_query
 from app.db.session import detach_session_objects, get_background_session
@@ -62,6 +63,7 @@ async def list_models() -> dict:
     models_by_slug = registry.get_models_with_fallback()
     if not models_by_slug:
         return {"models": []}
+    names = await get_model_display_names_cache().get()
     allowed_efforts = {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
     def _normalize_effort(value: str | None) -> str | None:
@@ -75,7 +77,7 @@ async def list_models() -> dict:
     models = [
         {
             "id": slug,
-            "name": model.display_name or slug,
+            "name": names.get(slug) or model.display_name or slug,
             "sourceOnly": False,
             "supportedReasoningEfforts": list(
                 dict.fromkeys(
@@ -102,7 +104,7 @@ async def list_models() -> dict:
         models.append(
             {
                 "id": source_model.slug,
-                "name": source_model.display_name or source_model.slug,
+                "name": names.get(source_model.slug) or source_model.display_name or source_model.slug,
                 "sourceOnly": True,
             }
         )

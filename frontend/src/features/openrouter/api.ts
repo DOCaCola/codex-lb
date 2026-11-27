@@ -3,7 +3,6 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 const SelectionSchema = z.object({
   model: z.string(),
-  displayName: z.string().nullable(),
 });
 export type Selection = z.infer<typeof SelectionSchema>;
 const CatalogSchema = z.object({

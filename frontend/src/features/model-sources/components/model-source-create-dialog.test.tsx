@@ -22,7 +22,6 @@ describe("ModelSourceCreateDialog", () => {
       "https://example.com/v1",
     );
     await user.type(screen.getByLabelText("Model ID"), "one");
-    await user.type(screen.getByLabelText("Display name"), "First model");
     await user.type(screen.getByLabelText("Input"), "0");
     await user.click(screen.getByRole("button", { name: "Add model" }));
     await user.type(screen.getByLabelText("Model ID"), "two");
@@ -32,13 +31,11 @@ describe("ModelSourceCreateDialog", () => {
     expect(onSubmit.mock.calls[0][0].models).toEqual([
       expect.objectContaining({
         model: "one",
-        displayName: "First model",
         inputPer1M: 0,
         outputPer1M: null,
       }),
       expect.objectContaining({
         model: "two",
-        displayName: null,
         inputPer1M: null,
         outputPer1M: 3.25,
       }),

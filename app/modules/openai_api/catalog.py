@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
+from app.core.openai.model_registry import UpstreamModel as UpstreamRegistryModel
 from app.core.openai.model_registry import get_model_registry
+from app.core.usage.pricing_catalog import get_active_model_names
 from app.db.models import ModelSourceModel
 from app.modules.openai_api.schemas import (
     OPENAI_API_MODEL_PREFIX,
@@ -64,23 +66,38 @@ def catalog_models(models: list[UpstreamModel]) -> list[CatalogModel]:
 
 def project_models(state: AccountState) -> list[ModelSourceModel]:
     catalog = {model.id: model for model in state.catalog}
-    return [
-        _project(selection.model, selection.display_name, catalog.get(selection.model))
-        for selection in state.selections
-    ]
+    return [_project(selection.model, catalog.get(selection.model)) for selection in state.selections]
 
 
 def publishable_text_models(state: AccountState) -> dict[str, str]:
     """Every text catalog model under its published slug, enabled or not."""
-    return {OPENAI_API_MODEL_PREFIX + model.id: model.id for model in state.catalog if model.kind == "text"}
+    names = default_model_names(state)
+    return {OPENAI_API_MODEL_PREFIX + model.id: names[model.id] for model in state.catalog if model.kind == "text"}
 
 
-def _project(model_id: str, display_name: str | None, model: CatalogModel | None) -> ModelSourceModel:
+def default_model_names(state: AccountState) -> dict[str, str]:
+    """The provider name of each catalog or selected model; the Settings model catalogue may rename it."""
+    registry = get_model_registry().get_models_with_fallback()
+    ids = {model.id for model in state.catalog} | {selection.model for selection in state.selections}
+    return {model_id: _default_name(model_id, registry) for model_id in ids}
+
+
+def _default_name(model_id: str, known: dict[str, UpstreamRegistryModel]) -> str:
+    # OpenAI's model list carries no names. The native registry names the models it describes;
+    # models.dev names OpenAI's other text models.
+    model = known.get(model_id)
+    if model is not None:
+        return model.display_name
+    return get_active_model_names().get(model_id.lower(), model_id)
+
+
+def _project(model_id: str, model: CatalogModel | None) -> ModelSourceModel:
     # A selected model that left the catalog keeps a disabled routing claim, so it never falls
     # through to a subscription account or another model.
+    registry = get_model_registry().get_models_with_fallback()
     row = ModelSourceModel(
         model=OPENAI_API_MODEL_PREFIX + model_id,
-        display_name=display_name or model_id,
+        display_name=_default_name(model_id, registry),
         is_enabled=model is not None,
         supports_streaming=True,
         supports_tools=False,
@@ -95,7 +112,7 @@ def _project(model_id: str, display_name: str | None, model: CatalogModel | None
         return row
     row.supports_tools = True
     metadata["experimental_supported_tools"] = _RESPONSES_TOOL_TYPES
-    known = get_model_registry().get_models_with_fallback().get(model_id)
+    known = registry.get(model_id)
     if known is None:
         # The native registry describes OpenAI's models; an id it does not know keeps the source defaults.
         metadata["default_reasoning_level"] = "none"

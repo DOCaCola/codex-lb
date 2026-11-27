@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, StrictInt, field_validator
+from pydantic import ConfigDict, Field, StrictInt, StringConstraints, field_validator
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -409,15 +409,20 @@ class ModelContextWindowOverrideResponse(DashboardModel):
     env_value: int | None = None
 
 
-# A text model currently offered to clients. ``default_context_window`` is the
-# window it reports without an override; ``max_context_window`` is the largest
-# override it accepts (``None`` when its provider declares no ceiling).
-# ``listed`` is false when the operator hid it from client model lists.
+# A model currently offered to clients. ``display_name`` is the name clients see:
+# the operator's name when ``renamed``, otherwise ``provider_display_name``.
+# ``default_context_window`` is the window it reports without an override and
+# ``max_context_window`` the largest override it accepts (``None`` when its
+# provider declares no ceiling); image models have neither. ``listed`` is false
+# when the operator hid it from client model lists.
 class ModelCatalogueEntryResponse(DashboardModel):
     slug: str
     display_name: str
+    provider_display_name: str
+    renamed: bool
+    image: bool
     provider: str
-    default_context_window: int
+    default_context_window: int | None
     max_context_window: int | None
     listed: bool
     redirect_target_model: str | None = None
@@ -440,6 +445,10 @@ class ModelContextWindowOverrideUpsertRequest(DashboardModel):
     # bool, a float or a numeric string is an operator mistake to surface as a
     # 422 rather than silently coerce into a stored window.
     context_window: StrictInt = Field(ge=1, le=MAX_MODEL_CONTEXT_WINDOW)
+
+
+class ModelDisplayNameUpsertRequest(DashboardModel):
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 
 
 # Native compaction model routes. ``models`` are the native models a route may

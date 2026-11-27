@@ -562,6 +562,9 @@ def _reset_global_state() -> None:
         get_hidden_models_cache().clear()
     except Exception:
         pass
+    from app.core.openai.model_display_names import get_model_display_names_cache
+
+    get_model_display_names_cache().clear()
     from app.core.openai.model_redirects import get_model_redirects_cache
 
     get_model_redirects_cache().clear()

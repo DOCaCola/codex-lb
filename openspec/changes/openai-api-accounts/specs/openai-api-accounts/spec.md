@@ -32,6 +32,21 @@ until selected. A model removed upstream MUST stay listed as unavailable and MUS
 - **WHEN** a client requests an API-key image model on `/v1/responses`
 - **THEN** the response is 400 directing the client to `/v1/images`
 
+### Requirement: Unnamed API-key models take registry names
+OpenAI's model list carries no names. A model not renamed in the model catalogue SHALL be published and shown on the
+dashboard under the native model registry's name for its id, else under the name models.dev publishes for that OpenAI
+text model, else under the id. models.dev names SHALL be refreshed and cached with the public price catalogs.
+Selections MUST NOT carry display names.
+
+#### Scenario: Default model name
+- **WHEN** `gpt-6.2-astra` and `gpt-image-2.5-sunburst` are selected and not renamed
+- **THEN** they are published as "GPT-6.2 Astra" and "gpt-image-2.5-sunburst"
+
+#### Scenario: API-only model
+- **WHEN** `gpt-5.5-pro` is selected and not renamed, the registry does not describe it and models.dev names it
+  "GPT-5.5 Pro"
+- **THEN** it is published as "GPT-5.5 Pro"
+
 ### Requirement: Codex routes exclude API-key models
 The Codex model list MUST NOT include `openai_apikey` models, and Codex backend Responses and compact requests for
 them MUST fail with 400 stating that OpenAI API models are served on `/v1` only. `/v1/models`,

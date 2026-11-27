@@ -27,6 +27,7 @@ import {
   createConversationDetails,
   createConversationEntry,
   createConversationsResponse,
+  createModelContextWindowOverrides,
   createModelSource,
   createRequestLogEntry,
 } from "../src/test/mocks/factories";
@@ -1156,8 +1157,8 @@ for (const width of [1440, 390]) {
     await applyTheme(page, "light");
     await interceptApi(page);
     const source = createModelSource({ name: "Model gateway" });
-    source.models[0] = { ...source.models[0], displayName: "Local Coder", inputPer1M: 0.5, cachedInputPer1M: 0.1, outputPer1M: 1.5 };
-    source.models.push({ ...source.models[0], id: 2, model: "free-model", displayName: "Free Model", inputPer1M: 0, outputPer1M: 0 });
+    source.models[0] = { ...source.models[0], displayName: null, inputPer1M: 0.5, cachedInputPer1M: 0.1, outputPer1M: 1.5 };
+    source.models.push({ ...source.models[0], id: 2, model: "free-model", inputPer1M: 0, outputPer1M: 0 });
     await page.route("**/api/model-sources/", (route) => fulfill(route, { sources: [source] }));
     await page.goto(`${BASE_URL}/settings/models`);
     await page.getByRole("button", { name: "Edit Model gateway" }).click();
@@ -1169,6 +1170,45 @@ for (const width of [1440, 390]) {
     await page.screenshot({ animations: "disabled", path: path.join(SCREENSHOT_DIR, `model-source-editor-${width}.png`) });
     await page.getByTestId("model-source-edit-scroll-region").evaluate((element) => { element.scrollTop = element.scrollHeight; });
     await page.screenshot({ animations: "disabled", path: path.join(SCREENSHOT_DIR, `model-source-editor-${width}-bottom.png`) });
+  });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`model catalogue names — ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 1400 });
+    await applyTheme(page, theme);
+    await interceptApi(page);
+    const catalogue = createModelContextWindowOverrides();
+    catalogue.models.push(
+      {
+        ...catalogue.models[2]!,
+        slug: "openrouter/z-ai/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+        providerDisplayName: "Z.ai: GLM 5.3 Flash",
+        renamed: true,
+        provider: "openrouter",
+        defaultContextWindow: 256000,
+        maxContextWindow: 256000,
+      },
+      {
+        ...catalogue.models[2]!,
+        slug: "openai-apikey/gpt-image-2.6-sunburst",
+        displayName: "gpt-image-2.6-sunburst",
+        providerDisplayName: "gpt-image-2.6-sunburst",
+        image: true,
+        provider: "openai_apikey",
+        defaultContextWindow: null,
+        maxContextWindow: null,
+      },
+    );
+    await page.route("**/api/settings/model-context-window-overrides", (route) => fulfill(route, catalogue));
+    await page.goto(`${BASE_URL}/settings/models`);
+    const section = page.locator("#model-catalogue");
+    await expect(section.getByText("openrouter/z-ai/glm-5.3-flash")).toBeVisible();
+    await section.screenshot({ path: testInfo.outputPath(`model-catalogue-${theme}.png`), animations: "disabled" });
+    await section.getByRole("button", { name: "Edit gpt-5.4" }).click();
+    await expect(section.getByLabel("Name for gpt-5.4")).toBeFocused();
+    await section.screenshot({ path: testInfo.outputPath(`model-catalogue-editor-${theme}.png`), animations: "disabled" });
   });
 }
 

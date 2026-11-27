@@ -9,7 +9,6 @@ from app.modules.shared.schemas import DashboardModel
 
 class ModelSourceModelInput(DashboardModel):
     model: str = Field(min_length=1, max_length=255)
-    display_name: str | None = Field(default=None, max_length=255)
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
     supports_streaming: bool = True
@@ -26,6 +25,8 @@ class ModelSourceModelInput(DashboardModel):
 class ModelSourceModelResponse(ModelSourceModelInput):
     id: int
     source_id: str
+    # The provider's name; managed accounts project it from their catalog. The Settings model catalogue renames.
+    display_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

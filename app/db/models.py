@@ -1795,6 +1795,25 @@ class HiddenModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class ModelDisplayName(Base):
+    """The operator's name for a published model, shown in client model lists and on the dashboard.
+
+    Without a row the model keeps the name its provider supplies.
+    """
+
+    __tablename__ = "model_display_names"
+
+    slug: Mapped[str] = mapped_column(String, primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class ModelCompactionRoute(Base):
     """Native compaction requests on ``slug`` run on ``compaction_model``.
 

@@ -1139,6 +1139,9 @@ export function createModelContextWindowOverrides(
 			{
 				slug: "gpt-5.4",
 				displayName: "GPT-5.4",
+				providerDisplayName: "GPT-5.4",
+				renamed: false,
+				image: false,
 				provider: "subscription",
 				defaultContextWindow: 272000,
 				maxContextWindow: 1000000,
@@ -1150,6 +1153,9 @@ export function createModelContextWindowOverrides(
 			{
 				slug: "gpt-5.5",
 				displayName: "GPT-5.5",
+				providerDisplayName: "GPT-5.5",
+				renamed: false,
+				image: false,
 				provider: "subscription",
 				defaultContextWindow: 272000,
 				maxContextWindow: null,
@@ -1161,6 +1167,9 @@ export function createModelContextWindowOverrides(
 			{
 				slug: "anthropic/claude-opus-5-5",
 				displayName: "Claude Opus 5.5",
+				providerDisplayName: "Claude Opus 5.5",
+				renamed: false,
+				image: false,
 				provider: "claude",
 				defaultContextWindow: 1000000,
 				maxContextWindow: 1000000,

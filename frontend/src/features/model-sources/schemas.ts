@@ -44,7 +44,6 @@ export const ModelSourcesResponseSchema = z.object({
 
 export const ModelSourceModelInputSchema = z.object({
   model: z.string().min(1).max(255),
-  displayName: z.string().max(255).nullable().optional(),
   contextWindow: z.number().int().positive().nullable().optional(),
   maxOutputTokens: z.number().int().positive().nullable().optional(),
   supportsStreaming: z.boolean().optional(),

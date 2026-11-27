@@ -63,7 +63,6 @@ describe("OpenRouter model selection", () => {
         "vendor/retired",
       ].map((model) => ({
         model,
-        displayName: "Custom name",
       }));
       const save = vi.fn().mockResolvedValue(undefined);
       render(
@@ -160,7 +159,6 @@ describe("OpenRouter model selection", () => {
     filtered.state.selections = ["vendor/test", "vendor/retired"].map(
       (model) => ({
         model,
-        displayName: null,
       }),
     );
     render(
@@ -236,7 +234,6 @@ describe("OpenRouter model selection", () => {
     expect(
       screen.queryByLabelText("Output cap for vendor/test"),
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Display name for vendor/test")).toBeVisible();
   });
   it("requires explicit selection and offers no per-model token limits", async () => {
     const user = userEvent.setup();
@@ -259,7 +256,7 @@ describe("OpenRouter model selection", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save 1 model" }));
     expect(save).toHaveBeenCalledWith(
-      [{ model: "vendor/test", displayName: null }],
+      [{ model: "vendor/test" }],
       { allModels: false, reasoningRestrictions: {} },
     );
   });
@@ -271,7 +268,7 @@ describe("OpenRouter model selection", () => {
         ...account.state,
         catalog: [],
         selections: [
-          { model: "vendor/retired", displayName: null },
+          { model: "vendor/retired" },
         ],
       },
     };

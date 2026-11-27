@@ -10,6 +10,7 @@ import {
   deleteModelCompactionRoute,
   deleteHiddenModel,
   deleteModelContextWindowOverride,
+  deleteModelDisplayName,
   deleteModelRedirect,
   getModelCompactionRoutes,
   getModelContextWindowOverrides,
@@ -20,11 +21,16 @@ import {
   putModelCompactionRoute,
   putHiddenModel,
   putModelContextWindowOverride,
+  putModelDisplayName,
   putModelRedirect,
   testUpstreamProxyEndpoint,
   updateSettings,
 } from "@/features/settings/api";
-import type { CompactionRouteUpsertRequest, SettingsUpdateRequest } from "@/features/settings/schemas";
+import type {
+  CompactionRouteUpsertRequest,
+  ModelContextWindowOverrides,
+  SettingsUpdateRequest,
+} from "@/features/settings/schemas";
 import type {
   AccountProxyBindingRequest,
   UpstreamProxyEndpointCreateRequest,
@@ -168,8 +174,17 @@ export function useUpstreamProxyAdmin(options?: { enabled?: boolean }) {
   };
 }
 
-// M4 model catalogue: per-model context window overrides. The list merges
-// dashboard rows with the environment fallback per slug; writes go to one slug.
+// One edit of a model catalogue row: `undefined` leaves a field as it is and
+// `null` returns it to the provider's name or the inherited window.
+export type ModelCatalogueEdit = {
+  slug: string;
+  displayName?: string | null;
+  contextWindow?: number | null;
+};
+
+// M4 model catalogue: names, context window overrides and list visibility per
+// model. The window list merges dashboard rows with the environment fallback
+// per slug; writes go to one slug.
 export function useModelContextWindowOverrides() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -181,26 +196,39 @@ export function useModelContextWindowOverrides() {
   });
   const overridesQuery = { data, error, isFetching, isLoading, isPending, isSuccess, refetch };
 
-  const upsertMutation = useMutation({
-    mutationFn: ({ slug, contextWindow }: { slug: string; contextWindow: number }) =>
-      putModelContextWindowOverride(slug, { contextWindow }),
-    onSuccess: () => {
+  const saveMutation = useMutation({
+    mutationFn: async ({ slug, displayName, contextWindow }: ModelCatalogueEdit) => {
+      let catalogue: ModelContextWindowOverrides | undefined;
+      if (displayName !== undefined) {
+        catalogue =
+          displayName === null
+            ? await deleteModelDisplayName(slug)
+            : await putModelDisplayName(slug, { displayName });
+      }
+      if (contextWindow !== undefined) {
+        catalogue =
+          contextWindow === null
+            ? await deleteModelContextWindowOverride(slug)
+            : await putModelContextWindowOverride(slug, { contextWindow });
+      }
+      return catalogue;
+    },
+    onSuccess: (catalogue, { displayName }) => {
       toast.success(t("settings.modelCatalogue.toasts.saved"));
-      void queryClient.invalidateQueries({ queryKey });
+      if (catalogue) {
+        queryClient.setQueryData(queryKey, catalogue);
+      }
+      if (displayName !== undefined) {
+        // Redirect and compaction pickers and the dashboard's model names show the catalogue name.
+        for (const key of [["settings", "model-compaction-routes"], ["settings", "model-redirects"], ["models"]]) {
+          void queryClient.invalidateQueries({ queryKey: key });
+        }
+      }
     },
     onError: (error: Error) => {
+      // The name may have been saved before the window failed.
+      void queryClient.invalidateQueries({ queryKey });
       toast.error(error.message || t("settings.modelCatalogue.toasts.saveFailed"));
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (slug: string) => deleteModelContextWindowOverride(slug),
-    onSuccess: () => {
-      toast.success(t("settings.modelCatalogue.toasts.removed"));
-      void queryClient.invalidateQueries({ queryKey });
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || t("settings.modelCatalogue.toasts.removeFailed"));
     },
   });
 
@@ -219,7 +247,7 @@ export function useModelContextWindowOverrides() {
     },
   });
 
-  return { overridesQuery, upsertMutation, deleteMutation, visibilityMutation };
+  return { overridesQuery, saveMutation, visibilityMutation };
 }
 
 // Native compaction model routes. The backend validates every write against

@@ -7,7 +7,7 @@ import pytest
 from aiohttp import web
 from sqlalchemy import select
 
-from app.db.models import ModelSource, RequestLog, SourceCooldown
+from app.db.models import ModelSource, ModelSourceModel, RequestLog, SourceCooldown
 from app.db.session import SessionLocal
 from app.modules.model_sources import pooled_accounts
 from app.modules.openai_api.client import OpenAIApiClient, OpenAIApiError
@@ -73,6 +73,8 @@ async def test_account_lifecycle_catalog_and_client_lists(async_client, platform
         ("gpt-image-2.5-sunburst", "image"),
         ("gpt-5.5", "text"),
     ]
+    # OpenAI's model list has no names: known text models take the native registry's, others keep their id.
+    assert account["modelNames"] == {"gpt-image-2.5-sunburst": "gpt-image-2.5-sunburst", "gpt-5.5": "GPT-5.5"}
     assert account["credit"]["monthlyCreditUsd"] == 50
     assert account["credit"]["spentUsd"] == 0
     assert account["credit"]["remainingUsd"] == 50
@@ -87,6 +89,17 @@ async def test_account_lifecycle_catalog_and_client_lists(async_client, platform
     by_id = {model["id"]: model for model in models}
     assert by_id[TEXT_MODEL]["api_types"] == ["chat_completions"]
     assert by_id[IMAGE_MODEL]["api_types"] == ["images"]
+    async with SessionLocal() as session:
+        names = dict(
+            (
+                await session.execute(
+                    select(ModelSourceModel.model, ModelSourceModel.display_name).where(
+                        ModelSourceModel.model.in_([TEXT_MODEL, IMAGE_MODEL])
+                    )
+                )
+            ).all()
+        )
+    assert names == {TEXT_MODEL: "GPT-5.5", IMAGE_MODEL: "gpt-image-2.5-sunburst"}
     codex = (await async_client.get("/backend-api/codex/models")).json()
     codex_slugs = {model["slug"] for model in codex["models"]}
     assert TEXT_MODEL not in codex_slugs
@@ -201,7 +214,7 @@ async def test_redirect_settings_offer_client_and_disabled_requested_models(asyn
     assert settings["disabledModels"] == [
         {
             "provider": "openai_apikey",
-            "models": [{"slug": TEXT_MODEL, "displayName": "gpt-5.5", "hidden": False, "image": False}],
+            "models": [{"slug": TEXT_MODEL, "displayName": "GPT-5.5", "hidden": False, "image": False}],
         }
     ]
 
@@ -234,6 +247,22 @@ async def test_image_redirect_serves_codex_image_backend(async_client, platform)
         assert stored.status_code == 200, stored.text
         assert {"slug": IMAGE_MODEL, "displayName": "gpt-image-2.5-sunburst", "hidden": False, "image": True} in [
             target for group in stored.json()["targets"] for target in group["models"]
+        ]
+        # Image models join the model catalogue for naming and listing; they have no context window.
+        catalogue = (await async_client.get("/api/settings/model-context-window-overrides")).json()
+        image = next(model for model in catalogue["models"] if model["slug"] == IMAGE_MODEL)
+        assert (image["image"], image["defaultContextWindow"], image["maxContextWindow"]) == (True, None, None)
+        windowed = await async_client.put(
+            f"/api/settings/model-context-window-overrides/{IMAGE_MODEL}", json={"contextWindow": 1000}
+        )
+        assert windowed.json()["error"]["code"] == "model_has_no_context_window"
+        renamed = await async_client.put(
+            f"/api/settings/model-display-names/{IMAGE_MODEL}", json={"displayName": "Sunburst"}
+        )
+        assert renamed.status_code == 200, renamed.text
+        redirects = (await async_client.get("/api/settings/model-redirects")).json()
+        assert {"slug": IMAGE_MODEL, "displayName": "Sunburst", "hidden": False, "image": True} in [
+            target for group in redirects["targets"] for target in group["models"]
         ]
 
         result = await async_client.post(

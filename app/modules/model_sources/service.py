@@ -190,7 +190,6 @@ def _model_inputs_to_rows(models: list[ModelSourceModelInput]) -> list[ModelSour
         rows.append(
             ModelSourceModel(
                 model=model,
-                display_name=item.display_name.strip() if item.display_name else None,
                 context_window=item.context_window,
                 max_output_tokens=item.max_output_tokens,
                 supports_streaming=item.supports_streaming,

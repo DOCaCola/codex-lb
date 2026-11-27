@@ -7,6 +7,7 @@ import {
   DashboardSettingsSchema,
   ModelContextWindowOverrideUpsertRequestSchema,
   ModelContextWindowOverridesSchema,
+  ModelDisplayNameUpsertRequestSchema,
   ModelRedirectsSchema,
   ModelRedirectUpsertRequestSchema,
   SettingsUpdateRequestSchema,
@@ -25,6 +26,7 @@ const MODEL_CONTEXT_WINDOW_OVERRIDES_PATH = `${SETTINGS_PATH}/model-context-wind
 const MODEL_COMPACTION_ROUTES_PATH = `${SETTINGS_PATH}/model-compaction-routes`;
 const MODEL_REDIRECTS_PATH = `${SETTINGS_PATH}/model-redirects`;
 const HIDDEN_MODELS_PATH = `${SETTINGS_PATH}/hidden-models`;
+const MODEL_DISPLAY_NAMES_PATH = `${SETTINGS_PATH}/model-display-names`;
 
 export function getSettings() {
   return get(SETTINGS_PATH, DashboardSettingsSchema);
@@ -99,6 +101,17 @@ export function putHiddenModel(slug: string) {
 
 export function deleteHiddenModel(slug: string) {
   return del(`${HIDDEN_MODELS_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema);
+}
+
+export function putModelDisplayName(slug: string, payload: unknown) {
+  const validated = ModelDisplayNameUpsertRequestSchema.parse(payload);
+  return put(`${MODEL_DISPLAY_NAMES_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema, {
+    body: validated,
+  });
+}
+
+export function deleteModelDisplayName(slug: string) {
+  return del(`${MODEL_DISPLAY_NAMES_PATH}/${encodeURIComponent(slug)}`, ModelContextWindowOverridesSchema);
 }
 
 // Native compaction model routes (one dashboard row per coding model).

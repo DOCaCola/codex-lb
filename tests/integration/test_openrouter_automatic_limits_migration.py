@@ -39,9 +39,11 @@ def test_openrouter_selection_caps_removed_and_catalog_marked_stale(tmp_path):
             assert isinstance(stored_json, str)
             stored = json.loads(stored_json)
             assert stored["selections"] == [
-                {"model": "z-ai/glm-5.3-flash", "display_name": None},
-                {"model": "vendor/named", "display_name": "Named"},
+                {"model": "z-ai/glm-5.3-flash"},
+                {"model": "vendor/named"},
             ]
+            names = connection.execute(sa.text("select slug, display_name from model_display_names")).all()
+            assert [tuple(row) for row in names] == [("openrouter/vendor/named", "Named")]
             assert stored["catalog_updated_at"] is None
             assert stored["key_error"] == "retained"
         command.downgrade(_build_alembic_config(url), PARENT)

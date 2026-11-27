@@ -41,7 +41,7 @@ def _project(
     # never fall through to a subscription account or a different paid model.
     row = ModelSourceModel(
         model=f"openrouter/{selection.model}",
-        display_name=selection.display_name or (model.name if model else selection.model),
+        display_name=model.name if model else selection.model,
         is_enabled=model is not None,
         supports_streaming=True,
         supports_tools=False,

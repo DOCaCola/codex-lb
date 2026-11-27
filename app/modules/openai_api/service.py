@@ -10,7 +10,7 @@ from app.core.utils.time import utcnow
 from app.db.models import AccountRoutingPolicy, ModelSource, OpenAIApiAccount
 from app.modules.model_sources.pooled_accounts import clear_cooldowns, cooldown_until
 from app.modules.model_sources.service import ModelSourceNotFoundError
-from app.modules.openai_api.catalog import catalog_models, project_models
+from app.modules.openai_api.catalog import catalog_models, default_model_names, project_models
 from app.modules.openai_api.client import OpenAIApiClient, OpenAIApiError
 from app.modules.openai_api.credit import credit_cycle
 from app.modules.openai_api.repository import OpenAIApiRepository
@@ -151,6 +151,7 @@ class OpenAIApiService:
             name=row.source.name,
             is_enabled=row.source.is_enabled,
             state=state,
+            model_names=default_model_names(state),
             credit=CreditEstimate(
                 cycle_start=cycle_start,
                 cycle_end=cycle_end,

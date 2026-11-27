@@ -111,8 +111,8 @@ export function ModelPicker({
           </DialogTitle>
           <DialogDescription>
             {kind === "images"
-              ? "Select image generation and editing models for the public Images API. Conversational selections are preserved. Refresh the account if an image model is missing."
-              : "Choose models for selected mode. Context windows are set in Settings → Model catalogue. Saved choices and image selections are retained when All models is enabled."}
+              ? "Select image generation and editing models for the public Images API. Conversational selections are preserved. Refresh the account if an image model is missing. Names are set in Settings → Model catalogue."
+              : "Choose models for selected mode. Names and context windows are set in Settings → Model catalogue. Saved choices and image selections are retained when All models is enabled."}
           </DialogDescription>
         </DialogHeader>
         {kind === "models" && (
@@ -185,10 +185,7 @@ export function ModelPicker({
                     onCheckedChange={(checked) =>
                       setSelected((current) =>
                         checked
-                          ? [
-                              ...current,
-                              { model: id, displayName: null },
-                            ]
+                          ? [...current, { model: id }]
                           : current.filter((item) => item.model !== id),
                       )
                     }
@@ -270,31 +267,6 @@ export function ModelPicker({
                         })
                       }
                     />
-                  </div>
-                )}
-                {selection && (
-                  <div className="mt-2">
-                    <label className="block space-y-1 text-xs sm:max-w-[50%]">
-                      Display name
-                      <Input
-                        aria-label={`Display name for ${id}`}
-                        value={selection.displayName ?? ""}
-                        placeholder={model?.name ?? id}
-                        disabled={busy}
-                        onChange={(event) =>
-                          setSelected((current) =>
-                            current.map((item) =>
-                              item.model === id
-                                ? {
-                                    ...item,
-                                    displayName: event.target.value || null,
-                                  }
-                                : item,
-                            ),
-                          )
-                        }
-                      />
-                    </label>
                   </div>
                 )}
               </div>

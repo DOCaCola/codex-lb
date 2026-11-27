@@ -21,6 +21,7 @@ from app.db.models import (
     LocalLoginPolicy,
     ModelCompactionRoute,
     ModelContextWindowOverride,
+    ModelDisplayName,
     ModelRedirect,
 )
 from app.modules.dashboard_users.repository import DashboardUsersRepository
@@ -634,6 +635,38 @@ class HiddenModelsRepository:
 
     async def delete(self, slug: str) -> bool:
         row = await self._session.get(HiddenModel, slug)
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.commit()
+        return True
+
+
+class ModelDisplayNamesRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def by_slug(self) -> dict[str, str]:
+        result = await self._session.execute(select(ModelDisplayName.slug, ModelDisplayName.display_name))
+        return {slug: name for slug, name in result.all()}
+
+    async def upsert(self, slug: str, display_name: str) -> None:
+        """Create or replace the name for ``slug`` in one statement, also under concurrency."""
+        dialect = self._session.get_bind().dialect.name
+        insert_fn = _UPSERT_INSERT_FNS.get(dialect)
+        if insert_fn is None:
+            raise RuntimeError(f"model_display_names upsert unsupported for dialect={dialect!r}")
+        statement = insert_fn(ModelDisplayName).values(slug=slug, display_name=display_name)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[ModelDisplayName.slug],
+                set_={"display_name": display_name, "updated_at": func.now()},
+            )
+        )
+        await self._session.commit()
+
+    async def delete(self, slug: str) -> bool:
+        row = await self._session.get(ModelDisplayName, slug)
         if row is None:
             return False
         await self._session.delete(row)

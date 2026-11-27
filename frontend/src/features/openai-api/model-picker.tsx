@@ -53,8 +53,8 @@ export function ModelPicker({
           </DialogTitle>
           <DialogDescription>
             {images
-              ? "Image models serve the Images API and image redirects. Codex clients reach them only through a redirect in Settings → Model catalogue."
-              : "Selected models are published to /v1 clients as openai-apikey/<model>. Codex clients cannot use them: the monthly API credit does not cover Codex usage."}
+              ? "Image models serve the Images API and image redirects. Codex clients reach them only through a redirect in Settings → Model catalogue, where they are also named."
+              : "Selected models are published to /v1 clients as openai-apikey/<model>. Codex clients cannot use them: the monthly API credit does not cover Codex usage. Names are set in Settings → Model catalogue."}
           </DialogDescription>
         </DialogHeader>
         <Input
@@ -81,13 +81,13 @@ export function ModelPicker({
                     onCheckedChange={(checked) =>
                       setSelected((current) =>
                         checked
-                          ? [...current, { model: id, displayName: null }]
+                          ? [...current, { model: id }]
                           : current.filter((item) => item.model !== id),
                       )
                     }
                   />
                   <span>
-                    {id}
+                    {account.modelNames[id]}
                     {model ? "" : " — Unavailable"}
                   </span>
                 </label>
@@ -95,24 +95,6 @@ export function ModelPicker({
                   {OPENAI_API_MODEL_PREFIX}
                   {id}
                 </div>
-                {selection && (
-                  <label className="mt-2 block space-y-1 text-xs sm:max-w-[50%]">
-                    Display name
-                    <Input
-                      aria-label={`Display name for ${id}`}
-                      value={selection.displayName ?? ""}
-                      placeholder={id}
-                      disabled={busy}
-                      onChange={(event) =>
-                        setSelected((current) =>
-                          current.map((item) =>
-                            item.model === id ? { ...item, displayName: event.target.value || null } : item,
-                          ),
-                        )
-                      }
-                    />
-                  </label>
-                )}
               </div>
             );
           })}
