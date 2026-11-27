@@ -16,9 +16,12 @@ from app.core.scheduling.leader_election_handle import get_leader_election
 from app.core.usage.pricing_catalog import (
     BUNDLE_PATH,
     decode_snapshot,
+    decode_snapshot_names,
     encode_snapshot,
     fetch_catalogs,
+    get_active_model_names,
     get_active_prices,
+    install_model_names,
     install_prices,
     merge_catalogs,
     snapshot_updated_at,
@@ -48,11 +51,15 @@ class MetadataRefreshScheduler:
             cached = json.loads(await asyncio.to_thread(path.read_text))
             bundled = json.loads(BUNDLE_PATH.read_text())
             prices = decode_snapshot(cached)
+            names = decode_snapshot_names(cached)
             if snapshot_updated_at(cached) < snapshot_updated_at(bundled):
                 prices = merge_catalogs(decode_snapshot(bundled), prices)
+                names = {**names, **decode_snapshot_names(bundled)}
             install_prices(prices)
+            install_model_names(names)
         except (OSError, ValueError):
             get_active_prices()
+            get_active_model_names()
         await get_codex_version_cache().restore(get_settings().data_dir / "codex-version-cache.json")
         self._stop.clear()
         self._task = asyncio.create_task(self._run_loop())
@@ -68,16 +75,21 @@ class MetadataRefreshScheduler:
     async def _refresh(self) -> None:
         await get_codex_version_cache().get_version()
         try:
-            prices = await fetch_catalogs()
+            catalog = await fetch_catalogs()
             previous = get_active_prices()
-            install_prices(prices)
+            install_prices(catalog.prices)
+            install_model_names(catalog.names)
             if get_active_prices() != previous:
                 self._cursor = 0
                 self._backfill_at = 0.0
             await asyncio.to_thread(
-                write_metadata, get_settings().data_dir / "pricing-cache.json", encode_snapshot(get_active_prices())
+                write_metadata,
+                get_settings().data_dir / "pricing-cache.json",
+                encode_snapshot(get_active_prices(), get_active_model_names()),
             )
-            logger.info("Refreshed OpenAI pricing metadata: models=%d", len(prices))
+            logger.info(
+                "Refreshed OpenAI pricing metadata: models=%d names=%d", len(catalog.prices), len(catalog.names)
+            )
             self._refresh_at = time.monotonic() + _REFRESH_SECONDS
         except (OSError, ValueError):
             self._refresh_at = time.monotonic() + _FAILURE_RETRY_SECONDS

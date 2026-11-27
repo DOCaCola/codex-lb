@@ -1,11 +1,15 @@
-"""Public catalog adapters; only validated OpenAI, Anthropic and Google text-token prices enter accounting."""
+"""Public catalog adapters; only validated OpenAI, Anthropic and Google text-token prices enter accounting.
+
+models.dev also names OpenAI's text models; those names are kept beside the prices for providers whose own model
+lists carry none.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import math
-from dataclasses import asdict, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -119,6 +123,18 @@ def parse_models_dev(payload: JsonValue) -> dict[str, ModelPrice]:
                 logger.debug("Ignoring unsupported models.dev price for %s", model)
     if not result:
         raise ValueError("models.dev supplied no valid OpenAI prices")
+    return result
+
+
+def parse_models_dev_names(payload: JsonValue) -> dict[str, str]:
+    """OpenAI's text-model names as published in models.dev's OpenAI section."""
+    models = _object(_object(_object(payload).get("openai")).get("models"))
+    result: dict[str, str] = {}
+    for model, raw in models.items():
+        entry = _object(raw)
+        name = entry.get("name")
+        if _object(entry.get("modalities")).get("output") == ["text"] and isinstance(name, str) and name.strip():
+            result[model.lower()] = name.strip()
     return result
 
 
@@ -246,7 +262,16 @@ def decode_snapshot(payload: JsonValue) -> dict[str, ModelPrice]:
     return result
 
 
-def encode_snapshot(prices: dict[str, ModelPrice]) -> str:
+def decode_snapshot_names(payload: JsonValue) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for model, name in _object(_object(payload).get("names")).items():
+        if not isinstance(name, str):
+            raise ValueError("Invalid model name in pricing snapshot")
+        result[model] = name
+    return result
+
+
+def encode_snapshot(prices: dict[str, ModelPrice], names: dict[str, str] | None = None) -> str:
     return (
         json.dumps(
             {
@@ -257,6 +282,7 @@ def encode_snapshot(prices: dict[str, ModelPrice]) -> str:
                     model: {k: v for k, v in asdict(price).items() if v is not None}
                     for model, price in sorted(prices.items())
                 },
+                "names": dict(sorted((names or {}).items())),
             },
             indent=2,
             allow_nan=False,
@@ -265,8 +291,15 @@ def encode_snapshot(prices: dict[str, ModelPrice]) -> str:
     )
 
 
-async def fetch_catalogs() -> dict[str, ModelPrice]:
+@dataclass(frozen=True)
+class PublicCatalog:
+    prices: dict[str, ModelPrice]
+    names: dict[str, str]
+
+
+async def fetch_catalogs() -> PublicCatalog:
     catalogs: list[dict[str, ModelPrice]] = []
+    names: dict[str, str] = {}
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=20),
         trust_env=True,
@@ -281,16 +314,20 @@ async def fetch_catalogs() -> dict[str, ModelPrice]:
                         body.extend(chunk)
                         if len(body) > MAX_CATALOG_BYTES:
                             raise ValueError("Pricing response too large")
-                    catalogs.append(parser(json.loads(body)))
+                    payload = json.loads(body)
+                    catalogs.append(parser(payload))
+                    if url == MODELS_DEV_URL:
+                        names = parse_models_dev_names(payload)
             except (aiohttp.ClientError, TimeoutError, ValueError):
                 logger.warning("Pricing source unavailable: %s", url, exc_info=True)
                 catalogs.append({})
     if not any(catalogs):
         raise ValueError("All pricing sources failed")
-    return merge_catalogs(catalogs[0], catalogs[1])
+    return PublicCatalog(merge_catalogs(catalogs[0], catalogs[1]), names)
 
 
 _prices: dict[str, ModelPrice] | None = None
+_names: dict[str, str] | None = None
 
 
 def get_active_prices() -> dict[str, ModelPrice]:
@@ -303,3 +340,16 @@ def get_active_prices() -> dict[str, ModelPrice]:
 def install_prices(prices: dict[str, ModelPrice]) -> None:
     global _prices
     _prices = merge_catalogs(prices, get_active_prices())
+
+
+def get_active_model_names() -> dict[str, str]:
+    global _names
+    if _names is None:
+        _names = decode_snapshot_names(json.loads(BUNDLE_PATH.read_text()))
+    return _names
+
+
+def install_model_names(names: dict[str, str]) -> None:
+    """Newer names win; a model models.dev stops listing keeps its last name."""
+    global _names
+    _names = {**get_active_model_names(), **names}

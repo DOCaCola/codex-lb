@@ -383,3 +383,22 @@ def test_google_list_prices_enter_both_catalogs():
     assert price.long_context_threshold_tokens == 200_000
     assert (price.long_context_input_per_1m, price.long_context_output_per_1m) == pytest.approx((4, 18))
     assert price.cache_write_input_per_1m is None
+
+
+def test_models_dev_names_cover_openai_text_models_and_survive_the_snapshot():
+    names = catalog.parse_models_dev_names(
+        {
+            "openai": {
+                "models": {
+                    "GPT-5.5-Pro": {"name": " GPT-5.5 Pro ", "modalities": {"output": ["text"]}},
+                    "gpt-image-2": {"name": "gpt-image-2", "modalities": {"output": ["image"]}},
+                    "gpt-unnamed": {"modalities": {"output": ["text"]}},
+                }
+            },
+            "anthropic": {"models": {"claude-test": {"name": "Claude Test", "modalities": {"output": ["text"]}}}},
+        }
+    )
+    assert names == {"gpt-5.5-pro": "GPT-5.5 Pro"}
+    snapshot = json.loads(catalog.encode_snapshot({"gpt-test": ModelPrice(1, 2)}, names))
+    assert catalog.decode_snapshot_names(snapshot) == names
+    assert catalog.decode_snapshot_names(json.loads(catalog.encode_snapshot({"gpt-test": ModelPrice(1, 2)}))) == {}

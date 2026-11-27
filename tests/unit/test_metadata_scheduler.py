@@ -16,6 +16,7 @@ from app.core.usage.pricing import ModelPrice, get_pricing_for_model
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(catalog, "_prices", None)
+    monkeypatch.setattr(catalog, "_names", None)
     monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(data_dir=tmp_path))
     cache = CodexVersionCache()
     monkeypatch.setattr(cache, "_fetch_latest_version", AsyncMock(return_value=None))
@@ -24,18 +25,23 @@ def setup(monkeypatch, tmp_path):
 
 
 async def test_refresh_persists_and_offline_restart_restores(setup, monkeypatch):
-    monkeypatch.setattr(module, "fetch_catalogs", AsyncMock(return_value={"gpt-test": ModelPrice(3, 9)}))
+    fetched = catalog.PublicCatalog({"gpt-test": ModelPrice(3, 9)}, {"gpt-test": "GPT Test"})
+    monkeypatch.setattr(module, "fetch_catalogs", AsyncMock(return_value=fetched))
     first = module.MetadataRefreshScheduler()
     await first._refresh()
     assert get_pricing_for_model("gpt-test") == ("gpt-test", ModelPrice(3, 9))
-    assert json.loads((setup / "pricing-cache.json").read_text())["models"]["gpt-test"]["input_per_1m"] == 3
+    cached = json.loads((setup / "pricing-cache.json").read_text())
+    assert cached["models"]["gpt-test"]["input_per_1m"] == 3
+    assert cached["names"]["gpt-test"] == "GPT Test"
     monkeypatch.setattr(catalog, "_prices", None)
+    monkeypatch.setattr(catalog, "_names", None)
     monkeypatch.setattr(module, "fetch_catalogs", AsyncMock(side_effect=ValueError("offline")))
     second = module.MetadataRefreshScheduler()
     monkeypatch.setattr(second, "_run_loop", AsyncMock())
     await second.start()
     await second._refresh()
     assert get_pricing_for_model("gpt-test") == ("gpt-test", ModelPrice(3, 9))
+    assert catalog.get_active_model_names()["gpt-test"] == "GPT Test"
     await second.stop()
     assert second._task is None
 
@@ -80,7 +86,7 @@ async def test_follower_refreshes_prices_without_running_backfill(setup, monkeyp
 
     async def fetch():
         refreshed.set()
-        return {"gpt-test": ModelPrice(3, 9)}
+        return catalog.PublicCatalog({"gpt-test": ModelPrice(3, 9)}, {})
 
     async def run_if_leader(callback):
         finished.set()
@@ -101,7 +107,9 @@ async def test_follower_refreshes_prices_without_running_backfill(setup, monkeyp
 
 async def test_compatible_partial_refresh_does_not_restart_backfill_cursor(setup, monkeypatch):
     catalog.install_prices({"gpt-test": ModelPrice(10, 50, 1, flex_input_per_1m=5, flex_output_per_1m=25)})
-    monkeypatch.setattr(module, "fetch_catalogs", AsyncMock(return_value={"gpt-test": ModelPrice(10, 50, 1)}))
+    monkeypatch.setattr(
+        module, "fetch_catalogs", AsyncMock(return_value=catalog.PublicCatalog({"gpt-test": ModelPrice(10, 50, 1)}, {}))
+    )
     scheduler = module.MetadataRefreshScheduler(_cursor=123)
     await scheduler._refresh()
     assert scheduler._cursor == 123
@@ -112,7 +120,7 @@ async def test_unexpected_failure_backs_off_only_the_failed_operation(setup, mon
     current = 0.0
     ticks = iter([5.0, 300.0])
     scheduler = module.MetadataRefreshScheduler()
-    fetch = AsyncMock(return_value={"gpt-test": ModelPrice(3, 9)})
+    fetch = AsyncMock(return_value=catalog.PublicCatalog({"gpt-test": ModelPrice(3, 9)}, {}))
     backfill = AsyncMock(return_value=True)
     if failed_operation == "refresh":
         fetch.side_effect = RuntimeError("unexpected catalog failure")

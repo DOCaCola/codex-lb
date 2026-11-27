@@ -21,9 +21,11 @@ async def sources(monkeypatch, *, primary_status=200, secondary_status=200):
                 "openai": {
                     "models": {
                         "gpt-test": {
+                            "name": "GPT Test",
                             "modalities": {"output": ["text"]},
                             "cost": {"input": 10, "output": 50, "cache_read": 1},
-                        }
+                        },
+                        "gpt-image-test": {"name": "GPT Image Test", "modalities": {"output": ["image"]}},
                     }
                 }
             },
@@ -65,9 +67,12 @@ async def sources(monkeypatch, *, primary_status=200, secondary_status=200):
 @pytest.mark.parametrize("primary_status", [200, 503])
 async def test_public_catalog_http_fetch_and_source_fallback(monkeypatch, primary_status):
     async with sources(monkeypatch, primary_status=primary_status) as requests:
-        prices = await catalog.fetch_catalogs()
+        result = await catalog.fetch_catalogs()
+    prices = result.prices
     assert prices["gpt-test"].input_per_1m == 10
     assert prices["gpt-test"].flex_output_per_1m == 25
+    # Only models.dev names OpenAI's text models.
+    assert result.names == ({"gpt-test": "GPT Test"} if primary_status == 200 else {})
     assert requests == ["codex-lb"]
 
 
