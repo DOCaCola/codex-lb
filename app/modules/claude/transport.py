@@ -46,6 +46,7 @@ from app.modules.model_sources.forwarding import (
     _redact_json_value,
     _response_json,
     _source_client_timeout,
+    _timeout_error,
     source_stream_idle_seconds,
     unreachable_error,
 )
@@ -212,7 +213,14 @@ async def _open_responses(
             await events.aclose()
         finally:
             await transport.aclose()
-        if isinstance(exc, (TimeoutError, StopAsyncIteration, StreamIdleTimeoutError)):
+        if isinstance(exc, TimeoutError):
+            raise _timeout_error(
+                "first_frame",
+                prepared.source,
+                deadline=SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
+                elapsed=clock.monotonic() - started_at,
+            ) from exc
+        if isinstance(exc, (StopAsyncIteration, StreamIdleTimeoutError)):
             raise _failure("invalid_upstream_response", "Claude did not start an SSE response") from exc
         if isinstance(exc, (aiohttp.ClientError, StreamEventTooLargeError)):
             raise _failure("invalid_upstream_response", "Claude SSE response could not be read") from exc

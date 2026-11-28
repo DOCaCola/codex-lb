@@ -38,13 +38,13 @@ from app.modules.antigravity.responses import EmptyCompletion, Usage
 from app.modules.antigravity.search import SearchOutcome, run_search
 from app.modules.claude.credentials import ClaudeError
 from app.modules.model_sources.forwarding import (
-    SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
     ModelSourceForwardingError,
     SourceResponsesStream,
     SourceStreamTransport,
     SourceStreamUsageParser,
     SourceUsageHolder,
     _open_source_stream,
+    _timeout_error,
     _usage_from_responses_mapping,
     source_stream_idle_seconds,
 )
@@ -54,6 +54,12 @@ logger = logging.getLogger(__name__)
 STREAM_PATH = "/v1internal:streamGenerateContent?alt=sse"
 MAX_EVENT_BYTES = 8 * 1024 * 1024
 KEEPALIVE_SECONDS = 5.0
+# Cloud Code can withhold its headers, or its first event, until it has processed
+# the prompt, so a large uncached prompt outlasts the Responses source deadlines.
+# Headers follow the Claude bound (opencodex: 200 s, OmniRoute and sub2api: 600 s);
+# the first event follows OmniRoute's stream readiness budget of 80 s.
+ANTIGRAVITY_HEADER_DEADLINE_SECONDS = 180.0
+ANTIGRAVITY_FIRST_EVENT_DEADLINE_SECONDS = 80.0
 
 
 def _failure(code: str, message: str) -> ModelSourceForwardingError:
@@ -102,6 +108,7 @@ class _Upstream:
                 encryptor=None,
                 prepared_headers=prepared.headers,
                 skip_auto_headers=GO_SKIP_AUTO_HEADERS,
+                header_deadline_seconds=ANTIGRAVITY_HEADER_DEADLINE_SECONDS,
                 first_frame_deadline_seconds=None,
                 compact_json=True,
                 scheduler=self.scheduler,
@@ -150,14 +157,21 @@ async def open_responses(
     transport = SourceStreamTransport(outer, scheduler=scheduler)
     try:
         events = await upstream.open()
-        with scheduler.fail_after(SOURCE_FIRST_FRAME_DEADLINE_SECONDS):
+        with scheduler.fail_after(ANTIGRAVITY_FIRST_EVENT_DEADLINE_SECONDS):
             first = await _first_event(events, secret)
         holder.first_frame_at = clock.monotonic()
     except BaseException as exc:
         await transport.aclose()
         if isinstance(exc, AntigravityUpstreamError):
             await _record(prepared, exc)
-        if isinstance(exc, (TimeoutError, StopAsyncIteration, StreamIdleTimeoutError)):
+        if isinstance(exc, TimeoutError):
+            raise _timeout_error(
+                "first_frame",
+                prepared.source,
+                deadline=ANTIGRAVITY_FIRST_EVENT_DEADLINE_SECONDS,
+                elapsed=clock.monotonic() - started_at,
+            ) from exc
+        if isinstance(exc, (StopAsyncIteration, StreamIdleTimeoutError)):
             raise _failure("invalid_upstream_response", "Antigravity did not start an SSE response") from exc
         if isinstance(exc, (aiohttp.ClientError, StreamEventTooLargeError)):
             raise _failure("invalid_upstream_response", "Antigravity SSE response could not be read") from exc

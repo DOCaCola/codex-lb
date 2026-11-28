@@ -1,3 +1,4 @@
+import asyncio
 import json
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
@@ -220,6 +221,56 @@ async def test_responses_reach_antigravity_as_the_native_agent(async_client, poo
     assert labels["model_enum"] == f"MODEL_PLACEHOLDER_M{900 if envelope['model'].endswith('high') else 899}"
     assert labels["used_non_gemini_model"] == "true"
     assert not {"used_claude", "used_claude_conservative"} & set(labels)
+
+
+async def test_cloud_code_gets_the_prompt_processing_deadlines(async_client, pool, monkeypatch):
+    from app.modules.antigravity import transport
+    from app.modules.model_sources.forwarding import SOURCE_FIRST_FRAME_DEADLINE_SECONDS, SOURCE_HEADER_DEADLINE_SECONDS
+
+    install_upstream(monkeypatch)
+    fake_open = transport._open_source_stream
+    deadlines = []
+
+    async def open_stream(*args, **kwargs):
+        deadlines.append((kwargs["header_deadline_seconds"], kwargs["first_frame_deadline_seconds"]))
+        return await fake_open(*args, **kwargs)
+
+    monkeypatch.setattr(transport, "_open_source_stream", open_stream)
+    await ask(async_client, GEMINI)
+
+    assert deadlines == [(transport.ANTIGRAVITY_HEADER_DEADLINE_SECONDS, None)]
+    assert transport.ANTIGRAVITY_HEADER_DEADLINE_SECONDS > SOURCE_HEADER_DEADLINE_SECONDS
+    assert transport.ANTIGRAVITY_FIRST_EVENT_DEADLINE_SECONDS > SOURCE_FIRST_FRAME_DEADLINE_SECONDS
+
+
+async def test_silent_first_event_reports_a_source_timeout(async_client, pool, monkeypatch):
+    from app.modules.antigravity import transport
+
+    monkeypatch.setattr(transport, "ANTIGRAVITY_FIRST_EVENT_DEADLINE_SECONDS", 0.05)
+    opened = []
+
+    async def open_stream(source, path, payload, **kwargs):
+        opened.append(source.id)
+
+        async def chunks(_size):
+            await asyncio.Event().wait()
+            yield b""
+
+        response = SimpleNamespace(status=200, headers={}, content=SimpleNamespace(iter_chunked=chunks))
+        return AsyncExitStack(), response, None
+
+    monkeypatch.setattr(transport, "_open_source_stream", open_stream)
+    response = await async_client.post(
+        "/backend-api/codex/responses",
+        json={"model": GEMINI, "input": "Hi", "stream": False, "prompt_cache_key": "silent"},
+        headers={"session_id": "silent"},
+    )
+
+    assert opened
+    assert response.status_code == 504, response.text
+    error = response.json()["error"]
+    assert error["code"] == "model_source_timeout"
+    assert "first response frame" in error["message"]
 
 
 async def test_enforced_redirect_routes_to_antigravity(async_client, pool, monkeypatch):

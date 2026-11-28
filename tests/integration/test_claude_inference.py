@@ -206,6 +206,32 @@ async def test_claude_stream_waits_past_the_responses_header_deadline(async_clie
     assert transport.CLAUDE_HEADER_DEADLINE_SECONDS > SOURCE_HEADER_DEADLINE_SECONDS
 
 
+async def test_claude_silent_first_frame_reports_a_source_timeout(async_client, pool, monkeypatch):
+    from app.modules.claude import transport
+
+    monkeypatch.setattr(transport, "SOURCE_FIRST_FRAME_DEADLINE_SECONDS", 0.05)
+    opened = []
+
+    async def open_stream(source, path, payload, **kwargs):
+        opened.append(source.id)
+
+        async def chunks(_size):
+            await asyncio.Event().wait()
+            yield b""
+
+        response = SimpleNamespace(status=200, headers={}, content=SimpleNamespace(iter_chunked=chunks))
+        return AsyncExitStack(), response, None
+
+    monkeypatch.setattr(transport, "_open_source_stream", open_stream)
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": False})
+
+    assert opened
+    assert response.status_code == 504, response.text
+    error = response.json()["error"]
+    assert error["code"] == "model_source_timeout"
+    assert "first response frame" in error["message"]
+
+
 @pytest.mark.parametrize("stream", [True, False])
 async def test_responses_route_reaches_claude_with_owned_cleanup(async_client, pool, monkeypatch, stream):
     captured, closed = install_upstream(monkeypatch)
