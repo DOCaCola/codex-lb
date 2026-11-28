@@ -359,3 +359,50 @@ async def test_image_stream_passes_through(async_client, platform):
         async with SessionLocal() as session:
             log = (await session.scalars(select(RequestLog).where(RequestLog.model_source_id == account_id))).one()
         assert (log.status, log.input_tokens, log.output_tokens) == ("success", 4, 8)
+
+
+async def test_v1_models_describe_image_model_parameters(async_client, monkeypatch):
+    image_models = ["gpt-image-2.6-sunburst", "gpt-image-2", "gpt-image-1.5"]
+
+    async def list_models(self, key):
+        return [UpstreamModel(id=model_id) for model_id in image_models]
+
+    monkeypatch.setattr(OpenAIApiClient, "models", list_models)
+    created = await async_client.post("/api/openai-api-accounts", json={"name": "Platform", "apiKey": "sk-test"})
+    assert created.status_code == 200, created.text
+    account_id = created.json()["id"]
+    selected = await async_client.patch(
+        f"/api/openai-api-accounts/{account_id}", json={"selections": [{"model": model} for model in image_models]}
+    )
+    assert selected.status_code == 200, selected.text
+
+    async def listed() -> dict[str, dict]:
+        return {model["id"]: model for model in (await async_client.get("/v1/models")).json()["data"]}
+
+    models = await listed()
+    sunburst = models["openai-apikey/gpt-image-2.6-sunburst"]["image"]["supported_parameters"]
+    assert sunburst["quality"]["values"] == ["auto", "low", "medium", "high", "xhigh", "max"]
+    assert (sunburst["complexity"]["values"], sunburst["complexity"]["default"]) == (["low", "medium", "high"], "high")
+    frame_count = {"type": "range", "min": 2, "max": 16, "default": 9, "description": "GIF output only."}
+    assert sunburst["frame_count"] == frame_count
+    image_2 = models["openai-apikey/gpt-image-2"]["image"]["supported_parameters"]
+    assert image_2["quality"]["values"] == ["auto", "low", "medium", "high"]
+    assert image_2["output_format"]["values"] == ["png", "jpeg", "webp"]
+    assert "complexity" not in image_2
+    # Undocumented families publish no parameters instead of guessed ones.
+    assert models["openai-apikey/gpt-image-1.5"]["image"] == {"id": "gpt-image-1.5"}
+    assert "complexity" not in models["gpt-image-2"]["image"]["supported_parameters"]
+
+    redirected = await async_client.put(
+        "/api/settings/model-redirects/gpt-image-2", json={"targetModel": "openai-apikey/gpt-image-2.6-sunburst"}
+    )
+    assert redirected.status_code == 200, redirected.text
+    models = await listed()
+    assert models["gpt-image-2"]["image"] == models["openai-apikey/gpt-image-2.6-sunburst"]["image"]
+
+    deselected = await async_client.patch(
+        f"/api/openai-api-accounts/{account_id}", json={"selections": [{"model": "gpt-image-2"}]}
+    )
+    assert deselected.status_code == 200, deselected.text
+    # An inactive redirect fails image requests, so the alias is not offered.
+    assert "gpt-image-2" not in await listed()

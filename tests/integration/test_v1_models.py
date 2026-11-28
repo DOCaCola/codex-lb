@@ -298,7 +298,7 @@ async def test_v1_models_uses_bootstrap_models_when_registry_not_populated(async
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["object"] == "list"
-    ids = {item["id"] for item in payload["data"]}
+    ids = {item["id"] for item in payload["data"] if item["api_types"] != ["images"]}
     assert ids == BOOTSTRAP_MODEL_SLUGS
     assert "gpt-5.5-pro" not in ids
 
@@ -597,6 +597,30 @@ async def test_v1_models_filters_source_models_by_exact_allowlist(async_client):
     assert canonical_response.status_code == 200
     canonical_ids = {item["id"] for item in canonical_response.json()["data"]}
     assert "gpt-5-high" not in canonical_ids
+
+
+@pytest.mark.asyncio
+async def test_v1_models_lists_native_image_model_for_permitted_keys(async_client):
+    settings = await async_client.put("/api/settings", json={"apiKeyAuthEnabled": True})
+    assert settings.status_code == 200
+
+    open_key = await async_client.post("/api/api-keys/", json={"name": "open key"})
+    listed = await async_client.get("/v1/models", headers={"Authorization": f"Bearer {open_key.json()['key']}"})
+    native = next(item for item in listed.json()["data"] if item["id"] == "gpt-image-2")
+    assert native["api_types"] == ["images"]
+    # The parameters the Codex client sends to the native image endpoint.
+    assert native["image"] == {
+        "id": "gpt-image-2",
+        "supported_parameters": {
+            "background": {"type": "enum", "values": ["opaque", "transparent"]},
+            "quality": {"type": "enum", "values": ["auto"], "default": "auto"},
+            "size": {"type": "enum", "values": ["auto"], "default": "auto"},
+        },
+    }
+
+    text_key = await async_client.post("/api/api-keys/", json={"name": "text key", "allowedModels": ["gpt-5.2"]})
+    restricted = await async_client.get("/v1/models", headers={"Authorization": f"Bearer {text_key.json()['key']}"})
+    assert "gpt-image-2" not in {item["id"] for item in restricted.json()["data"]}
 
 
 @pytest.mark.asyncio
@@ -1554,7 +1578,7 @@ async def test_model_sets_are_consistent_across_api_endpoints(async_client):
     assert codex.status_code == 200
 
     dashboard_ids = {item["id"] for item in dashboard.json()["models"]}
-    v1_ids = {item["id"] for item in v1.json()["data"]}
+    v1_ids = {item["id"] for item in v1.json()["data"] if item["api_types"] != ["images"]}
     codex_slugs = {item["slug"] for item in codex.json()["models"]}
     assert "gpt-hidden" not in dashboard_ids
     assert "gpt-hidden" not in v1_ids

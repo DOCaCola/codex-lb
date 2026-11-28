@@ -173,7 +173,7 @@ async def test_native_mode_api_retains_selection_and_enforces_fresh_and_warm_rou
     assert response.status_code == 200, response.text
     assert response.json()["selectedModels"] == [selected]
     public = await async_client.get("/v1/models")
-    assert {model["id"] for model in public.json()["data"]} == {selected}
+    assert {model["id"] for model in public.json()["data"] if model["api_types"] != ["images"]} == {selected}
     codex = await async_client.get("/backend-api/codex/models")
     assert {model["slug"] for model in codex.json()["models"] if model["visibility"] == "list"} == {selected}
     balancer = LoadBalancer(_repo_factory)

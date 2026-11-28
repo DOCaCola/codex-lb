@@ -267,12 +267,7 @@ from app.modules.api_keys.service import (
 from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.model_sources.catalog import (
-    is_codex_backend_catalog_model as _is_codex_backend_catalog_model,
-)
-from app.modules.model_sources.catalog import (
-    is_image_only_source_model as _is_image_only_source_model,
-)
-from app.modules.model_sources.catalog import (
+    image_redirect_targets,
     native_redirect_targets,
     source_model_audio_cost_usd,
     source_model_display_name,
@@ -281,6 +276,12 @@ from app.modules.model_sources.catalog import (
     source_model_supports_reasoning,
     source_models_to_upstream_models,
     source_redirect_targets,
+)
+from app.modules.model_sources.catalog import (
+    is_codex_backend_catalog_model as _is_codex_backend_catalog_model,
+)
+from app.modules.model_sources.catalog import (
+    is_image_only_source_model as _is_image_only_source_model,
 )
 from app.modules.model_sources.compaction import (
     SourceCompactionResultError,
@@ -315,6 +316,7 @@ from app.modules.model_sources.forwarding import (
 from app.modules.model_sources.forwarding import (
     stream_responses as stream_source_responses,
 )
+from app.modules.model_sources.image_parameters import native_image_description, published_image_description
 from app.modules.model_sources.instructions import (
     name_routed_identity,
     routed_base_instructions,
@@ -3762,7 +3764,59 @@ async def _build_models_response_body(
             _to_model_list_item(model.slug, model, created=created, context_window_overrides=context_window_overrides)
         )
         seen_slugs.add(model.slug)
+    if DEFAULT_IMAGE_MODEL not in hidden_models and (allowed_models is None or DEFAULT_IMAGE_MODEL in allowed_models):
+        native_image = await _native_image_list_item(redirects, created=created)
+        if native_image is not None:
+            items.append(native_image)
     return JSONResponse(content=_dump_v1_models_response(ModelListResponse(data=items)))
+
+
+async def _native_image_list_item(redirects: Mapping[str, str], *, created: int) -> ModelListItem | None:
+    """The image model Codex's image backend requests, described as the model that serves it."""
+    target = redirects.get(DEFAULT_IMAGE_MODEL)
+    if target is None:
+        return _image_list_item(
+            DEFAULT_IMAGE_MODEL,
+            native_image_description(DEFAULT_IMAGE_MODEL),
+            input_modalities=["text", "image"],
+            supports_streaming=True,
+            created=created,
+        )
+    model = (await image_redirect_targets()).get(target)
+    if model is None:
+        # An inactive redirect fails the request, so the alias is not offered.
+        return None
+    return _image_list_item(
+        DEFAULT_IMAGE_MODEL,
+        published_image_description(model),
+        input_modalities=list(model.input_modalities),
+        supports_streaming=model.raw.get("supports_streaming", False),
+        created=created,
+    )
+
+
+def _image_list_item(
+    slug: str,
+    image: dict[str, JsonValue],
+    *,
+    input_modalities: list[str],
+    supports_streaming: JsonValue,
+    created: int,
+) -> ModelListItem:
+    return ModelListItem.model_validate(
+        {
+            "id": slug,
+            "created": created,
+            "owned_by": "codex-lb",
+            "api_types": ["images"],
+            "capabilities": {
+                "input_modalities": input_modalities,
+                "output_modalities": ["image"],
+                "supports_streaming": supports_streaming,
+            },
+            "image": image,
+        }
+    )
 
 
 _ANTHROPIC_LIST_PROVIDERS: Final[Mapping[str, str]] = {
@@ -4016,19 +4070,12 @@ def _to_model_list_item(
     slug: str, model: UpstreamModel, *, created: int, context_window_overrides: Mapping[str, int]
 ) -> ModelListItem:
     if _is_image_only_source_model(model):
-        return ModelListItem.model_validate(
-            {
-                "id": slug,
-                "created": created,
-                "owned_by": "codex-lb",
-                "api_types": ["images"],
-                "capabilities": {
-                    "input_modalities": list(model.input_modalities),
-                    "output_modalities": ["image"],
-                    "supports_streaming": model.raw.get("supports_streaming", False),
-                },
-                "image": model.raw["image"],
-            }
+        return _image_list_item(
+            slug,
+            published_image_description(model),
+            input_modalities=list(model.input_modalities),
+            supports_streaming=model.raw.get("supports_streaming", False),
+            created=created,
         )
     context_window = _resolved_context_window(model, context_window_overrides)
     return ModelListItem.model_validate(
