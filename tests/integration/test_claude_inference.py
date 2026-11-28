@@ -187,6 +187,25 @@ async def test_public_native_signature_recovery_is_one_shot(async_client, pool, 
     assert len(closed) == (1 if rejections == 1 else 0)
 
 
+async def test_claude_stream_waits_past_the_responses_header_deadline(async_client, pool, monkeypatch):
+    from app.modules.claude import transport
+    from app.modules.model_sources.forwarding import SOURCE_HEADER_DEADLINE_SECONDS
+
+    install_upstream(monkeypatch)
+    fake_open = transport._open_source_stream
+    deadlines = []
+
+    async def open_stream(*args, **kwargs):
+        deadlines.append((kwargs["header_deadline_seconds"], kwargs["first_frame_deadline_seconds"]))
+        return await fake_open(*args, **kwargs)
+
+    monkeypatch.setattr(transport, "_open_source_stream", open_stream)
+    response = await async_client.post("/v1/responses", json={"model": MODEL, "input": "Hello", "stream": True})
+    assert response.status_code == 200, response.text
+    assert deadlines == [(transport.CLAUDE_HEADER_DEADLINE_SECONDS, None)]
+    assert transport.CLAUDE_HEADER_DEADLINE_SECONDS > SOURCE_HEADER_DEADLINE_SECONDS
+
+
 @pytest.mark.parametrize("stream", [True, False])
 async def test_responses_route_reaches_claude_with_owned_cleanup(async_client, pool, monkeypatch, stream):
     captured, closed = install_upstream(monkeypatch)

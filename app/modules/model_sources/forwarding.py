@@ -867,7 +867,9 @@ async def _open_source_stream(
             if header_deadline_seconds is None:
                 # Only the source's total budget was armed: the pre-hardening verdict.
                 raise unreachable_error(source, exc) from exc
-            raise _timeout_error("header", source, elapsed=clock.monotonic() - opened_at) from exc
+            raise _timeout_error(
+                "header", source, deadline=header_deadline_seconds, elapsed=clock.monotonic() - opened_at
+            ) from exc
         if response.status >= 400:
             if recode_credential_failures and _recode_credentials(source, response.status):
                 raise _credentials_rejected_error(response, source)
@@ -882,7 +884,9 @@ async def _open_source_stream(
             # anyio's deadline (or the source's total budget, a ``TimeoutError``
             # too) -- either way the source accepted the request and produced
             # nothing.
-            raise _timeout_error("first_frame", source, elapsed=clock.monotonic() - opened_at) from exc
+            raise _timeout_error(
+                "first_frame", source, deadline=first_frame_deadline_seconds, elapsed=clock.monotonic() - opened_at
+            ) from exc
         except aiohttp.ClientError as exc:
             raise unreachable_error(source, exc) from exc
         if not first_chunk:
@@ -1023,8 +1027,9 @@ def _credentials_rejected_error(response: aiohttp.ClientResponse, source: ModelS
     )
 
 
-def _timeout_error(phase: TimeoutPhase, source: ModelSource, *, elapsed: float) -> ModelSourceForwardingError:
-    deadline = SOURCE_HEADER_DEADLINE_SECONDS if phase == "header" else SOURCE_FIRST_FRAME_DEADLINE_SECONDS
+def _timeout_error(
+    phase: TimeoutPhase, source: ModelSource, *, deadline: float, elapsed: float
+) -> ModelSourceForwardingError:
     logger.warning(
         "%s %s exceeded the %s deadline (%.0fs) after %.1fs",
         source_label(source),

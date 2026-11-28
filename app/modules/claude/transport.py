@@ -50,6 +50,12 @@ from app.modules.model_sources.forwarding import (
     unreachable_error,
 )
 
+# Anthropic can hold its response headers until it has processed the prompt, so a
+# large uncached prompt legitimately outlasts the Responses header deadline. The
+# bound follows agent-lb's Anthropic first-byte budget (opencodex: 200 s,
+# OmniRoute and sub2api: 600 s); the first-frame and stream-idle bounds still apply.
+CLAUDE_HEADER_DEADLINE_SECONDS = 180.0
+
 
 def _failure(code: str, message: str) -> ModelSourceForwardingError:
     return ModelSourceForwardingError(
@@ -118,6 +124,7 @@ async def _open_responses(
             payload,
             encryptor=None,
             prepared_headers=prepared.headers,
+            header_deadline_seconds=CLAUDE_HEADER_DEADLINE_SECONDS,
             first_frame_deadline_seconds=None,
             scheduler=scheduler,
             clock=clock,

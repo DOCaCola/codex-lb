@@ -1105,8 +1105,10 @@ def test_source_errors_name_the_serving_provider(kind: str, label: str) -> None:
     error = cast(dict[str, object], forwarding_module.unreachable_error(source, exc).payload["error"])
     assert error["message"] == f"{label} request failed: ClientConnectorDNSError"
     assert error["code"] == "model_source_unreachable"
-    timeout = cast(dict[str, object], forwarding_module._timeout_error("header", source, elapsed=21).payload["error"])
-    assert str(timeout["message"]).startswith(f"{label} did not send response headers")
+    timeout = cast(
+        dict[str, object], forwarding_module._timeout_error("header", source, deadline=20, elapsed=21).payload["error"]
+    )
+    assert timeout["message"] == f"{label} did not send response headers within 20s"
 
 
 @pytest.mark.asyncio

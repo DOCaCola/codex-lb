@@ -22,6 +22,7 @@ import app.core.clients.http as http_module
 from app.core.clients.http import HttpClient
 from app.core.utils.sse import parse_sse_data_json
 from app.db.models import ModelSource
+from app.modules.claude.transport import CLAUDE_HEADER_DEADLINE_SECONDS
 from app.modules.model_sources import forwarding as forwarding_module
 from app.modules.model_sources.forwarding import (
     SOURCE_FIRST_FRAME_DEADLINE_SECONDS,
@@ -169,6 +170,43 @@ async def test_header_deadline_fires_at_twenty_virtual_seconds_on_a_silent_sourc
         assert error.timeout_phase == "header"
         assert _error_code(error) == "model_source_timeout"
         # The abandoned connection is closed, not parked in the pool.
+        await stub.wait_eof(1)
+        assert _acquired(http_client, model_source=True) == 0
+    await scheduler.cancel_owned_tasks()
+
+
+@pytest.mark.asyncio
+async def test_claude_header_deadline_outlasts_prompt_processing_on_a_silent_source(http_client: HttpClient) -> None:
+    clock, scheduler = _virtual()
+    async with _silent_tcp_upstream() as stub:
+        task = scheduler.create_task(
+            forwarding_module._open_source_stream(
+                _source(stub.base_url),
+                "/v1/messages",
+                {"model": "m", "stream": True},
+                encryptor=None,
+                scheduler=scheduler,
+                clock=clock,
+                header_deadline_seconds=CLAUDE_HEADER_DEADLINE_SECONDS,
+                first_frame_deadline_seconds=None,
+            )
+        )
+        await stub.wait_received(1)
+
+        await scheduler.advance(CLAUDE_HEADER_DEADLINE_SECONDS - 0.5)
+        assert not task.done()
+
+        await scheduler.advance(0.5)
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
+        with pytest.raises(ModelSourceForwardingError) as excinfo:
+            task.result()
+
+        error = excinfo.value
+        assert error.timeout_phase == "header"
+        assert _error_code(error) == "model_source_timeout"
+        payload = error.payload["error"]
+        assert isinstance(payload, dict)
+        assert payload["message"] == "OpenAI-compatible model source did not send response headers within 180s"
         await stub.wait_eof(1)
         assert _acquired(http_client, model_source=True) == 0
     await scheduler.cancel_owned_tasks()
